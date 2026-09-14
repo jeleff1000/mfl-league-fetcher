@@ -1,8 +1,6 @@
 name: Remove forbidden legacy research cache
 
 on:
-  schedule:
-    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:

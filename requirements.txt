@@ -1,0 +1,51 @@
+# Core dependencies - v2 (PINNED for stability)
+streamlit==1.52.0
+# MotherDuck supports 1.5.1 as of 2026-03-24
+duckdb==1.5.1
+pandas==2.2.3
+pyarrow==15.0.2
+requests==2.32.3
+
+# Yahoo Fantasy API
+yahoo-fantasy-api==2.12.2
+yahoo-oauth==2.1.1
+
+# ESPN Fantasy API
+espn-api>=0.45.0
+
+# Data processing
+numpy==1.26.4
+lxml==5.3.0
+polars==1.35.2
+
+# Visualization (for analytics_app)
+plotly==5.24.1
+matplotlib==3.9.2
+scipy==1.14.1
+
+# Optimization (for analytics_app)
+pulp==2.9.0
+
+# External-ingest schema_conform (Phase A) — PHASE 1.7 in import pipeline
+scikit-learn>=1.4
+rapidfuzz>=3.0
+
+# Streamlit extras (for analytics_app)
+streamlit-aggrid==1.0.5
+streamlit-scroll-navigation==1.2.1
+streamlit-option-menu==0.4.0
+streamlit-antd-components==0.3.2
+
+# Optional but recommended
+python-dotenv==1.0.1
+click==8.1.7
+
+# Credential encryption for weekly updates
+cryptography==43.0.3
+
+# For GitHub Actions worker
+pyyaml==6.0.2
+
+# For local development/testing
+pytest==8.3.3
+pytest-cov==5.0.0

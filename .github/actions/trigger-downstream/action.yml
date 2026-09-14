@@ -140,7 +140,7 @@ runs:
 
         if nfl_expansion_only:
             # No historical data to fetch, but we still need to run full import
-            # for expand_to_all_nfl.py to add unrostered NFL players
+            # for SQLEnrichments.expand_to_all_nfl() to add unrostered NFL players
             print(f"INFO: Single-year league (start={actual_start}, current={current_season})")
             print(f"INFO: Full import will run for NFL expansion only (adding unrostered players)")
             # Set year range to current season only - expand_to_all_nfl fetches ALL years from super_table

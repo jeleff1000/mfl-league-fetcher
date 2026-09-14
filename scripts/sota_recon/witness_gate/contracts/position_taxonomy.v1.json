@@ -1,0 +1,317 @@
+{
+ "schema_version": "1",
+ "taxonomy_version": "position-taxonomy.v1",
+ "broad_positions": [
+  "QB",
+  "RB",
+  "WR",
+  "TE",
+  "OL",
+  "DL",
+  "LB",
+  "DB",
+  "K",
+  "P",
+  "DEF"
+ ],
+ "detailed_to_broad": {
+  "QB": "QB",
+  "QUARTERBACK": "QB",
+  "B": "RB",
+  "BB": "RB",
+  "FB": "RB",
+  "HB": "RB",
+  "LHB": "RB",
+  "LH": "RB",
+  "LOH": "RB",
+  "OHB": "RB",
+  "RB": "RB",
+  "RHB": "RB",
+  "RH": "RB",
+  "ROH": "RB",
+  "RUNNING BACK": "RB",
+  "TB": "RB",
+  "WB": "RB",
+  "E": "WR",
+  "END": "WR",
+  "FL": "WR",
+  "LOE": "WR",
+  "LWR": "WR",
+  "OE": "WR",
+  "ROE": "WR",
+  "RWR": "WR",
+  "SE": "WR",
+  "WIDE RECEIVER": "WR",
+  "WR": "WR",
+  "TE": "TE",
+  "TIGHT END": "TE",
+  "C": "OL",
+  "CENTER": "OL",
+  "G": "OL",
+  "GUARD": "OL",
+  "LG": "OL",
+  "LOG": "OL",
+  "LONG": "OL",
+  "LOT": "OL",
+  "LS": "OL",
+  "LT": "OL",
+  "OFFENSIVE TACKLE": "OL",
+  "OG": "OL",
+  "OL": "OL",
+  "OT": "OL",
+  "RG": "OL",
+  "ROG": "OL",
+  "ROT": "OL",
+  "RT": "OL",
+  "T": "OL",
+  "TACKLE": "OL",
+  "DE": "DL",
+  "DEFENSIVE END": "DL",
+  "DEFENSIVE TACKLE": "DL",
+  "DG": "DL",
+  "DL": "DL",
+  "DT": "DL",
+  "EDGE": "DL",
+  "LDE": "DL",
+  "LDG": "DL",
+  "LDT": "DL",
+  "LE": "DL",
+  "LEO": "DL",
+  "MG": "DL",
+  "NG": "DL",
+  "NT": "DL",
+  "RDE": "DL",
+  "RDG": "DL",
+  "RDT": "DL",
+  "RE": "DL",
+  "RUSH": "DL",
+  "SDE": "DL",
+  "UT": "DL",
+  "WDE": "DL",
+  "BLB": "LB",
+  "IL": "LB",
+  "ILB": "LB",
+  "JLB": "LB",
+  "LB": "LB",
+  "LILB": "LB",
+  "LINEBACKER": "LB",
+  "LLB": "LB",
+  "LOLB": "LB",
+  "MIKE": "LB",
+  "MILB": "LB",
+  "MLB": "LB",
+  "OLB": "LB",
+  "RILB": "LB",
+  "RLB": "LB",
+  "ROLB": "LB",
+  "SAM": "LB",
+  "SILB": "LB",
+  "SLB": "LB",
+  "SOLB": "LB",
+  "WILB": "LB",
+  "WILL": "LB",
+  "WLB": "LB",
+  "WOLB": "LB",
+  "CB": "DB",
+  "DB": "DB",
+  "DEFENSIVE BACK": "DB",
+  "DH": "DB",
+  "FS": "DB",
+  "LCB": "DB",
+  "LDH": "DB",
+  "NB": "DB",
+  "RCB": "DB",
+  "RDH": "DB",
+  "RS": "DB",
+  "S": "DB",
+  "SAF": "DB",
+  "SS": "DB",
+  "WS": "DB",
+  "K": "K",
+  "KICKER": "K",
+  "PK": "K",
+  "P": "P",
+  "PUNTER": "P",
+  "DEF": "DEF"
+ },
+ "specialist_role_rule": {
+  "basis": "Joe 2026-08-04, the colloquial test: 'Nobody ever says \"Well Frank, I bet you remember that from your kicking days\"'. A specialist role is earned by being the team's actual kicker/punter that season, not by attempting one kick.",
+  "K": {
+   "requires": "player is his team's primary FG kicker that season (share of team FG attempts >= 0.50) AND >= 5 attempts",
+   "population": "99 players / 270 player-seasons",
+   "verified_in": [
+    "Blanda",
+    "Groza",
+    "Cappelletti",
+    "Hornung",
+    "Summerall",
+    "Mingo",
+    "Wayne Walker",
+    "Gilchrist",
+    "Augie Lio"
+   ],
+   "verified_out": [
+    "Gifford (2 att of team 4, 1953)",
+    "Sheeks (2 of 2, 1921)",
+    "Keck (2 of 2, 1923)"
+   ]
+  },
+  "P": {
+   "requires": "share of team punts >= 0.50 AND >= 5 punts"
+  },
+  "never": "tackles, interceptions, or any incidental play NEVER confer a role -- Larry Fitzgerald is not a DB for tackling on an INT, Matthew Slater is not a DB for special-teams tackles",
+  "combo_order": "SUPERSEDED 2026-08-04 -- this said 'the broad_positions sequence, primary position first, then K, then P', which is WRONG on both counts (wrong list, and primacy is irrelevant). The authoritative rank is the top-level combo_order block. Never read ordering from here."
+ },
+ "combos_permitted": {
+  "rule": "APPROVED COMBOS ARE PERMITTED in fantasy_position (Joe 2026-08-04: 'an approved combo in an approved order'). NOTE: normalize_position() in position_taxonomy.py still returns UNKNOWN for multi-broad SOURCE labels -- that guard is about parsing a source's position string and stays. Combos are CONSTRUCTED by us from a single broad position plus earned specialist roles, never parsed from a source.",
+  "vocabulary": "broad_positions only",
+  "separator": ","
+ },
+ "combo_order": {
+  "LOCKED": true,
+  "order": [
+   "QB",
+   "RB",
+   "WR",
+   "TE",
+   "K",
+   "LB",
+   "DL",
+   "DB",
+   "P",
+   "OL"
+  ],
+  "fingerprint_sha256": "7f01ec3cb0e4fc3219627782af1f5289d99f4d69abcf8cf3028196ef11c360b9",
+  "basis": "Joe 2026-08-04, verbatim: multi-positional players need their positions listed in this order in fantasy_position. THE RANK IS ABSOLUTE AND IS NOT PRIMACY -- Joe: 'even when its technically incorrect. Deion Sanders has one season with WR eligibility. That season should be WR,DB even though DB was his primary.' A combo is sorted by this rank and by nothing else: not by which role the player mostly filled, not by snap counts, not by the broad_positions sequence (which is a DIFFERENT list and must never be substituted -- it would emit OL,K for Groza).",
+  "worked_examples": {
+   "Taysom Hill": "QB,TE -- never TE,QB",
+   "Travis Hunter": "WR,DB -- never DB,WR",
+   "Deion Sanders": "WR,DB in his WR-eligible season, though DB was primary",
+   "Lou Groza": "K,OL",
+   "George Blanda": "QB,K -- and NOT dual-eligible every year; his Bears years are QB alone"
+  },
+  "eligibility_is_per_season": "dual eligibility is earned season by season, never smeared across a career (Blanda's Bears years, Gilchrist 1962 only)",
+  "immutability": "This block is LOCKED. It is mirrored in code as COMBO_ORDER in witness_gate/position_taxonomy.py and pinned by fingerprint_sha256 over ','.join(order). Any program that edits one side without the other raises ComboOrderViolation at import -- the quorum is that no single edit site can change the law quietly. To change it lawfully: edit BOTH sides, recompute the fingerprint, and record why here."
+ },
+ "witness_ceiling": {
+  "LOCKED": true,
+  "rule": "Joe 2026-08-04: 'the only time we can make our own rule is kicker.' Where a witness declares a season's positions, THAT DECLARATION IS THE CEILING -- fantasy_position may never contain a role the witness did not declare, with exactly one exception: K, which our volume rule may add.",
+  "authority": "PFR's OWN per-season Pos field, unioned across 26 PFR lanes keyed (pfr_id, year_id) -> pfr_season_position_declaration.parquet (build_position_declaration.py). 112,585 player-seasons, 415 dual.",
+  "plane_label_is_not_a_witness": "the weekly plane's own position/nfl_position gets NO vote where a declaration exists -- it is a fallback for undeclared seasons only. Unioning it over-fired 2,429 player-seasons (1,090 WR,DL where the witness says WR; 620 QB,RB where it says QB) by re-importing the plane's own polluted combos.",
+  "the_one_self_made_rule": {
+   "role": "K",
+   "rule": "team's primary FG kicker (share>=0.50 AND >=5 attempts) OR >=10 attempts",
+   "corroboration": "agrees with the declaration on 0.99390 of the K bit over 112,600 player-seasons, and independently reproduces Gilchrist RB,K in 1962 and no other year",
+   "measured_additions_beyond_the_declaration": 3
+  },
+  "punter_self_rule": "DELETED 2026-08-04. It was a second invented rule; only kicker is authorized. P now comes from witnesses alone.",
+  "gate": "test_position_wire.py EDGE5 fails the suite on any unauthorized extra token",
+  "why_not_season_positions": "Joe 2026-08-05: 'Its not if PFR carries a line for it with our positons. Its if PFR SAYS Travis Hunter is WR,CB in his actual bio for that season.' v26's season_positions was built from STAT-LINE PRESENCE -- appear in the kicking table and you were declared a kicker. It made Frank Gifford RB,K in 1956 off ONE field-goal attempt, though PFR's own pos that season reads LH even inside the kicking table. 1,805 'dual' seasons there against 415 real ones here.",
+  "the_declaration_shape": "Joe: 'You see how Deion has that one official WR year? thats how we declare dual players.' PFR reads RCB 1990-94, LCB 1995, RCB/WR 1996, RCB 1997-2000. The SLASH is the declaration. Same-broad slashes (LCB/RCB, RDE/LDE, FS/SS, LT/RT) are ALIGNMENT, not duality -- tokens map through the taxonomy and dedupe, so only a cross-broad slash survives as dual.",
+  "measured_2026_08_05": {
+   "declared_seasons": 103554,
+   "k_added_by_our_rule": 255,
+   "unauthorized_extras": 0,
+   "distinct_values": 44
+  }
+ },
+ "non_position_labels": {
+  "labels": [
+   "KR",
+   "PR",
+   "RS",
+   "ST",
+   "RET"
+  ],
+  "rule": "These are USAGE ROLES, not positions, and must never be compared against position/nfl_position as if they were. A roster listing a man as KR says he returned kicks; it says nothing about whether he was a WR or a DB.",
+  "why_it_mattered": "StatsCrew's roster lane mixes them in with real positions and our broad mapper passed them through unmapped, so they scored as disagreements. Excluding them lifts that lane's post-1970 agreement from 0.9443 to 0.9869 -- the lane was never wrong, the comparison was.",
+  "measured_2026_08_05": {
+   "statscrew_pre1970": 0.8817,
+   "statscrew_1970plus": 0.9869
+  }
+ },
+ "era_witness_state": {
+  "as_of": "2026-08-05",
+  "pfr_agreement_by_era": {
+   "1920-1949": 0.9863,
+   "1950-1969": 0.9876,
+   "1970-1989": 0.9994,
+   "1990-2009": 0.9981,
+   "2010-2025": 0.9985
+  },
+  "quorum": "2 independent roots >= 0.90 on the broad axis. HOLDS 1970-2025. PRE-1970 RESTS ON PFR ALONE -- statscrew, the only other position root reaching that era, scores 0.8817 once return roles are excluded. This is recorded as an OPEN GAP, not papered over: the early era is well-witnessed by one root, not certified by two."
+ },
+ "root_inventory": {
+  "as_of": "2026-08-05",
+  "law": "Count LINEAGE ROOTS, not lane names. Four lanes reading one file are one root, and a bundle located from PFR is not independent of PFR.",
+  "genuine_roots": {
+   "pfr": "per-season Pos across 26 lanes; 0.975 (1920-49) .. 1.000 (2010-25)",
+   "statscrew": "independent team-season rosters, 57,808 rows, 10,189 pre-1970; 0.923 (1920-49), 0.870 (1950-69), 0.99+ from 1970"
+  },
+  "not_independent": {
+   "ancient_pfa_gamelog / ancient_newspaper_ocr / ancient_pbp1978_recovery / ancient_pfr_recovery": "FOUR lane names, TWO files, both */through_197*_pfr_loc/weekly_stat_upsert_rows.parquet -- three read the IDENTICAL file. Their agreement figures matched to three decimals in every era, which is the mutual-fabrication signature. PFR-LOCATED, so not independent of PFR even where the file differs. They do NOT count toward quorum for position.",
+   "legacy_motherduck_supertable": "us-yesterday; never a witness"
+  },
+  "quorum_state": {
+   "measured": "2026-08-05, independent roots only (legacy and the pfr_loc 'ancient' lanes excluded)",
+   "1920-1949": "HOLDS -- pfr 0.9961, statscrew 0.9220",
+   "1950-1969": "OPEN, 1 root -- pfr 0.9985, statscrew 0.8727 (just under the 0.90 bar)",
+   "1970-1989": "HOLDS -- pfr 0.9998, statscrew 0.9936",
+   "1990-2009": "HOLDS -- pfr 1.0000, statscrew 0.9944",
+   "2010-2025": "HOLDS -- pfr 0.9998, statscrew 0.9756"
+  },
+  "nflcom_is_a_parse_gap_not_a_harvest_gap": {
+   "correction": "Recorded as a 'capture gap' earlier the same day. WRONG -- Joe: 'i dont think its a harvest gap. we have player pages for every player ever and they show position.' He was right.",
+   "why_the_column_is_empty": "NFLCOM_TEAM_SEASON_ROSTER.position is 0/144,568 because that crawl walked the ROSTER SITEMAP, which lists names and slugs and carries no positions at all.",
+   "where_the_position_actually_is": "The player-page cache -- 48,719 files ALREADY ON DISK at raw/nflcom/cache -- carries it in each page's meta description: 'Logs for 1977 New York Jets MLB John Ebersole' (kind, season, team, POSITION, name). The bytes were fetched; the field was never parsed. Nothing needs re-crawling.",
+   "identity": "canonical link, on 100% of player pages: /players/john-ebersole/stats/logs/1977/ -> slug + season, joining to pfr_id via nflcom_slug_pfrid",
+   "measured": {
+    "parse_rate_on_player_pages": 0.9484,
+    "season_span": "1935-2025",
+    "distinct_positions": 24,
+    "known_unparseable": "NFL.com ships some pages with its own template unrendered ('player.CurrentTeam player.Position') -- the source's defect, recorded, never guessed"
+   },
+   "builder": "scripts/sota_recon/extract_nflcom_positions.py",
+   "expected_effect": "a THIRD genuine root at season grain spanning 1935-2025, which is what the open 1950-69 quorum gap needs"
+  },
+  "nflcom_extracted_2026_08_05": {
+   "rows": 39934,
+   "player_seasons": 14584,
+   "players": 3412,
+   "seasons": "1920-2025",
+   "page_kinds": "logs 14,583 / splits 12,676 / situational 12,675 -- three views per season corroborate WITHIN the root",
+   "taxonomy_fit": "100% of extracted positions map to a broad position",
+   "single_valued": "0 slash positions in 39,934 rows: NFL.com names exactly ONE position per player-season, so it can corroborate a primary position but can NEVER declare dual eligibility",
+   "agreement_with_us": {
+    "1920-49": 0.7087,
+    "1950-69": 0.8554,
+    "1970-89": 0.9869,
+    "1990-09": 0.98,
+    "2010-25": 0.9655
+   },
+   "verdict": "genuine third root; clears the 0.90 quorum bar 1970-2025"
+  },
+  "the_1950s_60s_is_semantic": {
+   "finding": "Three-way on 1950-69 overlapping player-seasons: nflcom vs statscrew 0.7372, nflcom vs US 0.8554, statscrew vs US 0.7489. THE TWO INDEPENDENT SOURCES AGREE WITH EACH OTHER LESS THAN EITHER AGREES WITH US. We are not the outlier; our position is the most central of the three.",
+   "consequence": "The 1950-69 quorum gap will NOT close by adding witnesses. No two roots agree at 0.90 in that era, including with each other. The disagreement is about what 'position' MEANS when men played both ways and each source picked one label by its own convention -- a SEMANTIC problem, not a coverage problem. Containment against our dual set was tested and does not rescue it (0.8564 vs 0.8554 equality), so it is not merely the two-way split either.",
+   "what_would_close_it": "an adjudication rule for the two-way era, not another scrape: either treat early-era position as multi-valued by construction, or rank the sources' conventions explicitly for those seasons",
+   "revised_after_alias_fix": "The conclusion holds but the numbers were inflated by the hyphen defect when first written. Token-aware and post-fix: statscrew 0.8727 vs us, nflcom 0.8612 vs us, and the two sources agree with EACH OTHER least at 0.8070. We remain the most central of the three. Residual conflicts are dominated by ROLE-vs-POSITION labels (statscrew LS 'long snapper' against nflcom DB/SAF, 15 cases; statscrew P against nflcom QB/HB, 6) -- the same role-is-not-a-position class as KR/PR. QUEUED: decide whether LS joins non_position_labels, which would also mean nfl_position='LS' stops resolving to OL in our own plane."
+  },
+  "hyphen_alias_fix_2026_08_05": {
+   "prompt": "Joe: 'take a sample of mismatches and see if its just aliases' -- much of it was.",
+   "defect": "_broad_sql split multi-spot labels on / and , but NOT on '-'. StatsCrew writes them with hyphens (SE-FL, FB-HB, LOH-ROH, DB-E, LDE-MLB-LL), so those became raw literals that could never equal anything and scored as source disputes. A second defect: an unmappable label fell back to the RAW STRING, so 'FL/LE' counted as a contradiction instead of as no-opinion -- that one failed the write-time law on year=1954.",
+   "effect_on_agreement": {
+    "statscrew_vs_us_1950_69": "0.7489 -> 0.8550 (token-aware) -> 0.8727 (scalar, after fix)",
+    "nflcom_vs_statscrew_1950_69": "0.7372 -> 0.8070",
+    "pfr_vs_us_by_era_after_fix": {
+     "1920-49": 0.9961,
+     "1950-69": 0.9985,
+     "1970-89": 0.9998,
+     "1990-09": 1.0,
+     "2010-25": 0.9998
+    }
+   },
+   "lesson": "Third time this session a 'source disagreement' was our comparison: return roles (KR/PR), unmapped cross-broad labels (FL/LE), and now hyphen notation. Measure the mapper before believing a witness disagrees."
+  }
+ }
+}

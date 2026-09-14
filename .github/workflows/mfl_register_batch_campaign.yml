@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: corpus_seed/mfl_population_manifest_2004_2018_expanded.json
-      yahoo_oauth_ref:
-        description: 'Private pipeline ref containing importer and batch driver'
-        required: false
-        type: string
-        default: codex/mfl-gates
       batch_start:
         description: 'First batch number in this wave'
         required: false
@@ -144,9 +139,6 @@ jobs:
       - name: Checkout private manifest
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -405,9 +397,6 @@ jobs:
       - name: Checkout private pipeline
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -533,9 +522,6 @@ jobs:
       - name: Checkout canonical schema
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           sparse-checkout-cone-mode: false
           sparse-checkout: |
@@ -1101,7 +1087,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REF_NAME: ${{ github.ref_name }}
           MANIFEST_PATH: ${{ inputs.manifest_path }}
-          YAHOO_OAUTH_REF: ${{ inputs.yahoo_oauth_ref }}
           BATCH_START: ${{ inputs.batch_start }}
           BATCH_COUNT: ${{ inputs.batch_count }}
           BATCH_SIZE: ${{ inputs.batch_size }}
@@ -1133,7 +1118,7 @@ jobs:
             PRIOR_INDEX_CACHE_PATH=index_state
           fi
           gh workflow run mfl_register_batch_campaign.yml --repo "$REPOSITORY" --ref "$REF_NAME" \
-            --raw-field manifest_path="$MANIFEST_PATH" --raw-field yahoo_oauth_ref="$YAHOO_OAUTH_REF" \
+            --raw-field manifest_path="$MANIFEST_PATH" \
             --raw-field batch_start="$next" --raw-field batch_count="$BATCH_COUNT" --raw-field batch_size="$BATCH_SIZE" \
             --raw-field max_parallel="$MAX_PARALLEL" --raw-field cache_namespace="$CACHE_NAMESPACE" \
             --raw-field canonical_namespace="$CANONICAL_NAMESPACE" \

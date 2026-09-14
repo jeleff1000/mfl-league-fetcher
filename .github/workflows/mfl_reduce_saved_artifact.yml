@@ -53,9 +53,6 @@ jobs:
       - name: Checkout reducer
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: codex/mfl-gates
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false

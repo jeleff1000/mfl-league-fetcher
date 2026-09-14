@@ -45,7 +45,7 @@ jobs:
       matrix:
         bucket: ${{ fromJSON(needs.prepare.outputs.bucket_list) }}
     env:
-      GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+      GH_TOKEN: ${{ github.token }}
       CORPUS_DIR: ${{ github.workspace }}/source_corpus
 
     steps:
@@ -53,8 +53,6 @@ jobs:
       - name: Checkout private pipeline code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
       - uses: actions/setup-python@v6
         with:
@@ -72,7 +70,7 @@ jobs:
         run: |
           mkdir -p "$CORPUS_DIR"
           PART=$(printf '%02d' '${{ matrix.bucket }}')
-          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/yahoo_oauth \
+          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
             --pattern "research-source-backfill-v1.tar.part-${PART}"
           tar -xf "research-source-backfill-v1.tar.part-${PART}" -C "$CORPUS_DIR"
       - name: Run playoff odds and clutch for shard

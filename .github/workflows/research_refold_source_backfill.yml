@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     env:
-      GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+      GH_TOKEN: ${{ github.token }}
       REPO: jeleff1000/league-history-workers
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       CORPUS_DIR: ${{ github.workspace }}/source_corpus
@@ -38,8 +38,6 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
       - uses: actions/cache/restore@v5
         with:

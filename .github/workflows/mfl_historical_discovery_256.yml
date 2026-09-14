@@ -58,11 +58,6 @@ on:
         required: false
         default: "999"
         type: string
-      yahoo_oauth_ref:
-        description: "Pipeline code ref"
-        required: false
-        default: "main"
-        type: string
       artifact_namespace:
         description: "Optional namespace for nested windows sharing one workflow run"
         required: false
@@ -143,10 +138,6 @@ on:
       id_end:
         required: false
         default: "999"
-        type: string
-      yahoo_oauth_ref:
-        required: false
-        default: "main"
         type: string
       artifact_namespace:
         required: false
@@ -230,9 +221,6 @@ jobs:
       - name: Checkout pipeline code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -308,9 +296,6 @@ jobs:
       - name: Checkout pipeline code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -366,9 +351,6 @@ jobs:
       - name: Checkout pipeline code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -538,7 +520,6 @@ jobs:
           MFL_ID_END: ${{ inputs.id_end || '999' }}
           MFL_SHARD_INDICES: ${{ inputs.shard_indices || '' }}
           MFL_DIRECTORY_ONLY: ${{ inputs.directory_only || 'false' }}
-          MFL_PIPELINE_REF: ${{ inputs.yahoo_oauth_ref || 'main' }}
           MFL_PRIMARY_SOURCE_RUN_ID: ${{ inputs.source_run_id || github.run_id }}
           MFL_ADDITIONAL_SOURCE_RUN_IDS: ${{ inputs.additional_source_run_ids || '' }}
         run: |
@@ -561,7 +542,6 @@ jobs:
               "id_end": os.environ["MFL_ID_END"],
               "shard_indices": os.environ["MFL_SHARD_INDICES"],
               "directory_only": os.environ["MFL_DIRECTORY_ONLY"],
-              "yahoo_oauth_ref": os.environ["MFL_PIPELINE_REF"],
           }
           with open("out/mfl_window_manifest.json", "w", encoding="utf-8") as handle:
               json.dump(manifest, handle, indent=2, sort_keys=True)

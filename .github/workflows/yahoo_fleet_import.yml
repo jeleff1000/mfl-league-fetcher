@@ -71,8 +71,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |
@@ -271,8 +269,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |

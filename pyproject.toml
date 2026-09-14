@@ -1,0 +1,132 @@
+[project]
+name = "league-history"
+version = "1.0.0"
+description = "Multi-tenant fantasy football league analytics SaaS"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Core
+    "streamlit==1.52.0",
+    "duckdb==1.5.1",
+    "pandas==2.2.3",
+    "pyarrow==15.0.2",
+    "requests==2.32.3",
+
+    # Yahoo Fantasy API
+    "yahoo-fantasy-api==2.12.2",
+    "yahoo-oauth==2.1.1",
+
+    # ESPN Fantasy API
+    "espn-api>=0.45.0",
+
+    # Data processing
+    "numpy==1.26.4",
+    "lxml==5.3.0",
+    "polars==1.35.2",
+
+    # Visualization
+    "plotly==5.24.1",
+    "matplotlib==3.9.2",
+    "scipy==1.14.1",
+
+    # Optimization
+    "pulp==2.9.0",
+
+    # External-ingest schema_conform (Phase A)
+    "scikit-learn>=1.4",
+    "rapidfuzz>=3.0",
+
+    # Streamlit extras
+    "streamlit-aggrid==1.0.5",
+    "streamlit-scroll-navigation==1.2.1",
+    "streamlit-option-menu==0.4.0",
+    "streamlit-antd-components==0.3.2",
+
+    # Utilities
+    "python-dotenv==1.0.1",
+    "click==8.1.7",
+    "cryptography==43.0.3",
+    "pyyaml==6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "pytest-cov==5.0.0",
+    "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "fantasy_football_data_scripts/tests",
+    "fantasy_football_data_scripts/multi_league/validation_v2/tests",
+]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B905",  # zip without strict (too noisy for existing code)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B", "E741", "F841", "F601", "UP"]
+# Aggregation scripts use setup_module_path() which requires imports after path setup
+# UP038: isinstance tuple syntax used throughout pre-existing code
+"fantasy_football_data_scripts/multi_league/core/**" = ["E402", "E701", "E702", "E741", "F401", "F821", "F841", "B007", "B904", "UP038"]
+"fantasy_football_data_scripts/multi_league/transformations/aggregation/**" = ["E402", "E731", "F841"]
+"fantasy_football_data_scripts/multi_league/transformations/draft/**" = ["E402"]
+"fantasy_football_data_scripts/multi_league/transformations/finalize/**" = ["E402"]
+# Player transformations have pre-existing unused vars from settings extraction
+"fantasy_football_data_scripts/multi_league/transformations/player/**" = ["E402", "E741", "F401", "F601", "F821", "F841", "B007"]
+# Matchup transformations use setup_module_path() + pre-existing unused vars and closure patterns
+"fantasy_football_data_scripts/multi_league/transformations/matchup/**" = ["E402", "E701", "E702", "E712", "E741", "F601", "F821", "F841", "B007", "B023", "UP038"]
+"analytics_app/md/tab_data_access/**" = ["E402", "F841"]
+"fantasy_football_data_scripts/tests/**" = ["E402", "E741", "F841", "B007"]
+# Data fetchers use setup_module_path() bootstrap + try/except import fallbacks
+# F821: forward-reference string annotations (e.g. "ESPNContext") are intentional
+"fantasy_football_data_scripts/multi_league/data_fetchers/**" = ["E402", "E701", "E702", "F841", "B904", "B007", "B023", "F821"]
+# Import orchestrators use _verbose sentinel before imports
+"fantasy_football_data_scripts/initial_import_v*.py" = ["E402", "F841"]
+"fantasy_football_data_scripts/espn_initial_import.py" = ["E402", "E741", "F841"]
+"fantasy_football_data_scripts/sleeper_initial_import.py" = ["E402", "F841"]
+# Legacy Streamlit helpers have pre-existing issues: import order, unused vars, ambiguous names
+"streamlit_helpers/**" = ["E402", "E741", "F841", "F601", "F811", "F821", "B007", "B904", "UP038"]
+# Analytics app has pre-existing issues across tabs and shared modules
+"analytics_app/tabs/**" = ["E402", "E712", "E722", "E741", "F401", "F601", "F811", "F821", "F841", "B007", "B904", "UP038"]
+"analytics_app/shared/**" = ["E402", "E712", "E741", "F401", "F841", "B007", "B904", "UP038"]
+"analytics_app/md/**" = ["E402", "E712", "E722", "F401", "F601", "F821", "F841", "B007", "B904"]
+"analytics_app/app_*.py" = ["E402", "F841"]
+"analytics_app/app_utils/**" = ["E402", "F841"]
+"analytics_app/config/**" = ["E402", "F841"]
+# Scripts have pre-existing issues
+"scripts/**" = ["E402", "E741", "F401", "F841", "B007", "UP038"]
+# Maintenance scripts have import order + unused vars
+"fantasy_football_data_scripts/maintenance/**" = ["E402", "E712", "E722", "E741", "F401", "F601", "F821", "F841", "B007", "B904"]
+"fantasy_football_data_scripts/migrations/**" = ["E402", "F841", "B007"]
+"fantasy_football_data_scripts/nfl_data/**" = ["E402", "F401", "F841", "B007"]
+"fantasy_football_data_scripts/multi_league/analysis/**" = ["E402", "E741", "F841", "B007"]
+"fantasy_football_data_scripts/multi_league/validation/**" = ["E402", "E741", "F401", "F821", "F841", "B007", "B904", "UP038"]
+"fantasy_football_data_scripts/multi_league/shared/**" = ["E402", "F841"]
+"fantasy_football_data_scripts/multi_league/tools/**" = ["E402", "F841"]
+"fantasy_football_data_scripts/multi_league/utils/**" = ["E402", "F841"]
+# Root-level scripts
+"main.py" = ["E402", "E741", "F401", "F841"]
+"fantasy_football_data_scripts/multi_league/transformations/settings/**" = ["E402", "F601", "F841", "B904"]
+"audit_manager_refs.py" = ["E402", "F841"]
+"classify_audit.py" = ["E402", "F841"]
+"fix_all_manager_refs.py" = ["E402", "F841"]

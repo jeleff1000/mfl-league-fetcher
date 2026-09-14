@@ -1,0 +1,169 @@
+{
+ "version": "v1",
+ "law": "A refusal that is waiting on a HUMAN decision must name that decision here, and the wait must be machine-checkable. Before this file, 'blocked on Joe' lived in prose in three handoffs and nothing re-checked it -- so an item could be decided and the refusal would keep holding, or the refusal could hold on a reason that had already been overtaken. An item moves to APPROVED or DECLINED only by a human editing this file; the NO_SIGNOFF precondition in refusal_preconditions.py reads it every run, and a refusal still standing on an APPROVED item FAILS the scoreboard.",
+ "status_vocabulary": [
+  "PENDING",
+  "APPROVED",
+  "DECLINED"
+ ],
+ "items": [
+  {
+   "id": "write_nflcom_crosswalk_receipt",
+   "asks": "re-run `nflcom_slug_crosswalk --write-receipt`, which regenerates the enrolled receipt with `status: PASS` and licenses nflcom_player_logs + player_career + player_season + player_logs_targeted",
+   "magnitude_rows": 2278306,
+   "magnitude_basis": "player_logs 1,549,161 + player_career 637,134 + player_season 83,630 + player_logs_targeted 8,381 -- measured, not the 10M figure that circulated (that is all seven families combined)",
+   "status": "APPROVED",
+   "decided_utc": "2026-07-29T00:00:00Z",
+   "decision_note": "ENTAILED by promote_splits_situational, not separately asked. The `licenses` list lives IN the receipt, so the two families cannot be promoted without writing it -- and writing it also licenses the four families it already named (2,278,306 rows). Recorded explicitly so the coupling is visible rather than inferred."
+  },
+  {
+   "id": "promote_splits_situational",
+   "asks": "add nflcom_player_splits + nflcom_player_situational to the crosswalk receipt's `licenses`, holding out only the 182 escalated columns and the 8 unrecoverable columns per family",
+   "magnitude_rows": 7782148,
+   "magnitude_basis": "the two families' row counts; their COLUMN-SHIFT refusal is spent (repaired, repointed, 521 columns adjudicated)",
+   "status": "APPROVED",
+   "decided_utc": "2026-07-29T00:00:00Z",
+   "decision_note": "Joe, 2026-07-29: 'yes promote'. Holding out the escalated columns and the per-layout unrecoverable ones, which is enforced structurally: an unadjudicated column has no MAPPED_TO_CANONICAL row and therefore cannot vote regardless of what the source is licensed for."
+  },
+  {
+   "id": "split_at_admission_disposition",
+   "asks": "how a single published cell carrying two facts (made-att field-goal composites) is admitted: split at parse, split at adjudication, or carried composite. Three lineages now hold one",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02 ruled the CONFLICT side: source precedence pfr > nflcom > pbp > pfa > statscrew; log ALL cross-source arguments with side counts; unanimity against pfr overrides pfr; pfa and statscrew weigh much less than the others. Admission mechanics: split at adjudication (parse stays byte-true, adjudication emits the two atoms)."
+  },
+  {
+   "id": "new_supertable_column_concepts",
+   "asks": "the 47 distinct NEW_SUPERTABLE_COLUMN_CANDIDATE concepts (246 dossier rows) -- which become real supertable columns",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'both tranches' -- all concept tranches approved to proceed as batched proposals with unit/aggregation-class sheets, kickoff family first."
+  },
+  {
+   "id": "dob_apply",
+   "asks": "apply recovered birth dates to player_bio; this MUTATES THE IDENTITY SPINE and unblocks the StatsCrew player crosswalk",
+   "magnitude_rows": 2988,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'approve'. Backup of player_bio taken before the spine mutation, per deletion discipline."
+  },
+  {
+   "id": "pfa_licensing",
+   "asks": "license the PFA boxscore re-parse rows to vote, scoped by PFA's own declared per-statistic coverage",
+   "magnitude_rows": 1766668,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'approve'. Scoped by PFA's declared per-statistic coverage AND keyed only through the corroborated crosswalk (MATCHED status; twins/span-violators/unmatched abstain)."
+  },
+  {
+   "id": "repair_signoff",
+   "asks": "sign off the 113 of 117 bound-violation repairs",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'APPROVE'. Releases repairs 2a-2j wholesale; each still runs behind its own exact-count gate and CTAS promote."
+  },
+  {
+   "id": "def_row_apply",
+   "asks": "apply the O.7 DEF-row join repair -- the hand-built era-alias mapping (OTI/HOU, CRD/STL/PHO, CLT/BAL) that lets team-defense rows join franchise space",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'approve'."
+  },
+  {
+   "id": "bound_re_typing",
+   "asks": "re-type the bounds that the bound-violation sweep flagged as mis-typed rather than violated",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'approve'."
+  },
+  {
+   "id": "oq_lr_1_to_4",
+   "asks": "the four open lineage-root questions (OQ-LR-1..4), chiefly whether nflcom BOX families collapse into the pfr root",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: 'measure dont rule' -- the byte-fingerprint decides: identical => collapse into one root, different => stay separate."
+  },
+  {
+   "id": "position_two_system_law",
+   "asks": "position taxonomy ruling",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02, CRITICAL: we track TWO position systems ON PURPOSE. `position` = broad fantasy vocabulary (QB RB WR TE OL DL LB DB K P). `nfl_position` = specific NFL role (LCB, ILB, BB...). They conflict BY DESIGN -- this is a fantasy football table at the end of the day. primary_position: Joe sees no use; consumer-test before retiring."
+  },
+  {
+   "id": "misc_yards_definition",
+   "asks": "misc_yards semantics",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: KEEP misc_yards. pbp defines it: isolate the nonzero player-games, find which yards are 'weird' (laterals suspected) via the pbp lateral grammar."
+  },
+  {
+   "id": "rulings_batch_20260802",
+   "asks": "three_out boundary; rz/dropback predicates; fg_yards keeper",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe 2026-08-02: three_out pinned to CANON (<=3 scrimmage plays ending in punt); attempt counts exclude spikes/kneels and nullified plays (NFL official practice); fg_yards keeper name = fg_made_distance."
+  },
+  {
+   "id": "single_root_backfill_law",
+   "asks": "may a lone root write in eras it alone covers",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe: single root usable where it agrees with consensus on modern years ('if penalty yards agree on 2023 we can use them on 1923'). Modern validation = ancient write licence; provenance-stamped, density-scoped, coverage-partial lanes abstain."
+  },
+  {
+   "id": "promote_preauthorization",
+   "asks": "may green-receipt promotes proceed without a live read",
+   "magnitude_rows": null,
+   "status": "APPROVED",
+   "decided_utc": "2026-08-02T00:00:00Z",
+   "decision_note": "Joe: 'when we know we're fixing values we can promote.' Green receipts are the authorization; evidence still produced for the record. Scope now: the WEEKLY table."
+  },
+  {
+   "id": "tackles_family_era_2026-08-03",
+   "status": "APPROVED",
+   "joe_quote": "bubt pbp haas them to 78",
+   "ruling": "Tackle family (def_tackles_*) is ALL-PHASES by design. Era bound at 1978, not 2001: pbp carries tackles to 1978, so 1978+ closes via pbp-lineage recompute fidelity + phase-matched gamelog witnesses; pre-1978 = estimate-era. Defense-scoped surfaces log as scope-dissent, never blockers."
+  },
+  {
+   "id": "is_overtime_rulebook_2026-08-03",
+   "status": "APPROVED",
+   "joe_quote": "(signed as proposed)",
+   "ruling": "is_overtime := 0 for REG games pre-1974 -- regular-season overtime did not exist; the rulebook is the witness. Closes ancient decades by rule."
+  },
+  {
+   "id": "is_starter_lineup_data_2026-08-03",
+   "status": "REDIRECTED",
+   "joe_quote": "i suspect we have this data from our lineup data",
+   "ruling": "Do NOT null ancient is_starter -- hunt the lineup sources first (pfr box starters tables, newspaper lineups, statscrew rosters). Ecosystem-first."
+  },
+  {
+   "id": "ancient_root_licensing_2026-08-03",
+   "status": "APPROVED",
+   "joe_quote": "if a column is totally in sync with its peers from 2000-2025, then it can be trusted for its other values as well. Keep in mind it might have sparser data on earlier years so if it has a 0 or null or blank those values are not necessarily true, but positive values can be trusted",
+   "ruling": "ROOT CREDIBILITY LAW: a source vouched >=95% on closed modern ground (2000-2025, or closed overlapping eras for sources with no modern data) may backfill POSITIVE values into NULL cells in sparse eras. Zeros/NULLs/blanks from sparse coverage are NEVER testimony -- positive values only."
+  },
+  {
+   "id": "tackles_pre2001_canon_ratified_2026-08-03",
+   "status": "APPROVED",
+   "joe_quote": "i dont want a different pre 2001 cannon. pbp can work",
+   "ruling": "The estimate-era synthesis STANDS as final: pbp-derived tackle values are the pre-2001 canon (kept 1978-2000), the era is marked estimate in the dossiers with the three-way measurements, 2001+ closes on official witnesses at >=0.95. Family CLOSED at scoreboard 170. No re-canonization."
+  },
+  {
+   "id": "era_auto_ruling_authorization_2026-08-03",
+   "status": "APPROVED",
+   "joe_quote": "auto-rule and keep a ledger in plain english so i can grade at the end.",
+   "ruling": "Claude auto-rules the blocked era dossiers under the standing laws (precedence order, estimate-era, rulebook, zero-corroboration void, positive-only credibility). EVERY ruling is written in plain English to docs/runbooks/era-rulings-ledger-2026-08-03.md with its evidence, marked AUTO-RULED / VETO OPEN. Joe grades the ledger at the end; any veto reverts mechanically (all rulings are closure-layer, never plane mutations, unless separately gated). Anything not covered cleanly by a law stays BLOCKED with a needs-evidence note -- auto-ruling never forces."
+  }
+ ]
+}

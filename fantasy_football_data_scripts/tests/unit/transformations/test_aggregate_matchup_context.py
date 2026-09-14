@@ -1,0 +1,373 @@
+import duckdb
+import pytest
+import sys
+from pathlib import Path
+
+
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent
+for path in (SCRIPTS_DIR, SCRIPTS_DIR / "multi_league"):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+
+def test_aggregate_matchup_season_raises_when_franchise_id_missing():
+    """Bug #1.7: warn-and-skip on missing franchise_id is replaced with a
+    loud KeyError so the franchise_id no-fallback invariant fails fast
+    rather than producing silently-empty matchup_season rows."""
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_season,
+    )
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___leagues")
+    conn.execute('USE "___leagues"')
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(create_aggregate_table_sql("___leagues", "matchup_season"))
+
+    # matchup table created WITHOUT franchise_id column
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR,
+            manager VARCHAR,
+            year INTEGER,
+            week INTEGER,
+            team_points DOUBLE
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?)",
+        ["demo_league", "Alice", 2024, 1, 100.0],
+    )
+
+    with pytest.raises(KeyError, match="franchise_id"):
+        aggregate_matchup_season(conn, "demo_league")
+
+
+def test_aggregate_matchup_season_excludes_playoffs_from_record_rollup():
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_season,
+    )
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___leagues")
+    conn.execute('USE "___leagues"')
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(create_aggregate_table_sql("___leagues", "matchup_season"))
+    conn.execute(
+        """
+        CREATE TABLE public.league_settings (
+            db_name VARCHAR,
+            year INTEGER,
+            playoff_start_week INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR,
+            manager VARCHAR,
+            franchise_id VARCHAR,
+            year INTEGER,
+            week INTEGER,
+            opponent VARCHAR,
+            team_points DOUBLE,
+            opponent_points DOUBLE,
+            win INTEGER,
+            loss INTEGER,
+            is_playoffs INTEGER,
+            is_consolation INTEGER,
+            is_bye_week INTEGER,
+            is_placeholder INTEGER,
+            margin DOUBLE,
+            wins_to_date INTEGER,
+            losses_to_date INTEGER,
+            playoff_seed_to_date INTEGER
+        )
+        """
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('demo_league', 2024, 3)")
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("demo_league", "Alice", "fid_alice", 2024, 1, "Bob", 100.0, 90.0, 1, 0, 0, 0, 0, 0, 10.0, 1, 0, 1),
+            ("demo_league", "Bob", "fid_bob", 2024, 1, "Alice", 90.0, 100.0, 0, 1, 0, 0, 0, 0, -10.0, 0, 1, 2),
+            ("demo_league", "Alice", "fid_alice", 2024, 2, "Bob", 105.0, 110.0, 0, 1, 0, 0, 0, 0, -5.0, 1, 1, 2),
+            ("demo_league", "Bob", "fid_bob", 2024, 2, "Alice", 110.0, 105.0, 1, 0, 0, 0, 0, 0, 5.0, 1, 1, 1),
+            ("demo_league", "Alice", "fid_alice", 2024, 3, "Bob", 120.0, 115.0, 1, 0, 1, 0, 0, 0, 5.0, 2, 1, 1),
+            ("demo_league", "Bob", "fid_bob", 2024, 3, "Alice", 115.0, 120.0, 0, 1, 1, 0, 0, 0, -5.0, 1, 2, 2),
+        ],
+    )
+
+    aggregate_matchup_season(conn, "demo_league")
+
+    rows = conn.execute(
+        """
+        SELECT manager, games, wins, losses, total_team_points, wins_to_date, losses_to_date
+        FROM public.matchup_season
+        WHERE db_name = 'demo_league'
+        ORDER BY manager
+        """
+    ).fetchall()
+
+    assert rows == [
+        ("Alice", 2, 1, 1, 205.0, 1, 1),
+        ("Bob", 2, 1, 1, 200.0, 1, 1),
+    ]
+
+
+def test_aggregate_matchup_season_preserves_no_playoff_regular_season_flags():
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_season,
+    )
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___leagues")
+    conn.execute('USE "___leagues"')
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(create_aggregate_table_sql("___leagues", "matchup_season"))
+    conn.execute(
+        """
+        CREATE TABLE public.league_settings (
+            db_name VARCHAR,
+            year INTEGER,
+            playoff_start_week INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR,
+            manager VARCHAR,
+            franchise_id VARCHAR,
+            year INTEGER,
+            week INTEGER,
+            opponent VARCHAR,
+            team_points DOUBLE,
+            opponent_points DOUBLE,
+            win INTEGER,
+            loss INTEGER,
+            is_playoffs INTEGER,
+            is_consolation INTEGER,
+            is_bye_week INTEGER,
+            is_placeholder INTEGER,
+            margin DOUBLE,
+            champion INTEGER,
+            sacko INTEGER,
+            playoff_round VARCHAR,
+            consolation_round VARCHAR,
+            playoff_seed_to_date INTEGER,
+            final_playoff_seed INTEGER
+        )
+        """
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('demo_league', 2024, 3)")
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                "demo_league",
+                "Alice",
+                "fid_alice",
+                2024,
+                1,
+                "Bob",
+                100.0,
+                90.0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                10.0,
+                0,
+                0,
+                None,
+                None,
+                1,
+                1,
+            ),
+            (
+                "demo_league",
+                "Bob",
+                "fid_bob",
+                2024,
+                1,
+                "Alice",
+                90.0,
+                100.0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                -10.0,
+                0,
+                0,
+                None,
+                None,
+                2,
+                2,
+            ),
+            (
+                "demo_league",
+                "Alice",
+                "fid_alice",
+                2024,
+                2,
+                "Bob",
+                105.0,
+                110.0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                -5.0,
+                1,
+                0,
+                None,
+                None,
+                1,
+                1,
+            ),
+            (
+                "demo_league",
+                "Bob",
+                "fid_bob",
+                2024,
+                2,
+                "Alice",
+                110.0,
+                105.0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                5.0,
+                0,
+                1,
+                None,
+                None,
+                2,
+                2,
+            ),
+        ],
+    )
+
+    aggregate_matchup_season(conn, "demo_league")
+
+    rows = conn.execute(
+        """
+        SELECT manager, games, wins, losses, made_playoffs, is_champion, is_sacko, playoff_seed_to_date
+        FROM public.matchup_season
+        WHERE db_name = 'demo_league'
+        ORDER BY manager
+        """
+    ).fetchall()
+
+    assert rows == [
+        ("Alice", 2, 1, 1, 0, 1, 0, 1),
+        ("Bob", 2, 1, 1, 0, 0, 1, 2),
+    ]
+
+
+def test_aggregate_luck_all_play_builds_all_play_rollups():
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_luck_all_play,
+    )
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___leagues")
+    conn.execute('USE "___leagues"')
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    for table_name in ("all_play", "h2h_season", "schedule_swap", "schedule_swap_season"):
+        conn.execute(create_aggregate_table_sql("___leagues", table_name))
+
+    conn.execute(
+        """
+        CREATE TABLE public.league_settings (
+            db_name VARCHAR,
+            year INTEGER,
+            playoff_start_week INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR,
+            manager VARCHAR,
+            franchise_id VARCHAR,
+            opponent_franchise_id VARCHAR,
+            year INTEGER,
+            week INTEGER,
+            team_points DOUBLE,
+            opponent_points DOUBLE,
+            is_playoffs INTEGER,
+            is_consolation INTEGER,
+            is_bye_week INTEGER,
+            is_placeholder INTEGER
+        )
+        """
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('demo_league', 2024, 3)")
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("demo_league", "Alice", "fid_alice", "fid_bob", 2024, 1, 100.0, 90.0, 0, 0, 0, 0),
+            ("demo_league", "Bob", "fid_bob", "fid_alice", 2024, 1, 90.0, 100.0, 0, 0, 0, 0),
+            ("demo_league", "Alice", "fid_alice", "fid_bob", 2024, 2, 80.0, 85.0, 0, 0, 0, 0),
+            ("demo_league", "Bob", "fid_bob", "fid_alice", 2024, 2, 85.0, 80.0, 0, 0, 0, 0),
+            ("demo_league", "Alice", "fid_alice", "fid_bob", 2024, 3, 120.0, 110.0, 1, 0, 0, 0),
+            ("demo_league", "Bob", "fid_bob", "fid_alice", 2024, 3, 110.0, 120.0, 1, 0, 0, 0),
+        ],
+    )
+
+    assert aggregate_luck_all_play(conn, "demo_league") == (4, 2, 4, 2)
+
+    h2h_row = conn.execute(
+        """
+        SELECT wins, losses, ties, games
+        FROM public.h2h_season
+        WHERE db_name = 'demo_league'
+          AND franchise_id = 'fid_alice'
+          AND opponent_franchise_id = 'fid_bob'
+        """
+    ).fetchone()
+    assert h2h_row == (1, 1, 0, 2)
+
+    impossible_swap_row = conn.execute(
+        """
+        SELECT wins, losses, ties, games
+        FROM public.schedule_swap_season
+        WHERE db_name = 'demo_league'
+          AND franchise_id = 'fid_alice'
+          AND schedule_of_franchise_id = 'fid_bob'
+        """
+    ).fetchone()
+    assert impossible_swap_row is None
+
+    own_schedule_row = conn.execute(
+        """
+        SELECT wins, losses, ties, games
+        FROM public.schedule_swap_season
+        WHERE db_name = 'demo_league'
+          AND franchise_id = 'fid_alice'
+          AND schedule_of_franchise_id = 'fid_alice'
+        """
+    ).fetchone()
+    assert own_schedule_row == (1, 1, 0, 2)

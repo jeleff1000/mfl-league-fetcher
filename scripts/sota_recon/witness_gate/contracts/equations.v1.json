@@ -1,0 +1,72 @@
+{
+  "contract_version": "1",
+  "laws": [
+    {
+      "law_id": "passing_attempts_equal_completions_plus_incompletions",
+      "year_start": 1920,
+      "year_end": 2025,
+      "grain": "player_game",
+      "expression": {
+        "op": "eq",
+        "left": {"op": "atom", "atom_id": "passing.attempts"},
+        "right": {
+          "op": "add",
+          "left": {"op": "atom", "atom_id": "passing.completions"},
+          "right": {"op": "atom", "atom_id": "passing.incompletions"}
+        }
+      }
+    },
+    {
+      "law_id": "receptions_lte_targets",
+      "year_start": 1992,
+      "year_end": 2025,
+      "grain": "player_game",
+      "expression": {
+        "op": "lte",
+        "left": {"op": "atom", "atom_id": "receiving.receptions"},
+        "right": {"op": "atom", "atom_id": "receiving.targets"}
+      }
+    },
+    {
+      "law_id": "fumbles_lost_lte_fumbles",
+      "year_start": 1920,
+      "year_end": 2025,
+      "grain": "player_game",
+      "expression": {
+        "op": "lte",
+        "left": {"op": "atom", "atom_id": "fumbles.lost"},
+        "right": {"op": "atom", "atom_id": "fumbles.total"}
+      }
+    },
+    {
+      "law_id": "player_tackles_lte_defensive_snaps",
+      "year_start": 1978,
+      "year_end": 2025,
+      "grain": "player_game",
+      "expression": {
+        "op": "lte",
+        "left": {"op": "atom", "atom_id": "defense.tackles"},
+        "right": {"op": "atom", "atom_id": "participation.defensive_snaps"}
+      }
+    },
+    {
+      "law_id": "scoring_components_equal_total",
+      "year_start": 1920,
+      "year_end": 2025,
+      "grain": "player_game",
+      "expression": {
+        "op": "eq",
+        "left": {"op": "atom", "atom_id": "scoring.total_points"},
+        "right": {
+          "op": "add",
+          "left": {"op": "atom", "atom_id": "scoring.touchdown_points"},
+          "right": {
+            "op": "add",
+            "left": {"op": "atom", "atom_id": "scoring.kick_points"},
+            "right": {"op": "atom", "atom_id": "scoring.safety_points"}
+          }
+        }
+      }
+    }
+  ]
+}

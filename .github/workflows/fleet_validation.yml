@@ -27,11 +27,6 @@ on:
         required: false
         type: number
         default: 0
-      yahoo_oauth_ref:
-        description: 'Branch/ref to checkout from yahoo_oauth (default: main)'
-        required: false
-        type: string
-        default: main
 permissions:
   contents: read
 
@@ -43,10 +38,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
 
       - name: Setup Python
         uses: actions/setup-python@v6

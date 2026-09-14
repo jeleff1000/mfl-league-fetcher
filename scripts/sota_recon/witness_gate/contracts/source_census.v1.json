@@ -1,0 +1,278 @@
+{
+  "contract_version": "1",
+  "source_universe_version": "2026-07-18.v1",
+  "datasets": [
+    {
+      "contract_version": "1",
+      "dataset_id": "ffassets.nflcom.team_season_roster",
+      "source_class": "canonical",
+      "physical_globs": [
+        "ff_assets/nflcom/team_season_roster/**/*.parquet"
+      ],
+      "year_start": 1920,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "ff_assets",
+        "pin_status": "pending_pin"
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "ffassets.statscrew.team_season_roster",
+      "source_class": "secondary",
+      "physical_globs": [
+        "ff_assets/statscrew/team_season_roster/**/*.parquet"
+      ],
+      "year_start": 1920,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "ff_assets",
+        "pin_status": "pending_pin"
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "ffassets.profootballarchives.player_game_participation",
+      "source_class": "secondary",
+      "physical_globs": [
+        "ff_assets/profootballarchives/player_game_participation/**/*.parquet"
+      ],
+      "year_start": 1919,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "ff_assets",
+        "pin_status": "pending_pin"
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "ffassets.statscrew.team_season_stats",
+      "source_class": "secondary",
+      "physical_globs": [
+        "ff_assets/statscrew/team_season_stats/**/*.parquet"
+      ],
+      "year_start": 1921,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "ff_assets",
+        "pin_status": "pending_pin"
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "ffassets.statscrew.team_season_results",
+      "source_class": "secondary",
+      "physical_globs": [
+        "ff_assets/statscrew/team_season_results/**/*.parquet"
+      ],
+      "year_start": 1920,
+      "year_end": 2023,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "ff_assets",
+        "pin_status": "pending_pin"
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "derived.profootballarchives.player_game_participation",
+      "source_class": "secondary",
+      "physical_globs": [
+        "derived/profootballarchives/player_game_participation/**/*.parquet"
+      ],
+      "year_start": 1919,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.player_logs",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/player_logs/**/*.parquet"
+      ],
+      "year_start": 1920,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 42,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.player_career",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/player_career/**/*.parquet"
+      ],
+      "year_start": 1950,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 8,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.player_splits",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/player_splits/**/*.parquet"
+      ],
+      "year_start": 1921,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 53,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.player_situational",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/player_situational/**/*.parquet"
+      ],
+      "year_start": 1922,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 59,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.player_season",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/player_season/**/*.parquet"
+      ],
+      "year_start": 1932,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 11,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.team_stats",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/team_stats/**/*.parquet"
+      ],
+      "year_start": 1932,
+      "year_end": 2025,
+      "year_field": "season",
+      "schema_variant_count": 12,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.nflcom.player_logs_targeted",
+      "source_class": "canonical",
+      "physical_globs": [
+        "raw/nflcom/tables/player_logs_targeted/**/*.parquet"
+      ],
+      "year_start": 1932,
+      "year_end": 1977,
+      "required_years": [
+        1932,
+        1933,
+        1934,
+        1935,
+        1936,
+        1937,
+        1938,
+        1939,
+        1940,
+        1941,
+        1942,
+        1943,
+        1944,
+        1945,
+        1946,
+        1948,
+        1949,
+        1950,
+        1951,
+        1952,
+        1953,
+        1954,
+        1955,
+        1956,
+        1957,
+        1958,
+        1959,
+        1960,
+        1961,
+        1962,
+        1963,
+        1964,
+        1965,
+        1966,
+        1967,
+        1968,
+        1969,
+        1970,
+        1971,
+        1972,
+        1973,
+        1974,
+        1975,
+        1976,
+        1977
+      ],
+      "year_field": "season",
+      "schema_variant_count": 2,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.external_witness_intake",
+      "source_class": "secondary",
+      "physical_globs": [
+        "derived/external_witness_intake/EXTERNAL_WITNESS_INDEX.parquet"
+      ],
+      "year_start": 1920,
+      "year_end": 1939,
+      "year_field": "season",
+      "schema_variant_count": 1,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    }
+  ],
+  "discoveries": []
+}

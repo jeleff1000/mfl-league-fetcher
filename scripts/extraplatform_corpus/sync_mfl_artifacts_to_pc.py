@@ -406,7 +406,7 @@ def audit_landed_lane_bundles(
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Land verified MFL Actions artifacts directly on D:")
-    parser.add_argument("--repo", default="league-history-workers/mfl-league-fetcher")
+    parser.add_argument("--repo", default="jeleff1000/league-history-workers")
     parser.add_argument("--run-id", type=int, action="append", required=True)
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--artifact-prefix", default=DEFAULT_ARTIFACT_PREFIX)

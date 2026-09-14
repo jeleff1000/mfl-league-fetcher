@@ -42,12 +42,6 @@ on:
         required: false
         type: boolean
         default: false
-      yahoo_oauth_ref:
-        description: 'Private pipeline ref to check out'
-        required: false
-        type: string
-        default: 'main'
-
 permissions:
   contents: read
 
@@ -105,9 +99,6 @@ jobs:
       - name: Checkout private pipeline
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || 'main' }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -286,7 +277,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-          OAUTH_REF: ${{ github.event.inputs.yahoo_oauth_ref || 'main' }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -321,6 +311,5 @@ jobs:
             -f shards=5 \
             -f rebuild_inventory=false \
             -f workers=1 \
-            -f plan_only=false \
-            -f yahoo_oauth_ref="$OAUTH_REF"
+            -f plan_only=false
           echo "[queue] dispatched next five-runner wave"

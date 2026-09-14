@@ -19,12 +19,6 @@ on:
         description: 'Stable import concurrency key, usually the resolved db_name'
         required: false
         type: string
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out (workers-repo override; default main)'
-        required: false
-        type: string
-        default: 'main'
-
   repository_dispatch:
     types: [yahoo_quick_import]
 
@@ -62,9 +56,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || github.event.client_payload.yahoo_oauth_ref || 'main' }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |

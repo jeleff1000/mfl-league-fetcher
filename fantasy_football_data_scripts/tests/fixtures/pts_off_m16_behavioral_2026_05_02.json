@@ -1,0 +1,578 @@
+[
+  {
+    "scoring_field": "scoring_pass_yd",
+    "test_multiplier": 0.04,
+    "league_yrs_used": 2125,
+    "expected_atomic_stat": "passing_yards",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_td",
+    "test_multiplier": 4.0,
+    "league_yrs_used": 2125,
+    "expected_atomic_stat": "passing_tds",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_yd",
+    "test_multiplier": 0.1,
+    "league_yrs_used": 2125,
+    "expected_atomic_stat": "rushing_yards",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_td",
+    "test_multiplier": 6.0,
+    "league_yrs_used": 2125,
+    "expected_atomic_stat": "rushing_tds",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_2pt",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 2120,
+    "expected_atomic_stat": "passing_2pt_conversions",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_td",
+    "test_multiplier": 6.0,
+    "league_yrs_used": 2119,
+    "expected_atomic_stat": "receiving_tds",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_int",
+    "test_multiplier": -2.0,
+    "league_yrs_used": 2114,
+    "expected_atomic_stat": "passing_interceptions",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_fum_lost",
+    "test_multiplier": -2.0,
+    "league_yrs_used": 2074,
+    "expected_atomic_stat": "rushing_fumbles_lost",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_yd",
+    "test_multiplier": 0.1,
+    "league_yrs_used": 2065,
+    "expected_atomic_stat": "receiving_yards",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_fum_rec_td",
+    "test_multiplier": 6.0,
+    "league_yrs_used": 2019,
+    "expected_atomic_stat": "fum_rec_td",
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_fum_rec",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 1976,
+    "expected_atomic_stat": "fum_rec",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 1903,
+    "expected_atomic_stat": "receptions",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_st_td",
+    "test_multiplier": 6.0,
+    "league_yrs_used": 1847,
+    "expected_atomic_stat": "special_teams_tds",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_2pt",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 1700,
+    "expected_atomic_stat": "rushing_2pt_conversions",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_2pt",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 1694,
+    "expected_atomic_stat": "receiving_2pt_conversions",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_st_fum_rec",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 1216,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_st_ff",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 1145,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_fum",
+    "test_multiplier": -1.0,
+    "league_yrs_used": 525,
+    "expected_atomic_stat": "rushing_fumbles",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rec_te",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 339,
+    "expected_atomic_stat": "PRECOMPUTED:pts_rec_tep",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rush_yd_100",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 249,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rush_100yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rec_yd_100",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 234,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rec_100yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rush_yd_200",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 232,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rush_200yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rec_yd_200",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 229,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rec_200yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_td_40p",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 227,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_td_40p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 226,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_pass_yd_400",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 225,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_pass_400yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_td_40p",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 221,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_int_td",
+    "test_multiplier": -2.0,
+    "league_yrs_used": 208,
+    "expected_atomic_stat": "pick6",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_40p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 194,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_40p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 181,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_cmp_40p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 158,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_kr_yd",
+    "test_multiplier": 0.03999999910593033,
+    "league_yrs_used": 152,
+    "expected_atomic_stat": "kickoff_return_yards",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pr_yd",
+    "test_multiplier": 0.04,
+    "league_yrs_used": 151,
+    "expected_atomic_stat": "punt_return_yards",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_fd",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 146,
+    "expected_atomic_stat": "rushing_first_downs",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_fd",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 143,
+    "expected_atomic_stat": "receiving_first_downs",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_pass_yd_300",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 142,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_pass_300yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_td_50p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 131,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_sack",
+    "test_multiplier": -1.0,
+    "league_yrs_used": 107,
+    "expected_atomic_stat": "sacks",
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_td_50p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 105,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_st_yd",
+    "test_multiplier": 0.04,
+    "league_yrs_used": 102,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_td_50p",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 91,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rush_rec_yd_200",
+    "test_multiplier": 2.0,
+    "league_yrs_used": 84,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rush_rec_200yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_cmp",
+    "test_multiplier": 0.25,
+    "league_yrs_used": 75,
+    "expected_atomic_stat": "completions",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rush_att",
+    "test_multiplier": 0.1,
+    "league_yrs_used": 64,
+    "expected_atomic_stat": "carries",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rush_rec_yd_100",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 48,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rush_rec_100yd",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_fd",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 42,
+    "expected_atomic_stat": "passing_first_downs",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_st_tkl_solo",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 39,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_pass_cmp_25",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 37,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_pass_25cmp",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rec_rb",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 34,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rush_att_20",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 29,
+    "expected_atomic_stat": "PRECOMPUTED:bonus_rush_20att",
+    "atomic_category": "precomputed",
+    "classification": "\ud83d\udfe2 Path 1 (precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_20_29",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 27,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_30_39",
+    "test_multiplier": 1.0,
+    "league_yrs_used": 27,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_10_19",
+    "test_multiplier": 0.6499999761581421,
+    "league_yrs_used": 27,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_40p_alt",
+    "test_multiplier": 5.0,
+    "league_yrs_used": 27,
+    "expected_atomic_stat": "Phase 4 candidate (see Task 1.5 source verification)",
+    "atomic_category": "discover_phase1",
+    "classification": "\u26a0\ufe0f DISCOVER (Task 1.5)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_bonus_rec_wr",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 25,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_0_4",
+    "test_multiplier": 0.15000000596046448,
+    "league_yrs_used": 18,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_rec_5_9",
+    "test_multiplier": 0.4000000059604645,
+    "league_yrs_used": 18,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_fg_ret_yd",
+    "test_multiplier": 0.05000000074505806,
+    "league_yrs_used": 10,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udd34 GAP (no atomic + no precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_blk_kick_ret_yd",
+    "test_multiplier": 0.05000000074505806,
+    "league_yrs_used": 10,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udd34 GAP (no atomic + no precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_cmp_50p",
+    "test_multiplier": 0.5,
+    "league_yrs_used": 10,
+    "expected_atomic_stat": null,
+    "atomic_category": "unknown",
+    "classification": "\ud83d\udd34 GAP (no atomic + no precomputed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_int_ret_yd",
+    "test_multiplier": 0.1,
+    "league_yrs_used": 6,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_inc",
+    "test_multiplier": -0.1,
+    "league_yrs_used": 6,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_fum_ret_yd",
+    "test_multiplier": 0.1,
+    "league_yrs_used": 6,
+    "expected_atomic_stat": null,
+    "atomic_category": "missing_atomic",
+    "classification": "\ud83d\udfe1 missing atomic, but SQL key consumed (verify mechanism)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  },
+  {
+    "scoring_field": "scoring_pass_att",
+    "test_multiplier": -0.2,
+    "league_yrs_used": 1,
+    "expected_atomic_stat": "attempts",
+    "atomic_category": "covered_atomic",
+    "classification": "\ud83d\udfe2 Path 2 (atomic + consumed)",
+    "expected_test_row": "TBD - hand-fill in Phase 5 cross-validation; pick a player_week where the atomic stat is nonzero"
+  }
+]

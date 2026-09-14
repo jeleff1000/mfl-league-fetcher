@@ -7,11 +7,6 @@ name: Seed Ops Cache
 on:
   workflow_dispatch:
     inputs:
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out'
-        required: false
-        type: string
-        default: 'main'
       resume_run_id:
         description: 'Optional prior seed run whose checkpoint artifacts should be reused'
         required: false
@@ -115,10 +110,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || 'main' }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -196,10 +187,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || 'main' }}
 
       - name: Protect research-lake caches
         shell: bash

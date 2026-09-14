@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "draft_type": "auction",
+  "max_keepers": 5,
+  "min_price": 1,
+  "max_price": 200,
+  "budget": 200,
+  "base_cost_rules": {
+    "auction": {"multiplier": 1.1, "flat": 0},
+    "faab_only": {"multiplier": 1.0, "flat": 5},
+    "free_agent": {"value": 1}
+  },
+  "formulas_by_keeper_year": {
+    "2+": {"type": "compounding", "multiplier": 1.2, "flat_add": 5}
+  },
+  "position_limits": {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "K": 1, "DEF": 1, "FLEX": 1},
+  "franchise_tag_enabled": true,
+  "franchise_tag_cost_mult": 1.5,
+  "rookie_discount_enabled": true,
+  "rookie_discount_rounds": 5,
+  "rookie_discount_mult": 0.5,
+  "keeper_payroll_cap": 100
+}

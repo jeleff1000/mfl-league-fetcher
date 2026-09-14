@@ -24,12 +24,6 @@ on:
         description: 'Opaque UI claim token; blank for manual/QA runs'
         required: false
         type: string
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out'
-        required: false
-        type: string
-        default: main
-
 permissions:
   contents: read
 
@@ -58,9 +52,6 @@ jobs:
       - name: Checkout Yahoo application code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |

@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "draft_type": "auction",
+  "max_keepers": 4,
+  "max_years": 3,
+  "budget": 200,
+  "min_price": 1,
+  "max_price": 200,
+  "base_cost_rules": {
+    "auction": {"multiplier": 1.0, "flat": 5},
+    "faab_only": {"multiplier": 1.0, "flat": 0},
+    "free_agent": {"value": 1}
+  },
+  "formulas_by_keeper_year": {}
+}

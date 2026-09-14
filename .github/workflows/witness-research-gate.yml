@@ -3,12 +3,6 @@ name: Witness Research Gate
 on:
   workflow_dispatch:
     inputs:
-      yahoo_oauth_ref:
-        description: "yahoo_oauth branch/ref to validate"
-        required: false
-        type: string
-        default: main
-
 permissions:
   contents: read
 
@@ -20,9 +14,6 @@ jobs:
       - name: Checkout yahoo_oauth
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |

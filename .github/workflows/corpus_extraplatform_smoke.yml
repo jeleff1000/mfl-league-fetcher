@@ -22,12 +22,6 @@ on:
         required: false
         type: string
         default: ''
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out'
-        required: false
-        type: string
-        default: 'corpus-pilot-mfl-fleaflicker'
-
 permissions:
   contents: read
 
@@ -48,9 +42,6 @@ jobs:
       - name: Checkout pipeline code (private)
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || 'corpus-pilot-mfl-fleaflicker' }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false

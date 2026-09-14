@@ -1,0 +1,31 @@
+{
+  "schema_version": "position-alias-decisions.v1",
+  "decisions": [
+    {
+      "source_root": "statscrew",
+      "source_dataset": "team_season_roster",
+      "raw_label": "LS",
+      "era_scope": "1950-1969",
+      "team_context": null,
+      "mapped_broad_tokens": ["DB"],
+      "role_kind": "ALIGNMENT",
+      "authoritative_for_primary": false,
+      "authoritative_for_eligibility": false,
+      "evidence": "The captured roster records use LS in the same historical vocabulary as RS/S/FS/SS/LCB/RCB; matched PFR seasons resolve the players to DB. This is a source-native left-safety alignment label, not modern long-snapper evidence.",
+      "counterexample_policy": "Do not apply outside 1950-1969 or to a different source dataset."
+    },
+    {
+      "source_root": "statscrew",
+      "source_dataset": "team_season_roster",
+      "raw_label": "P",
+      "era_scope": "1950-1969",
+      "team_context": null,
+      "mapped_broad_tokens": ["P"],
+      "role_kind": "POSITION_OR_USAGE_ROLE",
+      "authoritative_for_primary": false,
+      "authoritative_for_eligibility": false,
+      "evidence": "P is a real punter position on seasons declared P by PFR, but the same roster field is also present on multi-role players whose authoritative PFR primary declaration is QB/RB/WR/TE/DL. The raw source field is therefore retained and classified per player-season.",
+      "counterexample_policy": "Never globally demote P or infer primary eligibility from roster-field presence."
+    }
+  ]
+}

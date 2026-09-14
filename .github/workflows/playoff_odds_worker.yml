@@ -19,12 +19,6 @@ on:
         description: 'User ID (for artifact naming)'
         required: false
         type: string
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out (workers-repo override; default main)'
-        required: false
-        type: string
-        default: 'main'
-
 jobs:
   calculate-playoff-odds:
     runs-on: ubuntu-latest
@@ -51,10 +45,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || 'main' }}
 
       - name: Setup Python
         uses: actions/setup-python@v6

@@ -24,5 +24,4 @@ jobs:
       request_sleep: "5.0"
       id_start: "8000"
       id_end: "8999"
-      yahoo_oauth_ref: "main"
     secrets: inherit

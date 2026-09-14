@@ -1,0 +1,30 @@
+{
+  "contract_version": "1",
+  "play_disposition_contract": "pbp_taxonomy.v1.json",
+  "stat_columns_count": 102,
+  "stat_columns_fingerprint": "sha256:6558b972bf0d8953f34445dfb4a555ec8335864c5c8ffea288acfdf2714bbb3a",
+  "max_columns": ["fg_long", "punt_long"],
+  "coverage_year_overrides": {
+    "passing_epa": 1999,
+    "rushing_epa": 1999,
+    "receiving_epa": 1999,
+    "passing_wpa": 1999,
+    "rushing_wpa": 1999,
+    "receiving_wpa": 1999,
+    "passing_air_yards": 2006,
+    "receiving_air_yards": 2006,
+    "passing_cpoe_sum": 2006,
+    "passing_cpoe_n": 2006,
+    "passing_2pt_conversions": 1994,
+    "rushing_2pt_conversions": 1994,
+    "receiving_2pt_conversions": 1994
+  },
+  "reflexive_atoms": {
+    "pbp.pass_success_rate": {"op": "safe_divide", "left": {"op": "atom", "atom_id": "pbp.pass_success"}, "right": {"op": "atom", "atom_id": "pbp.pass_success_plays"}, "zero_policy": "null"},
+    "pbp.rush_success_rate": {"op": "safe_divide", "left": {"op": "atom", "atom_id": "pbp.rush_success"}, "right": {"op": "atom", "atom_id": "pbp.rush_success_plays"}, "zero_policy": "null"},
+    "pbp.rec_success_rate": {"op": "safe_divide", "left": {"op": "atom", "atom_id": "pbp.rec_success"}, "right": {"op": "atom", "atom_id": "pbp.rec_success_plays"}, "zero_policy": "null"},
+    "pbp.passing_cpoe": {"op": "safe_divide", "left": {"op": "atom", "atom_id": "pbp.passing_cpoe_sum"}, "right": {"op": "atom", "atom_id": "pbp.passing_cpoe_n"}, "zero_policy": "null"},
+    "pbp.total_epa": {"op": "add", "left": {"op": "atom", "atom_id": "pbp.passing_epa"}, "right": {"op": "add", "left": {"op": "atom", "atom_id": "pbp.rushing_epa"}, "right": {"op": "atom", "atom_id": "pbp.receiving_epa"}}},
+    "pbp.total_wpa": {"op": "add", "left": {"op": "atom", "atom_id": "pbp.passing_wpa"}, "right": {"op": "add", "left": {"op": "atom", "atom_id": "pbp.rushing_wpa"}, "right": {"op": "atom", "atom_id": "pbp.receiving_wpa"}}}
+  }
+}

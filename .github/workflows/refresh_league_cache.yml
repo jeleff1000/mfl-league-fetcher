@@ -15,12 +15,6 @@ on:
         options:
           - quick
           - full
-      yahoo_oauth_ref:
-        description: "Importer branch containing the shared cache warmer"
-        required: false
-        default: main
-        type: string
-
 permissions:
   contents: read
 
@@ -34,9 +28,6 @@ jobs:
       - name: Checkout importer
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: yahoo_oauth
 
       - name: Setup Python

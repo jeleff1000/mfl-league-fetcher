@@ -1,0 +1,3025 @@
+{
+ "version": "v1",
+ "estimate_eras": {
+  "fg_att": {
+   "span": [
+    1920,
+    1939
+   ],
+   "roots_measured": [
+    "newspaper",
+    "nflcom",
+    "pfa",
+    "pfr",
+    "statscrew"
+   ],
+   "best_agreements": [
+    0.6442,
+    0.8903
+   ]
+  },
+  "fg_made_30_39": {
+   "span": [
+    1930,
+    1969
+   ],
+   "roots_measured": [
+    "nflcom",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.9388,
+    0.8712,
+    0.9189,
+    0.8979
+   ]
+  },
+  "fumble_recovery_own": {
+   "span": [
+    1970,
+    1989
+   ],
+   "roots_measured": [
+    "nflcom",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.936,
+    0.9386
+   ]
+  },
+  "fumbles_lost": {
+   "span": [
+    1970,
+    1979
+   ],
+   "roots_measured": [
+    "nflcom",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.8557
+   ]
+  },
+  "kickoff_return_yards": {
+   "span": [
+    1930,
+    1939
+   ],
+   "roots_measured": [
+    "internal",
+    "nflcom",
+    "pfa",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.7895
+   ]
+  },
+  "passing_first_downs": {
+   "span": [
+    1970,
+    1989
+   ],
+   "roots_measured": [
+    "nflcom",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.925,
+    0.8817
+   ]
+  },
+  "pat_att": {
+   "span": [
+    1920,
+    1939
+   ],
+   "roots_measured": [
+    "newspaper",
+    "nflcom",
+    "pfr",
+    "statscrew"
+   ],
+   "best_agreements": [
+    0.7485,
+    0.7133
+   ]
+  },
+  "punt_return_yards": {
+   "span": [
+    1930,
+    1939
+   ],
+   "roots_measured": [
+    "internal",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.8947
+   ]
+  },
+  "total_tds_scored": {
+   "span": [
+    1920,
+    1979
+   ],
+   "roots_measured": [
+    "internal",
+    "pfr"
+   ],
+   "best_agreements": [
+    0.8663,
+    0.792,
+    0.9101,
+    0.9282,
+    0.9377,
+    0.9448
+   ]
+  }
+ },
+ "rulebook": {},
+ "needs_witness": {
+  "def_carries_allowed": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_completion_yards_allowed": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.662,
+    0.63,
+    0.693
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_completions_allowed": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.562,
+    0.542,
+    0.64
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_qb_hits": {
+   "decades": [
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_sack_yards": {
+   "decades": [
+    1920,
+    1930,
+    1940
+   ],
+   "bests": [
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_tackles_for_loss": {
+   "decades": [
+    1930,
+    1940,
+    1950,
+    1960
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_tds": {
+   "decades": [
+    1960,
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_wpa_allowed": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "dst_points_allowed": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.883,
+    0.868,
+    0.874
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "dst_return_yards": {
+   "decades": [
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0.014,
+    0.008,
+    0.12
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_made_0_19": {
+   "decades": [
+    1940,
+    1950
+   ],
+   "bests": [
+    0.909,
+    0.858
+   ],
+   "roots": [
+    "nflcom"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_made_20_29": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960
+   ],
+   "bests": [
+    0,
+    0.918,
+    0.856,
+    0.845,
+    0.922
+   ],
+   "roots": [
+    "nflcom",
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_made_50_59": {
+   "decades": [
+    1930,
+    1940,
+    1950,
+    1960
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_made_60_": {
+   "decades": [
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_made_60plus": {
+   "decades": [
+    1930,
+    1940
+   ],
+   "bests": [
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_missed": {
+   "decades": [
+    1930,
+    1940,
+    1950,
+    1960
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0.095
+   ],
+   "roots": [
+    "newspaper",
+    "pfa",
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_missed_0_19": {
+   "decades": [
+    2010,
+    2020
+   ],
+   "bests": [
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_yards": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fg_yds_over_30": {
+   "decades": [
+    1940,
+    1960,
+    1970
+   ],
+   "bests": [
+    0.75,
+    0.394,
+    0.362
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fum_rec": {
+   "decades": [
+    1920,
+    1930,
+    1940
+   ],
+   "bests": [
+    0,
+    0,
+    0.503
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fum_rec_yds": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.913,
+    0.923
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "is_starter": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990,
+    2000,
+    2010,
+    2020
+   ],
+   "bests": [
+    0,
+    0.105,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [
+    "newspaper"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "kickoff_return_long": {
+   "decades": [
+    1990,
+    2000
+   ],
+   "bests": [
+    0.926,
+    0.946
+   ],
+   "roots": [
+    "nflcom",
+    "pbp",
+    "pfr",
+    "statscrew"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "opportunities": {
+   "decades": [
+    1990
+   ],
+   "bests": [
+    0.944
+   ],
+   "roots": [
+    "pbp",
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "pass_success": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0.505,
+    0.479,
+    0.801
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "pass_success_plays": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0.397,
+    0.358,
+    0.773
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "passing_epa": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0.872
+   ],
+   "roots": [
+    "internal",
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "passing_interceptions": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "passing_tds_allowed": {
+   "decades": [
+    1920,
+    1930
+   ],
+   "bests": [
+    0.84,
+    0.84
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "passing_yds_allowed": {
+   "decades": [
+    1920,
+    1930,
+    1940
+   ],
+   "bests": [
+    0,
+    0.878,
+    0.943
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "pat_missed": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0.731
+   ],
+   "roots": [
+    "newspaper",
+    "pfa",
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "penalties": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "penalty_yards": {
+   "decades": [
+    1920,
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "pick6": {
+   "decades": [
+    1980,
+    1990,
+    2000,
+    2010,
+    2020
+   ],
+   "bests": [
+    0.95,
+    0.946,
+    0,
+    0,
+    0
+   ],
+   "roots": [
+    "internal"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "punt_return_long": {
+   "decades": [
+    1960,
+    1970,
+    1980,
+    2000
+   ],
+   "bests": [
+    0.922,
+    0.87,
+    0.858,
+    0.929
+   ],
+   "roots": [
+    "newspaper",
+    "nflcom",
+    "pbp",
+    "pfa",
+    "pfr",
+    "statscrew"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rec_success": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0.586,
+    0.632
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rec_success_plays": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0.392,
+    0.456,
+    0.619
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "receiving_target_interceptions": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rush_success": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0.76,
+    0.818
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rush_success_plays": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0.539,
+    0.605,
+    0.77
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_40plus": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0.872
+   ],
+   "roots": [
+    "nflcom"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_epa": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0.547,
+    0.614,
+    0.862
+   ],
+   "roots": [
+    "internal",
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_scrambles": {
+   "decades": [
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_tds_40plus": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_tds_50plus": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_tds_allowed": {
+   "decades": [
+    1920,
+    1930
+   ],
+   "bests": [
+    0.805,
+    0.809
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rushing_yds_allowed": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950
+   ],
+   "bests": [
+    0,
+    0.839,
+    0.904,
+    0.937
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "sack_fumbles": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0.911,
+    0.948
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "sack_fumbles_lost": {
+   "decades": [
+    1970,
+    1980
+   ],
+   "bests": [
+    0.855,
+    0.923
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "scrimmage_yards": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950
+   ],
+   "bests": [
+    0,
+    0.784,
+    0.827,
+    0.875
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "special_teams_tds": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "three_out": {
+   "decades": [
+    1970,
+    1980,
+    1990,
+    2000
+   ],
+   "bests": [
+    0,
+    0,
+    0.504,
+    0.886
+   ],
+   "roots": [
+    "pbp",
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "total_points_scored": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990
+   ],
+   "bests": [
+    0.827,
+    0.728,
+    0.889,
+    0.893,
+    0.912,
+    0.934,
+    0.94,
+    0.914
+   ],
+   "roots": [
+    "internal",
+    "pbp",
+    "pfr",
+    "statscrew"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "total_return_yards": {
+   "decades": [
+    1930,
+    1940,
+    1950
+   ],
+   "bests": [
+    0,
+    0.479,
+    0.838
+   ],
+   "roots": [
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "total_touches": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990,
+    2000
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.933,
+    0.928
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "touches": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "all_purpose_yards": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    2020
+   ],
+   "bests": [
+    0,
+    0,
+    0.324,
+    0.697,
+    0.885,
+    0.881,
+    0.928,
+    0.947
+   ],
+   "roots": [
+    "pbp",
+    "pfr"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "def_fumbles": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fantasy_points_ppr": {
+   "decades": [
+    1990,
+    2000,
+    2010,
+    2020
+   ],
+   "bests": [
+    0.929,
+    0.933,
+    0.936,
+    0.942
+   ],
+   "roots": [
+    "internal"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "fourth_down_stop": {
+   "decades": [
+    1970,
+    1980,
+    1990,
+    2000,
+    2010,
+    2020
+   ],
+   "bests": [
+    0,
+    0,
+    0.042,
+    0.846,
+    0.864,
+    0.883
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "rush_receive_td": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "turnovers": {
+   "decades": [
+    1920,
+    1930,
+    1940,
+    1950,
+    1960,
+    1970,
+    1980,
+    1990,
+    2000,
+    2010,
+    2020
+   ],
+   "bests": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.823,
+    0.84,
+    0.899,
+    0.908
+   ],
+   "roots": [
+    "pbp"
+   ],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  },
+  "yds_from_scrimmage": {
+   "decades": [
+    1920
+   ],
+   "bests": [
+    0
+   ],
+   "roots": [],
+   "why": "single-root or zero-agreement blockade -- ruling it without a second source would be invention"
+  }
+ },
+ "dispositions": {
+  "bonus_pass_25cmp": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_pass_300yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_pass_400yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rec_100yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rec_10rec": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rec_200yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rush_100yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rush_200yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rush_20att": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rush_rec_100yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "bonus_rush_rec_200yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_4pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_4pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_4pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_4pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_4pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_5pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_5pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_5pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_5pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_5pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_6pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_6pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_6pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_6pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "consistency_6pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "dal_dtx_collision_repaired_at_20260503": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "def_identity_repaired_at_20260504": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fg_made_60_plus_canonical": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fg_yards_canonical": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fg_yards_over_30_canonical": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_0ppr_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_half_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_ppr_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_4pt_tep_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_0ppr_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_half_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_ppr_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_5pt_tep_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_0ppr_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_half_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_ppr_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_6pt_tep_ret": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "fpts_recomputed_at_20260503": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "franchise_ids_populated_at_20260503": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "l3_rollups_recomputed_at_20260504": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "l4_research_lamar_recomputed_at_20260503": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_ppfd_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_ppfd_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_std_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_flx_std_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_ppfd_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_ppfd_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_std_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_idp_std_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_ppfd_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_ppfd_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_std_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_sflx_std_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_tep_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_tep_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_tep_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_10t_tep_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_ppfd_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_ppfd_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_std_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_flx_std_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_ppfd_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_ppfd_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_std_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_idp_std_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_ppfd_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_ppfd_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_std_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_sflx_std_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_tep_half_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_tep_half_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_tep_ppr_4pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "lamar_12t_tep_ppr_6pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pfr_kicking_atoms_repaired_at_20260513": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_4pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_4pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_4pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_4pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_4pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_5pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_5pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_5pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_5pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_5pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_6pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_6pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_6pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_6pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "ppg_alltime_6pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_2pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_3out": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_4stop": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_blk_kick_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_block": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_bonus_fum_td_50p": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_bonus_int_td_50p": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_bonus_sack_2p": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_bonus_tkl_10p": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_ff": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_fg_block": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_forced_punts": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_fr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_fum_rec_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_fum_ret_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_int": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_int_ret_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_kr_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_pass_def": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_pat_block": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_pr_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_punt_block": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_recomputed_at_20260430": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_ret_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_ret_yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_sack": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_sack_yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_safety": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_st_ff": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_st_fum_rec": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_st_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_def_tfl": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_first_downs": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_fum_lost_n1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_fum_lost_n2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_big_play": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_blk_kick_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_ff": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_fr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_fum_rec_yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_int": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_int_ret_yd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_pass_def_3p": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_pd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_premium": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_qb_hit": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_recomputed_at_20260503": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_sack": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_safety": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_std": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_tackle_assist": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_tackle_heavy": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_tackle_solo": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_td": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_tfl": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_tkl_combined": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_idp_xpr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_0_19_3": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_20_29_3": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_30_39_3": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_40_49_3": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_40_49_4": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_50_59_5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_60p_5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_60p_6": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_yd_over30_p1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgm_yd_p1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_fgmiss_n1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_recomputed_at_20260502": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_std": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_xpm_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_k_xpmiss_n1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_kr_yd_p04": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_off_components_recomputed_at_20260502": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_2pt_2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_4pt_int1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_5pt": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_5pt_int1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_6pt_int1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_cmp": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_cmp_40plus_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_cmp_p1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_cmp_p25": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_cmp_p5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_fd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_fd_p25": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_fd_p5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pass_yd_p04": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pick6": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pick6_n1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pick6_n2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_pr_yd_p04": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_2pt_2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_40plus_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_fd_p25": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_fd_p5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_p5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_td_40plus_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_td_50plus_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_td_6": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_te_bonus_p5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rec_yd_p1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_ret_yds": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_2pt_2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_40plus_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_att": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_att_p1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_att_p2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_att_p25": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_fd_p25": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_fd_p5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_td_40plus_2": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_td_50plus_1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_td_6": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_rush_yd_p1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_sack_taken": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_sack_taken_n1": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_sack_taken_np5": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_st_td_6": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "recon_correction_log": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_4pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_4pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_4pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_4pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_4pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_5pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_5pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_5pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_5pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_5pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_6pt_0ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_6pt_half": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_6pt_ppfd": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_6pt_ppr": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "rolling_3_6pt_tep": {
+   "class": "internal-metric",
+   "basis": "no independent external source carries this concept (zero or sub-bar candidates across every registered schema); closes by recompute/config-consistency, never by witness",
+   "jurisdiction": "recompute (stage7-style coefficient licensing pending)"
+  },
+  "pts_fum_ret_td_6": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pbp_player_week_rollup",
+    "source_col": "fum_ret_td",
+    "n": 18057,
+    "agree": 0.9888,
+    "jaccard": 0.75
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_idp_blk_kick": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pbp_player_week_rollup",
+    "source_col": "def_blk_kick",
+    "n": 18080,
+    "agree": 0.9976,
+    "jaccard": 0.5
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_idp_fum_ret_td": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pbp_player_week_rollup",
+    "source_col": "fum_ret_td",
+    "n": 18080,
+    "agree": 0.9981,
+    "jaccard": 0.6
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_pass_int_n1": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_all_pro_members",
+    "source_col": "pass_int",
+    "n": 891,
+    "agree": 0.9663,
+    "jaccard": 0.5
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_pass_int_n2": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_all_pro_members",
+    "source_col": "pass_int",
+    "n": 891,
+    "agree": 0.9663,
+    "jaccard": 0.5
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_pass_td_4": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_all_pro_members",
+    "source_col": "pass_td",
+    "n": 891,
+    "agree": 0.9562,
+    "jaccard": 0.67
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_pass_td_40plus_2": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_all_pro_members",
+    "source_col": "pass_td",
+    "n": 891,
+    "agree": 0.9562,
+    "jaccard": 0.5
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_pass_td_50plus_1": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_all_pro_members",
+    "source_col": "pass_td",
+    "n": 891,
+    "agree": 0.9585,
+    "jaccard": 0.5
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_pass_td_6": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_all_pro_members",
+    "source_col": "pass_td",
+    "n": 891,
+    "agree": 0.9562,
+    "jaccard": 0.67
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "pts_rec_1": {
+   "class": "weak-witness",
+   "best_candidate": {
+    "source": "pfr_pro_bowl_members",
+    "source_col": "rec",
+    "n": 1161,
+    "agree": 0.9983,
+    "jaccard": 0.5
+   },
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_4pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_4pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_4pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_4pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_4pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_5pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_5pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_5pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_5pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_5pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_6pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_6pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_6pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_6pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_5_6pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_4pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_4pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_4pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_4pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_4pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_5pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_5pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_5pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_5pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_5pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_6pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_6pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_6pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_6pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_6pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_def": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "rolling_total_k": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weekly_scoring_surface_recomputed_at_20260513": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_4pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_4pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_4pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_4pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_4pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_5pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_5pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_5pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_5pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_5pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_6pt_0ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_6pt_half": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_6pt_ppfd": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_6pt_ppr": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "weighted_ppg_6pt_tep": {
+   "class": "weak-witness",
+   "best_candidate": null,
+   "basis": "token-matched candidates measured across every registered source; best falls short of the 0.95 licensing bar -- insufficient external witness; internal-consistency jurisdiction until a better source lands"
+  },
+  "avg_pts_next_year_4pt_0ppr": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_4pt_half": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_4pt_ppfd": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_4pt_ppr": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_4pt_tep": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_5pt_0ppr": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_5pt_half": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_5pt_ppfd": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_5pt_ppr": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_5pt_tep": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_6pt_0ppr": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_6pt_half": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_6pt_ppfd": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_6pt_ppr": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  },
+  "avg_pts_next_year_6pt_tep": {
+   "class": "composite-dependent",
+   "basis": "next-year average under a scoring variant; recompute requires the fpts composite formulas (Joe ask #1); closes mechanically once those license"
+  }
+ },
+ "measured_definitions": {
+  "scrimmage_tds": {
+   "definition": "rushing_tds + receiving_tds",
+   "fit": 1.0,
+   "cells": 834945,
+   "status": "exact; keeps its name"
+  },
+  "total_tds_scored": {
+   "definition": "rushing_tds + receiving_tds + kickoff_return_tds + punt_return_tds + def_int_ret_td + fum_ret_td (ALL TDs SCORED)",
+   "fit": 0.99987,
+   "cells": 1171588,
+   "status": "LEGITIMATE distinct concept -- earlier 'retire as duplicate' verdict REFUTED by audit 2026-08-04; rename to total_tds_scored proposed"
+  },
+  "total_tds_accounted_for": {
+   "definition": "rushing_tds + receiving_tds + passing_tds (TDs ACCOUNTED FOR: scored-scrimmage + thrown)",
+   "fit": 0.9999,
+   "cells": 834396,
+   "status": "distinct concept; rename to total_tds_accounted_for proposed"
+  }
+ }
+}

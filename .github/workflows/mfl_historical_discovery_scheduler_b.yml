@@ -30,7 +30,6 @@ jobs:
       request_sleep: ${{ steps.resolve.outputs.request_sleep }}
       id_start: ${{ steps.next.outputs.id_start }}
       id_end: ${{ steps.next.outputs.id_end }}
-      yahoo_oauth_ref: ${{ steps.resolve.outputs.yahoo_oauth_ref }}
     steps:
       - name: Download completed-window manifest
         if: ${{ github.event_name == 'workflow_run' }}
@@ -56,7 +55,6 @@ jobs:
           request_sleep=5.0
           id_start=0
           id_end=999
-          yahoo_oauth_ref=main
           completed_start_year=$((BOOTSTRAP_END_YEAR - 1))
           completed_end_year=${BOOTSTRAP_END_YEAR}
           EOF
@@ -75,7 +73,7 @@ jobs:
           if str(data.get("shard_indices", "")):
               raise SystemExit("partial-shard runs cannot advance the historical window")
   
-          for key in ("shard_count", "id_bands", "request_sleep", "id_start", "id_end", "yahoo_oauth_ref"):
+          for key in ("shard_count", "id_bands", "request_sleep", "id_start", "id_end"):
               print(f"{key}={data[key]}")
           # Recovery/merge manifests may record one merge runner; full
           # historical discovery always uses the campaign cap of 15.
@@ -142,5 +140,4 @@ jobs:
       request_sleep: ${{ needs.read-window.outputs.request_sleep }}
       id_start: ${{ needs.read-window.outputs.id_start }}
       id_end: ${{ needs.read-window.outputs.id_end }}
-      yahoo_oauth_ref: ${{ needs.read-window.outputs.yahoo_oauth_ref }}
     secrets: inherit

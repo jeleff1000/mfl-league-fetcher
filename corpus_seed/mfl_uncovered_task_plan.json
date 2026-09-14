@@ -1,0 +1,766 @@
+{
+  "schema_version": 1,
+  "unit": "uncovered (season, league_id) interval",
+  "start_year": 1993,
+  "end_year": 2018,
+  "id_upper": 80000,
+  "target_samples": 10000,
+  "tasks": [
+    {
+      "year": 2018,
+      "id_start": 25000,
+      "id_end": 80000,
+      "probe_count": 55001
+    },
+    {
+      "year": 2017,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2016,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2015,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2014,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2013,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2012,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2011,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 2010,
+      "id_start": 10001,
+      "id_end": 80000,
+      "probe_count": 70000
+    },
+    {
+      "year": 2009,
+      "id_start": 10001,
+      "id_end": 80000,
+      "probe_count": 70000
+    },
+    {
+      "year": 2008,
+      "id_start": 10001,
+      "id_end": 80000,
+      "probe_count": 70000
+    },
+    {
+      "year": 2007,
+      "id_start": 10001,
+      "id_end": 80000,
+      "probe_count": 70000
+    },
+    {
+      "year": 2004,
+      "id_start": 6000,
+      "id_end": 80000,
+      "probe_count": 74001
+    },
+    {
+      "year": 2003,
+      "id_start": 6000,
+      "id_end": 80000,
+      "probe_count": 74001
+    },
+    {
+      "year": 2002,
+      "id_start": 6000,
+      "id_end": 80000,
+      "probe_count": 74001
+    },
+    {
+      "year": 2001,
+      "id_start": 6000,
+      "id_end": 80000,
+      "probe_count": 74001
+    },
+    {
+      "year": 2000,
+      "id_start": 6000,
+      "id_end": 80000,
+      "probe_count": 74001
+    },
+    {
+      "year": 1999,
+      "id_start": 0,
+      "id_end": 999,
+      "probe_count": 1000
+    },
+    {
+      "year": 1999,
+      "id_start": 4000,
+      "id_end": 4999,
+      "probe_count": 1000
+    },
+    {
+      "year": 1999,
+      "id_start": 6000,
+      "id_end": 80000,
+      "probe_count": 74001
+    },
+    {
+      "year": 1998,
+      "id_start": 10001,
+      "id_end": 80000,
+      "probe_count": 70000
+    },
+    {
+      "year": 1997,
+      "id_start": 10001,
+      "id_end": 80000,
+      "probe_count": 70000
+    },
+    {
+      "year": 1996,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 1995,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 1994,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    },
+    {
+      "year": 1993,
+      "id_start": 0,
+      "id_end": 80000,
+      "probe_count": 80001
+    }
+  ],
+  "task_count": 26,
+  "probe_count": 1801018,
+  "window_probe_limit": 50000,
+  "windows": [
+    {
+      "window_index": 0,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2018,
+          "id_start": 25000,
+          "id_end": 74999,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 1,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2018,
+          "id_start": 75000,
+          "id_end": 80000,
+          "probe_count": 5001
+        },
+        {
+          "year": 2017,
+          "id_start": 0,
+          "id_end": 44998,
+          "probe_count": 44999
+        }
+      ]
+    },
+    {
+      "window_index": 2,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2017,
+          "id_start": 44999,
+          "id_end": 80000,
+          "probe_count": 35002
+        },
+        {
+          "year": 2016,
+          "id_start": 0,
+          "id_end": 14997,
+          "probe_count": 14998
+        }
+      ]
+    },
+    {
+      "window_index": 3,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2016,
+          "id_start": 14998,
+          "id_end": 64997,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 4,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2016,
+          "id_start": 64998,
+          "id_end": 80000,
+          "probe_count": 15003
+        },
+        {
+          "year": 2015,
+          "id_start": 0,
+          "id_end": 34996,
+          "probe_count": 34997
+        }
+      ]
+    },
+    {
+      "window_index": 5,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2015,
+          "id_start": 34997,
+          "id_end": 80000,
+          "probe_count": 45004
+        },
+        {
+          "year": 2014,
+          "id_start": 0,
+          "id_end": 4995,
+          "probe_count": 4996
+        }
+      ]
+    },
+    {
+      "window_index": 6,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2014,
+          "id_start": 4996,
+          "id_end": 54995,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 7,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2014,
+          "id_start": 54996,
+          "id_end": 80000,
+          "probe_count": 25005
+        },
+        {
+          "year": 2013,
+          "id_start": 0,
+          "id_end": 24994,
+          "probe_count": 24995
+        }
+      ]
+    },
+    {
+      "window_index": 8,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2013,
+          "id_start": 24995,
+          "id_end": 74994,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 9,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2013,
+          "id_start": 74995,
+          "id_end": 80000,
+          "probe_count": 5006
+        },
+        {
+          "year": 2012,
+          "id_start": 0,
+          "id_end": 44993,
+          "probe_count": 44994
+        }
+      ]
+    },
+    {
+      "window_index": 10,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2012,
+          "id_start": 44994,
+          "id_end": 80000,
+          "probe_count": 35007
+        },
+        {
+          "year": 2011,
+          "id_start": 0,
+          "id_end": 14992,
+          "probe_count": 14993
+        }
+      ]
+    },
+    {
+      "window_index": 11,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2011,
+          "id_start": 14993,
+          "id_end": 64992,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 12,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2011,
+          "id_start": 64993,
+          "id_end": 80000,
+          "probe_count": 15008
+        },
+        {
+          "year": 2010,
+          "id_start": 10001,
+          "id_end": 44992,
+          "probe_count": 34992
+        }
+      ]
+    },
+    {
+      "window_index": 13,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2010,
+          "id_start": 44993,
+          "id_end": 80000,
+          "probe_count": 35008
+        },
+        {
+          "year": 2009,
+          "id_start": 10001,
+          "id_end": 24992,
+          "probe_count": 14992
+        }
+      ]
+    },
+    {
+      "window_index": 14,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2009,
+          "id_start": 24993,
+          "id_end": 74992,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 15,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2009,
+          "id_start": 74993,
+          "id_end": 80000,
+          "probe_count": 5008
+        },
+        {
+          "year": 2008,
+          "id_start": 10001,
+          "id_end": 54992,
+          "probe_count": 44992
+        }
+      ]
+    },
+    {
+      "window_index": 16,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2008,
+          "id_start": 54993,
+          "id_end": 80000,
+          "probe_count": 25008
+        },
+        {
+          "year": 2007,
+          "id_start": 10001,
+          "id_end": 34992,
+          "probe_count": 24992
+        }
+      ]
+    },
+    {
+      "window_index": 17,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2007,
+          "id_start": 34993,
+          "id_end": 80000,
+          "probe_count": 45008
+        },
+        {
+          "year": 2004,
+          "id_start": 6000,
+          "id_end": 10991,
+          "probe_count": 4992
+        }
+      ]
+    },
+    {
+      "window_index": 18,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2004,
+          "id_start": 10992,
+          "id_end": 60991,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 19,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2004,
+          "id_start": 60992,
+          "id_end": 80000,
+          "probe_count": 19009
+        },
+        {
+          "year": 2003,
+          "id_start": 6000,
+          "id_end": 36990,
+          "probe_count": 30991
+        }
+      ]
+    },
+    {
+      "window_index": 20,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2003,
+          "id_start": 36991,
+          "id_end": 80000,
+          "probe_count": 43010
+        },
+        {
+          "year": 2002,
+          "id_start": 6000,
+          "id_end": 12989,
+          "probe_count": 6990
+        }
+      ]
+    },
+    {
+      "window_index": 21,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2002,
+          "id_start": 12990,
+          "id_end": 62989,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 22,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2002,
+          "id_start": 62990,
+          "id_end": 80000,
+          "probe_count": 17011
+        },
+        {
+          "year": 2001,
+          "id_start": 6000,
+          "id_end": 38988,
+          "probe_count": 32989
+        }
+      ]
+    },
+    {
+      "window_index": 23,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2001,
+          "id_start": 38989,
+          "id_end": 80000,
+          "probe_count": 41012
+        },
+        {
+          "year": 2000,
+          "id_start": 6000,
+          "id_end": 14987,
+          "probe_count": 8988
+        }
+      ]
+    },
+    {
+      "window_index": 24,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2000,
+          "id_start": 14988,
+          "id_end": 64987,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 25,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 2000,
+          "id_start": 64988,
+          "id_end": 80000,
+          "probe_count": 15013
+        },
+        {
+          "year": 1999,
+          "id_start": 0,
+          "id_end": 999,
+          "probe_count": 1000
+        },
+        {
+          "year": 1999,
+          "id_start": 4000,
+          "id_end": 4999,
+          "probe_count": 1000
+        },
+        {
+          "year": 1999,
+          "id_start": 6000,
+          "id_end": 38986,
+          "probe_count": 32987
+        }
+      ]
+    },
+    {
+      "window_index": 26,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1999,
+          "id_start": 38987,
+          "id_end": 80000,
+          "probe_count": 41014
+        },
+        {
+          "year": 1998,
+          "id_start": 10001,
+          "id_end": 18986,
+          "probe_count": 8986
+        }
+      ]
+    },
+    {
+      "window_index": 27,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1998,
+          "id_start": 18987,
+          "id_end": 68986,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 28,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1998,
+          "id_start": 68987,
+          "id_end": 80000,
+          "probe_count": 11014
+        },
+        {
+          "year": 1997,
+          "id_start": 10001,
+          "id_end": 48986,
+          "probe_count": 38986
+        }
+      ]
+    },
+    {
+      "window_index": 29,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1997,
+          "id_start": 48987,
+          "id_end": 80000,
+          "probe_count": 31014
+        },
+        {
+          "year": 1996,
+          "id_start": 0,
+          "id_end": 18985,
+          "probe_count": 18986
+        }
+      ]
+    },
+    {
+      "window_index": 30,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1996,
+          "id_start": 18986,
+          "id_end": 68985,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 31,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1996,
+          "id_start": 68986,
+          "id_end": 80000,
+          "probe_count": 11015
+        },
+        {
+          "year": 1995,
+          "id_start": 0,
+          "id_end": 38984,
+          "probe_count": 38985
+        }
+      ]
+    },
+    {
+      "window_index": 32,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1995,
+          "id_start": 38985,
+          "id_end": 80000,
+          "probe_count": 41016
+        },
+        {
+          "year": 1994,
+          "id_start": 0,
+          "id_end": 8983,
+          "probe_count": 8984
+        }
+      ]
+    },
+    {
+      "window_index": 33,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1994,
+          "id_start": 8984,
+          "id_end": 58983,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 34,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1994,
+          "id_start": 58984,
+          "id_end": 80000,
+          "probe_count": 21017
+        },
+        {
+          "year": 1993,
+          "id_start": 0,
+          "id_end": 28982,
+          "probe_count": 28983
+        }
+      ]
+    },
+    {
+      "window_index": 35,
+      "probe_count": 50000,
+      "tasks": [
+        {
+          "year": 1993,
+          "id_start": 28983,
+          "id_end": 78982,
+          "probe_count": 50000
+        }
+      ]
+    },
+    {
+      "window_index": 36,
+      "probe_count": 1018,
+      "tasks": [
+        {
+          "year": 1993,
+          "id_start": 78983,
+          "id_end": 80000,
+          "probe_count": 1018
+        }
+      ]
+    }
+  ],
+  "window_count": 37
+}

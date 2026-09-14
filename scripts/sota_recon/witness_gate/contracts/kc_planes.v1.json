@@ -1,0 +1,2772 @@
+{
+  "version": "v1",
+  "n_sources": 94,
+  "contracts": [
+    {
+      "source_id": "v26_release",
+      "k": {
+        "status": "IDENTITY_SUBJECT",
+        "reason": "subject under test"
+      },
+      "c": {
+        "coverage_model": "DENSE"
+      }
+    },
+    {
+      "source_id": "player_bio",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id"
+        ],
+        "logical_key": [
+          "pfr_id"
+        ],
+        "canonical_universe": "players",
+        "canonical_key_columns": [
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "bio spans players outside PFR box coverage (pre-1932 offense box floor, specialists)"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_slug_pfrid",
+      "k": {
+        "status": "PENDING_COLUMN_MAP",
+        "reason": "no rule for join hint 'nflcom_slug -> pfr_id'"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_index",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id"
+        ],
+        "logical_key": [
+          "pfr_id"
+        ],
+        "canonical_universe": "players",
+        "canonical_key_columns": [
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "index includes players with no surviving boxscore rows"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "schedule_master",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "year",
+          "week",
+          "nfl_team"
+        ],
+        "logical_key": [
+          "year",
+          "week",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "known catalog/schedule symmetric diff (~50 games, see entity-universes summary)"
+      },
+      "c": {
+        "coverage_model": "DENSE"
+      }
+    },
+    {
+      "source_id": "pfr_team_games",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "DENSE"
+      }
+    },
+    {
+      "source_id": "pbp_player_week_rollup",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted bio crosswalk (crosswalk_receipts.v1.json#bio_pfr_nflid, O.5 \u00a719.2); weekly grain joins player_seasons at season fanout \u2014 game_date->boxscore crosswalk for game-grain joins remains a separate future receipt",
+        "crosswalk": {
+          "via": "player_bio",
+          "on": "NFL_player_id",
+          "adds": "pfr_id",
+          "receipt": "bio_pfr_nflid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "year"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1978,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "0.33% of rollup NFL_player_ids lack a bio pfr crosswalk (receipted; they surface as null_key_rows); POST-only seasons"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_offense_box",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_defense_box",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1933,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "scoring_summary",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "derived per team-game scoring rollup; carries catalog boxscore_id + team_code directly",
+        "source_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "ancient_pfa_gamelog",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ancient composite bundle team_game_key = boxscore_id + '_' + team (no catalog game-num suffix; adjudicated 2026-07-25, 90/95 raw-key unmatched receipt); player ids are NFL-space (crosswalk pending for player grain); rows scoped by the stream's source-definition filter (OQ-LR-5)",
+        "source_key_exprs": [
+          "split_part(team_game_key, '_', 1)",
+          "nfl_team"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "boxscore_id",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1954
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "ancient_pfr_recovery",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ancient composite bundle team_game_key = boxscore_id + '_' + team (no catalog game-num suffix; adjudicated 2026-07-25, 90/95 raw-key unmatched receipt); player ids are NFL-space (crosswalk pending for player grain); rows scoped by the stream's source-definition filter (OQ-LR-5)",
+        "source_key_exprs": [
+          "split_part(team_game_key, '_', 1)",
+          "nfl_team"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "boxscore_id",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1978
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "ancient_pbp1978_recovery",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ancient composite bundle team_game_key = boxscore_id + '_' + team (no catalog game-num suffix; adjudicated 2026-07-25, 90/95 raw-key unmatched receipt); player ids are NFL-space (crosswalk pending for player grain); rows scoped by the stream's source-definition filter (OQ-LR-5)",
+        "source_key_exprs": [
+          "split_part(team_game_key, '_', 1)",
+          "nfl_team"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "boxscore_id",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1978,
+          "year_max": 1979
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "ancient_newspaper_ocr",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ancient composite bundle team_game_key = boxscore_id + '_' + team (no catalog game-num suffix; adjudicated 2026-07-25, 90/95 raw-key unmatched receipt); player ids are NFL-space (crosswalk pending for player grain); rows scoped by the stream's source-definition filter (OQ-LR-5)",
+        "source_key_exprs": [
+          "split_part(team_game_key, '_', 1)",
+          "nfl_team"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "boxscore_id",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1939
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "legacy_motherduck_supertable",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted bio crosswalk (subject_history class still NEVER votes \u2014 this is a join/coverage contract only)",
+        "crosswalk": {
+          "via": "player_bio",
+          "on": "NFL_player_id",
+          "adds": "pfr_id",
+          "receipt": "bio_pfr_nflid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "year"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "2.39% of legacy NFL_player_ids lack a bio pfr crosswalk (receipted; null_key_rows); presence-universe era floors"
+      },
+      "c": {
+        "coverage_model": "DENSE"
+      }
+    },
+    {
+      "source_id": "pfr_player_season_passing",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_season_rush_rec",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_season_rec_rush",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_games_played",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_scoring",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_kicking",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1938,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_punting",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1939,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_defense",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1940,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_returns",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1941,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_fantasy",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1970,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_snap_counts",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2012,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "ngs_season_published",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted bio crosswalk (crosswalk_receipts.v1.json#bio_pfr_nflid, O.5 \u00a719.2)",
+        "crosswalk": {
+          "via": "player_bio",
+          "on": "NFL_player_id",
+          "adds": "pfr_id",
+          "receipt": "bio_pfr_nflid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "year"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2016,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "NGS covers qualifying modern players only (100% crosswalk coverage receipted)"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "ngs_weekly_raw",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted bio crosswalk (crosswalk_receipts.v1.json#bio_pfr_nflid, O.5 \u00a719.2)",
+        "crosswalk": {
+          "via": "player_bio",
+          "on": "NFL_player_id",
+          "adds": "pfr_id",
+          "receipt": "bio_pfr_nflid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "year"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2016,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "NGS covers qualifying modern players only (100% crosswalk coverage receipted)"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "pbp_team_defense",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "alt key (year, week, team) valid 1978+ (no doubleheaders in the pbp era). KNOWN ISSUE (receipted 2026-07-25): 505 windowed keys unmatched, dominated by BAL(Colts)/HOU(Oilers) 2-per-week 1978-95 \u2014 era-ambiguous codes ('BAL' = Colts in catalog space but Ravens in pbp space) are UNRESOLVABLE by a shared static canon map; fix = franchise-id (team_fid) scoped join, queued (see build_franchise_normalization).",
+        "source_key_columns": [
+          "year",
+          "week",
+          "nfl_team"
+        ],
+        "logical_key": [
+          "year",
+          "week",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1978,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "DENSE"
+      }
+    },
+    {
+      "source_id": "pfr_box_home_starters",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": "two-way starters appear once per position row (2,197 dup keys receipted 2026-07-25)",
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_vis_starters",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": "two-way starters appear once per position row (2,232 dup keys receipted 2026-07-25)",
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_home_snaps",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2012,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_vis_snaps",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2012,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_team_stats",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null,
+        "side_binding": {
+          "declaration": "vis_stat/home_stat columns bind to team_games via (boxscore_id, is_home) -> team_fid; packed labels parsed per relationship_verdicts.Runner.BOX_LABELS",
+          "receipt": "docs/relationship-verdicts.v1.json#r4_team_witness_join_receipt"
+        }
+      },
+      "c": {
+        "coverage_model": "TOTAL_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_home_drives",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1998,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_vis_drives",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1998,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_game_info",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "pfr_box_expected_points",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1994,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "pfr_box_scoring",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_pbp",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1981,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_kicking",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_returns",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_defense_advanced",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_receiving_advanced",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_rushing_advanced",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_passing_advanced",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id",
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "canonical_universe": "player_game_presence",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "pfr_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_box_officials",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1957,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "pfr_passing_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1933,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_rushrec_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1933,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_recrush_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1933,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_defense_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1940,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_kicking_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1938,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_punting_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1939,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_returns_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1941,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_scoring_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_games_played_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1933,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adj_passing",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_combine",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "17 players carry multiple combine rows (re-attendees; receipted 2026-07-25)",
+        "source_key_columns": [
+          "player_link_ids"
+        ],
+        "logical_key": [
+          "pfr_id"
+        ],
+        "canonical_universe": "players",
+        "canonical_key_columns": [
+          "pfr_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2000,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "combine attendees who never appeared in an NFL game"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_all_pro_members",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": ["player_link_ids", "year"],
+        "logical_key": ["pfr_id", "year"],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": ["pfr_id", "year", "season_type"],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {"year_min": 1920, "year_max": 2025},
+        "season_type_policy": "REG",
+        "permitted_unmatched": "award members with no captured player-season stat row"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_pro_bowl_members",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": ["player_link_ids", "year"],
+        "logical_key": ["pfr_id", "year"],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": ["pfr_id", "year", "season_type"],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {"year_min": 1938, "year_max": 2025},
+        "season_type_policy": "REG",
+        "permitted_unmatched": "award members with no captured player-season stat row"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adv_defense",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adv_recrush",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adv_rushrec",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_passing_adv_season",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adv_defense_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adv_recrush_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_adv_rushrec_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_passing_adv_post",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id",
+          "year_id"
+        ],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2018,
+          "year_max": 2025
+        },
+        "season_type_policy": "POST",
+        "permitted_unmatched": "presence universe floor is the box-table era (offense box 1932+); games_played index pages additionally list zero-game (DNP/IR) seasons with no presence evidence \u2014 era-uniform unmatched receipted 2026-07-25, adjudication queued"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfr_player_combine",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "pfr_id"
+        ],
+        "logical_key": [
+          "pfr_id"
+        ],
+        "canonical_universe": "players",
+        "canonical_key_columns": [
+          "pfr_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 2000,
+          "year_max": 2025
+        },
+        "season_type_policy": "REG",
+        "permitted_unmatched": "combine attendees who never appeared in an NFL game; year is combine year, not season"
+      },
+      "c": {
+        "coverage_model": "PARTICIPANT_ONLY"
+      }
+    },
+    {
+      "source_id": "pbp_merged_1978_2025",
+      "k": {
+        "status": "AUTHORITY",
+        "reason": null,
+        "source_key_columns": [
+          "game_id",
+          "play_id"
+        ],
+        "logical_key": [
+          "game_id",
+          "play_id"
+        ],
+        "canonical_universe": "plays",
+        "canonical_key_columns": [
+          "game_id",
+          "play_id"
+        ],
+        "expected_cardinality": "1:1",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1978,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "newspaper_player_cells",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_team_stats",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_team_claims",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_scoring_events",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_pbp_events",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_lineups",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_game_context",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_player_notes",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_source_doc_notes",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": [
+          "boxscore_id"
+        ],
+        "logical_key": [
+          "boxscore_id"
+        ],
+        "canonical_universe": "games",
+        "canonical_key_columns": [
+          "boxscore_id"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 1940
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "newspaper harvest covers a curated game subset; ids minted from the catalog"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    },
+    {
+      "source_id": "newspaper_review_accepted",
+      "k": {
+        "status": "NOT_APPLICABLE",
+        "reason": "triage workflow records, no entity grain"
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "newspaper_review_holds",
+      "k": {
+        "status": "NOT_APPLICABLE",
+        "reason": "triage workflow records, no entity grain"
+      },
+      "c": {
+        "coverage_model": "EVENT_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_player_logs",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted nflcom slug crosswalk (crosswalk_receipts.v1.json#nflcom_slug_pfrid, \u00a719.2). Licensing the SOURCE is not licensing every column: the receipt's own does_not_license list still withholds the L4 return block, the L7 made-att composites and the L0 tackle total, and those rows stay OPEN in the dossier regardless of this status",
+        "crosswalk": {
+          "via": "nflcom_slug_pfrid",
+          "on": "nflcom_slug",
+          "adds": "pfr_id",
+          "receipt": "nflcom_slug_pfrid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "season"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1920,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "28.0% of slugs carry no pfr_id and are EXCLUDED, not guessed: 23,392 of 32,488 resolved (88.1% of roster rows). Coverage is era-skewed by design of the evidence -- 1920-32 18.7%, 1933-49 68.5%, 1950-77 83.7%, 1978-98 84.0%, 1999-2025 73.2% -- so an ancient-era anti-join miss is expected, not a defect. Ambiguous (name, season) keys on either side are never scored, and the 2 slugs claiming two pfr_ids are excluded rather than resolved"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_player_career",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted nflcom slug crosswalk (crosswalk_receipts.v1.json#nflcom_slug_pfrid, \u00a719.2). Licensing the SOURCE is not licensing every column: the receipt's own does_not_license list still withholds the L4 return block, the L7 made-att composites and the L0 tackle total, and those rows stay OPEN in the dossier regardless of this status",
+        "crosswalk": {
+          "via": "nflcom_slug_pfrid",
+          "on": "nflcom_slug",
+          "adds": "pfr_id",
+          "receipt": "nflcom_slug_pfrid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "season"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1950,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "28.0% of slugs carry no pfr_id and are EXCLUDED, not guessed: 23,392 of 32,488 resolved (88.1% of roster rows). Coverage is era-skewed by design of the evidence -- 1920-32 18.7%, 1933-49 68.5%, 1950-77 83.7%, 1978-98 84.0%, 1999-2025 73.2% -- so an ancient-era anti-join miss is expected, not a defect. Ambiguous (name, season) keys on either side are never scored, and the 2 slugs claiming two pfr_ids are excluded rather than resolved"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_player_season",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted nflcom slug crosswalk (crosswalk_receipts.v1.json#nflcom_slug_pfrid, \u00a719.2). Licensing the SOURCE is not licensing every column: the receipt's own does_not_license list still withholds the L4 return block, the L7 made-att composites and the L0 tackle total, and those rows stay OPEN in the dossier regardless of this status",
+        "crosswalk": {
+          "via": "nflcom_slug_pfrid",
+          "on": "_player_slug",
+          "adds": "pfr_id",
+          "receipt": "nflcom_slug_pfrid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "season"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "28.0% of slugs carry no pfr_id and are EXCLUDED, not guessed: 23,392 of 32,488 resolved (88.1% of roster rows). Coverage is era-skewed by design of the evidence -- 1920-32 18.7%, 1933-49 68.5%, 1950-77 83.7%, 1978-98 84.0%, 1999-2025 73.2% -- so an ancient-era anti-join miss is expected, not a defect. Ambiguous (name, season) keys on either side are never scored, and the 2 slugs claiming two pfr_ids are excluded rather than resolved"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_player_situational",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted nflcom slug crosswalk (crosswalk_receipts.v1.json#nflcom_slug_pfrid, \u00a719.2). Licensing the SOURCE is not licensing every column: the receipt's own does_not_license list still withholds the L4 return block, the L7 made-att composites and the L0 tackle total, and those rows stay OPEN in the dossier regardless of this status",
+        "crosswalk": {
+          "via": "nflcom_slug_pfrid",
+          "on": "nflcom_slug",
+          "adds": "pfr_id",
+          "receipt": "nflcom_slug_pfrid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "season"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1922,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "28.0% of slugs carry no pfr_id and are EXCLUDED, not guessed: 23,392 of 32,488 resolved (88.1% of roster rows). Coverage is era-skewed by design of the evidence -- 1920-32 18.7%, 1933-49 68.5%, 1950-77 83.7%, 1978-98 84.0%, 1999-2025 73.2% -- so an ancient-era anti-join miss is expected, not a defect. Ambiguous (name, season) keys on either side are never scored, and the 2 slugs claiming two pfr_ids are excluded rather than resolved"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_player_splits",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted nflcom slug crosswalk (crosswalk_receipts.v1.json#nflcom_slug_pfrid, \u00a719.2). Licensing the SOURCE is not licensing every column: the receipt's own does_not_license list still withholds the L4 return block, the L7 made-att composites and the L0 tackle total, and those rows stay OPEN in the dossier regardless of this status",
+        "crosswalk": {
+          "via": "nflcom_slug_pfrid",
+          "on": "nflcom_slug",
+          "adds": "pfr_id",
+          "receipt": "nflcom_slug_pfrid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "season"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1921,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "28.0% of slugs carry no pfr_id and are EXCLUDED, not guessed: 23,392 of 32,488 resolved (88.1% of roster rows). Coverage is era-skewed by design of the evidence -- 1920-32 18.7%, 1933-49 68.5%, 1950-77 83.7%, 1978-98 84.0%, 1999-2025 73.2% -- so an ancient-era anti-join miss is expected, not a defect. Ambiguous (name, season) keys on either side are never scored, and the 2 slugs claiming two pfr_ids are excluded rather than resolved"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_player_logs_targeted",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "ACTIVE via receipted nflcom slug crosswalk (crosswalk_receipts.v1.json#nflcom_slug_pfrid, \u00a719.2). Licensing the SOURCE is not licensing every column: the receipt's own does_not_license list still withholds the L4 return block, the L7 made-att composites and the L0 tackle total, and those rows stay OPEN in the dossier regardless of this status",
+        "crosswalk": {
+          "via": "nflcom_slug_pfrid",
+          "on": "nflcom_slug",
+          "adds": "pfr_id",
+          "receipt": "nflcom_slug_pfrid"
+        },
+        "source_key_exprs": [
+          "xw_pfr_id",
+          "season"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "pfr_id",
+          "year"
+        ],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": [
+          "pfr_id",
+          "year",
+          "season_type"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": false,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 1977
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": "28.0% of slugs carry no pfr_id and are EXCLUDED, not guessed: 23,392 of 32,488 resolved (88.1% of roster rows). Coverage is era-skewed by design of the evidence -- 1920-32 18.7%, 1933-49 68.5%, 1950-77 83.7%, 1978-98 84.0%, 1999-2025 73.2% -- so an ancient-era anti-join miss is expected, not a defect. Ambiguous (name, season) keys on either side are never scored, and the 2 slugs claiming two pfr_ids are excluded rather than resolved"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_team_stats",
+      "k": {
+        "status": "ACTIVE",
+        "reason": "TEAM key space (season + team label), so NO player crosswalk is needed -- only nflcom team labels canonicalized into franchise (team_fid) space. It is SEASON grain against a team_games universe, so the join is a rollup, not a row match. Cheapest nflcom family to activate",
+        "crosswalk": {
+          "via": "stat fingerprint against v26 (year, nfl_franchise_number)",
+          "on": "undoubled nickname + season -> team_fid",
+          "adds": "team_fid",
+          "receipt": "nflcom_team_fid"
+        },
+        "source_key_exprs": [
+          "season",
+          "team"
+        ],
+        "source_key_columns": [],
+        "logical_key": [
+          "year",
+          "week",
+          "team"
+        ],
+        "canonical_universe": "team_games",
+        "canonical_key_columns": [
+          "boxscore_id",
+          "team_code"
+        ],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {
+          "year_min": 1932,
+          "year_max": 2025
+        },
+        "season_type_policy": "ALL",
+        "permitted_unmatched": null
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "nflcom_team_season_roster",
+      "k": {
+        "status": "PENDING_CROSSWALK",
+        "reason": "crosswalk receipt 'PENDING -- not yet built' missing, failing, or not licensing this source"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "statscrew_team_season_roster",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": ["source_player_id", "season", "team"],
+        "logical_key": ["pfr_id", "year", "team"],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": ["pfr_id", "year"],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {"year_min": 1921, "year_max": 2025},
+        "season_type_policy": "REG",
+        "crosswalk_receipt": "statscrew_player_pfr_crosswalk_v1",
+        "permitted_unmatched": "source IDs absent from the stats crosswalk are excluded fail-closed"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "statscrew_team_season_stats",
+      "k": {
+        "status": "ACTIVE",
+        "reason": null,
+        "source_key_columns": ["source_player_id", "season", "team", "table_tag"],
+        "logical_key": ["pfr_id", "year", "team", "table_tag"],
+        "canonical_universe": "player_seasons",
+        "canonical_key_columns": ["pfr_id", "year", "nfl_team"],
+        "expected_cardinality": "controlled 1:N",
+        "canon_team": true,
+        "temporal_validity": {"year_min": 1921, "year_max": 2025},
+        "season_type_policy": "REG",
+        "crosswalk_receipt": "statscrew_player_pfr_crosswalk_v1",
+        "permitted_unmatched": "690 source player IDs remain unmatched or ambiguous under fail-closed name/year matching"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "statscrew_team_season_results",
+      "k": {
+        "status": "PENDING_CROSSWALK",
+        "reason": "crosswalk receipt 'PENDING -- not yet built' missing, failing, or not licensing this source"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "pfa_player_game_participation",
+      "k": {
+        "status": "PENDING_CROSSWALK",
+        "reason": "crosswalk receipt 'PENDING -- not yet built' missing, failing, or not licensing this source"
+      },
+      "c": {
+        "coverage_model": "SPARSE_POSITIVE_ONLY"
+      }
+    },
+    {
+      "source_id": "newspaper_raw_archives",
+      "k": {
+        "status": "NOT_APPLICABLE",
+        "reason": "archive-of provenance layer (LOC page/issue image captures + source-horizon candidate ledgers), not a tabular witness with an entity grain; the curated newspaper bundle carries the joined rows"
+      },
+      "c": {
+        "coverage_model": "PARTIAL_KNOWN"
+      }
+    }
+  ]
+}

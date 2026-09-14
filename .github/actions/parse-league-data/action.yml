@@ -47,6 +47,12 @@ outputs:
   database_name:
     description: 'Database name'
     value: ${{ steps.parse.outputs.database_name }}
+  credential_database_name:
+    description: 'Database that owns the encrypted Yahoo credential'
+    value: ${{ steps.parse.outputs.credential_database_name }}
+  credential_league_name:
+    description: 'Display name retained on the encrypted Yahoo credential'
+    value: ${{ steps.parse.outputs.credential_league_name }}
   quick_import_year:
     description: 'Resolved year for Yahoo quick imports'
     value: ${{ steps.parse.outputs.quick_import_year }}
@@ -217,11 +223,16 @@ runs:
         # required, and the plaintext token never travels through
         # repository_dispatch.
         use_stored = bool(league_data.get('use_stored_credentials'))
+        stored_credential_league_name = ''
         if use_stored:
-            db_for_lookup = (league_data.get('database_name') or '').strip()
+            db_for_lookup = (
+                league_data.get('credential_database_name')
+                or league_data.get('database_name')
+                or ''
+            ).strip()
             if not db_for_lookup:
                 validation_errors.append(
-                    "use_stored_credentials=true but database_name missing from payload"
+                    "use_stored_credentials=true but credential_database_name/database_name missing from payload"
                 )
             db_url = os.environ.get('DATABASE_SERVER_URL', '').rstrip('/')
             db_tok = os.environ.get('DATABASE_READ_TOKEN', '')
@@ -261,6 +272,9 @@ runs:
                     )
                 else:
                     encrypted = rows[0].get('encrypted_refresh_token')
+                    stored_credential_league_name = str(
+                        rows[0].get('league_name') or ''
+                    ).strip()
                     if not encrypted:
                         validation_errors.append(
                             f"Credential row for '{db_for_lookup}' has empty encrypted_refresh_token"
@@ -297,6 +311,12 @@ runs:
         if not league_name:
             league_name = f"League {league_id}" if league_id else "Unknown League"
             validation_warnings.append(f"No league_name provided, using: {league_name}")
+
+        credential_owner_league_name = (
+            str(league_data.get('credential_league_name') or '').strip()
+            or stored_credential_league_name
+            or league_name
+        )
 
         season_source = league_data.get('season', league_data.get('end_year'))
         if season_source in (None, ''):
@@ -390,6 +410,15 @@ runs:
             final_db_name = resolve_result.stdout.strip().split('\n')[-1]
         print(f"Using database name: {final_db_name}")
 
+        # A clone may import into a distinct database while deliberately using
+        # its source league's stored Yahoo credential.  Preserve that owner for
+        # later credential refresh/storage steps; otherwise the worker would
+        # move the credential to the clone and break the source league.
+        credential_owner_db = (
+            league_data.get('credential_database_name')
+            or final_db_name
+        ).strip()
+
         # ============================================================
         # GENERATE USER ID
         # ============================================================
@@ -409,6 +438,8 @@ runs:
             f.write(f"start_year={start_year}\n")
             f.write(f"actual_start_year={actual_start_year}\n")
             f.write(f"database_name={final_db_name}\n")
+            f.write(f"credential_database_name={credential_owner_db}\n")
+            f.write(f"credential_league_name={credential_owner_league_name}\n")
             f.write(f"quick_import_year={season}\n")
             f.write(f"import_mode={import_mode}\n")
             f.write(f"validation_warnings={json.dumps(validation_warnings)}\n")

@@ -69,12 +69,6 @@ on:
         required: false
         type: boolean
         default: false
-      yahoo_oauth_ref:
-        description: "yahoo_oauth branch/ref to check out"
-        required: false
-        type: string
-        default: main
-
 permissions:
   contents: read
 
@@ -86,10 +80,6 @@ jobs:
     steps:
       - name: Checkout yahoo_oauth
         uses: actions/checkout@v5
-        with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref || 'main' }}
 
       - name: Install flyctl
         run: |

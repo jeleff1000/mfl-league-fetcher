@@ -1,0 +1,1969 @@
+{
+  "combo_001": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 9.5,
+        "WR": 8.2,
+        "QB": 15.33,
+        "RB": 5.5,
+        "DEF": 8.5,
+        "TE": 9.0
+      },
+      "player_lamar_mean": {
+        "K": -1.682065,
+        "QB": -1.593338,
+        "RB": 0.706541,
+        "DEF": -3.414671,
+        "TE": -4.403316,
+        "WR": -1.798062
+      },
+      "player_lamar_stddev": {
+        "K": 4.561229,
+        "QB": 9.490753,
+        "RB": 7.081148,
+        "DEF": 6.825808,
+        "TE": 5.788363,
+        "WR": 7.054765
+      },
+      "total_manager_lamar": 5229.29,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7239
+    },
+    "combo_id": "C001",
+    "representative": {
+      "database_name": "kmffl",
+      "league_name": "KMFFL",
+      "platform": "Yahoo",
+      "year": 2015
+    }
+  },
+  "combo_002": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "fum_ret_td",
+          -6.0
+        ],
+        [
+          "rushing_first_downs",
+          -0.5
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 8.45,
+        "TE": 6.35,
+        "QB": 14.22,
+        "WR": 6.05,
+        "RB": 3.9,
+        "DEF": 6.4
+      },
+      "player_lamar_mean": {
+        "TE": -2.399992,
+        "RB": 3.113203,
+        "DEF": -0.888095,
+        "K": -0.567269,
+        "WR": -0.212919,
+        "QB": 0.772292
+      },
+      "player_lamar_stddev": {
+        "TE": 5.332474,
+        "RB": 8.516552,
+        "DEF": 5.875462,
+        "K": 4.703318,
+        "WR": 7.17557,
+        "QB": 9.917584
+      },
+      "total_manager_lamar": 10337.349996,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7296
+    },
+    "combo_id": "C002",
+    "representative": {
+      "database_name": "nyu_ffl",
+      "league_name": "nyu_ffl",
+      "platform": "Sleeper",
+      "year": 2018
+    }
+  },
+  "combo_003": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 8.0,
+        "TE": 7.5,
+        "QB": 13.88,
+        "RB": 4.15,
+        "DEF": 7.0,
+        "WR": 6.4
+      },
+      "player_lamar_mean": {
+        "TE": -2.850958,
+        "RB": 2.278448,
+        "DEF": -1.592262,
+        "K": -0.567407,
+        "WR": -0.672956,
+        "QB": 0.184541
+      },
+      "player_lamar_stddev": {
+        "TE": 5.281614,
+        "RB": 7.834905,
+        "DEF": 6.224714,
+        "K": 4.282576,
+        "WR": 6.926434,
+        "QB": 9.59339
+      },
+      "total_manager_lamar": 8774.63,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7271
+    },
+    "combo_id": "C003",
+    "representative": {
+      "database_name": "tfl_of_extraordinary_gentleman",
+      "league_name": "TFL of extraordinary gentleman",
+      "platform": "ESPN",
+      "year": 2019
+    }
+  },
+  "combo_005": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_tds_50plus",
+          1.0
+        ],
+        [
+          "special_teams_tds",
+          -1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 7.35,
+        "K": 9.5,
+        "QB": 10.21,
+        "RB": 4.25,
+        "DEF": 5.5,
+        "WR": 6.25
+      },
+      "player_lamar_mean": {
+        "TE": -2.553237,
+        "RB": 2.721176,
+        "DEF": 0.826837,
+        "WR": 0.294649,
+        "K": -1.556772,
+        "QB": 3.471108
+      },
+      "player_lamar_stddev": {
+        "TE": 5.403137,
+        "RB": 7.383106,
+        "DEF": 6.3713,
+        "WR": 6.98526,
+        "K": 4.425266,
+        "QB": 8.837645
+      },
+      "total_manager_lamar": 12746.07,
+      "started_with_lamar_pct": 0.981587,
+      "player_lamar_count": 6753
+    },
+    "combo_id": "C005",
+    "representative": {
+      "database_name": "tfl_of_extraordinary_gentleman",
+      "league_name": "TFL of extraordinary gentleman",
+      "platform": "ESPN",
+      "year": 2012
+    }
+  },
+  "combo_006": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "special_teams_tds",
+          -6.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 7.0,
+        "QB": 8.87,
+        "WR": 4.35,
+        "RB": 2.85,
+        "TE": 3.65
+      },
+      "player_lamar_mean": {
+        "TE": 0.224148,
+        "RB": 3.281678,
+        "WR": 1.117917,
+        "K": 0.066014,
+        "QB": 4.066198
+      },
+      "player_lamar_stddev": {
+        "TE": 5.115085,
+        "RB": 7.714246,
+        "WR": 6.853602,
+        "K": 4.489671,
+        "QB": 10.161708
+      },
+      "total_manager_lamar": 16740.835,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7210
+    },
+    "combo_id": "C006",
+    "representative": {
+      "database_name": "l_14_big_booms",
+      "league_name": "14 Big Booms",
+      "platform": "Sleeper",
+      "year": 2019
+    }
+  },
+  "combo_007": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "RB": 3.35,
+        "K": 8.0,
+        "TE": 6.7,
+        "DEF": 8.0,
+        "QB": 13.7,
+        "WR": 6.3
+      },
+      "player_lamar_mean": {
+        "RB": 2.729356,
+        "K": -0.16065,
+        "WR": -0.092376,
+        "TE": -2.298306,
+        "DEF": -1.514993,
+        "QB": -0.33245
+      },
+      "player_lamar_stddev": {
+        "RB": 7.071652,
+        "K": 4.669299,
+        "WR": 6.912116,
+        "TE": 5.367013,
+        "DEF": 6.132236,
+        "QB": 8.833755
+      },
+      "total_manager_lamar": 9239.51,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7334
+    },
+    "combo_id": "C007",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2014
+    }
+  },
+  "combo_008": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 6.0,
+        "QB": 2.94,
+        "TE": 4.45,
+        "RB": 2.55,
+        "WR": 5.75
+      },
+      "player_lamar_mean": {
+        "RB": 4.136255,
+        "K": 0.725581,
+        "WR": 0.948868,
+        "QB": 7.860444,
+        "TE": 0.483743
+      },
+      "player_lamar_stddev": {
+        "RB": 8.32601,
+        "K": 4.437391,
+        "WR": 7.973804,
+        "QB": 10.518499,
+        "TE": 6.011456
+      },
+      "total_manager_lamar": 17701.9,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7289
+    },
+    "combo_id": "C008",
+    "representative": {
+      "database_name": "degenerate_gamblers_football_league",
+      "league_name": "Degenerate Gamblers Football League",
+      "platform": "Sleeper",
+      "year": 2019
+    }
+  },
+  "combo_009": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_interceptions",
+          -0.5
+        ],
+        [
+          "rushing_fumbles_lost",
+          0.5
+        ],
+        [
+          "sack_fumbles_lost",
+          0.5
+        ],
+        [
+          "receiving_fumbles_lost",
+          0.5
+        ],
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "QB": 3.57,
+        "TE": 7.2,
+        "DEF": 7.0,
+        "RB": 3.8,
+        "K": 7.5,
+        "WR": 6.1
+      },
+      "player_lamar_mean": {
+        "RB": 2.231606,
+        "K": 0.295614,
+        "QB": 7.350506,
+        "TE": -2.950566,
+        "DEF": -1.271307,
+        "WR": -0.2492
+      },
+      "player_lamar_stddev": {
+        "RB": 7.218294,
+        "K": 4.383914,
+        "QB": 9.625195,
+        "TE": 5.105513,
+        "DEF": 5.826215,
+        "WR": 6.536872
+      },
+      "total_manager_lamar": 13082.85,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 8054
+    },
+    "combo_id": "C009",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2022
+    }
+  },
+  "combo_010": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "QB": 12.38,
+        "K": 6.5,
+        "TE": 6.5,
+        "RB": 5.45,
+        "DEF": 5.0,
+        "WR": 8.3
+      },
+      "player_lamar_mean": {
+        "TE": -1.965054,
+        "RB": 0.982778,
+        "DEF": -0.91369,
+        "WR": -2.097303,
+        "K": 0.477518,
+        "QB": 0.851068
+      },
+      "player_lamar_stddev": {
+        "TE": 5.369365,
+        "RB": 7.679396,
+        "DEF": 5.965499,
+        "WR": 6.836711,
+        "K": 4.207558,
+        "QB": 9.036463
+      },
+      "total_manager_lamar": 8393.7,
+      "started_with_lamar_pct": 0.99406,
+      "player_lamar_count": 7320
+    },
+    "combo_id": "C010",
+    "representative": {
+      "database_name": "the_pigskin_platoon",
+      "league_name": "The Pigskin Platoon",
+      "platform": "ESPN",
+      "year": 2016
+    }
+  },
+  "combo_011": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 7.5,
+        "QB": 15.84,
+        "TE": 7.95,
+        "WR": 7.8,
+        "RB": 5.1,
+        "DEF": 7.75
+      },
+      "player_lamar_mean": {
+        "TE": -3.663243,
+        "K": 0.117958,
+        "RB": 1.292869,
+        "DEF": -3.46875,
+        "WR": -2.191186,
+        "QB": -2.915847
+      },
+      "player_lamar_stddev": {
+        "TE": 5.225642,
+        "K": 4.560701,
+        "RB": 7.431823,
+        "DEF": 6.141794,
+        "WR": 6.778057,
+        "QB": 9.433018
+      },
+      "total_manager_lamar": 6411.24,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7840
+    },
+    "combo_id": "C011",
+    "representative": {
+      "database_name": "the_pigskin_platoon",
+      "league_name": "The Pigskin Platoon",
+      "platform": "ESPN",
+      "year": 2021
+    }
+  },
+  "combo_012": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": []
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 5.8,
+        "QB": 9.93,
+        "RB": 2.3,
+        "WR": 4.05
+      },
+      "player_lamar_mean": {
+        "TE": -1.598235,
+        "WR": 1.548975,
+        "QB": 1.161222,
+        "RB": 3.534464
+      },
+      "player_lamar_stddev": {
+        "TE": 5.095898,
+        "WR": 6.650017,
+        "QB": 9.451751,
+        "RB": 7.129825
+      },
+      "total_manager_lamar": 10225.755,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 6876
+    },
+    "combo_id": "C012",
+    "representative": {
+      "database_name": "zootown_dynasty",
+      "league_name": "zootown_dynasty",
+      "platform": "Sleeper",
+      "year": 2023
+    }
+  },
+  "combo_013": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_tds",
+          -1.0
+        ],
+        [
+          "passing_2pt_conversions",
+          -1.0
+        ],
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "special_teams_tds",
+          -1.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 7.0,
+        "QB": 7.14,
+        "TE": 6.25,
+        "RB": 3.25,
+        "DEF": 7.0,
+        "WR": 6.0
+      },
+      "player_lamar_mean": {
+        "RB": 2.741842,
+        "DEF": -0.988756,
+        "TE": -1.974551,
+        "QB": 1.624277,
+        "WR": 0.210176,
+        "K": -0.169052
+      },
+      "player_lamar_stddev": {
+        "RB": 7.567457,
+        "DEF": 6.400036,
+        "TE": 4.993154,
+        "QB": 8.526584,
+        "WR": 6.875217,
+        "K": 4.085395
+      },
+      "total_manager_lamar": 8731.22,
+      "started_with_lamar_pct": 0.999392,
+      "player_lamar_count": 7176
+    },
+    "combo_id": "C013",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2007
+    }
+  },
+  "combo_014": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_interceptions",
+          -0.5
+        ],
+        [
+          "passing_yards",
+          -0.006666666666667001
+        ],
+        [
+          "rushing_fumbles_lost",
+          1.0
+        ],
+        [
+          "sack_fumbles_lost",
+          1.0
+        ],
+        [
+          "receiving_fumbles_lost",
+          1.0
+        ],
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 6.85,
+        "DEF": 7.5,
+        "QB": 11.61,
+        "RB": 3.0,
+        "K": 8.5,
+        "WR": 5.5
+      },
+      "player_lamar_mean": {
+        "RB": 3.279422,
+        "K": -0.767035,
+        "WR": 0.35129,
+        "TE": -2.386146,
+        "DEF": -0.858883,
+        "QB": 0.411959
+      },
+      "player_lamar_stddev": {
+        "RB": 7.421135,
+        "K": 4.293709,
+        "WR": 6.714951,
+        "TE": 5.56471,
+        "DEF": 6.356663,
+        "QB": 9.223271
+      },
+      "total_manager_lamar": 10072.51,
+      "started_with_lamar_pct": 0.99102,
+      "player_lamar_count": 7286
+    },
+    "combo_id": "C014",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2011
+    }
+  },
+  "combo_015": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 7.4,
+        "K": 4.75,
+        "QB": 6.27,
+        "WR": 7.65,
+        "RB": 4.4,
+        "DEF": 9.0
+      },
+      "player_lamar_mean": {
+        "RB": 2.156489,
+        "DEF": -1.958333,
+        "QB": 6.488579,
+        "TE": -2.697724,
+        "K": -0.392857,
+        "WR": -1.494355
+      },
+      "player_lamar_stddev": {
+        "RB": 7.83236,
+        "DEF": 5.880662,
+        "QB": 10.210006,
+        "TE": 5.26808,
+        "K": 2.481435,
+        "WR": 6.936116
+      },
+      "total_manager_lamar": 10362.525,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7305
+    },
+    "combo_id": "C015",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2019
+    }
+  },
+  "combo_016": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 9.0,
+        "QB": 13.47,
+        "TE": 8.2,
+        "RB": 5.25,
+        "DEF": 7.0,
+        "WR": 8.4
+      },
+      "player_lamar_mean": {
+        "TE": -3.626447,
+        "K": -0.543664,
+        "WR": -1.403129,
+        "QB": -0.249191,
+        "RB": 1.704135,
+        "DEF": -2.703125
+      },
+      "player_lamar_stddev": {
+        "TE": 6.023997,
+        "K": 4.858043,
+        "WR": 7.833877,
+        "QB": 9.532971,
+        "RB": 8.0639,
+        "DEF": 6.209816
+      },
+      "total_manager_lamar": 9154.68,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7801
+    },
+    "combo_id": "C016",
+    "representative": {
+      "database_name": "the_pigskin_platoon",
+      "league_name": "The Pigskin Platoon",
+      "platform": "ESPN",
+      "year": 2024
+    }
+  },
+  "combo_017": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_yds",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": []
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 10.0,
+        "QB": 15.77,
+        "TE": 9.5,
+        "WR": 7.7,
+        "RB": 4.95,
+        "DEF": 7.3875
+      },
+      "player_lamar_mean": {
+        "TE": -4.410089,
+        "RB": 1.80996,
+        "DEF": -2.441548,
+        "QB": -1.996504,
+        "K": -1.546891,
+        "WR": -1.134868
+      },
+      "player_lamar_stddev": {
+        "TE": 6.023209,
+        "RB": 8.047605,
+        "DEF": 6.633282,
+        "QB": 9.493898,
+        "K": 5.064391,
+        "WR": 7.818598
+      },
+      "total_manager_lamar": 8827.465,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7861
+    },
+    "combo_id": "C017",
+    "representative": {
+      "database_name": "the_real_ff_league",
+      "league_name": "The Real FF League",
+      "platform": "Sleeper",
+      "year": 2024
+    }
+  },
+  "combo_018": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 4.2,
+        "K": 7.5,
+        "RB": 1.75,
+        "QB": 0.72,
+        "WR": 3.9
+      },
+      "player_lamar_mean": {
+        "TE": 0.461208,
+        "K": 0.515152,
+        "RB": 4.319081,
+        "WR": 2.257633,
+        "QB": 7.227971
+      },
+      "player_lamar_stddev": {
+        "TE": 5.827211,
+        "K": 4.990693,
+        "RB": 7.835177,
+        "WR": 7.696798,
+        "QB": 10.14397
+      },
+      "total_manager_lamar": 20439.94,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 8286
+    },
+    "combo_id": "C018",
+    "representative": {
+      "database_name": "degenerate_gamblers_football_league",
+      "league_name": "Degenerate Gamblers Football League",
+      "platform": "Sleeper",
+      "year": 2024
+    }
+  },
+  "combo_019": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_fumbles_lost",
+          1.0
+        ],
+        [
+          "sack_fumbles_lost",
+          1.0
+        ],
+        [
+          "receiving_fumbles_lost",
+          1.0
+        ],
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "QB": 7.45,
+        "TE": 6.55,
+        "DEF": 8.0,
+        "RB": 3.05,
+        "K": 8.0,
+        "WR": 5.45
+      },
+      "player_lamar_mean": {
+        "TE": -2.057333,
+        "DEF": -1.482759,
+        "QB": 2.776341,
+        "RB": 3.370202,
+        "K": -1.463311,
+        "WR": 0.352204
+      },
+      "player_lamar_stddev": {
+        "TE": 5.489662,
+        "DEF": 6.514485,
+        "QB": 8.856664,
+        "RB": 7.70315,
+        "K": 4.291108,
+        "WR": 6.630628
+      },
+      "total_manager_lamar": 9319.63,
+      "started_with_lamar_pct": 0.996491,
+      "player_lamar_count": 7165
+    },
+    "combo_id": "C019",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2009
+    }
+  },
+  "combo_020": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_fumbles_lost",
+          1.0
+        ],
+        [
+          "sack_fumbles_lost",
+          1.0
+        ],
+        [
+          "receiving_fumbles_lost",
+          1.0
+        ],
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "RB": 3.75,
+        "K": 8.0,
+        "TE": 6.4,
+        "DEF": 8.0,
+        "WR": 5.35,
+        "QB": 8.25
+      },
+      "player_lamar_mean": {
+        "WR": 0.435621,
+        "QB": 2.799679,
+        "RB": 2.444257,
+        "K": -0.875,
+        "TE": -2.357738,
+        "DEF": -1.558471
+      },
+      "player_lamar_stddev": {
+        "WR": 6.81136,
+        "QB": 9.032927,
+        "RB": 7.50533,
+        "K": 4.365898,
+        "TE": 5.084157,
+        "DEF": 6.576898
+      },
+      "total_manager_lamar": 9376.81,
+      "started_with_lamar_pct": 0.989899,
+      "player_lamar_count": 7275
+    },
+    "combo_id": "C020",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2010
+    }
+  },
+  "combo_021": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 8.4,
+        "DEF": 7.625,
+        "RB": 4.45,
+        "K": 9.0,
+        "WR": 6.1,
+        "QB": 13.95
+      },
+      "player_lamar_mean": {
+        "TE": -3.292308,
+        "DEF": -2.061282,
+        "RB": 2.114818,
+        "K": -0.836127,
+        "WR": 0.001336,
+        "QB": -0.563578
+      },
+      "player_lamar_stddev": {
+        "TE": 5.732023,
+        "DEF": 7.114869,
+        "RB": 7.326877,
+        "K": 4.333051,
+        "WR": 7.190261,
+        "QB": 9.16959
+      },
+      "total_manager_lamar": 8191.97,
+      "started_with_lamar_pct": 0.99576,
+      "player_lamar_count": 7101
+    },
+    "combo_id": "C021",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2013
+    }
+  },
+  "combo_022": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_half",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_interceptions",
+          -0.5
+        ],
+        [
+          "rushing_fumbles_lost",
+          0.5
+        ],
+        [
+          "sack_fumbles_lost",
+          0.5
+        ],
+        [
+          "receiving_fumbles_lost",
+          0.5
+        ],
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ],
+        [
+          "fum_ret_td",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "QB": 4.03,
+        "TE": 7.5,
+        "DEF": 4.6075,
+        "RB": 3.2,
+        "K": 4.45,
+        "WR": 5.95
+      },
+      "player_lamar_mean": {
+        "WR": -0.59434,
+        "QB": 6.797676,
+        "TE": -3.422456,
+        "DEF": -1.300866,
+        "RB": 2.829736,
+        "K": -0.440263
+      },
+      "player_lamar_stddev": {
+        "WR": 6.753672,
+        "QB": 10.225241,
+        "TE": 5.232205,
+        "DEF": 2.820778,
+        "RB": 7.342163,
+        "K": 2.386588
+      },
+      "total_manager_lamar": 13409.96,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 8224
+    },
+    "combo_id": "C022",
+    "representative": {
+      "database_name": "the_league",
+      "league_name": "The League",
+      "platform": "Sleeper",
+      "year": 2021
+    }
+  },
+  "combo_023": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 7.5,
+        "QB": 14.97,
+        "TE": 8.1,
+        "RB": 8.7,
+        "DEF": 7.0,
+        "WR": 9.05
+      },
+      "player_lamar_mean": {
+        "TE": -3.637876,
+        "K": -0.816578,
+        "WR": -2.899501,
+        "QB": -1.762435,
+        "RB": -2.26142,
+        "DEF": -1.410928
+      },
+      "player_lamar_stddev": {
+        "TE": 5.436565,
+        "K": 4.586415,
+        "WR": 7.118431,
+        "QB": 8.846273,
+        "RB": 7.307011,
+        "DEF": 6.745974
+      },
+      "total_manager_lamar": 4221.74,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7164
+    },
+    "combo_id": "C023",
+    "representative": {
+      "database_name": "the_pigskin_platoon",
+      "league_name": "The Pigskin Platoon",
+      "platform": "ESPN",
+      "year": 2014
+    }
+  },
+  "combo_024": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 7.5,
+        "RB": 5.95,
+        "DEF": 7.5,
+        "TE": 7.65,
+        "QB": 15.43,
+        "WR": 10.2
+      },
+      "player_lamar_mean": {
+        "TE": -2.906261,
+        "K": -0.843972,
+        "WR": -3.38411,
+        "RB": 0.358679,
+        "DEF": -2.52994,
+        "QB": -2.338527
+      },
+      "player_lamar_stddev": {
+        "TE": 5.744419,
+        "K": 4.295847,
+        "WR": 7.256009,
+        "RB": 7.185277,
+        "DEF": 7.161125,
+        "QB": 9.427644
+      },
+      "total_manager_lamar": 5580.24,
+      "started_with_lamar_pct": 0.992905,
+      "player_lamar_count": 7236
+    },
+    "combo_id": "C024",
+    "representative": {
+      "database_name": "the_pigskin_platoon",
+      "league_name": "The Pigskin Platoon",
+      "platform": "ESPN",
+      "year": 2015
+    }
+  },
+  "combo_025": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "special_teams_tds",
+          -6.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 7.5,
+        "QB": 18.04,
+        "TE": 8.4,
+        "RB": 4.4,
+        "DEF": 7.5,
+        "WR": 7.25
+      },
+      "player_lamar_mean": {
+        "RB": 1.448109,
+        "DEF": -3.855655,
+        "K": 0.507449,
+        "QB": -3.451004,
+        "WR": -1.709473,
+        "TE": -4.125699
+      },
+      "player_lamar_stddev": {
+        "RB": 7.044609,
+        "DEF": 6.037883,
+        "K": 4.716787,
+        "QB": 10.019523,
+        "WR": 6.194403,
+        "TE": 4.92782
+      },
+      "total_manager_lamar": 4632.69,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7387
+    },
+    "combo_id": "C025",
+    "representative": {
+      "database_name": "the_pigskin_platoon",
+      "league_name": "The Pigskin Platoon",
+      "platform": "ESPN",
+      "year": 2020
+    }
+  },
+  "combo_026": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_yards",
+          0.010000000745058059
+        ],
+        [
+          "carries",
+          0.10000000298023223
+        ],
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "receptions_40plus",
+          1.5
+        ],
+        [
+          "receptions_0_4",
+          0.20000000298023224
+        ],
+        [
+          "receptions_5_9",
+          0.4000000059604645
+        ],
+        [
+          "receptions_10_19",
+          0.6000000238418579
+        ],
+        [
+          "receptions_20_29",
+          0.800000011920929
+        ],
+        [
+          "receptions_30_39",
+          1.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 7.55,
+        "K": 9.0,
+        "QB": 7.34,
+        "WR": 6.9,
+        "RB": 4.65,
+        "DEF": 7.25
+      },
+      "player_lamar_mean": {
+        "WR": -1.557991,
+        "K": -0.935764,
+        "TE": -2.913894,
+        "RB": 2.45487,
+        "DEF": -1.471591,
+        "QB": 7.006299
+      },
+      "player_lamar_stddev": {
+        "WR": 6.726686,
+        "K": 4.54908,
+        "TE": 6.097779,
+        "RB": 8.385966,
+        "DEF": 6.346047,
+        "QB": 11.312575
+      },
+      "total_manager_lamar": 14143.775,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7927
+    },
+    "combo_id": "C026",
+    "representative": {
+      "database_name": "champions_branch_out",
+      "league_name": "champions_branch_out",
+      "platform": "Sleeper",
+      "year": 2021
+    }
+  },
+  "combo_027": {
+    "scoring_config": {
+      "pass": "pts_pass_6pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "carries",
+          0.1
+        ],
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "receptions_40plus",
+          1.5
+        ],
+        [
+          "receptions_0_4",
+          0.20000000298023224
+        ],
+        [
+          "receptions_5_9",
+          0.4000000059604645
+        ],
+        [
+          "receptions_10_19",
+          0.6000000238418579
+        ],
+        [
+          "receptions_20_29",
+          0.800000011920929
+        ],
+        [
+          "receptions_30_39",
+          1.0
+        ],
+        [
+          "rushing_first_downs",
+          -0.5
+        ],
+        [
+          "receiving_first_downs",
+          -0.5
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 9.0,
+        "TE": 7.35,
+        "QB": 6.26,
+        "RB": 4.7,
+        "DEF": 8.0,
+        "WR": 6.425
+      },
+      "player_lamar_mean": {
+        "K": -0.930412,
+        "QB": 8.672743,
+        "TE": -2.734063,
+        "WR": -0.380798,
+        "RB": 2.935868,
+        "DEF": -1.768466
+      },
+      "player_lamar_stddev": {
+        "K": 4.458922,
+        "QB": 11.920799,
+        "TE": 5.976105,
+        "WR": 7.139679,
+        "RB": 9.029788,
+        "DEF": 5.89805
+      },
+      "total_manager_lamar": 16602.58,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7909
+    },
+    "combo_id": "C027",
+    "representative": {
+      "database_name": "champions_branch_out",
+      "league_name": "champions_branch_out",
+      "platform": "Sleeper",
+      "year": 2022
+    }
+  },
+  "combo_028": {
+    "scoring_config": {
+      "pass": "pts_pass_6pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_yds",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_yards",
+          0.010000000000000002
+        ],
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "receptions_40plus",
+          1.5
+        ],
+        [
+          "receptions_0_4",
+          0.20000000298023224
+        ],
+        [
+          "receptions_5_9",
+          0.4000000059604645
+        ],
+        [
+          "receptions_10_19",
+          0.6000000238418579
+        ],
+        [
+          "receptions_20_29",
+          0.800000011920929
+        ],
+        [
+          "receptions_30_39",
+          1.0
+        ],
+        [
+          "rushing_first_downs",
+          -0.5
+        ],
+        [
+          "receiving_first_downs",
+          -0.5
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 1.5,
+        "TE": 7.45,
+        "QB": 17.525,
+        "RB": 3.6,
+        "DEF": 7.25,
+        "WR": 5.35
+      },
+      "player_lamar_mean": {
+        "TE": -2.684499,
+        "RB": 2.734734,
+        "DEF": -0.727273,
+        "K": 5.701626,
+        "WR": 0.139509,
+        "QB": -0.502521
+      },
+      "player_lamar_stddev": {
+        "TE": 6.148143,
+        "RB": 7.864261,
+        "DEF": 6.245298,
+        "K": 5.223634,
+        "WR": 7.356945,
+        "QB": 12.109334
+      },
+      "total_manager_lamar": 14205.6,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7792
+    },
+    "combo_id": "C028",
+    "representative": {
+      "database_name": "champions_branch_out",
+      "league_name": "champions_branch_out",
+      "platform": "Sleeper",
+      "year": 2023
+    }
+  },
+  "combo_029": {
+    "scoring_config": {
+      "pass": "pts_pass_4pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_yds",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_yards",
+          0.010000000000000002
+        ],
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "receptions_40plus",
+          1.5
+        ],
+        [
+          "receptions_0_4",
+          0.20000000298023224
+        ],
+        [
+          "receptions_5_9",
+          0.4000000059604645
+        ],
+        [
+          "receptions_10_19",
+          0.6000000238418579
+        ],
+        [
+          "receptions_20_29",
+          0.800000011920929
+        ],
+        [
+          "receptions_30_39",
+          1.0
+        ],
+        [
+          "rushing_first_downs",
+          -0.5
+        ],
+        [
+          "receiving_first_downs",
+          -0.5
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 8.0,
+        "QB": 14.94,
+        "TE": 4.5,
+        "WR": 6.0,
+        "RB": 3.8,
+        "DEF": 0.75
+      },
+      "player_lamar_mean": {
+        "WR": -0.058793,
+        "QB": -0.63735,
+        "RB": 2.974479,
+        "DEF": 3.826065,
+        "TE": -0.319899,
+        "K": 0.3471
+      },
+      "player_lamar_stddev": {
+        "WR": 7.304128,
+        "QB": 10.577499,
+        "RB": 8.156767,
+        "DEF": 6.793336,
+        "TE": 5.386943,
+        "K": 4.852163
+      },
+      "total_manager_lamar": 17175.805,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7897
+    },
+    "combo_id": "C029",
+    "representative": {
+      "database_name": "champions_branch_out",
+      "league_name": "champions_branch_out",
+      "platform": "Sleeper",
+      "year": 2024
+    }
+  },
+  "combo_030": {
+    "scoring_config": {
+      "pass": "pts_pass_6pt_int1",
+      "rec": "pts_rec_0ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_yds",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "passing_yards",
+          0.010000000000000002
+        ],
+        [
+          "carries",
+          0.1
+        ],
+        [
+          "rushing_fumbles",
+          -1.0
+        ],
+        [
+          "sack_fumbles",
+          -1.0
+        ],
+        [
+          "receiving_fumbles",
+          -1.0
+        ],
+        [
+          "receptions_40plus",
+          1.5
+        ],
+        [
+          "receptions_0_4",
+          0.20000000298023224
+        ],
+        [
+          "receptions_5_9",
+          0.4000000059604645
+        ],
+        [
+          "receptions_10_19",
+          0.6000000238418579
+        ],
+        [
+          "receptions_20_29",
+          0.800000011920929
+        ],
+        [
+          "receptions_30_39",
+          1.0
+        ],
+        [
+          "rushing_first_downs",
+          -0.5
+        ],
+        [
+          "receiving_first_downs",
+          -0.5
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "K": 8.0,
+        "QB": 11.05,
+        "TE": 6.85,
+        "RB": 6.25,
+        "DEF": 6.5,
+        "WR": 7.1
+      },
+      "player_lamar_mean": {
+        "RB": 0.146062,
+        "DEF": -1.00744,
+        "K": 0.146561,
+        "WR": -2.449807,
+        "TE": -2.379801,
+        "QB": 3.985367
+      },
+      "player_lamar_stddev": {
+        "RB": 10.026268,
+        "DEF": 6.333381,
+        "K": 4.807042,
+        "WR": 7.327462,
+        "TE": 6.874217,
+        "QB": 15.058603
+      },
+      "total_manager_lamar": 13128.73,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 7928
+    },
+    "combo_id": "C030",
+    "representative": {
+      "database_name": "champions_branch_out",
+      "league_name": "champions_branch_out",
+      "platform": "Sleeper",
+      "year": 2025
+    }
+  },
+  "combo_031": {
+    "scoring_config": {
+      "pass": "pts_pass_6pt",
+      "rec": "pts_rec_ppr",
+      "rush": "pts_rush",
+      "kick": "pts_k_std",
+      "def": "pts_def_std",
+      "misc": "pts_misc",
+      "corrections": [
+        [
+          "rushing_2pt_conversions",
+          -2.0
+        ],
+        [
+          "receiving_2pt_conversions",
+          -2.0
+        ]
+      ]
+    },
+    "lamar_stats": {
+      "replacement_ppg": {
+        "TE": 7.5,
+        "K": 10.0,
+        "QB": 17.1,
+        "DEF": 6.0,
+        "RB": 4.8,
+        "WR": 6.8
+      },
+      "player_lamar_mean": {
+        "DEF": 0.072917,
+        "RB": 1.971858,
+        "WR": -0.751568,
+        "TE": -2.399073,
+        "QB": -1.336455,
+        "K": -1.379914
+      },
+      "player_lamar_stddev": {
+        "DEF": 6.109096,
+        "RB": 8.142692,
+        "WR": 7.283269,
+        "TE": 6.137319,
+        "QB": 11.956822,
+        "K": 5.002737
+      },
+      "total_manager_lamar": 9762.13,
+      "started_with_lamar_pct": 1.0,
+      "player_lamar_count": 8145
+    },
+    "combo_id": "C031",
+    "representative": {
+      "database_name": "keeper_league",
+      "league_name": "Keeper League",
+      "platform": "Yahoo",
+      "year": 2025
+    }
+  }
+}

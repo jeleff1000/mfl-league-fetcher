@@ -24,6 +24,5 @@ jobs:
       request_sleep: "5.0"
       id_start: "7000"
       id_end: "7999"
-      yahoo_oauth_ref: "main"
       artifact_namespace: "recovery-204-31398751688"
     secrets: inherit

@@ -3,11 +3,6 @@ name: MFL 1998 Candidate Probe
 on:
   workflow_dispatch:
     inputs:
-      yahoo_oauth_ref:
-        required: false
-        type: string
-        default: codex/mfl-gates
-
 permissions:
   actions: write
   contents: read
@@ -22,9 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -58,4 +50,3 @@ jobs:
           name: mfl-valid-candidates-1998-special
           retention-days: 30
           path: valid_1998.json
-

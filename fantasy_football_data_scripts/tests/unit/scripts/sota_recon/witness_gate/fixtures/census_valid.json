@@ -1,0 +1,37 @@
+{
+  "contract_version": "1",
+  "source_universe_version": "fixture-v1",
+  "datasets": [
+    {
+      "contract_version": "1",
+      "dataset_id": "nflcom.team_season_roster",
+      "source_class": "canonical",
+      "physical_globs": ["nflcom/rosters/*.parquet"],
+      "year_start": 1920,
+      "year_end": 2025,
+      "producer": {
+        "kind": "ff_assets",
+        "manifest_pin": "run-123/witness-harvest-nflcom-team_season_roster"
+      }
+    },
+    {
+      "contract_version": "1",
+      "dataset_id": "lake.external_witness_intake",
+      "source_class": "secondary",
+      "physical_globs": ["derived/external_witness_intake/EXTERNAL_WITNESS_INDEX.parquet"],
+      "year_start": 1920,
+      "year_end": 2025,
+      "producer": {
+        "kind": "local_lake",
+        "local_only": true
+      }
+    }
+  ],
+  "discoveries": [
+    {
+      "dataset_id": "nflcom.team_season_roster",
+      "url": "https://www.nfl.com/teams/example/roster/1920",
+      "classification": "canonical"
+    }
+  ]
+}

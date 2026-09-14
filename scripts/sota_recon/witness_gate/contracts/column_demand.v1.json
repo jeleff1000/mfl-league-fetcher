@@ -1,0 +1,279 @@
+{
+ "contract_version": "1",
+ "law": "The evidence pack a NEW_SUPERTABLE_COLUMN_CANDIDATE must carry before it may be proposed as a supertable column. Adding a column is promote-class, so the bar is evidence a reviewer can CHECK without re-deriving it: two independent publishers, their measured pairwise agreement, a crossed control ruling out the obvious alternative reading, a bound or identity the values satisfy on each publisher independently, and who would supply it over how many rows.",
+ "why_this_file_exists": "The disposition's reason text has always said candidates route 'through the census + demand join (24.4), never ad-hoc'. Until 2026-07-31 that phrase appeared ONLY in the two strings asserting it -- no module, no ledger, no counter -- so ~414 candidates across the programme had no queue and could not be burned down, and def_interception_long reached full evidence with nowhere to file it.",
+ "status_is_derived": "column_demand.evaluate() is the ONLY thing that sets EVIDENCED. A hand-typed status is forbidden: six nflcom families sat PENDING_CROSSWALK for days after their receipt PASSED because a generator short-circuited on a typed string before the receipt gate ran.",
+ "bar": {
+  "min_publishers": 2,
+  "min_agreement": 0.95,
+  "independence": "publishers must span >= 2 lineage roots per lineage_roots.v1.json; note the DECLARED_UNRECEIPTED elias_gsis_gamebook ancestor means pfr/nflcom/nflverse independence is itself unreceipted (OQ-LR-1), so an EVIDENCED status here is a DEFINITION claim -- two sources report the same number -- not a claim of independent corroboration"
+ },
+ "demands": [
+  {
+   "key": "nflcom_player_career|Defense Career|id_career:DEF_career|lng",
+   "proposed_canonical": "def_interception_long",
+   "unit": "yards",
+   "aggregation_class": "MAX",
+   "rationale": "v26 carries SEVEN *_long columns (fg, kickoff_return, passing, punt, punt_return, receiving, rushing) and no defensive one, while holding def_interception_yards and def_int_ret_td.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "lng",
+     "lineage_root": "nflcom",
+     "player_seasons": 15525
+    },
+    {
+     "source": "pfr_player_defense",
+     "column": "def_int_long",
+     "lineage_root": "pfr",
+     "player_seasons": 89818
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.lng ~ pfr.def_int_long",
+     "agree_pct": 0.9923,
+     "n": 12948,
+     "by_era": {
+      "<1982": 0.984,
+      "1982-93": 0.995,
+      "1994-99": 0.998,
+      "2000-09": 0.999,
+      "2010+": 0.997
+     }
+    }
+   ],
+   "crossed_control": "Against nflcom `lng` the PFR SEASON yardage total reads 52.77% where PFR's own long reads 99.23% -- a 46-point margin. The 52.77% is itself explained: on a one-interception season the long IS the total.",
+   "constraint": "BOUND lng <= season interception-return yards holds independently on both publishers: 99.13% (nflcom) and 98.97% (PFR) of 15,468. SELF-CHECK: on seasons with exactly one interception, lng == yds on 98.82% of 4,985.",
+   "lower_layer_denominator": {"counter": "def_interceptions", "layer": "weekly/season canonical defensive interception counter", "status": "HOLD", "agreement": 0.9992, "reason": "PFR's lower-layer def_int has one 2025 mismatch (1532/1533); the long counter cannot clear until the denominator is reconciled."},
+   "supply": "pfr_player_defense.def_int_long, 89,818 player-seasons",
+   "measured_utc": "2026-07-31"
+  },
+  {
+   "key": "nflcom_player_career|P Career|id_career:P|tb",
+   "proposed_canonical": "punt_touchbacks",
+   "unit": "count",
+   "aggregation_class": "SUM",
+   "rationale": "punt-coverage family; v26 carries no coverage-side punting columns at all.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "tb",
+     "lineage_root": "nflcom",
+     "player_seasons": 1940
+    },
+    {
+     "source": "pfr_player_punting",
+     "column": "punt_tb",
+     "lineage_root": "pfr",
+     "player_seasons": 1940
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.tb ~ pfr.punt_tb",
+     "agree_pct": 0.999,
+     "n": 1940
+    }
+   ],
+   "crossed_control": "The same join and the same 1,940 rows match `rety` to a DIFFERENT PFR column (punt_ret_yds_opp, 96.19%), so the join is not agreeing with everything indiscriminately.",
+   "constraint": "BOUND tb <= punts on the nflcom side; punts itself is a licensed mapping at 0.9966.",
+   "lower_layer_denominator": {"counter": "punts", "layer": "season canonical punting counter", "status": "PASS", "agreement": 0.9966, "evidence": "witness_licence_floors.v1.json: nflcom_player_career P Career punts, n=590"},
+   "supply": "pfr_player_punting.punt_tb",
+   "measured_utc": "2026-07-31"
+  },
+  {
+   "key": "nflcom_player_career|P Career|id_career:P|in_20",
+   "proposed_canonical": "punts_inside_20",
+   "unit": "count",
+   "aggregation_class": "SUM",
+   "rationale": "the standard punt-placement statistic; v26 has no coverage-side punting.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "in_20",
+     "lineage_root": "nflcom",
+     "player_seasons": 1940
+    },
+    {
+     "source": "pfr_player_punting",
+     "column": "punt_in_20",
+     "lineage_root": "pfr",
+     "player_seasons": 1940
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.in_20 ~ pfr.punt_in_20",
+     "agree_pct": 0.9959,
+     "n": 1940
+    }
+   ],
+   "crossed_control": "as `tb`: the same rows discriminate rety onto a different PFR column.",
+   "constraint": "BOUND in_20 <= punts.",
+   "lower_layer_denominator": {"counter": "punts", "layer": "season canonical punting counter", "status": "PASS", "agreement": 0.9966, "evidence": "witness_licence_floors.v1.json: nflcom_player_career P Career punts, n=590"},
+   "supply": "pfr_player_punting.punt_in_20",
+   "measured_utc": "2026-07-31"
+  },
+  {
+   "key": "nflcom_player_career|P Career|id_career:P|net_yds",
+   "proposed_canonical": "punt_net_yards",
+   "unit": "yards",
+   "aggregation_class": "SUM",
+   "rationale": "net punting is the coverage-adjusted total; v26 carries gross punt_yards only.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "net_yds",
+     "lineage_root": "nflcom",
+     "player_seasons": 1940
+    },
+    {
+     "source": "pfr_player_punting",
+     "column": "punt_net_yds",
+     "lineage_root": "pfr",
+     "player_seasons": 1940
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.net_yds ~ pfr.punt_net_yds",
+     "agree_pct": 0.9562,
+     "n": 1940
+    }
+   ],
+   "crossed_control": "as `tb`.",
+   "constraint": "BOUND net_yds <= punt_yards (gross); punt_yards is a licensed mapping at 0.9797.",
+   "lower_layer_denominator": {"counter": "punt_yards", "layer": "season canonical gross punting counter", "status": "HOLD", "agreement": 0.9797, "reason": "gross punt_yards is below the 0.995 quality bar; net yards cannot clear against an unstable lower layer."},
+   "supply": "pfr_player_punting.punt_net_yds",
+   "measured_utc": "2026-07-31"
+  },
+  {
+   "key": "nflcom_player_career|K Career|id_career:K|tb",
+   "proposed_canonical": "kickoff_touchbacks",
+   "unit": "count",
+   "aggregation_class": "SUM",
+   "rationale": "v26 carries the kickoff RETURN side and nothing for the kicking side. A touchback is the modern kickoff's most common outcome, so its absence makes kickoff volume uninterpretable.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "tb",
+     "lineage_root": "nflcom",
+     "player_seasons": 3474
+    },
+    {
+     "source": "pfr_player_kicking",
+     "column": "kickoff_tb",
+     "lineage_root": "pfr",
+     "player_seasons": 1695
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.tb ~ pfr.kickoff_tb",
+     "agree_pct": 0.9729,
+     "n": 1695
+    }
+   ],
+   "crossed_control": "fgm -> fgm on the SAME join agrees 100.00% (n=2,596), so the crosswalk and the per-team dedupe are not the source of any disagreement here.",
+   "constraint": "0 <= kickoff_touchbacks <= kickoffs; integer",
+   "lower_layer_denominator": {"counter": "kickoffs", "layer": "season canonical kickoff-volume counter", "status": "HOLD", "reason": "no receipted lower-layer kickoffs counter is currently registered; the bound is only prose until that counter is measured."},
+   "supply": "pfr_player_kicking.kickoff_tb (1,695 player-seasons) + nflcom K Career (3,474)"
+  },
+  {
+   "key": "nflcom_player_career|P Career|id_career:P|rety",
+   "proposed_canonical": "punt_return_yards_allowed",
+   "unit": "yards",
+   "aggregation_class": "SUM",
+   "rationale": "The PUNTING team's coverage result. v26 carries punt_return_yards (the returner's stat) and nothing for yards allowed, which is what evaluates a punter's coverage unit and is the operand net punting is built from.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "rety",
+     "lineage_root": "nflcom",
+     "player_seasons": 2881
+    },
+    {
+     "source": "pfr_player_punting",
+     "column": "punt_ret_yds_opp",
+     "lineage_root": "pfr",
+     "player_seasons": 1940
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.rety ~ pfr.punt_ret_yds_opp",
+     "agree_pct": 0.9619,
+     "n": 1940
+    }
+   ],
+   "crossed_control": "punts -> punt on the SAME join agrees 99.56% (n=2,712). And rety is POSITIVELY IDENTIFIED as the allowed side rather than assumed: its block-mates `ret` and `td` were withdrawn from the returner-side canonicals at 0.00% and 67.34%, so the block is the coverage block.",
+   "constraint": "punt_return_yards_allowed >= 0; may be negative in the source on a single season (eg -7) where returns lost yardage",
+   "lower_layer_denominator": {"counter": "punts", "layer": "season canonical punting counter", "status": "HOLD", "reason": "the candidate is a coverage-side yard counter, but no lower-layer coverage-volume receipt proves its denominator/constraint yet."},
+   "supply": "pfr_player_punting.punt_ret_yds_opp (1,940) + nflcom P Career (2,881)"
+  },
+  {
+   "key": "nflcom_player_career|K Career|id_career:K|avg",
+   "proposed_canonical": "kickoff_yards_per_kickoff",
+   "unit": "yards/kickoff",
+   "aggregation_class": "RECOMPUTE_RATE",
+   "rationale": "Average kickoff distance. IDENTITY IS CONFIRMED, the agreement is not: median difference against PFR kickoff_yds_avg is 0.0 and 84.15% land within 1.0 yard, but only 22.96% within 0.05. Both publish one decimal over slightly different kickoff sets, and PFR's own published avg does not equal its own yds/ko either (57.03%). This is a rate-tolerance question, not a mapping question.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "avg",
+     "lineage_root": "nflcom",
+     "player_seasons": 3473
+    },
+    {
+     "source": "pfr_player_kicking",
+     "column": "kickoff_yds_avg",
+     "lineage_root": "pfr",
+     "player_seasons": 1969
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.avg ~ pfr.kickoff_yds_avg",
+     "agree_pct": 0.2296,
+     "n": 1969,
+     "note": "within 1.0 yard: 0.8415; median diff 0.0; two-sided (nflcom higher 886, PFR higher 631)"
+    }
+   ],
+   "crossed_control": "Restricting to SINGLE-TEAM seasons moved it 0.2448 -> 0.2513, which refutes per-team rate summing as the cause. Medians 61.4 (nflcom) vs 62.0 (PFR) confirm the column is kickoff distance, not return average (avg_2 medians 21.4).",
+   "constraint": "a kickoff averages ~55-70 yards; nflcom max 247.9 exceeds any possible single-kick distance and is itself a defect to explain",
+   "supply": "pfr_player_kicking.kickoff_yds + .kickoff give the operands nflcom lacks"
+  },
+  {
+   "key": "nflcom_player_career|P Career|id_career:P|net_avg",
+   "proposed_canonical": "punt_net_yards_per_punt",
+   "unit": "yards/punt",
+   "aggregation_class": "RECOMPUTE_RATE",
+   "rationale": "Net punting average. Joe: one of three published rates carrying NO equation floor. Measured against PFR punt_net_yds_per_punt at 65.37% on single-team seasons -- too low to promote and too high to dismiss; the two publishers likely differ on the touchback penalty in the numerator.",
+   "publishers": [
+    {
+     "source": "nflcom_player_career",
+     "column": "net_avg",
+     "lineage_root": "nflcom",
+     "player_seasons": 2878
+    },
+    {
+     "source": "pfr_player_punting",
+     "column": "punt_net_yds_per_punt",
+     "lineage_root": "pfr",
+     "player_seasons": 1877
+    }
+   ],
+   "agreement": [
+    {
+     "pair": "nflcom.net_avg ~ pfr.punt_net_yds_per_punt",
+     "agree_pct": 0.6537,
+     "n": 1877
+    }
+   ],
+   "crossed_control": "its OPERAND net_yds -> punt_net_yds agrees 95.62% on the same join, so the numerator is sound and the disagreement is in the rate definition",
+   "constraint": "punt_net_yards_per_punt < punt_yards_per_punt by construction",
+   "supply": "derive from punt_net_yards / punts once net_yards is promoted"
+  }
+ ]
+}

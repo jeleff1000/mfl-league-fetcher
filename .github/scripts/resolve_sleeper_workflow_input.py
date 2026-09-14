@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 
@@ -61,6 +62,26 @@ def parse_history_ids(league_ids: object) -> dict[int, str]:
     return by_year
 
 
+def fly_query(sql: str, database: str = "___ops") -> list[dict]:
+    server_url = os.environ.get("DATABASE_SERVER_URL", "").rstrip("/")
+    read_token = os.environ.get("DATABASE_READ_TOKEN", "").strip()
+    if not server_url or not read_token:
+        return []
+
+    data = json.dumps({"sql": sql, "database": database}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{server_url}/query",
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {read_token}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = json.loads(resp.read())
+    return payload if isinstance(payload, list) else payload.get("rows", [])
+
+
 def canonical_sleeper_league_id(league_data: dict) -> tuple[str, int | None, int | None]:
     direct_id = str(league_data.get("sleeper_league_id") or league_data.get("league_id") or "").strip()
     history_ids = parse_history_ids(league_data.get("league_ids") or {})
@@ -84,6 +105,30 @@ def canonical_sleeper_league_id(league_data: dict) -> tuple[str, int | None, int
             return league_id, min(history_ids), latest_year
 
     return history_ids[latest_year], min(history_ids), latest_year
+
+
+def lookup_registered_sleeper_league_id(database_name: str) -> str:
+    database_name = str(database_name or "").strip()
+    if not database_name:
+        return ""
+
+    escaped_db_name = database_name.replace("'", "''")
+
+    try:
+        rows = fly_query(
+            "SELECT sleeper_league_id "
+            "FROM main.sleeper_leagues "
+            f"WHERE database_name = '{escaped_db_name}' "
+            "ORDER BY updated_at DESC "
+            "LIMIT 1"
+        )
+    except Exception as exc:
+        print(f"WARNING: current Sleeper mapping lookup failed: {exc}", file=sys.stderr)
+        return ""
+
+    if not rows:
+        return ""
+    return str(rows[0].get("sleeper_league_id") or "").strip()
 
 
 def resolve_db_name(league_id: str, league_name: str, pre_resolved_db_name: str) -> str:
@@ -131,9 +176,7 @@ def main() -> None:
     league_name = str(league_data.get("league_name") or "Sleeper League")
     username = str(league_data.get("username") or "").strip()
     user_id = os.environ.get("USER_ID", "").strip()
-    import_mode = (
-        os.environ.get("IMPORT_MODE", "").strip() or str(league_data.get("import_mode") or "quick").strip()
-    )
+    import_mode = os.environ.get("IMPORT_MODE", "").strip() or str(league_data.get("import_mode") or "quick").strip()
 
     canonical_id, history_start_year, history_end_year = canonical_sleeper_league_id(league_data)
     if not canonical_id:
@@ -161,10 +204,30 @@ def main() -> None:
     league_data["end_year"] = end_year
     league_data["season"] = end_year
 
-    pre_resolved_db_name = (
-        os.environ.get("PRE_RESOLVED_DATABASE_NAME", "").strip()
-        or str(league_data.get("database_name") or "").strip()
-    )
+    env_pre_resolved_db_name = os.environ.get("PRE_RESOLVED_DATABASE_NAME", "").strip()
+    payload_db_name = str(league_data.get("database_name") or "").strip()
+    pre_resolved_db_name = env_pre_resolved_db_name or payload_db_name
+
+    if env_pre_resolved_db_name and payload_db_name and env_pre_resolved_db_name != payload_db_name:
+        payload_registered_id = lookup_registered_sleeper_league_id(payload_db_name)
+        if payload_registered_id and payload_registered_id == canonical_id:
+            print(
+                f"INFO: Preferring payload database_name {payload_db_name} over pre-resolved "
+                f"{env_pre_resolved_db_name} because it is registered to Sleeper id {canonical_id}",
+                file=sys.stderr,
+            )
+            pre_resolved_db_name = payload_db_name
+
+    registered_canonical_id = lookup_registered_sleeper_league_id(pre_resolved_db_name)
+    if registered_canonical_id and registered_canonical_id != canonical_id:
+        print(
+            f"INFO: Promoting {pre_resolved_db_name} to current registered Sleeper id {registered_canonical_id}",
+            file=sys.stderr,
+        )
+        canonical_id = registered_canonical_id
+        league_data["sleeper_league_id"] = canonical_id
+        league_data["league_id"] = canonical_id
+
     database_name = resolve_db_name(canonical_id, league_name, pre_resolved_db_name)
 
     outputs = {

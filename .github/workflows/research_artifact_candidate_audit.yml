@@ -32,7 +32,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT || github.token }}
+  GH_TOKEN: ${{ github.token }}
   AUDIT_RUN_ID: ${{ inputs.audit_run_id || '31337901490' }}
   BASE_CACHE_KEY: ${{ inputs.base_cache_key || 'research-public-lake-v4-Linux-20260806-championship-v2-final-playoff-anchor-outcomes-31147899613' }}
   SHARD_COUNT: ${{ inputs.shard_count || '256' }}

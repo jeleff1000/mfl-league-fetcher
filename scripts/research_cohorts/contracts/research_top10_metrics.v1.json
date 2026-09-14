@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "description": "Production-visible numeric player boards whose ordered top ten is measured within each season. Time identity columns (year and week/year) are excluded.",
+  "groups": [
+    {
+      "dataset": "matchup",
+      "grain": "weekly",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "all",
+      "metrics": [
+        {"metric": "points", "support_metric": "eligible_leagues", "source_metric": "canonical_points", "ui_sortable": true},
+        {"metric": "start_rate", "support_metric": "eligible_leagues", "source_metric": "start_rate_pct", "ui_sortable": true},
+        {"metric": "win_rate", "support_metric": "eligible_leagues", "source_metric": "won_pct", "ui_sortable": true},
+        {"metric": "expected_wins", "support_metric": "eligible_leagues", "source_metric": "expected_wins", "ui_sortable": false},
+        {"metric": "lamar", "support_metric": "started_leagues", "source_metric": "avg_lamar_started", "ui_sortable": true},
+        {"metric": "clutch", "support_metric": "started_leagues", "source_metric": "avg_clutch_started", "ui_sortable": true},
+        {"metric": "started_leagues", "support_metric": "eligible_leagues", "source_metric": "started_leagues", "ui_sortable": false},
+        {"metric": "eligible_leagues", "support_metric": "eligible_leagues", "source_metric": "eligible_leagues", "ui_sortable": false}
+      ]
+    },
+    {
+      "dataset": "matchup",
+      "grain": "season",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "all",
+      "metrics": [
+        {"metric": "ppg", "support_metric": "started_weeks", "source_metric": "canonical_ppg", "ui_sortable": true},
+        {"metric": "points", "support_metric": "eligible_leagues", "source_metric": "canonical_points", "ui_sortable": false},
+        {"metric": "start_rate", "support_metric": "eligible_leagues", "source_metric": "start_rate_pct", "ui_sortable": false},
+        {"metric": "win_rate", "support_metric": "eligible_leagues", "source_metric": "won_pct", "ui_sortable": true},
+        {"metric": "expected_wins", "support_metric": "eligible_leagues", "source_metric": "expected_wins", "ui_sortable": false},
+        {"metric": "expected_starts", "support_metric": "eligible_leagues", "source_metric": "expected_starts", "ui_sortable": false},
+        {"metric": "lamar", "support_metric": "started_weeks", "source_metric": "total_lamar_started", "ui_sortable": true},
+        {"metric": "clutch", "support_metric": "started_weeks", "source_metric": "avg_clutch_started", "ui_sortable": true},
+        {"metric": "champ_total", "support_metric": "champ_elig", "source_metric": "champ_total_pct", "ui_sortable": true},
+        {"metric": "champ_started", "support_metric": "champ_elig", "source_metric": "champ_as_starter_pct", "ui_sortable": true},
+        {"metric": "playoff_total", "support_metric": "playoff_elig", "source_metric": "playoff_total_pct", "ui_sortable": true},
+        {"metric": "playoff_started", "support_metric": "playoff_elig", "source_metric": "playoff_as_starter_pct", "ui_sortable": true},
+        {"metric": "active_weeks", "support_metric": "eligible_leagues", "source_metric": "nfl_active_weeks", "ui_sortable": false},
+        {"metric": "inactive_weeks", "support_metric": "eligible_leagues", "source_metric": "inactive_weeks", "ui_sortable": false}
+      ]
+    },
+    {
+      "dataset": "matchup",
+      "grain": "career",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "all",
+      "metrics": [
+        {"metric": "ppg", "support_metric": "started_weeks", "source_metric": "canonical_ppg", "ui_sortable": true},
+        {"metric": "points", "support_metric": "eligible_leagues", "source_metric": "canonical_points", "ui_sortable": false},
+        {"metric": "start_rate", "support_metric": "eligible_leagues", "source_metric": "start_rate_pct", "ui_sortable": false},
+        {"metric": "win_rate", "support_metric": "eligible_leagues", "source_metric": "won_pct", "ui_sortable": true},
+        {"metric": "expected_wins", "support_metric": "eligible_leagues", "source_metric": "expected_wins", "ui_sortable": false},
+        {"metric": "expected_starts", "support_metric": "eligible_leagues", "source_metric": "expected_starts", "ui_sortable": false},
+        {"metric": "lamar", "support_metric": "started_weeks", "source_metric": "total_lamar_started", "ui_sortable": true},
+        {"metric": "clutch", "support_metric": "started_weeks", "source_metric": "avg_clutch_started", "ui_sortable": true},
+        {"metric": "champ_total", "support_metric": "champ_elig", "source_metric": "champ_total_pct", "ui_sortable": true},
+        {"metric": "champ_started", "support_metric": "champ_elig", "source_metric": "champ_as_starter_pct", "ui_sortable": true},
+        {"metric": "expected_champs", "support_metric": "champ_elig", "source_metric": "expected_champs", "ui_sortable": false},
+        {"metric": "playoff_total", "support_metric": "playoff_elig", "source_metric": "playoff_total_pct", "ui_sortable": true},
+        {"metric": "playoff_started", "support_metric": "playoff_elig", "source_metric": "playoff_as_starter_pct", "ui_sortable": true},
+        {"metric": "expected_playoffs", "support_metric": "playoff_elig", "source_metric": "expected_playoffs", "ui_sortable": false},
+        {"metric": "n_years", "support_metric": "eligible_leagues", "source_metric": "n_years", "ui_sortable": false},
+        {"metric": "active_weeks", "support_metric": "eligible_leagues", "source_metric": "active_weeks", "ui_sortable": false},
+        {"metric": "inactive_weeks", "support_metric": "eligible_leagues", "source_metric": "inactive_weeks", "ui_sortable": false}
+      ]
+    },
+    {
+      "dataset": "draft",
+      "grain": "season",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "drafted_3pct",
+      "metrics": [
+        {"metric": "draft_score", "support_metric": "n_drafted", "source_metric": "draft_score", "ui_sortable": true},
+        {"metric": "draft_score_healthy", "support_metric": "n_drafted", "source_metric": "draft_score_healthy", "ui_sortable": true},
+        {"metric": "adp", "support_metric": "n_drafted", "source_metric": "adp", "ui_sortable": true},
+        {"metric": "avg_round", "support_metric": "n_drafted", "source_metric": "adp", "ui_sortable": false},
+        {"metric": "draft_rate", "support_metric": "n_drafted", "source_metric": "draft_rate_pct", "ui_sortable": true},
+        {"metric": "cost", "support_metric": "n_auction_leagues", "source_metric": "cost_pct", "ui_sortable": true},
+        {"metric": "points", "support_metric": "n_drafted", "source_metric": "canonical_points", "ui_sortable": true},
+        {"metric": "lamar", "support_metric": "n_drafted", "source_metric": "canonical_lamar", "ui_sortable": true},
+        {"metric": "year", "support_metric": "n_drafted", "source_metric": "identity_year", "ui_sortable": true}
+      ]
+    },
+    {
+      "dataset": "draft",
+      "grain": "career",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "drafted_3pct",
+      "metrics": [
+        {"metric": "n_years", "support_metric": "n_drafted", "source_metric": "n_years", "ui_sortable": true},
+        {"metric": "best_draft_score", "support_metric": "n_drafted", "source_metric": "best_draft_score", "ui_sortable": true},
+        {"metric": "draft_score", "support_metric": "n_drafted", "source_metric": "draft_score", "ui_sortable": false},
+        {"metric": "worst_draft_score", "support_metric": "n_drafted", "source_metric": "worst_draft_score", "ui_sortable": true},
+        {"metric": "best_healthy_score", "support_metric": "n_drafted", "source_metric": "best_healthy_score", "ui_sortable": true},
+        {"metric": "draft_score_healthy", "support_metric": "n_drafted", "source_metric": "draft_score_healthy", "ui_sortable": false},
+        {"metric": "worst_healthy_score", "support_metric": "n_drafted", "source_metric": "worst_healthy_score", "ui_sortable": true},
+        {"metric": "earliest_adp", "support_metric": "n_drafted", "source_metric": "earliest_adp", "ui_sortable": false},
+        {"metric": "adp", "support_metric": "n_drafted", "source_metric": "adp", "ui_sortable": true},
+        {"metric": "latest_adp", "support_metric": "n_drafted", "source_metric": "latest_adp", "ui_sortable": false},
+        {"metric": "highest_draft_rate", "support_metric": "n_drafted", "source_metric": "highest_draft_rate", "ui_sortable": false},
+        {"metric": "draft_rate", "support_metric": "n_drafted", "source_metric": "draft_rate_pct", "ui_sortable": true},
+        {"metric": "lowest_draft_rate", "support_metric": "n_drafted", "source_metric": "lowest_draft_rate", "ui_sortable": false},
+        {"metric": "highest_cost", "support_metric": "n_auction_leagues", "source_metric": "highest_cost_pct", "ui_sortable": false},
+        {"metric": "cost", "support_metric": "n_auction_leagues", "source_metric": "cost_pct", "ui_sortable": false},
+        {"metric": "lowest_cost", "support_metric": "n_auction_leagues", "source_metric": "lowest_cost_pct", "ui_sortable": false},
+        {"metric": "career_auction_spend", "support_metric": "n_auction_leagues", "source_metric": "career_auction_spend_pct", "ui_sortable": true},
+        {"metric": "points", "support_metric": "n_drafted", "source_metric": "canonical_points", "ui_sortable": true},
+        {"metric": "lamar", "support_metric": "n_drafted", "source_metric": "canonical_lamar", "ui_sortable": true}
+      ]
+    },
+    {
+      "dataset": "transactions",
+      "grain": "weekly",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "added_3pct_or_drop",
+      "metrics": [
+        {"metric": "add_rate", "support_metric": "n_add", "source_metric": "add_rate_pct", "ui_sortable": true},
+        {"metric": "faab", "support_metric": "n_add", "source_metric": "avg_faab_pct", "ui_sortable": true},
+        {"metric": "add_lamar", "support_metric": "n_add", "source_metric": "avg_add_lamar", "ui_sortable": true},
+        {"metric": "add_grade", "support_metric": "n_add", "source_metric": "add_grade", "ui_sortable": true}
+      ]
+    },
+    {
+      "dataset": "transactions",
+      "grain": "season",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "added_3pct_or_drop",
+      "metrics": [
+        {"metric": "add_rate", "support_metric": "n_add", "source_metric": "add_rate_pct", "ui_sortable": true},
+        {"metric": "faab", "support_metric": "n_add", "source_metric": "avg_faab_pct", "ui_sortable": false},
+        {"metric": "add_lamar", "support_metric": "n_add", "source_metric": "avg_add_lamar", "ui_sortable": true},
+        {"metric": "title_run", "support_metric": "n_add", "source_metric": "title_run", "ui_sortable": true},
+        {"metric": "drop_regret", "support_metric": "n_drop", "source_metric": "avg_drop_regret", "ui_sortable": true}
+      ]
+    },
+    {
+      "dataset": "transactions",
+      "grain": "career",
+      "direction": "desc",
+      "position_scope": ["ALL", "QB", "RB", "WR", "TE", "K", "DEF", "DL", "LB", "DB"],
+      "common_pool": "added_3pct_or_drop",
+      "metrics": [
+        {"metric": "add_rate", "support_metric": "n_add", "source_metric": "add_rate_pct", "ui_sortable": true},
+        {"metric": "add_lamar", "support_metric": "n_add", "source_metric": "avg_add_lamar", "ui_sortable": true},
+        {"metric": "drop_regret", "support_metric": "n_drop", "source_metric": "avg_drop_regret", "ui_sortable": true}
+      ]
+    }
+  ]
+}

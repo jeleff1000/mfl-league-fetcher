@@ -299,14 +299,6 @@ def resolve(league_id: str, league_name: str, platform: str, pre_computed_db: st
     try:
         base_name = slugify(league_name)
 
-        # 1. Fly league_inventory is the live source of truth. This catches
-        # cross-platform collisions even when legacy credential registries are stale.
-        inventory_identity = lookup_inventory_identity(base_name, league_id, platform)
-        if inventory_identity and inventory_identity.get("database_name"):
-            mapped = inventory_identity["database_name"]
-            print(f"[resolve] Found in league_inventory: {mapped}", file=sys.stderr)
-            return mapped
-
         base_owner = lookup_inventory_owner(base_name)
         if base_owner:
             if same_inventory_owner(base_owner, league_id, platform):
@@ -326,28 +318,10 @@ def resolve(league_id: str, league_name: str, platform: str, pre_computed_db: st
                 )
                 return hashed_name
 
-        # 2. Check mapping table for THIS league, but do not let stale
-        # mappings override an inventory owner for another league.
-        mapped = lookup_mapping_table(league_id, platform)
-        if mapped:
-            mapped_owner = lookup_inventory_owner(mapped)
-            if (
-                not mapped_owner
-                or same_inventory_owner(mapped_owner, league_id, platform)
-                or provisional_inventory_owner(mapped_owner, platform)
-            ):
-                print(f"[resolve] Found in {platform} mapping table: {mapped}", file=sys.stderr)
-                return mapped
-            print(
-                f"[resolve] Ignoring stale {platform} mapping table db '{mapped}' "
-                f"owned by {mapped_owner.get('platform')}:{mapped_owner.get('league_id')}",
-                file=sys.stderr,
-            )
-
-        # 3. Trust an explicit database_name when it does not belong to another league.
-        # In Fly-first centralized storage the db_name may be canonical without existing as
-        # a separate catalog, so registry ownership is a better idempotence signal than
-        # catalog existence.
+        # 1. An explicit target is the caller's canonical name, so honor it
+        # before a temporary credential/inventory mapping.  It remains subject
+        # to the same live inventory and registry collision checks as every
+        # automatically resolved name.
         if pre_computed_db:
             pre_owner = lookup_inventory_owner(pre_computed_db)
             if (
@@ -381,6 +355,32 @@ def resolve(league_id: str, league_name: str, platform: str, pre_computed_db: st
                         file=sys.stderr,
                     )
                 return pre_computed_db
+
+        # 2. Fly league_inventory is the live source of truth. This catches
+        # cross-platform collisions even when legacy credential registries are stale.
+        inventory_identity = lookup_inventory_identity(base_name, league_id, platform)
+        if inventory_identity and inventory_identity.get("database_name"):
+            mapped = inventory_identity["database_name"]
+            print(f"[resolve] Found in league_inventory: {mapped}", file=sys.stderr)
+            return mapped
+
+        # 3. Check mapping table for THIS league, but do not let stale
+        # mappings override an inventory owner for another league.
+        mapped = lookup_mapping_table(league_id, platform)
+        if mapped:
+            mapped_owner = lookup_inventory_owner(mapped)
+            if (
+                not mapped_owner
+                or same_inventory_owner(mapped_owner, league_id, platform)
+                or provisional_inventory_owner(mapped_owner, platform)
+            ):
+                print(f"[resolve] Found in {platform} mapping table: {mapped}", file=sys.stderr)
+                return mapped
+            print(
+                f"[resolve] Ignoring stale {platform} mapping table db '{mapped}' "
+                f"owned by {mapped_owner.get('platform')}:{mapped_owner.get('league_id')}",
+                file=sys.stderr,
+            )
 
         # 4. Slugify and check for legacy collisions
         print(f"[resolve] Not in mapping table, checking base name: {base_name}", file=sys.stderr)

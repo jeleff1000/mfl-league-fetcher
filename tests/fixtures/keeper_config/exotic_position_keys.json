@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "draft_type": "snake",
+  "max_keepers": 4,
+  "min_price": 1,
+  "num_rounds": 20,
+  "base_cost_rules": {"drafted": {"round_offset": -1}, "fa_pickup": {"source": "last"}},
+  "position_limits": {"QB": 2, "DB": 4, "DL": 4, "LB": 4}
+}

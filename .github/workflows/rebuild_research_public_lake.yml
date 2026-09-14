@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     env:
-      GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+      GH_TOKEN: ${{ github.token }}
       CORPUS_DIR: ${{ github.workspace }}/source_corpus
 
     steps:
@@ -47,9 +47,6 @@ jobs:
       - name: Checkout private pipeline code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.private_repo_ref }}
           path: code
       - uses: actions/setup-python@v6
         with:
@@ -63,10 +60,10 @@ jobs:
       - name: Download deterministic native identity crosswalk
         if: inputs.schema_only != 'true'
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh release download research-native-id-crosswalk-v4 \
-            --repo jeleff1000/yahoo_oauth \
+            --repo jeleff1000/league-history-workers \
             --pattern native_id_crosswalk.parquet \
             --clobber \
             --dir research_public_lake
@@ -152,10 +149,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "${{ inputs.release_tag }}" --repo jeleff1000/yahoo_oauth >/dev/null 2>&1 || \
-            gh release create "${{ inputs.release_tag }}" --repo jeleff1000/yahoo_oauth \
+          gh release view "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers >/dev/null 2>&1 || \
+            gh release create "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
               --title "${{ inputs.release_tag }}" --notes "Rebuilt public research lake"
-          gh release upload "${{ inputs.release_tag }}" --repo jeleff1000/yahoo_oauth \
+          gh release upload "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
             public_parts/research-public-lake.tar.part-* \
             research_public_lake/ops_cache.duckdb --clobber
-

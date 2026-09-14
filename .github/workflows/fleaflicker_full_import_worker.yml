@@ -35,11 +35,6 @@ on:
           - full
           - quick
         default: full
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out'
-        required: false
-        type: string
-        default: 'main'
       skip_track_1:
         description: 'Skip NFL super table verification'
         required: false
@@ -116,9 +111,6 @@ jobs:
       - name: Checkout yahoo_oauth
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || github.event.client_payload.yahoo_oauth_ref || 'main' }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |

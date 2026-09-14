@@ -1,0 +1,51 @@
+{
+  "contract_version": "1",
+  "rules": [
+    {
+      "contract_version": "1",
+      "rule_id": "identity.roster.nflcom.all",
+      "atom_id": "identity.player_id",
+      "dataset_id": "ffassets.nflcom.team_season_roster",
+      "role": "identity_only",
+      "year_start": 1920,
+      "year_end": 2025,
+      "precedence": 10,
+      "grain": "player_season",
+      "season_type": "REG"
+    },
+    {
+      "contract_version": "1",
+      "rule_id": "identity.roster.statscrew.all",
+      "atom_id": "identity.player_id",
+      "dataset_id": "ffassets.statscrew.team_season_roster",
+      "role": "identity_only",
+      "year_start": 1920,
+      "year_end": 2025,
+      "precedence": 30,
+      "grain": "player_season",
+      "season_type": "REG"
+    },
+    {
+      "contract_version": "1",
+      "rule_id": "participation.pfa.all",
+      "atom_id": "participation.played",
+      "dataset_id": "ffassets.profootballarchives.player_game_participation",
+      "role": "corroborating",
+      "year_start": 1919,
+      "year_end": 2025,
+      "precedence": 20,
+      "grain": "player_game"
+    },
+    {
+      "contract_version": "1",
+      "rule_id": "passing_attempts.nflcom.logs",
+      "atom_id": "passing.attempts",
+      "dataset_id": "lake.nflcom.player_logs",
+      "role": "authoritative",
+      "year_start": 1932,
+      "year_end": 2025,
+      "precedence": 10,
+      "grain": "player_game"
+    }
+  ]
+}

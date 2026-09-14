@@ -78,9 +78,6 @@ jobs:
       - name: Checkout canonical merger and overlay builder
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: codex/mfl-gates
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -97,11 +94,11 @@ jobs:
           OUTPUT_KEY: ${{ inputs.cache_namespace }}-chunk-${{ inputs.output_suffix }}
         run: |
           python -u - <<'PY'
-import json
-import re
-import time
-from pathlib import Path
-import duckdb
+          import json
+          import re
+          import time
+          from pathlib import Path
+          import duckdb
 
           TABLES = ('league_settings', 'matchup', 'player_fantasy')
           prior_path = Path('prior_index/mfl_register_all_runs.json')

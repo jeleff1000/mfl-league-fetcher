@@ -40,12 +40,6 @@ on:
         required: false
         type: boolean
         default: false
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out (default main)'
-        required: false
-        type: string
-        default: 'main'
-
 permissions:
   actions: write
   contents: read
@@ -66,8 +60,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |
@@ -228,9 +220,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || 'main' }}
           filter: blob:none
           sparse-checkout-cone-mode: false
           sparse-checkout: |

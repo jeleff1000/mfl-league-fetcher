@@ -1,0 +1,258 @@
+{
+ "version": "v1",
+ "receipts": [
+  {
+   "receipt_id": "bio_pfr_nflid",
+   "claim": "bio (NFL_player_id, pfr_id) pairs form a bijection usable as the NFL_player_id->pfr_id join for K/C-plane and voting-lane joins",
+   "crosswalk": {
+    "via": "player_bio",
+    "on": "NFL_player_id",
+    "adds": "pfr_id"
+   },
+   "measured": {
+    "bio_rows": 42642,
+    "rows_with_both_ids": 30537,
+    "distinct_nfl_player_id_mapped": 30537,
+    "distinct_pfr_id": 30537,
+    "nflid_to_multiple_pfr": 0,
+    "pfr_to_multiple_nflid": 0,
+    "dependent_source_coverage": {
+     "ngs_season_published": {
+      "distinct_ids": 703,
+      "crosswalked": 703,
+      "coverage": 1.0
+     },
+     "ngs_weekly_raw": {
+      "distinct_ids": 1141,
+      "crosswalked": 1141,
+      "coverage": 1.0
+     },
+     "pbp_player_week_rollup": {
+      "distinct_ids": 17233,
+      "crosswalked": 17176,
+      "coverage": 0.996692
+     },
+     "legacy_motherduck_supertable": {
+      "distinct_ids": 16074,
+      "crosswalked": 15690,
+      "coverage": 0.97611
+     }
+    }
+   },
+   "gates": {
+    "bijection": "PASS"
+   },
+   "status": "PASS",
+   "licenses": [
+    "ngs_season_published",
+    "ngs_weekly_raw",
+    "pbp_player_week_rollup",
+    "legacy_motherduck_supertable"
+   ],
+   "unresolved_id_policy": "unresolved NFL_player_ids surface as K-plane null_key_rows (typed, counted) -- never dropped silently, never COALESCE'd"
+  },
+  {
+   "receipt_id": "nflcom_slug_pfrid",
+   "status": "PASS",
+   "bijection": {
+    "resolved_set_is_non_empty": true,
+    "no_pfr_id_claims_two_slugs": true,
+    "conflicting_slugs_were_excluded_not_resolved": true
+   },
+   "claim": "nflcom_slug -> pfr_id, resolved through the nflcom_team_season_roster capture on (normalised name, season) keys that are UNIQUE ON BOTH SIDES, and accepted only where the slug and the pfr_id each have exactly one counterpart",
+   "crosswalk": {
+    "via": "nflcom_team_season_roster + PFR player-page season tables",
+    "on": "normalised(player) + season",
+    "adds": "pfr_id"
+   },
+   "refusals": [
+    "bare name joins (twins hazard, \u00a719.2) -- season is always part of the key",
+    "non-unique (name, season) keys on EITHER side are excluded, never scored",
+    "a slug matching two pfr_ids is reported as a conflict, never resolved by taking the more frequent candidate",
+    "team is not a join key: nflcom uses url slugs and PFR uses abbreviations, and inventing that mapping would put an unreceipted crosswalk under a receipt"
+   ],
+   "measured": {
+    "nflcom_distinct_slugs": 32488,
+    "pfr_distinct_ids_in_universe": 24007,
+    "name_season_keys_ambiguous_nflcom_side": 683,
+    "name_season_keys_ambiguous_pfr_side": 564,
+    "candidate_pairs": 23396,
+    "slug_conflicts_multiple_pfr_ids": 2,
+    "pfr_id_conflicts_multiple_slugs": 0,
+    "resolved_slugs": 29495,
+    "resolved_slugs_pass1_name_season": 23392,
+    "resolved_slugs_pass2_name_form": 6103,
+    "pass2_blocked_name_twin_in_some_source": 557,
+    "pass2_blocked_nflcom_disambiguator_suffix": 488,
+    "resolved_on_more_than_one_season": 18401,
+    "slug_coverage": 0.907874,
+    "slug_coverage_pass1_only": 0.72002,
+    "roster_rows": 144568,
+    "roster_rows_resolved": 139023,
+    "roster_row_coverage": 0.961644,
+    "ambiguous_names_with_a_statscrew_birth_date": 670
+   },
+   "coverage_by_era": [
+    {
+     "era": "1920-1932",
+     "slugs": 2109,
+     "resolved": 1902,
+     "coverage": 0.9018
+    },
+    {
+     "era": "1933-1949",
+     "slugs": 2727,
+     "resolved": 2571,
+     "coverage": 0.9428
+    },
+    {
+     "era": "1950-1977",
+     "slugs": 6045,
+     "resolved": 5764,
+     "coverage": 0.9535
+    },
+    {
+     "era": "1978-1998",
+     "slugs": 8998,
+     "resolved": 8262,
+     "coverage": 0.9182
+    },
+    {
+     "era": "1999-2025",
+     "slugs": 15902,
+     "resolved": 14209,
+     "coverage": 0.8935
+    }
+   ],
+   "gates": {
+    "licensed_mapping_is_bijective": true,
+    "conflicting_slugs_excluded_not_resolved": 2,
+    "licenses_sources": true
+   },
+   "conflicting_slugs_excluded": [
+    {
+     "slug": "brandon-johnson-3",
+     "pfr_ids": [
+      "JohnBr23",
+      "JohnBr24"
+     ],
+     "seasons_agreeing": [
+      3,
+      1
+     ]
+    },
+    {
+     "slug": "todd-collins",
+     "pfr_ids": [
+      "CollTo00",
+      "CollTo20"
+     ],
+     "seasons_agreeing": [
+      9,
+      3
+     ]
+    }
+   ],
+   "licenses": [
+    "nflcom_player_logs",
+    "nflcom_player_career",
+    "nflcom_player_season",
+    "nflcom_player_logs_targeted",
+    "nflcom_player_splits",
+    "nflcom_player_situational"
+   ],
+   "does_not_license": [
+    "individual COLUMNS that are not adjudicated -- the L4 return block (NFL.com renders RET|YDS|AVG|LNG|TD|20+|40+|FC under BOTH Kick Return and Punt Return, so 811,572 rows carry an unknown return family), the L7 made-att field-goal composites, the L0 tackle total, and the per-layout columns the original parse truncated away. These are held out structurally: an OPEN dossier row has no canonical mapping, so nothing can resolve a witness through it",
+    "coverage is partial: unresolved slugs stay unresolved and their rows stay unlicensed rather than being joined on a weaker key. 90.8% of slugs resolve and 96.2% of roster rows; the weakest era is 1999-2025 at 89.3%. Licensing this receipt does NOT make the unresolved rows votable"
+   ]
+  },
+  {
+   "receipt_id": "nflcom_team_fid",
+   "status": "PASS",
+   "claim": "(nflcom doubled nickname, season) -> nfl_franchise_number, established by season passing-yard fingerprint against our own franchise-season universe",
+   "crosswalk": {
+    "via": "stat fingerprint against v26 (year, nfl_franchise_number)",
+    "on": "undoubled nickname + season",
+    "adds": "team_fid"
+   },
+   "measured": {
+    "team_seasons_matched": 2228,
+    "matched_to_within_one_yard": 2146,
+    "coverage": 0.9632,
+    "nicknames_resolving_to_one_franchise_at_95pct": 38,
+    "nicknames_total": 42,
+    "nicknames_spanning_two_franchises": {
+     "Seahawks": [
+      [
+       47,
+       16
+      ],
+      [
+       1,
+       31
+      ],
+      [
+       1,
+       13
+      ],
+      [
+       1,
+       4
+      ]
+     ],
+     "Titans": [
+      [
+       26,
+       28
+      ],
+      [
+       3,
+       20
+      ],
+      [
+       1,
+       31
+      ]
+     ],
+     "Yanks": [
+      [
+       2,
+       114
+      ],
+      [
+       1,
+       148
+      ]
+     ],
+     "Texans": [
+      [
+       24,
+       25
+      ],
+      [
+       3,
+       30
+      ],
+      [
+       1,
+       137
+      ]
+     ]
+    }
+   },
+   "refusals": [
+    "label matching is refused outright: every franchise spans the nickname seasons so containment is degenerate, and renamed franchises (Redskins to Football Team to Commanders) defeat name similarity",
+    "the key is (nickname, SEASON) to fid, never nickname to fid: Texans and Titans each span two franchises and only the season separates them",
+    "one nickname does not invert its doubling (the Steagles value) because it was TRUNCATED BEFORE it was doubled; it is excluded, not repaired by guess"
+   ],
+   "gates": {
+    "fingerprint_coverage_at_least_95pct": true,
+    "no_nickname_season_resolves_to_two_franchises": true
+   },
+   "licenses": [
+    "nflcom_team_stats"
+   ]
+  }
+ ],
+ "measured_utc": "20260726T004616Z"
+}

@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+      GH_TOKEN: ${{ github.token }}
       CACHE_KEY: ${{ inputs.cache_key }}
 
     steps:
@@ -31,8 +31,6 @@ jobs:
       - name: Checkout private validation code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
 
       - name: Setup Python
@@ -43,7 +41,7 @@ jobs:
       - name: Download private local-source bundle
         run: |
           gh release download "${{ inputs.release_tag }}" \
-            --repo jeleff1000/yahoo_oauth \
+            --repo jeleff1000/league-history-workers \
             --pattern corpus-dependencies.tar.gz
           mkdir -p corpus_dependencies
           tar -xzf corpus-dependencies.tar.gz -C corpus_dependencies --strip-components=1

@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: corpus_seed/mfl_execution_manifest_1993_2025.json
-      yahoo_oauth_ref:
-        description: 'Private pipeline ref containing the manifest and importer'
-        required: false
-        type: string
-        default: codex/mfl-gates
       max_parallel:
         description: 'Concurrent MFL runners (one league per runner/IP)'
         required: false
@@ -94,9 +89,6 @@ jobs:
       - name: Checkout private pipeline and manifest
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -195,9 +187,6 @@ jobs:
       - name: Checkout private pipeline
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           filter: blob:none
           sparse-checkout-cone-mode: false
@@ -375,9 +364,6 @@ jobs:
       - name: Checkout canonical schema
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: code
           sparse-checkout-cone-mode: false
           sparse-checkout: |
@@ -510,7 +496,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REF_NAME: ${{ github.ref_name }}
           MANIFEST_PATH: ${{ inputs.manifest_path }}
-          YAHOO_OAUTH_REF: ${{ inputs.yahoo_oauth_ref }}
           MAX_PARALLEL: ${{ inputs.max_parallel }}
           CURRENT_END: ${{ inputs.index_end }}
           POPULATION_TOTAL: ${{ inputs.population_total }}
@@ -548,7 +533,6 @@ jobs:
             --repo "$REPOSITORY" \
             --ref "$REF_NAME" \
             -f manifest_path="$MANIFEST_PATH" \
-            -f yahoo_oauth_ref="$YAHOO_OAUTH_REF" \
             -f max_parallel="$MAX_PARALLEL" \
             -f index_start="$next_start" \
             -f index_end="$next_end" \

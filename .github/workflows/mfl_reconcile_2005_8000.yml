@@ -29,7 +29,6 @@ jobs:
       request_sleep: "5.0"
       id_start: "8000"
       id_end: "8999"
-      yahoo_oauth_ref: "main"
       merge_only: "true"
       source_run_id: "31406871174"
       additional_source_run_ids: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '31408950801' }}

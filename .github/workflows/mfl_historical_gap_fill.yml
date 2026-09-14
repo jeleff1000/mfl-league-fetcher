@@ -63,7 +63,6 @@ jobs:
       id_start: ${{ inputs.id_start || '0' }}
       id_end: ${{ inputs.id_end || '999' }}
       artifact_namespace: "1997-1998"
-      yahoo_oauth_ref: "main"
     secrets: inherit
 
   window-1999-2000:
@@ -83,7 +82,6 @@ jobs:
       id_start: ${{ inputs.id_start || '0' }}
       id_end: ${{ inputs.id_end || '999' }}
       artifact_namespace: "1999-2000"
-      yahoo_oauth_ref: "main"
     secrets: inherit
 
   window-2001-2002:
@@ -103,7 +101,6 @@ jobs:
       id_start: ${{ inputs.id_start || '0' }}
       id_end: ${{ inputs.id_end || '999' }}
       artifact_namespace: "2001-2002"
-      yahoo_oauth_ref: "main"
     secrets: inherit
 
   window-2003-2004:
@@ -123,7 +120,6 @@ jobs:
       id_start: ${{ inputs.id_start || '0' }}
       id_end: ${{ inputs.id_end || '999' }}
       artifact_namespace: "2003-2004"
-      yahoo_oauth_ref: "main"
     secrets: inherit
 
   window-2005-2006:
@@ -143,7 +139,6 @@ jobs:
       id_start: ${{ inputs.id_start || '0' }}
       id_end: ${{ inputs.id_end || '999' }}
       artifact_namespace: "2005-2006"
-      yahoo_oauth_ref: "main"
     secrets: inherit
 
   finalize:

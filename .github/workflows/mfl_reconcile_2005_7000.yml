@@ -24,7 +24,6 @@ jobs:
       request_sleep: "5.0"
       id_start: "7000"
       id_end: "7999"
-      yahoo_oauth_ref: "main"
       merge_only: "true"
       source_run_id: "31398751688"
       additional_source_run_ids: "31404267212"

@@ -1,0 +1,22 @@
+{
+  "contract_version": "1",
+  "rule_id": "PBP-DISPOSITION-NO-PLAY-001",
+  "name": "official_play",
+  "definition": "A PBP row is countable for player statistics only when it is not nullified by a '(no play)' disposition and is not an nflverse play_type=no_play row.",
+  "predicate": "LOWER(COALESCE(CAST(desc AS VARCHAR), '')) NOT LIKE '%(no play)%' AND NOT (pbp_source_system='nflverse' AND play_type='no_play')",
+  "exceptions": [
+    "Declined penalties remain countable plays.",
+    "Penalty statistics themselves may count an accepted/no-play penalty as a penalty event; this contract governs the underlying football play only."
+  ],
+  "required_consumers": [
+    "aggregate_merged_pbp_for_supertable_audit.py",
+    "witness_map.py pbp_rollup",
+    "weekly rushing PBP overlay",
+    "PBP quorum/audit receipts"
+  ],
+  "quorum": {
+    "required_signals": ["description_no_play_marker", "source_play_type_no_play_marker"],
+    "adjudication": "Either marker is sufficient to exclude; absence of both is required to count.",
+    "status": "LOCKED"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "contract_version": "1",
+  "namespace_policy": {
+    "legacy_witness_map": "player_season.<v26_column>",
+    "legacy_coverage": "team_game.<coverage_atom>",
+    "direct_player_game": "<family>.<atom>"
+  },
+  "semantic_inference_version": "legacy-v1",
+  "notes": [
+    "The complete legacy atom list is generated deterministically by migrate_legacy.py.",
+    "Generated atoms remain review inputs until source closure promotes them into explicit field mappings."
+  ]
+}

@@ -74,7 +74,11 @@ def lineage_seasons(cli: SleeperAPIClient, head_id: str) -> dict[int, tuple[str,
 def championship_game_rosters_for_week(
     bracket: list[dict], settings: dict, week: int
 ) -> set[int]:
-    """Return rosters actually playing a championship-bracket game in ``week``."""
+    """Return rosters actually playing a championship-bracket game in ``week``.
+
+    A roster can qualify for the playoffs and later appear in a consolation or
+    placement game. Those rows intentionally do not receive ``is_playoffs``.
+    """
     structure = resolve_playoff_structure(settings)
     target_round = playoff_round_for_week(
         week,

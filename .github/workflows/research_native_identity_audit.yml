@@ -27,8 +27,6 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
       - uses: actions/setup-python@v6
         with:
@@ -40,11 +38,11 @@ jobs:
           fail-on-cache-miss: true
       - name: Download deterministic native identity crosswalk
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p research_public_lake
           gh release download research-native-id-crosswalk-v4 \
-            --repo jeleff1000/yahoo_oauth \
+            --repo jeleff1000/league-history-workers \
             --pattern native_id_crosswalk.parquet \
             --clobber \
             --dir research_public_lake

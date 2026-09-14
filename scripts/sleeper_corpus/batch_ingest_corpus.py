@@ -44,7 +44,7 @@ _lock = threading.Lock()
 SLEEPER_IP_BUDGET = 1000  # Sleeper's documented ceiling, per IP (api.sleeper.app)
 
 
-def load_env(workers: int = 1) -> dict:
+def load_env(workers: int = 1, *, require_draft_source: bool = True) -> dict:
     # Local runs read .env; on a GH runner there is no .env and secrets arrive as env vars.
     env_file = ROOT / ".env"
     if env_file.exists():
@@ -55,7 +55,7 @@ def load_env(workers: int = 1) -> dict:
     env = dict(os.environ)
     if not OPS_CACHE.is_file():
         raise FileNotFoundError(f"Corpus ops cache is missing: {OPS_CACHE}")
-    if not DRAFT_GLOBAL_SOURCE.is_file():
+    if require_draft_source and not DRAFT_GLOBAL_SOURCE.is_file():
         raise FileNotFoundError(f"Corpus draft baseline source is missing: {DRAFT_GLOBAL_SOURCE}")
 
     # A corpus import is an offline transformation. Strip every production
@@ -68,7 +68,8 @@ def load_env(workers: int = 1) -> dict:
         env.pop(key, None)
     env["CORPUS_MODE"] = "1"
     env["OPS_CACHE_PATH"] = str(OPS_CACHE)
-    env["DRAFT_GLOBAL_SOURCE_PATH"] = str(DRAFT_GLOBAL_SOURCE)
+    if DRAFT_GLOBAL_SOURCE.is_file():
+        env["DRAFT_GLOBAL_SOURCE_PATH"] = str(DRAFT_GLOBAL_SOURCE)
     env["PYTHONPATH"] = str(ROOT / "fantasy_football_data_scripts")
     # Each ingest is a subprocess with its OWN limiter, so the host's real rate is
     # workers x per-process budget. Divide the IP budget so N workers still total <=1000/min.
@@ -225,14 +226,7 @@ def ingest_one(r: dict, env: dict) -> tuple[str, str]:
             [sys.executable, str(SIM_PY), "--db", db, "--data-dir", str(ddir)],
             env=env, capture_output=True, text=True, timeout=3000)
         if p2.returncode != 0:
-            err = _err(p2)
-            # Structurally-impossible leagues (num_playoff_teams > num_teams -- common in
-            # 4-team best-ball/test leagues) crash the playoff sim and can NEVER succeed on
-            # retry. Skip them permanently: not a failure (won't fail the slice) and not
-            # re-attempted every run (they never leave the plan otherwise).
-            if "exceeds total teams" in err or "Invalid playoff settings" in err:
-                return "skip_invalid", err
-            return "sim_failed", err
+            return "sim_failed", _err(p2)
     return "done", ""
 
 
@@ -300,7 +294,7 @@ def main() -> None:
             if name.startswith("smpl_"):
                 done.setdefault(name[len("smpl_"):], "done")
     # Slice AFTER the done-filter so every job carves from the same remaining list.
-    todo = [r for r in plan if done.get(r["league_id"]) not in ("done", "skip_invalid")]
+    todo = [r for r in plan if done.get(r["league_id"]) != "done"]
     if args.offset:
         todo = todo[args.offset:]
     if args.limit:
@@ -319,7 +313,7 @@ def main() -> None:
           f"= {int(env['SLEEPER_RATE_LIMIT_PER_MIN']) * args.workers}/min for this IP "
           f"(Sleeper budget {SLEEPER_IP_BUDGET}/min)", flush=True)
     snap = open_snapshot(args.fold_into) if args.fold_into else None
-    counts = {"done": 0, "fail": 0, "folded": 0, "skip_invalid": 0}
+    counts = {"done": 0, "fail": 0, "folded": 0}
     t_start = time.time()
 
     def run(r):
@@ -330,7 +324,7 @@ def main() -> None:
         with _lock:
             done[r["league_id"]] = status
             DONE.write_text(json.dumps(done))
-            counts[status if status in ("done", "skip_invalid") else "fail"] += 1
+            counts["done" if status == "done" else "fail"] += 1
             if snap is not None and status == "done":
                 ddir = SMPL_DIR / f"smpl_{r['league_id']}"
                 ok, fmsg = fold_league(snap, ddir)
@@ -360,13 +354,11 @@ def main() -> None:
     if snap is not None:
         snap.close()
     print(f"\n[done] {counts['done']} ok, {counts['fail']} failed, "
-          f"{counts['skip_invalid']} skipped(invalid), {counts['folded']} folded in "
-          f"{(time.time()-t_start)/60:.0f} min -> {SMPL_DIR}", flush=True)
+          f"{counts['folded']} folded in {(time.time()-t_start)/60:.0f} min -> {SMPL_DIR}", flush=True)
     # Exit non-zero when nothing worked. Counting failures but returning 0 let a CI job go
     # green on a 100% failure rate (the first GH pilot did exactly that: ok=0, failed=15,
     # every step green). A caller cannot distinguish "crawled nothing" from "nothing to do".
-    # A slice that only hit permanently-skipped junk leagues did its job -- not fatal.
-    if todo and not counts["done"] and counts["fail"]:
+    if todo and not counts["done"]:
         raise SystemExit(f"[fatal] 0 of {len(todo)} leagues ingested -- see failures above")
 
 

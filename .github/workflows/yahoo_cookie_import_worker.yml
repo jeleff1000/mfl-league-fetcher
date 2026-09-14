@@ -27,11 +27,6 @@ on:
         description: "JSON object mapping each Yahoo season to its league key"
         required: true
         type: string
-      yahoo_oauth_ref:
-        description: "yahoo_oauth ref containing the cookie worker"
-        required: false
-        default: main
-        type: string
       request_delay:
         description: "Seconds between Yahoo web requests"
         required: false
@@ -106,9 +101,6 @@ jobs:
       - name: Checkout importer
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ inputs.yahoo_oauth_ref }}
           path: yahoo_oauth
 
       - name: Setup Python

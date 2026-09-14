@@ -1,0 +1,249 @@
+{
+ "version": "v1",
+ "generated": "2026-08-03 09:21",
+ "vouch_window": "2015-2024",
+ "min_agree": 0.99,
+ "tol": 0.05,
+ "licensed": {
+  "passing_yards_per_attempt": {
+   "variant": "yds/att",
+   "agree": 1.0,
+   "expr": "TRY_CAST(passing_yards AS DOUBLE)/TRY_CAST(attempts AS DOUBLE)",
+   "guard": "TRY_CAST(attempts AS DOUBLE)"
+  },
+  "rushing_yards_per_carry": {
+   "variant": "yds/car",
+   "agree": 1.0,
+   "expr": "TRY_CAST(rushing_yards AS DOUBLE)/TRY_CAST(carries AS DOUBLE)",
+   "guard": "TRY_CAST(carries AS DOUBLE)"
+  },
+  "receiving_yards_per_reception": {
+   "variant": "yds/rec",
+   "agree": 1.0,
+   "expr": "TRY_CAST(receiving_yards AS DOUBLE)/TRY_CAST(receptions AS DOUBLE)",
+   "guard": "TRY_CAST(receptions AS DOUBLE)"
+  },
+  "receiving_yards_per_target": {
+   "variant": "yds/tgt",
+   "agree": 1.0,
+   "expr": "TRY_CAST(receiving_yards AS DOUBLE)/TRY_CAST(targets AS DOUBLE)",
+   "guard": "TRY_CAST(targets AS DOUBLE)"
+  },
+  "punt_yards_per_punt": {
+   "variant": "yds/punt",
+   "agree": 1.0,
+   "expr": "TRY_CAST(punt_yards AS DOUBLE)/TRY_CAST(punts AS DOUBLE)",
+   "guard": "TRY_CAST(punts AS DOUBLE)"
+  },
+  "pat_pct": {
+   "variant": "made/att",
+   "agree": 1.0,
+   "expr": "TRY_CAST(pat_made AS DOUBLE)/TRY_CAST(pat_att AS DOUBLE)",
+   "guard": "TRY_CAST(pat_att AS DOUBLE)"
+  },
+  "fg_pct": {
+   "variant": "made/att",
+   "agree": 1.0,
+   "expr": "TRY_CAST(fg_made AS DOUBLE)/TRY_CAST(fg_att AS DOUBLE)",
+   "guard": "TRY_CAST(fg_att AS DOUBLE)"
+  },
+  "completion_pct": {
+   "variant": "cmp/att*100",
+   "agree": 1.0,
+   "expr": "TRY_CAST(completions AS DOUBLE)/TRY_CAST(attempts AS DOUBLE)*100",
+   "guard": "TRY_CAST(attempts AS DOUBLE)"
+  },
+  "passing_td_pct": {
+   "variant": "td/att*100",
+   "agree": 1.0,
+   "expr": "TRY_CAST(passing_tds AS DOUBLE)/TRY_CAST(attempts AS DOUBLE)*100",
+   "guard": "TRY_CAST(attempts AS DOUBLE)"
+  },
+  "passing_int_pct": {
+   "variant": "int/att*100",
+   "agree": 1.0,
+   "expr": "TRY_CAST(passing_interceptions AS DOUBLE)/TRY_CAST(attempts AS DOUBLE)*100",
+   "guard": "TRY_CAST(attempts AS DOUBLE)"
+  },
+  "catch_pct": {
+   "variant": "rec/tgt*100",
+   "agree": 1.0,
+   "expr": "TRY_CAST(receptions AS DOUBLE)/TRY_CAST(targets AS DOUBLE)*100",
+   "guard": "TRY_CAST(targets AS DOUBLE)"
+  },
+  "yards_per_touch": {
+   "variant": "(ruyd+reyd)/(car+rec)",
+   "agree": 1.0,
+   "expr": "(COALESCE(TRY_CAST(rushing_yards AS DOUBLE),0)+COALESCE(TRY_CAST(receiving_yards AS DOUBLE),0))/(COALESCE(TRY_CAST(carries AS DOUBLE),0)+COALESCE(TRY_CAST(receptions AS DOUBLE),0))",
+   "guard": "(COALESCE(TRY_CAST(carries AS DOUBLE),0)+COALESCE(TRY_CAST(receptions AS DOUBLE),0))"
+  },
+  "passing_adjusted_yards_per_attempt": {
+   "variant": "AY/A",
+   "agree": 1.0,
+   "expr": "(TRY_CAST(passing_yards AS DOUBLE) + 20*TRY_CAST(passing_tds AS DOUBLE) - 45*TRY_CAST(passing_interceptions AS DOUBLE))/TRY_CAST(attempts AS DOUBLE)",
+   "guard": "TRY_CAST(attempts AS DOUBLE)"
+  },
+  "passing_net_yards_per_attempt": {
+   "variant": "NY/A",
+   "agree": 1.0,
+   "expr": "(TRY_CAST(passing_yards AS DOUBLE) - COALESCE(TRY_CAST(sack_yards_lost AS DOUBLE),0))/(TRY_CAST(attempts AS DOUBLE) + COALESCE(TRY_CAST(sacks_suffered AS DOUBLE),0))",
+   "guard": "(TRY_CAST(attempts AS DOUBLE) + COALESCE(TRY_CAST(sacks_suffered AS DOUBLE),0))"
+  },
+  "passing_adjusted_net_yards_per_attempt": {
+   "variant": "ANY/A",
+   "agree": 1.0,
+   "expr": "(TRY_CAST(passing_yards AS DOUBLE) + 20*TRY_CAST(passing_tds AS DOUBLE) - 45*TRY_CAST(passing_interceptions AS DOUBLE) - COALESCE(TRY_CAST(sack_yards_lost AS DOUBLE),0))/(TRY_CAST(attempts AS DOUBLE) + COALESCE(TRY_CAST(sacks_suffered AS DOUBLE),0))",
+   "guard": "(TRY_CAST(attempts AS DOUBLE) + COALESCE(TRY_CAST(sacks_suffered AS DOUBLE),0))"
+  },
+  "passer_rating": {
+   "variant": "nfl_formula",
+   "agree": 0.997,
+   "expr": "(\n  LEAST(GREATEST((TRY_CAST(completions AS DOUBLE)/TRY_CAST(attempts AS DOUBLE) - 0.3) * 5, 0), 2.375)\n+ LEAST(GREATEST((TRY_CAST(passing_yards AS DOUBLE)/TRY_CAST(attempts AS DOUBLE) - 3) * 0.25, 0), 2.375)\n+ LEAST(GREATEST((TRY_CAST(passing_tds AS DOUBLE)/TRY_CAST(attempts AS DOUBLE)) * 20, 0), 2.375)\n+ LEAST(GREATEST(2.375 - (TRY_CAST(passing_interceptions AS DOUBLE)/TRY_CAST(attempts AS DOUBLE)) * 25, 0), 2.375)\n) / 6 * 100",
+   "guard": "TRY_CAST(attempts AS DOUBLE)",
+   "storage": "1dp"
+  },
+  "bonus_pass_400yd": {
+   "variant": "threshold",
+   "agree": 0.99925,
+   "expr": "CASE WHEN (TRY_CAST(passing_yards AS DOUBLE)) >= 400 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null
+  },
+  "bonus_rec_100yd": {
+   "variant": "threshold",
+   "agree": 1.0,
+   "expr": "CASE WHEN (TRY_CAST(receiving_yards AS DOUBLE)) >= 100 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null
+  },
+  "bonus_rec_200yd": {
+   "variant": "threshold",
+   "agree": 1.0,
+   "expr": "CASE WHEN (TRY_CAST(receiving_yards AS DOUBLE)) >= 200 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null
+  },
+  "bonus_pass_25cmp": {
+   "variant": "threshold",
+   "agree": 1.0,
+   "expr": "CASE WHEN (TRY_CAST(completions AS DOUBLE)) >= 25 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null
+  },
+  "bonus_rush_20att": {
+   "variant": "threshold",
+   "agree": 1.0,
+   "expr": "CASE WHEN (TRY_CAST(carries AS DOUBLE)) >= 20 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null
+  },
+  "bonus_rec_10rec": {
+   "variant": "threshold",
+   "agree": 1.0,
+   "expr": "CASE WHEN (TRY_CAST(receptions AS DOUBLE)) >= 10 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null
+  },
+  "bonus_pass_300yd": {
+   "variant": "threshold",
+   "agree": null,
+   "expr": "CASE WHEN TRY_CAST(passing_yards AS DOUBLE) >= 300 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "DIRECTION-CONFIRMED by measurement (own threshold beats the alternative 0.983 vs 0.967); residual is STALENESS vs repaired bases -- definitional threshold, recompute wins per bases-are-truth"
+  },
+  "bonus_rush_100yd": {
+   "variant": "threshold",
+   "agree": null,
+   "expr": "CASE WHEN TRY_CAST(rushing_yards AS DOUBLE) >= 100 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "DIRECTION-CONFIRMED by measurement (own threshold beats the alternative 0.983 vs 0.967); residual is STALENESS vs repaired bases -- definitional threshold, recompute wins per bases-are-truth"
+  },
+  "bonus_rush_200yd": {
+   "variant": "threshold",
+   "agree": null,
+   "expr": "CASE WHEN TRY_CAST(rushing_yards AS DOUBLE) >= 200 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "DIRECTION-CONFIRMED by measurement (own threshold beats the alternative 0.983 vs 0.967); residual is STALENESS vs repaired bases -- definitional threshold, recompute wins per bases-are-truth"
+  },
+  "bonus_rush_rec_100yd": {
+   "variant": "threshold",
+   "agree": null,
+   "expr": "CASE WHEN (COALESCE(TRY_CAST(rushing_yards AS DOUBLE),0)+COALESCE(TRY_CAST(receiving_yards AS DOUBLE),0)) >= 100 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "DIRECTION-CONFIRMED by measurement (own threshold beats the alternative 0.983 vs 0.967); residual is STALENESS vs repaired bases -- definitional threshold, recompute wins per bases-are-truth"
+  },
+  "bonus_rush_rec_200yd": {
+   "variant": "threshold",
+   "agree": null,
+   "expr": "CASE WHEN (COALESCE(TRY_CAST(rushing_yards AS DOUBLE),0)+COALESCE(TRY_CAST(receiving_yards AS DOUBLE),0)) >= 200 THEN 1.0 ELSE 0.0 END",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "DIRECTION-CONFIRMED by measurement (own threshold beats the alternative 0.983 vs 0.967); residual is STALENESS vs repaired bases -- definitional threshold, recompute wins per bases-are-truth"
+  },
+  "pts_pick6": {
+   "variant": "coefficient 1.0*pick6",
+   "agree": 1.0,
+   "expr": "1.0 * COALESCE(TRY_CAST(pick6 AS DOUBLE), 0)",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "coefficient discovered by median ratio on modern cells; reproduces 1.0000 of n=177848"
+  },
+  "pts_pick6_n1": {
+   "variant": "coefficient -1.0*pick6",
+   "agree": 1.0,
+   "expr": "-1.0 * COALESCE(TRY_CAST(pick6 AS DOUBLE), 0)",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "coefficient discovered by median ratio on modern cells; reproduces 1.0000 of n=177848"
+  },
+  "pts_pick6_n2": {
+   "variant": "coefficient -2.0*pick6",
+   "agree": 1.0,
+   "expr": "-2.0 * COALESCE(TRY_CAST(pick6 AS DOUBLE), 0)",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "coefficient discovered by median ratio on modern cells; reproduces 1.0000 of n=177848"
+  },
+  "pts_rec_40plus_1": {
+   "variant": "coefficient 1.0*receptions_40plus",
+   "agree": 0.99994,
+   "expr": "1.0 * COALESCE(TRY_CAST(receptions_40plus AS DOUBLE), 0)",
+   "guard": "1",
+   "storage": null,
+   "license_basis": "coefficient discovered by median ratio on modern cells; reproduces 0.9999 of n=177849"
+  },
+  "scrimmage_tds": {
+   "variant": "td-family definition",
+   "agree": null,
+   "expr": "COALESCE(TRY_CAST(rushing_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(receiving_tds AS DOUBLE), 0)",
+   "guard": "CASE WHEN rushing_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN receiving_tds IS NOT NULL THEN 1 ELSE 0 END",
+   "storage": null,
+   "license_basis": "rushing + receiving touchdowns; guard = at least one component present (no components -> stays NULL, never 0)"
+  },
+  "total_tds_scored": {
+   "variant": "td-family definition",
+   "agree": null,
+   "expr": "COALESCE(TRY_CAST(rushing_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(receiving_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(kickoff_return_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(punt_return_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(def_int_ret_td AS DOUBLE), 0) + COALESCE(TRY_CAST(fum_ret_td AS DOUBLE), 0)",
+   "guard": "CASE WHEN rushing_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN receiving_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN kickoff_return_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN punt_return_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN def_int_ret_td IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN fum_ret_td IS NOT NULL THEN 1 ELSE 0 END",
+   "storage": null,
+   "license_basis": "ALL touchdowns SCORED (scrimmage + returns + defensive returns) -- measured 0.99987 before recompute; guard = at least one component present (no components -> stays NULL, never 0)"
+  },
+  "total_tds_accounted_for": {
+   "variant": "td-family definition",
+   "agree": null,
+   "expr": "COALESCE(TRY_CAST(rushing_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(receiving_tds AS DOUBLE), 0) + COALESCE(TRY_CAST(passing_tds AS DOUBLE), 0)",
+   "guard": "CASE WHEN rushing_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN receiving_tds IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN passing_tds IS NOT NULL THEN 1 ELSE 0 END",
+   "storage": null,
+   "license_basis": "touchdowns ACCOUNTED FOR (scored scrimmage + thrown) -- measured 0.9999 before recompute; guard = at least one component present (no components -> stays NULL, never 0)"
+  }
+ },
+ "queued_no_winner": [
+  "target_share",
+  "air_yards_share"
+ ],
+ "storage_convention_law": "Declared per column from LOCK evidence, never inferred: passer_rating locks compare at 0.001 against witnesses that print one decimal, so the plane stores ROUND(formula, 1). Columns absent a declaration store full precision (their locks carry the 0.05 rate floor). 2026-08-03: majority-vote detection judged the mixed-convention plane 'full' and un-rounded the witnessed minority -- the gate refused at 0.096/0.14 and caught it."
+}

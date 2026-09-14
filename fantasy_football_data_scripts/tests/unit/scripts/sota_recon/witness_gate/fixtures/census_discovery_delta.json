@@ -1,0 +1,12 @@
+[
+  {
+    "dataset_id": "nflcom.team_season_roster",
+    "url": "https://www.nfl.com/teams/example/roster/1920",
+    "classification": "canonical"
+  },
+  {
+    "dataset_id": "nflcom.team_season_roster",
+    "url": "https://www.nfl.com/teams/example/roster/1921",
+    "classification": "canonical"
+  }
+]

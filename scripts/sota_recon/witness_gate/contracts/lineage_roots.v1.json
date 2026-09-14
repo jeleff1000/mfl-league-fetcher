@@ -1,0 +1,1664 @@
+{
+  "version": "v1",
+  "n_sources": 94,
+  "roots": [
+    "internal",
+    "newspaper",
+    "nflcom",
+    "nflverse_pbp",
+    "ngs",
+    "pfa_loc",
+    "pfr",
+    "statscrew"
+  ],
+  "pbp_split_year": 1999,
+  "sources": [
+    {
+      "source_id": "v26_release",
+      "lineage": "internal",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "internal",
+          "basis": "registry lineage 'internal' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "player_bio",
+      "lineage": "internal",
+      "witness_class": "identity",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "internal",
+          "basis": "registry lineage 'internal' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_slug_pfrid",
+      "lineage": "internal",
+      "witness_class": "identity",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "internal",
+          "basis": "registry lineage 'internal' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_index",
+      "lineage": "pfr",
+      "witness_class": "identity",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "schedule_master",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_team_games",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pbp_player_week_rollup",
+      "lineage": "pbp_merged",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1978,
+          "year_max": 1998,
+          "root": "pfr",
+          "basis": "pbp_merged 1978-98 is PFR-pbp-rooted (registry-declared era split): in these years the pbp stream and the PFR tables are ONE bloodline -- one independent root, never a 2-1 majority against pfr"
+        },
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1999,
+          "year_max": 2025,
+          "root": "nflverse_pbp",
+          "basis": "pbp_merged 1999+ is nflverse-rooted: independent of the PFR scrape bloodline"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_offense_box",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_defense_box",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1933,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "scoring_summary",
+      "lineage": "internal",
+      "witness_class": "derived",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "internal",
+          "basis": "registry lineage 'internal' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "ancient_pfa_gamelog",
+      "lineage": "pfa_loc",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1954,
+          "root": "pfa_loc",
+          "basis": "registry lineage 'pfa_loc' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "ancient_pfr_recovery",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1978,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "ancient_pbp1978_recovery",
+      "lineage": "pbp_merged",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1978,
+          "year_max": 1979,
+          "root": "pfr",
+          "basis": "pbp_merged 1978-98 is PFR-pbp-rooted (registry-declared era split): in these years the pbp stream and the PFR tables are ONE bloodline -- one independent root, never a 2-1 majority against pfr"
+        }
+      ]
+    },
+    {
+      "source_id": "ancient_newspaper_ocr",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1939,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "legacy_motherduck_supertable",
+      "lineage": "internal",
+      "witness_class": "subject_history",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "internal",
+          "basis": "registry lineage 'internal' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_season_passing",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_season_rush_rec",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_season_rec_rush",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_games_played",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_scoring",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_kicking",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1938,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_punting",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1939,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_defense",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1940,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_returns",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1941,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_fantasy",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1970,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_snap_counts",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2012,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "ngs_season_published",
+      "lineage": "ngs",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2016,
+          "year_max": 2025,
+          "root": "ngs",
+          "basis": "registry lineage 'ngs' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "ngs_weekly_raw",
+      "lineage": "ngs",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2016,
+          "year_max": 2025,
+          "root": "ngs",
+          "basis": "registry lineage 'ngs' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pbp_team_defense",
+      "lineage": "pbp_merged",
+      "witness_class": "derived",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1978,
+          "year_max": 1998,
+          "root": "pfr",
+          "basis": "pbp_merged 1978-98 is PFR-pbp-rooted (registry-declared era split): in these years the pbp stream and the PFR tables are ONE bloodline -- one independent root, never a 2-1 majority against pfr"
+        },
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1999,
+          "year_max": 2025,
+          "root": "nflverse_pbp",
+          "basis": "pbp_merged 1999+ is nflverse-rooted: independent of the PFR scrape bloodline"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_home_starters",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_vis_starters",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_home_snaps",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2012,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_vis_snaps",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2012,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_team_stats",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_home_drives",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1998,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_vis_drives",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1998,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_game_info",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_expected_points",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1994,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_scoring",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_pbp",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1981,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_kicking",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_returns",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_defense_advanced",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_receiving_advanced",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_rushing_advanced",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_passing_advanced",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_box_officials",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1957,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_passing_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1933,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_rushrec_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1933,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_recrush_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1933,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_defense_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1940,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_kicking_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1938,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_punting_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1939,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_returns_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1941,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_scoring_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_games_played_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1933,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adj_passing",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_combine",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2000,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_all_pro_members",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_pro_bowl_members",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1938,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adv_defense",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adv_recrush",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adv_rushrec",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_passing_adv_season",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adv_defense_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adv_recrush_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_adv_rushrec_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_passing_adv_post",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2018,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfr_player_combine",
+      "lineage": "pfr",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 2000,
+          "year_max": 2025,
+          "root": "pfr",
+          "basis": "registry lineage 'pfr' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pbp_merged_1978_2025",
+      "lineage": "pbp_merged",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1978,
+          "year_max": 1998,
+          "root": "pfr",
+          "basis": "pbp_merged 1978-98 is PFR-pbp-rooted (registry-declared era split): in these years the pbp stream and the PFR tables are ONE bloodline -- one independent root, never a 2-1 majority against pfr"
+        },
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1999,
+          "year_max": 2025,
+          "root": "nflverse_pbp",
+          "basis": "pbp_merged 1999+ is nflverse-rooted: independent of the PFR scrape bloodline"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_player_cells",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_team_stats",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_team_claims",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_scoring_events",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_pbp_events",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_lineups",
+      "lineage": "newspaper",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_game_context",
+      "lineage": "newspaper",
+      "witness_class": "context",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_player_notes",
+      "lineage": "newspaper",
+      "witness_class": "context",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_source_doc_notes",
+      "lineage": "newspaper",
+      "witness_class": "context",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_review_accepted",
+      "lineage": "newspaper",
+      "witness_class": "context",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_review_holds",
+      "lineage": "newspaper",
+      "witness_class": "context",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_player_logs",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_player_career",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1950,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_player_season",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_player_situational",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1922,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_player_splits",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1921,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_player_logs_targeted",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 1977,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_team_stats",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1932,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "nflcom_team_season_roster",
+      "lineage": "nflcom",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "nflcom",
+          "basis": "registry lineage 'nflcom' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "statscrew_team_season_roster",
+      "lineage": "statscrew",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "statscrew",
+          "basis": "registry lineage 'statscrew' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "statscrew_team_season_stats",
+      "lineage": "statscrew",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1921,
+          "year_max": 2025,
+          "root": "statscrew",
+          "basis": "registry lineage 'statscrew' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "statscrew_team_season_results",
+      "lineage": "statscrew",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2023,
+          "root": "statscrew",
+          "basis": "registry lineage 'statscrew' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "pfa_player_game_participation",
+      "lineage": "pfa_loc",
+      "witness_class": "primary",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 2025,
+          "root": "pfa_loc",
+          "basis": "registry lineage 'pfa_loc' (mandatory-explicit, O.5)"
+        }
+      ]
+    },
+    {
+      "source_id": "newspaper_raw_archives",
+      "lineage": "newspaper",
+      "witness_class": "context",
+      "assignments": [
+        {
+          "families": [
+            "*"
+          ],
+          "year_min": 1920,
+          "year_max": 1940,
+          "root": "newspaper",
+          "basis": "registry lineage 'newspaper' (mandatory-explicit, O.5)"
+        }
+      ]
+    }
+  ],
+  "shared_ancestors": [
+    {
+      "ancestor": "elias_gsis_gamebook",
+      "status": "DECLARED_UNRECEIPTED",
+      "voting_effect": "none",
+      "members": [
+        {
+          "root": "pfr",
+          "scope": "PFR box + player-page season tables, box-count stat families, modern era (era boundary unadjudicated -- see open_questions)",
+          "families": [
+            "passing",
+            "rushing",
+            "receiving",
+            "kicking",
+            "punting",
+            "returns",
+            "defense",
+            "fumbles",
+            "special_teams",
+            "general"
+          ]
+        },
+        {
+          "root": "nflverse_pbp",
+          "scope": "nflverse play feed descends from NFL GSIS; box-count rollups share the gamebook primal record class with PFR transcriptions",
+          "families": [
+            "passing",
+            "rushing",
+            "receiving",
+            "kicking",
+            "punting",
+            "returns",
+            "defense",
+            "fumbles",
+            "special_teams",
+            "general"
+          ]
+        }
+      ],
+      "note": "pfr and nflverse_pbp stay SEPARATE roots per standing registry doctrine (\u00a716 header); this annotation records the coordinated-lineage residual risk (\u00a717.2.8) -- agreement between them on box counts may be inherited from one primal gamebook record. Plausibility lane + source-image arbitration is the only recourse; collapsing them is an adjudication, never a code change."
+    },
+    {
+      "ancestor": "elias_gsis_gamebook",
+      "status": "DECLARED_UNRECEIPTED",
+      "voting_effect": "none",
+      "members": [
+        {
+          "root": "nflcom",
+          "scope": "NFL.com box-count stat families in the gamebook era (player_logs / player_career / player_season / team_stats); era boundary unadjudicated (OQ-LR-2). Ancient-era NFL.com rows (pre-Elias) are a DIFFERENT provenance class -- likely league-release/newspaper compilation -- and are NOT covered by this annotation.",
+          "families": [
+            "passing",
+            "rushing",
+            "receiving",
+            "kicking",
+            "punting",
+            "returns",
+            "defense",
+            "fumbles",
+            "special_teams",
+            "general"
+          ]
+        },
+        {
+          "root": "pfr",
+          "scope": "PFR box + player-page season tables, same box-count families, modern era",
+          "families": [
+            "passing",
+            "rushing",
+            "receiving",
+            "kicking",
+            "punting",
+            "returns",
+            "defense",
+            "fumbles",
+            "special_teams",
+            "general"
+          ]
+        }
+      ],
+      "note": "nflcom stays a SEPARATE root from pfr pending OQ-LR-1. It cannot vote yet regardless (no licensed mappings -- the slug->pfr_id crosswalk is unbuilt), so nothing downstream depends on this call today. When the crosswalk lands, the FIRST use of nflcom must be a shared-error fingerprint study against pfr on the modern box stratum; a blanket 'independent' or 'collapsed' assumption in either direction is forbidden."
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "OQ-LR-1",
+      "question": "nflcom box-family root assignment: NFL.com harvest exists (nflcom_harvest.py) but no nflcom source is registered. On registration its BOX families presumptively share the elias_gsis_gamebook ancestor with PFR box atoms (near-copies) while charting/derived families are independent -- which families exactly, and does box-family agreement collapse to one root?",
+      "blocker": "requires registration + shared-error fingerprint receipt (\u00a720.5)",
+      "status": "RESOLVED",
+      "resolution": "MEASURED 2026-08-02 (Joe: 'measure dont rule'). Shared-error fingerprint on modern box stratum (passing_yards, 2010-2019, 500 player-season triples vs pbp): nflcom==pfr on 491/500 overall; among the 172 cells where BOTH disagree with pbp, 170 are BYTE-IDENTICAL (98.8%). Verdict: one upstream (gamebook/Elias) -- nflcom modern box families COLLAPSE into the pfr root for vote counting. Ancient-era nflcom rows keep their separate provenance class (pre-Elias, OQ-LR-2 bounds the era boundary -- find where the shared-error pattern breaks)."
+    },
+    {
+      "id": "OQ-LR-2",
+      "question": "Era boundary at which PFR box atoms become gamebook transcriptions (Elias founded 1961, GSIS later; pre-war box provenance is newspaper/league-release class). Affects ancestor scope only, not current vote collapse.",
+      "blocker": "needs source-provenance evidence, not code",
+      "status": "QUEUED"
+    },
+    {
+      "id": "OQ-LR-3",
+      "question": "Platform feeds (Yahoo/Sleeper/ESPN NFL stat feeds) as candidate roots: they may share upstream providers with each other and with GSIS. No votes until independence is proven empirically.",
+      "blocker": "shared-error fingerprint study (\u00a720.5, \u00a725.5 corrected \u00a720.1)",
+      "status": "QUEUED"
+    },
+    {
+      "id": "OQ-LR-5",
+      "question": "Composite-bundle root fidelity: the ancient ready bundle's rows carry row-level lineage (bundle_source/data_source incl. newspapers_com_ocr, loc_newspaper_ocr, pfr recovery lanes, pbp-1978) but the single registered source resolved ALL rows to pfa_loc -- ancient-era root diversity miscounted in both directions.",
+      "status": "RESOLVED",
+      "resolution": "2026-07-26: row-level lineage beats source-level lineage. The composite is registered as per-stream sources, each scoped by a mandatory bundle_source/data_source filter declared in the source note: ancient_pfa_gamelog (pfa_loc root, through_1978 bundle, 10,320 rows 1920-54), ancient_pfr_recovery (pfr root, 19,887 rows 1920-78), ancient_pbp1978_recovery (pbp_merged era-split -> pfr root, 17,129 rows 1978-79), ancient_newspaper_ocr (newspaper root, non-voting, 133 rows 1920-39). Mixed-lineage rows (multiple data_source roots, ~6 pfa_scoring_summary+loc rows) are multi-root corroborated and carry NO single-root credit. EVIDENCE FINDING queued to Joe: the upstream ancient_upsert_bundle input dir is EMPTY; the 2026-07-18 through_1979 regen silently dropped the entire pfa_player_gamelog stream (10,320 rows) -- surviving snapshot = through_1978 bundle (registered), rebuild-or-promote decision is Joe's (deletion discipline)."
+    },
+    {
+      "id": "OQ-LR-4",
+      "question": "consensus_reconcile 'idp' witness kind sums the SUBJECT's own rows (v26 IDP detail) as a consensus participant -- under LOROO the subject may not vote for itself. Re-type as internal-consistency check or drop from the >=2-agreement count?",
+      "blocker": "apply-lane semantics change; needs adjudication before touching shipped reconcile behavior",
+      "status": "RESOLVED",
+      "resolution": "2026-08-02 under Joe's batch approval: re-typed as INTERNAL-CONSISTENCY CHECK. LOROO holds -- the subject's own rows never join the >=2-agreement count; the check still runs and reports, it just does not vote."
+    }
+  ]
+}

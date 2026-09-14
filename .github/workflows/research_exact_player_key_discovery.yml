@@ -71,4 +71,3 @@ jobs:
             prestate.json
             ops_before.sha256
           retention-days: 30
-

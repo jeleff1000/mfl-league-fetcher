@@ -76,8 +76,6 @@ jobs:
       - name: Checkout fetcher code (private)
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
 
       - name: Setup Python

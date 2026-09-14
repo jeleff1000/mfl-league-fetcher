@@ -23,6 +23,9 @@ import duckdb
 # env-overridable so this runs unchanged on a Linux GH runner (corpus_crawl_worker.yml)
 CORPUS = Path(os.environ.get("CORPUS_DIR", "D:/league-history-data/fantasy_leagues/sampling_corpus"))
 OUT = CORPUS / "corpus_snapshot.duckdb"
+NATIVE_ID_CROSSWALK = Path(os.environ.get(
+    "RESEARCH_NATIVE_ID_CROSSWALK",
+    str(CORPUS / "native_id_crosswalk.parquet")))
 
 # Mirror snapshot_real_leagues.py column contracts (week included for the weekly builders).
 # The eligibility gates (docs/runbooks/research-eligibility-gates-2026-07-16.md) all read from
@@ -30,6 +33,10 @@ OUT = CORPUS / "corpus_snapshot.duckdb"
 LS_COLS = [
     ("db_name", "VARCHAR"), ("year", "INTEGER"), ("num_teams", "INTEGER"),
     ("is_dynasty", "BOOLEAN"), ("max_keepers", "INTEGER"), ("sleeper_best_ball", "BOOLEAN"),
+    # FAAB normalization (Joe 2026-07-17): bids only compare as % of budget -- 28% of
+    # budget-known leagues are NOT $100 (200/1000/500...). GH-crawled slices predate this
+    # column; patch_waiver_budget.py backfills them (raw dir first, Sleeper API fallback).
+    ("waiver_budget", "INTEGER"), ("waiver_type", "VARCHAR"),
     ("roster_QB", "INTEGER"), ("roster_RB", "INTEGER"), ("roster_WR", "INTEGER"),
     ("roster_TE", "INTEGER"), ("roster_FLX", "INTEGER"), ("roster_SUPER_FLEX", "INTEGER"),
     ("roster_IDP", "INTEGER"), ("roster_DL", "INTEGER"), ("roster_LB", "INTEGER"),
@@ -60,32 +67,70 @@ DRAFT_COLS = [
     # --- Class C gate: keeper eligibility. is_keeper is the only trustworthy signal
     # (100% populated on every platform); league_settings.max_keepers is a Yahoo capture gap.
     ("is_keeper", "BOOLEAN"), ("round", "INTEGER"), ("pick_in_round", "INTEGER"),
+    # AUCTION NORMALIZATION (Joe 2026-07-20): auction cost only compares across leagues as
+    # % of budget. Sleeper/ESPN record the budget in settings (a DDL capture gap to close);
+    # Yahoo does not, so the budget is derived as the 3rd-HIGHEST team spend that year --
+    # 3rd, not max, because leagues that allow auction-dollar trading let one or two teams
+    # exceed the nominal budget. Per-team spend needs an identity on the draft row.
+    ("franchise_id", "VARCHAR"), ("manager", "VARCHAR"),
 ]
 TXN_COLS = [
     ("db_name", "VARCHAR"), ("year", "INTEGER"), ("week", "INTEGER"),
-    ("NFL_player_id", "VARCHAR"), ("franchise_id", "VARCHAR"),
+    ("NFL_player_id", "VARCHAR"),
+    # FAAB budget-proxy input (Joe 2026-07-17): budget-unavailable leagues normalize bids by
+    # the top franchise's season spend; franchise_id is the stable manager key.
+    ("franchise_id", "VARCHAR"),
     ("transaction_type", "VARCHAR"), ("faab_bid", "DOUBLE"),
     ("transaction_score", "DOUBLE"), ("manager_lamar_ros_managed", "DOUBLE"),
     ("player_lamar_ros_total", "DOUBLE"),
 ]
 PF_COLS = [
     ("db_name", "VARCHAR"), ("year", "INTEGER"), ("week", "INTEGER"),
-    ("NFL_player_id", "VARCHAR"), ("is_started", "INTEGER"), ("is_rostered", "INTEGER"),
+    # Keep raw platform identity in the public research snapshot.  Without these
+    # fields an unresolved Fleaflicker/MFL row cannot be repaired after folding.
+    ("NFL_player_id", "VARCHAR"), ("player", "VARCHAR"), ("position", "VARCHAR"),
+    ("fantasy_position", "VARCHAR"), ("platform", "VARCHAR"), ("team_key", "VARCHAR"),
+    ("team_name", "VARCHAR"), ("nfl_team_api", "VARCHAR"),
+    ("yahoo_player_id", "VARCHAR"), ("sleeper_player_id", "VARCHAR"),
+    ("espn_player_id", "VARCHAR"), ("fleaflicker_player_id", "VARCHAR"),
+    ("mfl_player_id", "VARCHAR"),
+    ("is_started", "INTEGER"), ("is_rostered", "INTEGER"),
     ("fantasy_points", "DOUBLE"), ("win", "INTEGER"), ("champion", "INTEGER"),
     ("clutch_equity", "DOUBLE"), ("manager_lamar", "DOUBLE"),
-    # row-level playoff flags (2026-07-24): matchup_to_player stamps these on player rows in
-    # every league db (same block as `champion`), so they survive attribution loss. The
-    # research builder derives made_po at build time as
-    # final_playoff_seed <= league_settings.playoff_teams (is_playoffs-appearance fallback) --
-    # no manager/matchup join needed, so playoff-rate exposure jumps from the ~1k attributed
-    # leagues/yr to the full ~10-15k folded. Pilot-verified 2026-07-24.
+    # playoff-rate capture (Joe 2026-07-19): manager attributes player-weeks to a team for
+    # the standings-derivation fallback; team_points is its points-for tiebreak.
+    ("manager", "VARCHAR"), ("team_points", "DOUBLE"),
+    # Playoff signal. final_playoff_seed/is_playoffs are the NATIVE truth; made_po_bf/
+    # is_playoffs_bf are the Sleeper overlay for slice-delivered leagues that arrived without
+    # it. made_po/has_po_signal are the RESOLVED pair -- read these, not the _bf suffix, which
+    # exists only to keep provenance separable (apply_playoff_backfill.py owns the chain).
     ("final_playoff_seed", "INTEGER"), ("is_playoffs", "INTEGER"),
+    ("made_po_bf", "TINYINT"), ("is_playoffs_bf", "TINYINT"),
+    ("made_po", "TINYINT"), ("has_po_signal", "TINYINT"),
+]
+# Playoff GROUND TRUTH (ledger D15: 94% of crawled leagues carry a fully populated matchup
+# table -- final_playoff_seed/is_playoffs make the standings derivation a mere ~6% fallback).
+MU_COLS = [
+    ("db_name", "VARCHAR"), ("year", "INTEGER"), ("week", "INTEGER"),
+    ("manager", "VARCHAR"), ("franchise_id", "VARCHAR"), ("opponent", "VARCHAR"),
+    ("team_points", "DOUBLE"), ("opponent_points", "DOUBLE"),
+    ("win", "INTEGER"), ("loss", "INTEGER"), ("tie", "INTEGER"),
+    ("is_playoffs", "INTEGER"), ("playoff_seed", "INTEGER"),
+    ("final_playoff_seed", "INTEGER"), ("champion", "INTEGER"),
+    # Explicit title-game signal.  This is distinct from `champion`, which is
+    # a season-level winner flag and must not be propagated to every playoff
+    # week for championship-start credit.
+    ("is_championship", "INTEGER"),
+    # The simulator's title probability is the upstream input to clutch. Keep
+    # it in the folded research lake so source and snapshot audits agree.
+    ("p_champ", "DOUBLE"),
 ]
 TABLES = {
     "league_settings": (LS_COLS, ""),
     "draft": (DRAFT_COLS, "WHERE pick IS NOT NULL OR cost IS NOT NULL"),
     "transactions": (TXN_COLS, ""),
     "player_fantasy": (PF_COLS, "WHERE CAST(is_rostered AS INT) = 1"),
+    "matchup": (MU_COLS, ""),
 }
 
 
@@ -95,14 +140,99 @@ def league_dirs(corpus: Path = CORPUS) -> list[Path]:
     return [d for d in dirs if (d / f"{d.name}.duckdb").exists()]
 
 
-def _select_sql(src_cols: set[str], cols: list[tuple[str, str]], table: str, where: str) -> str:
+def _select_sql(
+    src_cols: set[str],
+    cols: list[tuple[str, str]],
+    table: str,
+    where: str,
+    source_db_name: str | None = None,
+) -> str:
     parts = []
     for name, typ in cols:
-        if name in src_cols:
+        if name == "is_started" and "fantasy_position" in src_cols:
+            # Some historical platform tables carried the lineup slot but left the
+            # normalized starter flag NULL.  Preserve an explicit source flag; only
+            # derive the missing value from bench/reserve slots.
+            derived = (
+                "CASE WHEN \"fantasy_position\" IS NULL THEN NULL "
+                "WHEN UPPER(TRIM(CAST(\"fantasy_position\" AS VARCHAR))) "
+                "IN ('BN', 'IR', 'TAXI', 'BENCH', 'RESERVE', 'FA', 'WAIVERS', '') "
+                "THEN 0 ELSE 1 END"
+            )
+            if "is_started" in src_cols:
+                parts.append(
+                    f'CAST(COALESCE(CAST("is_started" AS INTEGER), {derived}) AS {typ}) AS "is_started"'
+                )
+            else:
+                parts.append(f'CAST({derived} AS {typ}) AS "is_started"')
+            continue
+        if name == "db_name" and name not in src_cols and source_db_name:
+            literal = source_db_name.replace("'", "''")
+            parts.append(f"'{literal}'::VARCHAR AS \"db_name\"")
+        elif name in src_cols:
             parts.append(f'CAST("{name}" AS {typ}) AS "{name}"')
         else:
             parts.append(f'CAST(NULL AS {typ}) AS "{name}"')
     return f'SELECT {", ".join(parts)} FROM src.public.{table} {where}'
+
+
+def _table_where(src_cols: set[str], table: str, configured: str) -> str:
+    """Return a source-compatible population filter.
+
+    Historical source databases are not schema-identical.  Some carry an
+    ``is_rostered`` flag, while older/backfilled player_fantasy tables only
+    carry the manager field.  The old fixed filter caused DuckDB to skip an
+    entire league when is_rostered was absent, which made a successful public
+    lake rebuild silently omit repaired player rows.
+    """
+    if table != "player_fantasy":
+        return configured
+    if "is_rostered" in src_cols:
+        return "WHERE CAST(is_rostered AS INT) = 1"
+    if "manager" in src_cols:
+        return (
+            "WHERE manager IS NOT NULL "
+            "AND TRIM(CAST(manager AS VARCHAR)) <> '' "
+            "AND LOWER(TRIM(CAST(manager AS VARCHAR))) NOT IN "
+            "('unrostered', 'fa', 'free agent', 'waivers')"
+        )
+    return ""
+
+
+def _identity_repair_expr(src_cols: set[str]) -> str | None:
+    """Return a safe MFL->canonical expression for a player_fantasy source row."""
+    if not NATIVE_ID_CROSSWALK.is_file() or "year" not in src_cols:
+        return None
+    if not {"player", "position"} <= src_cols and "mfl_player_id" not in src_cols:
+        return None
+    platform_gate = (
+        "LOWER(TRIM(CAST(\"platform\" AS VARCHAR))) = 'mfl'"
+        if "platform" in src_cols else "TRUE"
+    )
+    year_expr = 'CAST("year" AS INTEGER)'
+    name_expr = (
+        "LOWER(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(CAST(\"player\" AS VARCHAR), "
+        "'[^a-zA-Z0-9 ]', '', 'g'), '\\\\s+', ' ', 'g'), "
+        "' (iii|iv|ii|jr|sr|v)$', '', 'i')))"
+        if "player" in src_cols else "CAST(NULL AS VARCHAR)"
+    )
+    pos_expr = (
+        "CASE UPPER(TRIM(CAST(\"position\" AS VARCHAR))) "
+        "WHEN 'HB' THEN 'RB' WHEN 'FB' THEN 'RB' WHEN 'PK' THEN 'K' "
+        "WHEN 'DST' THEN 'DEF' WHEN 'D/ST' THEN 'DEF' WHEN 'DEF' THEN 'DEF' "
+        "ELSE UPPER(TRIM(CAST(\"position\" AS VARCHAR))) END"
+        if "position" in src_cols else "CAST(NULL AS VARCHAR)"
+    )
+    native_pred = (
+        f"x.year = {year_expr} AND x.native_id = NULLIF(TRIM(CAST(\"mfl_player_id\" AS VARCHAR)), '')"
+        if "mfl_player_id" in src_cols else "FALSE"
+    )
+    native = f"(SELECT MIN(x.NFL_player_id) FROM _mfl_native_crosswalk x WHERE {native_pred})"
+    named = (
+        f"(SELECT MIN(x.NFL_player_id) FROM _mfl_name_crosswalk x "
+        f"WHERE x.year = {year_expr} AND x.norm_name = {name_expr} AND x.pos_family = {pos_expr})"
+    )
+    return f"CASE WHEN {platform_gate} THEN COALESCE(NULLIF(TRIM(CAST(\"NFL_player_id\" AS VARCHAR)), ''), {native}, {named}) ELSE NULLIF(TRIM(CAST(\"NFL_player_id\" AS VARCHAR)), '') END"
 
 
 def open_snapshot(path: Path | str = OUT) -> duckdb.DuckDBPyConnection:
@@ -124,6 +254,21 @@ def open_snapshot(path: Path | str = OUT) -> duckdb.DuckDBPyConnection:
                 con.execute(f'ALTER TABLE public.{t} ADD COLUMN "{name}" {typ}')
                 print(f"[schema] public.{t}: added missing column {name} {typ}")
     con.execute("CREATE TABLE IF NOT EXISTS _sources (db_name VARCHAR PRIMARY KEY, folded_at TIMESTAMP)")
+    if NATIVE_ID_CROSSWALK.is_file():
+        crosswalk = NATIVE_ID_CROSSWALK.resolve().as_posix().replace("'", "''")
+        con.execute(f"""CREATE OR REPLACE TEMP VIEW _mfl_native_crosswalk AS
+            SELECT year, native_id, MIN(NFL_player_id) AS NFL_player_id
+            FROM read_parquet('{crosswalk}')
+            WHERE platform='mfl' AND native_id IS NOT NULL AND NFL_player_id IS NOT NULL
+            GROUP BY 1, 2
+            HAVING COUNT(DISTINCT NFL_player_id) = 1""")
+        con.execute(f"""CREATE OR REPLACE TEMP VIEW _mfl_name_crosswalk AS
+            SELECT year, name_norm AS norm_name, pos_family, MIN(NFL_player_id) AS NFL_player_id
+            FROM read_parquet('{crosswalk}')
+            WHERE platform='mfl' AND name_norm IS NOT NULL AND name_norm <> ''
+              AND pos_family IS NOT NULL AND pos_family <> '' AND NFL_player_id IS NOT NULL
+            GROUP BY 1, 2, 3
+            HAVING COUNT(DISTINCT NFL_player_id) = 1""")
     return con
 
 
@@ -150,20 +295,12 @@ def evict_league(con: duckdb.DuckDBPyConnection, db_name: str) -> None:
         raise
 
 
-def fold_database(
-    con: duckdb.DuckDBPyConnection,
-    db_path: Path | str,
-    db_name: str,
-    *,
-    anonymize_identity: bool = False,
-) -> tuple[bool, str]:
-    """Fold one local league DB into a compact snapshot.
+def fold_league(con: duckdb.DuckDBPyConnection, league_dir: Path) -> tuple[bool, str]:
+    """Fold ONE smpl_* league into the open snapshot. Caller serializes (DuckDB single-writer).
 
-    Yahoo franchise IDs derive from private manager GUIDs. When
-    ``anonymize_identity`` is true they are replaced with a deterministic,
-    league-scoped digest before the transaction commits.
+    Returns (ok, message). Never raises; a locked/corrupt league is skipped for a later run.
     """
-    db = Path(db_path)
+    db = league_dir / f"{league_dir.name}.duckdb"
     if not db.exists():
         return False, "no duckdb"
     try:
@@ -187,16 +324,19 @@ def fold_database(
             # land in the wrong columns (this silently tried to cast platform='sleeper' into
             # playoff_start_week INTEGER and skipped all 2,200 leagues).
             collist = ", ".join(f'"{n}"' for n, _ in cols)
-            con.execute(f"INSERT INTO public.{t} ({collist}) {_select_sql(src_cols, cols, t, where)}")
-        if anonymize_identity and "transactions" in src_tables:
+            select_sql = _select_sql(src_cols, cols, t, _table_where(src_cols, t, where), league_dir.name)
+            if t == "player_fantasy" and "NFL_player_id" in src_cols:
+                repair = _identity_repair_expr(src_cols)
+                if repair:
+                    select_sql = select_sql.replace(
+                        'CAST("NFL_player_id" AS VARCHAR) AS "NFL_player_id"',
+                        f'{repair} AS "NFL_player_id"',
+                    )
             con.execute(
-                "UPDATE public.transactions "
-                "SET franchise_id = CASE WHEN franchise_id IS NULL THEN NULL "
-                "ELSE 'anon-' || substr(sha256(? || ':' || franchise_id), 1, 16) END "
-                "WHERE db_name = ?",
-                [db_name, db_name],
+                f"INSERT INTO public.{t} ({collist}) "
+                f"{select_sql}"
             )
-        con.execute("INSERT INTO _sources VALUES (?, now())", [db_name])
+        con.execute("INSERT INTO _sources VALUES (?, now())", [league_dir.name])
         con.execute("COMMIT")
         return True, ""
     except Exception as e:
@@ -212,21 +352,21 @@ def fold_database(
             pass
 
 
-def fold_league(con: duckdb.DuckDBPyConnection, league_dir: Path) -> tuple[bool, str]:
-    """Compatibility wrapper for the existing Sleeper corpus directory layout."""
-    db = league_dir / f"{league_dir.name}.duckdb"
-    return fold_database(con, db, league_dir.name)
-
-
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rebuild", action="store_true",
-                    help="drop and re-fold everything. Needed after WIDENING the column "
-                         "contracts above: open_snapshot() adds missing columns, but rows folded "
-                         "earlier keep NULL in them, and _sources makes fold_league() skip those "
-                         "leagues forever. Re-folding is the only way to populate new columns.")
+                    help="drop and re-fold everything. DANGER: slice-delivered leagues have NO "
+                         "local source db (the GH runner folded them remotely) -- --rebuild drops "
+                         "them UNRECOVERABLY unless every slice file is still on disk to re-merge. "
+                         "For contract widenings use --refold-local instead.")
+    ap.add_argument("--refold-local", action="store_true",
+                    help="evict + re-fold ONLY leagues that have a local per-league duckdb, so a "
+                         "widened column contract reaches them. Slice-delivered leagues are left "
+                         "untouched (their new columns stay NULL until a re-crawl).")
     args = ap.parse_args()
+    if args.rebuild and args.refold_local:
+        raise SystemExit("--rebuild and --refold-local are mutually exclusive")
 
     con = open_snapshot(OUT)
     if args.rebuild:
@@ -235,6 +375,15 @@ def main() -> None:
         for t in TABLES:
             con.execute(f"DELETE FROM public.{t}")
         con.execute("DELETE FROM _sources")
+    if args.refold_local:
+        done = folded_set(con)
+        targets = [d.name for d in league_dirs() if d.name in done]
+        print(f"[corpus-snapshot] --refold-local: evicting {len(targets):,} locally-sourced "
+              f"leagues for re-fold ({len(done) - len(targets):,} slice-delivered untouched)")
+        for i, name in enumerate(targets, 1):
+            evict_league(con, name)
+            if i % 500 == 0:
+                print(f"  ... evicted {i:,}/{len(targets):,}")
     done = folded_set(con)
     dirs = [d for d in league_dirs() if d.name not in done]
     print(f"[corpus-snapshot] {len(done):,} already folded; {len(dirs):,} to fold")

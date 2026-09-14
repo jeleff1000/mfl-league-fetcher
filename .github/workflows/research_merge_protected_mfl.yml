@@ -112,8 +112,6 @@ jobs:
       - name: Checkout private merge code
         uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
           sparse-checkout-cone-mode: false
           sparse-checkout: |

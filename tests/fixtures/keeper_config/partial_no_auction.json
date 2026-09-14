@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "draft_type": "snake",
+  "max_keepers": 2,
+  "min_price": 1,
+  "num_rounds": 15,
+  "base_cost_rules": {
+    "drafted": {"round_offset": -1}
+  }
+}

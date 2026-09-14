@@ -1,0 +1,24 @@
+-- Add starter_points column to centralized matchup table.
+-- Populated by player_to_matchup enrichment as:
+--   SUM(CASE WHEN CAST(is_started AS INTEGER) = 1 THEN fantasy_points ELSE 0.0 END)
+-- This is the internal-data-consistent version of team_points. The
+-- optimal_gte_team_points validator compares against this instead of
+-- team_points, so fetcher gaps on specific player-weeks don't fire false
+-- positives.
+--
+-- Canonical DDL source: canonical_matchup.MATCHUP_SCHEMA (added in same commit).
+--
+-- Idempotent: IF NOT EXISTS makes this safe to re-run.
+-- Non-destructive: adds a new nullable DOUBLE column; existing rows get NULL,
+-- which is the correct starting state before player_to_matchup backfills them.
+-- No backfill is required here: the enrichment re-populates on next retransform
+-- or fresh import, and NULL is a valid "not yet computed" state.
+--
+-- Rollback:
+--   ALTER TABLE ___leagues.public.matchup DROP COLUMN IF EXISTS starter_points;
+-- Rollback is safe: nothing reads starter_points before this migration because
+-- the canonical DDL didn't have it; the only writers are player_to_matchup
+-- (gated by _ensure_columns) and the validator's optimal_gte_team_points check
+-- (which already binder-errors without it — same broken state as pre-migration).
+
+ALTER TABLE ___leagues.public.matchup ADD COLUMN IF NOT EXISTS starter_points DOUBLE;

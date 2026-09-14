@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "draft_type": "snake",
+  "max_keepers": 2,
+  "max_years": null,
+  "min_price": 1,
+  "num_rounds": 16,
+  "min_round": 1,
+  "base_cost_rules": {
+    "drafted": {"round_offset": -1},
+    "fa_pickup": {"source": "fixed", "round": 16}
+  },
+  "formulas_by_keeper_year": {
+    "2+": {"type": "round_escalation", "rounds_per_year": 1}
+  }
+}

@@ -79,7 +79,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Wait for a verified MFL archive run, then land it on D:")
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("--repo", default="league-history-workers/mfl-league-fetcher")
+    parser.add_argument("--repo", default="jeleff1000/league-history-workers")
     parser.add_argument("--poll-seconds", type=int, default=300)
     parser.add_argument("--expected-lane-count", type=int, default=15)
     parser.add_argument("--artifact-prefix", default="mfl-original-source-archives-lane-")

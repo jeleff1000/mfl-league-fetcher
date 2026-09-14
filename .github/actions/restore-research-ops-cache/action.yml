@@ -21,7 +21,6 @@ runs:
         path: research_public_lake
         key: ${{ inputs.cache-key }}
         fail-on-cache-miss: false
-
     - name: Restore release backup when Actions cache is absent
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
@@ -31,16 +30,12 @@ runs:
         set -euo pipefail
         rm -rf research_public_lake
         mkdir -p research_public_lake
-        gh release download "${{ inputs.release-tag }}" \
-          --repo "${{ inputs.release-repository }}" \
+        python scripts/download_release_asset.py \
+          --release-tag "${{ inputs.release-tag }}" \
+          --release-repository "${{ inputs.release-repository }}" \
           --pattern ops_cache.duckdb \
           --dir research_public_lake
         test -s research_public_lake/ops_cache.duckdb
-        echo "[ops-cache] restored durable release backup ${{ inputs.release-tag }}"
-
     - name: Verify durable ops cache
       shell: bash
-      run: |
-        set -euo pipefail
-        test -s research_public_lake/ops_cache.duckdb
-        echo "[ops-cache] source=${{ steps.restore.outputs.cache-hit == 'true' && 'actions-cache' || 'release-backup' }}"
+      run: test -s research_public_lake/ops_cache.duckdb

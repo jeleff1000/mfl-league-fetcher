@@ -15,12 +15,6 @@ on:
         description: 'Stable merge concurrency key, usually target/source db names'
         required: false
         type: string
-      yahoo_oauth_ref:
-        description: 'yahoo_oauth branch/ref to check out'
-        required: false
-        type: string
-        default: 'main'
-
   repository_dispatch:
     types: [league_admin_merge]
 
@@ -48,10 +42,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-          ref: ${{ github.event.inputs.yahoo_oauth_ref || github.event.client_payload.yahoo_oauth_ref || 'main' }}
 
       - name: Setup Python
         uses: actions/setup-python@v6

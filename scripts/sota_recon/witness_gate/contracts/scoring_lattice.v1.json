@@ -1,0 +1,213 @@
+{
+ "version": "v1",
+ "generated": "2026-08-03 22:39",
+ "window": "2015-2024",
+ "min_agree": 0.999,
+ "licensed_composites": {},
+ "queued": [
+  {
+   "composite": "fpts_4pt_half",
+   "components": [
+    "pts_pass_4pt",
+    "pts_rush",
+    "pts_rec_half",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_4pt_ppr",
+   "components": [
+    "pts_pass_4pt",
+    "pts_rush",
+    "pts_rec_ppr",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_6pt_0ppr",
+   "components": [
+    "pts_pass_6pt",
+    "pts_rush",
+    "pts_rec_0ppr",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_6pt_half",
+   "components": [
+    "pts_pass_6pt",
+    "pts_rush",
+    "pts_rec_half",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_6pt_ppr",
+   "components": [
+    "pts_pass_6pt",
+    "pts_rush",
+    "pts_rec_ppr",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_4pt_0ppr",
+   "components": [
+    "pts_pass_4pt",
+    "pts_rush",
+    "pts_rec_0ppr",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_5pt_0ppr",
+   "components": [
+    "pts_pass_5pt",
+    "pts_rush",
+    "pts_rec_0ppr",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_5pt_half",
+   "components": [
+    "pts_pass_5pt",
+    "pts_rush",
+    "pts_rec_half",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_5pt_ppr",
+   "components": [
+    "pts_pass_5pt",
+    "pts_rush",
+    "pts_rec_ppr",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_4pt_tep",
+   "components": [
+    "pts_pass_4pt",
+    "pts_rush",
+    "pts_rec_tep",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_5pt_tep",
+   "components": [
+    "pts_pass_5pt",
+    "pts_rush",
+    "pts_rec_tep",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_6pt_tep",
+   "components": [
+    "pts_pass_6pt",
+    "pts_rush",
+    "pts_rec_tep",
+    "pts_misc"
+   ],
+   "n": 177849,
+   "agree": 0.942,
+   "why": "identity does not hold"
+  },
+  {
+   "composite": "fpts_4pt_0ppr_ret",
+   "why": "missing ['pts_rec_0ppr_ret']"
+  },
+  {
+   "composite": "fpts_4pt_half_ret",
+   "why": "missing ['pts_rec_half_ret']"
+  },
+  {
+   "composite": "fpts_4pt_ppr_ret",
+   "why": "missing ['pts_rec_ppr_ret']"
+  },
+  {
+   "composite": "fpts_5pt_0ppr_ret",
+   "why": "missing ['pts_rec_0ppr_ret']"
+  },
+  {
+   "composite": "fpts_5pt_half_ret",
+   "why": "missing ['pts_rec_half_ret']"
+  },
+  {
+   "composite": "fpts_5pt_ppr_ret",
+   "why": "missing ['pts_rec_ppr_ret']"
+  },
+  {
+   "composite": "fpts_6pt_0ppr_ret",
+   "why": "missing ['pts_rec_0ppr_ret']"
+  },
+  {
+   "composite": "fpts_6pt_half_ret",
+   "why": "missing ['pts_rec_half_ret']"
+  },
+  {
+   "composite": "fpts_6pt_ppr_ret",
+   "why": "missing ['pts_rec_ppr_ret']"
+  },
+  {
+   "composite": "fpts_4pt_tep_ret",
+   "why": "missing ['pts_rec_tep_ret']"
+  },
+  {
+   "composite": "fpts_5pt_tep_ret",
+   "why": "missing ['pts_rec_tep_ret']"
+  },
+  {
+   "composite": "fpts_6pt_tep_ret",
+   "why": "missing ['pts_rec_tep_ret']"
+  },
+  {
+   "composite": "fpts_4pt_ppfd",
+   "why": "missing ['pts_rec_ppfd']"
+  },
+  {
+   "composite": "fpts_5pt_ppfd",
+   "why": "missing ['pts_rec_ppfd']"
+  },
+  {
+   "composite": "fpts_6pt_ppfd",
+   "why": "missing ['pts_rec_ppfd']"
+  }
+ ]
+}

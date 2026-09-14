@@ -1,0 +1,259 @@
+<title>Witness Coverage Ledger</title>
+<style>
+:root{
+  --paper:#FAF8F4; --panel:#FFFFFF; --ink:#26221B; --ink2:#6B6357; --ink3:#9A9184;
+  --rule:#E3DDD2; --rule2:#CFC7B8; --gold:#B08A3E;
+  --w0-ink:#B4AA9A; --w0-border:#DDD5C7;
+  --w1:#E9F2F0; --w2:#C6E0DB; --w3:#9ECBC3; --w4:#6FAFA6; --w5:#438379; --w6:#1F6157;
+  --cell-ink-hi:#F4FAF9;
+  --danger:#A4402F; --danger-bg:#F6E7E2;
+  --chip:#EFEAE0; --focus:#2E6FA3;
+}
+@media (prefers-color-scheme: dark){:root{
+  --paper:#181611; --panel:#201D17; --ink:#EAE4D8; --ink2:#A89E8E; --ink3:#7C7364;
+  --rule:#363128; --rule2:#48422F; --gold:#C9A45C;
+  --w0-ink:#5E574A; --w0-border:#3A342A;
+  --w1:#233230; --w2:#28453F; --w3:#2F5A52; --w4:#3A7268; --w5:#54948A; --w6:#7FB8AE;
+  --cell-ink-hi:#0F1D1A;
+  --danger:#D9846F; --danger-bg:#3A241E;
+  --chip:#2B271F; --focus:#7FB0D8;
+}}
+:root[data-theme="light"]{
+  --paper:#FAF8F4; --panel:#FFFFFF; --ink:#26221B; --ink2:#6B6357; --ink3:#9A9184;
+  --rule:#E3DDD2; --rule2:#CFC7B8; --gold:#B08A3E;
+  --w0-ink:#B4AA9A; --w0-border:#DDD5C7;
+  --w1:#E9F2F0; --w2:#C6E0DB; --w3:#9ECBC3; --w4:#6FAFA6; --w5:#438379; --w6:#1F6157;
+  --cell-ink-hi:#F4FAF9;
+  --danger:#A4402F; --danger-bg:#F6E7E2;
+  --chip:#EFEAE0; --focus:#2E6FA3;
+}
+:root[data-theme="dark"]{
+  --paper:#181611; --panel:#201D17; --ink:#EAE4D8; --ink2:#A89E8E; --ink3:#7C7364;
+  --rule:#363128; --rule2:#48422F; --gold:#C9A45C;
+  --w0-ink:#5E574A; --w0-border:#3A342A;
+  --w1:#233230; --w2:#28453F; --w3:#2F5A52; --w4:#3A7268; --w5:#54948A; --w6:#7FB8AE;
+  --cell-ink-hi:#0F1D1A;
+  --danger:#D9846F; --danger-bg:#3A241E;
+  --chip:#2B271F; --focus:#7FB0D8;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font:14px/1.45 system-ui,"Segoe UI",sans-serif}
+.wrap{max-width:1320px;margin:0 auto;padding:20px 20px 80px}
+header.mast{border-bottom:2px solid var(--gold);padding:6px 0 14px;margin-bottom:14px}
+header.mast h1{font-family:Georgia,"Times New Roman",serif;font-size:26px;font-weight:600;margin:0;letter-spacing:.2px;text-wrap:balance}
+header.mast p{margin:4px 0 0;color:var(--ink2);max-width:78ch}
+.meta{color:var(--ink3);font-size:12px;margin-top:4px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 12px}
+.tab{border:1px solid var(--rule2);background:var(--panel);color:var(--ink);
+  padding:7px 12px 6px;cursor:pointer;font:13px system-ui,sans-serif;border-radius:3px;
+  display:flex;gap:8px;align-items:baseline}
+.tab:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.tab.active{border-color:var(--gold);box-shadow:inset 0 -2px 0 var(--gold)}
+.tab .n{color:var(--ink3);font-size:11.5px}
+.tab .zero{color:var(--danger);font-size:11.5px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.controls input[type=search]{background:var(--panel);border:1px solid var(--rule2);color:var(--ink);
+  padding:6px 10px;border-radius:3px;font:13px system-ui;width:230px}
+.controls input[type=search]:focus-visible{outline:2px solid var(--focus)}
+.tog{display:flex;gap:6px;align-items:center;color:var(--ink2);font-size:12.5px;cursor:pointer;user-select:none}
+.tog input{accent-color:var(--gold)}
+.legend{display:flex;gap:10px;align-items:center;margin-left:auto;color:var(--ink2);font-size:12px;flex-wrap:wrap}
+.legend .sw{display:inline-block;width:22px;height:13px;border-radius:2px;vertical-align:-2px;margin-right:3px}
+.legend .sw.z{border:1px dashed var(--w0-border);background:transparent}
+.legend .sw.um{border:1px dashed var(--ink3);background:var(--w2)}
+.matrix-outer{overflow-x:auto;border:1px solid var(--rule);background:var(--panel);border-radius:3px}
+table{border-collapse:separate;border-spacing:0;width:100%;min-width:980px}
+thead th{position:sticky;top:0;z-index:3;background:var(--panel);color:var(--ink2);
+  font:11px/1.3 system-ui;text-transform:uppercase;letter-spacing:.07em;text-align:right;
+  padding:8px 9px;border-bottom:1px solid var(--rule2)}
+thead th:first-child{text-align:left;left:0;z-index:4}
+tbody td{padding:4px 9px;border-bottom:1px solid var(--rule);text-align:right;
+  font-family:ui-monospace,Consolas,monospace;font-size:12.3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+tbody td:first-child{text-align:left;position:sticky;left:0;background:var(--panel);z-index:1;
+  max-width:290px;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+tr.cat-row td{background:var(--chip);color:var(--ink);font-family:system-ui;font-size:12px;
+  font-weight:600;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;position:sticky;left:0;text-align:left;padding:6px 9px}
+tr.cat-row td:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+tr.cat-row .count{color:var(--ink3);font-weight:400;margin-left:8px;text-transform:none;letter-spacing:0}
+tr.cat-row .zeros{color:var(--danger);font-weight:400;margin-left:6px;text-transform:none;letter-spacing:0}
+tr.cat-row .tri{display:inline-block;width:14px;color:var(--ink3)}
+td.c0{color:var(--w0-ink)}
+td.c0 span{border:1px dashed var(--w0-border);border-radius:2px;padding:0 5px;display:inline-block;min-width:20px;text-align:center}
+td.cf .pill{display:inline-block;border-radius:2px;padding:1px 6px}
+td.cf .pill.um{border:1px dashed var(--ink3);padding:0 5px}
+td .yr{opacity:.75;font-size:11px}
+.pill.l1{background:var(--w1)} .pill.l2{background:var(--w2)} .pill.l3{background:var(--w3)}
+.pill.l4{background:var(--w4)} .pill.l5{background:var(--w5);color:var(--cell-ink-hi)}
+.pill.l6{background:var(--w6);color:var(--cell-ink-hi)}
+td.total{font-weight:600;border-left:1px solid var(--rule2)}
+td.total.zero{color:var(--danger)}
+.note{color:var(--ink3);font-size:12px;margin-top:10px;max-width:95ch}
+.note b{color:var(--ink2)}
+@media (prefers-reduced-motion: no-preference){
+  .tab{transition:border-color .12s ease}
+}
+</style>
+
+<div class="wrap">
+<header class="mast">
+  <h1>Witness Coverage Ledger</h1>
+  <p>What is loaded and ready to verify the moment we hit play: every super-table column,
+  by plane, against the mapped witness specs each lineage root holds for it &mdash; and the
+  earliest season those witnessing sources reach.</p>
+  <div class="meta" id="meta"></div>
+</header>
+
+<div class="tabs" id="tabs" role="tablist"></div>
+
+<div class="controls">
+  <input type="search" id="q" placeholder="Filter columns&hellip;" aria-label="Filter columns">
+  <label class="tog"><input type="checkbox" id="zeroOnly"> zero-witness only</label>
+  <label class="tog"><input type="checkbox" id="showDerived"> show derived / stamps</label>
+  <div class="legend">
+    <span><span class="sw z"></span>0</span>
+    <span><span class="sw" style="background:var(--w1)"></span>1</span>
+    <span><span class="sw" style="background:var(--w2)"></span>2</span>
+    <span><span class="sw" style="background:var(--w3)"></span>3&ndash;4</span>
+    <span><span class="sw" style="background:var(--w4)"></span>5&ndash;7</span>
+    <span><span class="sw" style="background:var(--w5)"></span>8&ndash;11</span>
+    <span><span class="sw" style="background:var(--w6)"></span>12+</span>
+    <span><span class="sw um"></span>loaded, not yet fired</span>
+    <span>count &middot; earliest year</span>
+  </div>
+</div>
+
+<div class="matrix-outer"><table id="tbl" aria-label="Witness coverage matrix">
+  <thead><tr id="hdr"></tr></thead>
+  <tbody id="body"></tbody>
+</table></div>
+
+<p class="note" id="foot"></p>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const TABS = [
+  ['weekly','Weekly'],['season','Season'],['season_playoffs','Season &middot; incl. playoffs'],
+  ['career','Career'],['career_playoffs','Career &middot; incl. playoffs'],['player_bio','Player Bio']];
+const DERIVED = new Set(['scoring_derived','rank_derived','audit_stamp']);
+const CAT_LABEL = {passing:'Passing',rushing:'Rushing',receiving:'Receiving',kicking:'Kicking',
+  punting:'Punting',returns:'Returns',idp_defense:'IDP / Defense',team_dst:'Team DST',
+  usage_ol:'Usage / OL',awards:'Awards',advanced_epa:'Advanced (EPA/WP)',context:'Game Context',
+  bio:'Bio',identifier:'Identifiers',other:'Other Stats',
+  scoring_derived:'Scoring (derived)',rank_derived:'Ranks (derived)',audit_stamp:'Audit Stamps'};
+let tab='weekly';
+const collapsed = new Set(DERIVED);
+
+function lvl(n){return n<=0?0:n===1?1:n===2?2:n<=4?3:n<=7?4:n<=11?5:6}
+function counts(rows){
+  const z = rows.filter(r=>r[3]===0).length;
+  return {n:rows.length, z};
+}
+
+function render(){
+  const rows = D.tabs[tab];
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const zeroOnly = document.getElementById('zeroOnly').checked;
+  const showDerived = document.getElementById('showDerived').checked;
+
+  const hdr = document.getElementById('hdr');
+  hdr.innerHTML = '<th scope="col">Column</th>' +
+    D.roots.map(r=>`<th scope="col">${D.labels[r]}</th>`).join('') +
+    '<th scope="col">Total</th><th scope="col">Reach</th>';
+
+  const byCat = new Map();
+  for(const r of rows){
+    if(!showDerived && DERIVED.has(r[1])) continue;
+    if(q && !r[0].toLowerCase().includes(q)) continue;
+    if(zeroOnly && r[3]!==0) continue;
+    if(!byCat.has(r[1])) byCat.set(r[1],[]);
+    byCat.get(r[1]).push(r);
+  }
+  const parts=[];
+  for(const cat of D.cats){
+    const list = byCat.get(cat);
+    if(!list || !list.length) continue;
+    const c = counts(list);
+    const isCollapsed = collapsed.has(cat) && !q && !zeroOnly;
+    parts.push(`<tr class="cat-row" data-cat="${cat}"><td colspan="${D.roots.length+3}" tabindex="0" role="button" aria-expanded="${!isCollapsed}">`+
+      `<span class="tri">${isCollapsed?'&#9656;':'&#9662;'}</span>${CAT_LABEL[cat]||cat}`+
+      `<span class="count">${c.n} columns</span>`+
+      (c.z?`<span class="zeros">${c.z} unwitnessed</span>`:'')+`</td></tr>`);
+    if(isCollapsed) continue;
+    for(const r of list){
+      const cells = D.roots.map((root,i)=>{
+        const v = r[2][i];
+        if(!v) return `<td class="c0"><span>&ndash;</span></td>`;
+        const [n, yr, meas, kind, srcs, dens] = v;
+        const l = lvl(n);
+        const um = meas===0 ? ' um' : '';
+        const yrTxt = kind===0 ? `${yr}` : kind===1 ? `~${yr}` : '—';
+        const yrNote = kind===0 ? ' (measured sustained start)'
+                     : kind===1 ? ' (declared span — surface has no year axis)'
+                                : ' (loaded, but no in-span data found for this column)';
+        const measNote = meas===0 ? String.fromCharCode(10)+'not yet fired in the full audit'
+                                  : `
+${meas} of ${n} fired with overlap`;
+        const srcLines = (srcs||[]).map(([s,st])=>`  ${s}: ${st||'—'}`).join(String.fromCharCode(10));
+        const densLine = dens ? `
+density ${dens}` : '';
+        return `<td class="cf"><span class="pill l${l}${um}" title="${D.labels[root]} reaches ${yrTxt}${yrNote}${measNote}
+by source:
+${srcLines}${densLine}">${n}&nbsp;&middot;&nbsp;<span class="yr">${yrTxt}</span></span></td>`;
+      }).join('');
+      parts.push(`<tr><td title="${r[0]}">${r[0]}</td>${cells}`+
+        `<td class="total${r[3]===0?' zero':''}">${r[3]===0?'&mdash;':r[3]}</td>`+
+        `<td>${r[4]??'&mdash;'}</td></tr>`);
+    }
+  }
+  document.getElementById('body').innerHTML = parts.join('') ||
+    `<tr><td colspan="${D.roots.length+3}" style="text-align:left;color:var(--ink2);font-family:system-ui">No rows match.</td></tr>`;
+
+  const all = counts(rows.filter(r=>showDerived||!DERIVED.has(r[1])));
+  document.getElementById('meta').textContent =
+    `Ready-to-verify coverage from the witness documentation (WITNESS_MAP, regenerated 2026-08-01). `+
+    `${all.n} columns on this tab · ${all.z} with zero witness specs.`;
+}
+
+function renderTabs(){
+  const el = document.getElementById('tabs');
+  el.innerHTML = TABS.map(([k,label])=>{
+    const c = counts(D.tabs[k].filter(r=>!DERIVED.has(r[1])));
+    return `<button class="tab${k===tab?' active':''}" role="tab" aria-selected="${k===tab}" data-tab="${k}">`+
+      `${label} <span class="n">${c.n}</span> <span class="zero">${c.z} zero</span></button>`;
+  }).join('');
+}
+
+document.getElementById('tabs').addEventListener('click',e=>{
+  const b=e.target.closest('.tab'); if(!b) return;
+  tab=b.dataset.tab; renderTabs(); render();
+});
+document.getElementById('body').addEventListener('click',e=>{
+  const row=e.target.closest('.cat-row'); if(!row) return;
+  const c=row.dataset.cat;
+  collapsed.has(c)?collapsed.delete(c):collapsed.add(c);
+  render();
+});
+document.getElementById('body').addEventListener('keydown',e=>{
+  if(e.key!=='Enter'&&e.key!==' ') return;
+  const row=e.target.closest('.cat-row'); if(!row) return;
+  e.preventDefault();
+  const c=row.dataset.cat;
+  collapsed.has(c)?collapsed.delete(c):collapsed.add(c);
+  render();
+});
+for(const id of ['q','zeroOnly','showDerived'])
+  document.getElementById(id).addEventListener('input',render);
+
+document.getElementById('foot').innerHTML =
+  '<b>Reading the ledger.</b> Each cell is <b>witness-spec count &middot; measured start</b>: the first <b>sustained</b> season the exact source column carries real nonzero values inside the source&rsquo;s registered span (&ge;3 nonzero rows, or &ge;1 on tables under 30 rows, with another qualifying season within two years). A padded zero never counts; a lone stray value never opens a window; rows outside a source&rsquo;s registered span are excluded and receipted separately (337 such findings). Hover a cell for the per-source starts and the decade density scale. A <b>~year</b> falls back to the declared span only where the surface has no year axis; a <b>&mdash;</b> means specs are loaded but no in-span data was found — review those specs. '+
+  'Counts come from the witness documentation: every mapped spec ready to fire, counted on every plane its column lives on. A dash means no root has any spec loaded for the column. '+
+  'Solid cells have fired at least once with overlap in the 2026-08-01 full-stratum audit; <b>dashed-outline cells are loaded but not yet fired</b> (the whole Newspaper column is unaudited by scope decision). '+
+  'REG tabs count non-playoff specs; the incl.-playoffs tabs count POST-stratum specs (their whole question); Weekly counts every stratum. '+
+  'Derived scoring/rank columns and audit stamps verify by recomputation, not external witnesses — collapsed by default and excluded from tab totals unless shown. '+
+  'Counts are per-root spec counts; several tables of one source each count.';
+
+renderTabs(); render();
+</script>

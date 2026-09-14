@@ -29,13 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     env:
-      GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          repository: jeleff1000/yahoo_oauth
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
           path: code
       - uses: actions/setup-python@v6
         with:
@@ -52,7 +50,7 @@ jobs:
         run: |
           mkdir -p research_public_lake
           gh release download "${{ inputs.ops_release_tag }}" \
-            --repo jeleff1000/yahoo_oauth \
+            --repo jeleff1000/league-history-workers \
             --pattern ops_cache.duckdb \
             --dir research_public_lake
           corpus=$(find backup -name corpus_snapshot.duckdb -type f | head -1)
@@ -73,7 +71,7 @@ jobs:
           for part in 00 01 02 03; do
             rm -f "research-public-lake.tar.part-$part"
             gh release download "${{ inputs.ops_release_tag }}" \
-              --repo jeleff1000/yahoo_oauth \
+              --repo jeleff1000/league-history-workers \
               --pattern "research-public-lake.tar.part-$part" \
               --dir .
             cat "research-public-lake.tar.part-$part" >&3

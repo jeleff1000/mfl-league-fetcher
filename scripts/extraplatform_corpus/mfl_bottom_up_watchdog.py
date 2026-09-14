@@ -67,7 +67,7 @@ def cancel(repo: str, run_id: int) -> None:
 
 
 def main() -> int:
-    repo = os.environ.get("MFL_REPO", "league-history-workers/mfl-league-fetcher")
+    repo = os.environ.get("MFL_REPO", "jeleff1000/league-history-workers")
     campaign_workflow = os.environ.get("MFL_CAMPAIGN_WORKFLOW", "mfl_register_batch_campaign.yml")
     planner_workflow = os.environ.get("MFL_PLANNER_WORKFLOW", "mfl_plan_next_wave.yml")
     epoch = parse_time(os.environ.get("MFL_SCHEDULER_EPOCH", "2026-08-19T03:10:00Z"))

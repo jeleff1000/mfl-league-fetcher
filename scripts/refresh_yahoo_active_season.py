@@ -81,6 +81,19 @@ def _blank_identity_values(values: pd.Series) -> pd.Series:
     return values.isna() | normalized.isin({"", "none", "nan", "<na>"})
 
 
+def normalize_yahoo_roster_provider_identity(rosters: pd.DataFrame) -> pd.DataFrame:
+    """Expose the raw Yahoo ``player_id`` under the canonical provider key."""
+    normalized = rosters.copy()
+    if "player_id" not in normalized.columns:
+        return normalized
+    if "yahoo_player_id" not in normalized.columns:
+        normalized["yahoo_player_id"] = normalized["player_id"]
+        return normalized
+    blank = _blank_identity_values(normalized["yahoo_player_id"])
+    normalized.loc[blank, "yahoo_player_id"] = normalized.loc[blank, "player_id"]
+    return normalized
+
+
 def _patched_yahoo_draft_identities(hydrated: pd.DataFrame, identities: pd.DataFrame) -> pd.DataFrame:
     """Overlay bulk Yahoo draft identities without replacing retained draft facts.
 
@@ -778,6 +791,7 @@ def _merge_refresh_payloads(
     rosters, roster_failures = fetch_rosters_for_year(ctx, year, oauth_session=oauth, weeks=refresh_weeks)
     if roster_failures:
         raise RuntimeError(f"Yahoo roster fetch failed for weeks: {roster_failures}")
+    rosters = normalize_yahoo_roster_provider_identity(rosters)
     roster_rows = 0
     for week in refresh_weeks:
         source = rosters[rosters["week"].astype(int) == int(week)].copy()

@@ -1259,6 +1259,18 @@ def _compute_transaction_highlights(
     return highlights
 
 
+def _trade_partner_sql(txn_cols: Sequence[str]) -> tuple[str, str]:
+    """Return trade-partner SQL that tolerates numeric platform manager IDs."""
+    if "source_manager" not in txn_cols:
+        return "NULL as partner", ""
+
+    source_manager = "CAST(t.source_manager AS VARCHAR)"
+    return (
+        f"STRING_AGG(DISTINCT {source_manager}, ', ' ORDER BY {source_manager}) as partner",
+        f"AND t.source_manager IS NOT NULL AND TRIM({source_manager}) <> ''",
+    )
+
+
 def _compute_best_trade(
     conn, db_name: str, year: int = None, platform: str = "yahoo", cache: "ColumnCache | None" = None
 ) -> dict[str, Any]:
@@ -1298,14 +1310,7 @@ def _compute_best_trade(
         f"STRING_AGG({headshot_subquery('t', player_id_col, platform, has_nfl_id=has_nfl_id)}, "
         f"'|||' ORDER BY t.player) as headshots"
     )
-    partner_select = (
-        "STRING_AGG(DISTINCT t.source_manager, ', ' ORDER BY t.source_manager) as partner"
-        if "source_manager" in txn_cols
-        else "NULL as partner"
-    )
-    partner_filter = (
-        "AND t.source_manager IS NOT NULL AND TRIM(t.source_manager) <> ''" if "source_manager" in txn_cols else ""
-    )
+    partner_select, partner_filter = _trade_partner_sql(txn_cols)
 
     try:
         row = conn.execute(f"""
@@ -2473,14 +2478,7 @@ def _compute_manager_best_trade(
         f"STRING_AGG({headshot_subquery('t', player_id_col, platform, has_nfl_id=has_nfl_id)}, "
         f"'|||' ORDER BY t.player) as headshots"
     )
-    partner_select = (
-        "STRING_AGG(DISTINCT t.source_manager, ', ' ORDER BY t.source_manager) as partner"
-        if "source_manager" in txn_cols
-        else "NULL as partner"
-    )
-    partner_filter = (
-        "AND t.source_manager IS NOT NULL AND TRIM(t.source_manager) <> ''" if "source_manager" in txn_cols else ""
-    )
+    partner_select, partner_filter = _trade_partner_sql(txn_cols)
 
     try:
         row = conn.execute(f"""

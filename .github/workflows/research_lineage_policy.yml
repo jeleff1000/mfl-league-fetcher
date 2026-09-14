@@ -1,10 +1,6 @@
 name: Research matchup lineage policy
 
 on:
-  push:
-    paths:
-      - ".github/workflows/**"
-      - "code/scripts/research_cohorts/research_lineage_*.py"
   pull_request:
     paths:
       - ".github/workflows/**"

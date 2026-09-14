@@ -28,6 +28,9 @@ _RULES = {
     "private-repository-token": re.compile(r"PRIVATE_REPO_PAT"),
     "private-source-ref": re.compile(r"yahoo_oauth_ref", re.IGNORECASE),
     "mutable-worker-ref": re.compile(r"worker_ref", re.IGNORECASE),
+    "redirected-public-repository": re.compile(
+        r"jeleff1000/league-history-workers", re.IGNORECASE
+    ),
 }
 
 _EXECUTABLE_ROOTS = (
@@ -72,6 +75,8 @@ def _scan_git_repository(root: Path) -> list[Violation] | None:
         "yahoo_oauth_ref",
         "-e",
         "worker_ref",
+        "-e",
+        "jeleff1000/league-history-workers",
         "--",
         ".github/workflows",
         ".github/actions",

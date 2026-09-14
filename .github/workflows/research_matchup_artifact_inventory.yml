@@ -82,7 +82,7 @@ jobs:
           if not run_ids:
               page = 1
               while True:
-                  url = f'https://api.github.com/repos/jeleff1000/league-history-workers/actions/artifacts?per_page=100&page={page}'
+                  url = f'https://api.github.com/repos/jeleff1000/mfl-league-fetcher/actions/artifacts?per_page=100&page={page}'
                   req = urllib.request.Request(url, headers=headers)
                   with opener.open(req, timeout=120) as response: payload = json.load(response)
                   batch = payload.get('artifacts', [])
@@ -95,7 +95,7 @@ jobs:
           for run_id in run_ids:
               page = 1
               while True:
-                  url = f'https://api.github.com/repos/jeleff1000/league-history-workers/actions/runs/{run_id}/artifacts?per_page=100&page={page}'
+                  url = f'https://api.github.com/repos/jeleff1000/mfl-league-fetcher/actions/runs/{run_id}/artifacts?per_page=100&page={page}'
                   req = urllib.request.Request(url, headers=headers)
                   with opener.open(req, timeout=120) as response: payload = json.load(response)
                   batch = payload.get('artifacts', [])

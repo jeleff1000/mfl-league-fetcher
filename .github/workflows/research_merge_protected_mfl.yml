@@ -174,7 +174,7 @@ jobs:
           set -euo pipefail
           mkdir -p immutable_ops
           gh release download ops-cache-v6-2000-plus-player-bio \
-            --repo jeleff1000/league-history-workers \
+            --repo jeleff1000/mfl-league-fetcher \
             --pattern ops_cache.duckdb --dir immutable_ops
           cp immutable_ops/ops_cache.duckdb merged_lake/ops_cache.duckdb
           sha256sum merged_lake/ops_cache.duckdb > ops_seed_before.sha256

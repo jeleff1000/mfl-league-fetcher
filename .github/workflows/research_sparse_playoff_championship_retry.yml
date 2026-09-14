@@ -30,7 +30,7 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.combine_run_id }}
           name: research-source-matchup-rescue-combined-${{ inputs.combine_run_id }}
           path: input

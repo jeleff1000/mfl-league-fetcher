@@ -7,7 +7,7 @@ inputs:
     required: true
   release-repository:
     required: false
-    default: jeleff1000/league-history-workers
+    default: jeleff1000/mfl-league-fetcher
 outputs:
   cache-hit:
     value: ${{ steps.restore.outputs.cache-hit }}

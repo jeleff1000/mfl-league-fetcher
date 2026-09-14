@@ -87,7 +87,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download research-native-id-crosswalk-v4 \
-            --repo jeleff1000/league-history-workers \
+            --repo jeleff1000/mfl-league-fetcher \
             --pattern native_id_crosswalk.parquet \
             --dir research_public_lake
       - name: Create focused DB target list

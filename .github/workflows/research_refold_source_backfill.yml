@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 355
     env:
       GH_TOKEN: ${{ github.token }}
-      REPO: jeleff1000/league-history-workers
+      REPO: jeleff1000/mfl-league-fetcher
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       CORPUS_DIR: ${{ github.workspace }}/source_corpus
       PYTHONPATH: ${{ github.workspace }}/code

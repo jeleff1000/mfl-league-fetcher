@@ -63,7 +63,7 @@ jobs:
           token = os.environ['GH_TOKEN']
           run_id = os.environ['SOURCE_RUN']
           year = int(os.environ['SOURCE_YEAR'])
-          api = f'https://api.github.com/repos/jeleff1000/league-history-workers/actions/runs/{run_id}/artifacts'
+          api = f'https://api.github.com/repos/jeleff1000/mfl-league-fetcher/actions/runs/{run_id}/artifacts'
           headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
           found = []
           page = 1

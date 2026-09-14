@@ -12,10 +12,11 @@ _PRIVATE_REPOSITORY = "jeleff1000/" + "yahoo_" + "oauth"
 _PRIVATE_TOKEN = "PRIVATE_REPO" + "_PAT"
 _PRIVATE_REF = "yahoo_" + "oauth_ref"
 _PRIVATE_REF_ENV = "YAHOO_" + "OAUTH_REF"
-_PUBLIC_REPOSITORY = "jeleff1000/league-history-workers"
+_PUBLIC_REPOSITORY = "jeleff1000/mfl-league-fetcher"
 _RETIRED_REPOSITORIES = (
     "league-history-workers/mfl-league-fetcher",
     "league-history-workers/league-history-workers",
+    "jeleff1000/league-history-workers",
 )
 
 

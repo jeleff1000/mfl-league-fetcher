@@ -1,6 +1,6 @@
 name: Yahoo Corpus Pilot
 
-# Operational owner: jeleff1000/league-history-workers only. This file is mirrored into
+# Operational owner: jeleff1000/mfl-league-fetcher only. This file is mirrored into
 # yahoo_oauth for workflow-source parity, but the repository guard below keeps that copy inert.
 
 on:
@@ -51,7 +51,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.repository == 'jeleff1000/league-history-workers'
+    if: github.repository == 'jeleff1000/mfl-league-fetcher'
     runs-on: ubuntu-latest
     outputs:
       shard_list: ${{ steps.mk.outputs.shard_list }}
@@ -73,7 +73,7 @@ jobs:
 
   pilot:
     needs: prepare
-    if: github.repository == 'jeleff1000/league-history-workers'
+    if: github.repository == 'jeleff1000/mfl-league-fetcher'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     strategy:
@@ -255,7 +255,7 @@ jobs:
 
   continue-inventory:
     needs: [prepare, pilot]
-    if: always() && github.repository == 'jeleff1000/league-history-workers' && github.event.inputs.mode == 'inventory'
+    if: always() && github.repository == 'jeleff1000/mfl-league-fetcher' && github.event.inputs.mode == 'inventory'
     runs-on: ubuntu-latest
     permissions:
       actions: write

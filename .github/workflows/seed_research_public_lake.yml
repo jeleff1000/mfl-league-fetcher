@@ -33,9 +33,9 @@ jobs:
           python-version: "3.12"
       - name: Download public-only lake bundle
         run: |
-          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
+          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/mfl-league-fetcher \
             --pattern 'research-public-lake.tar.part-*'
-          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
+          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/mfl-league-fetcher \
             --pattern 'ops_cache.duckdb'
           mkdir -p research_public_lake
           cat research-public-lake.tar.part-* | \

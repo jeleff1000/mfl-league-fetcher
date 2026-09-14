@@ -31,7 +31,7 @@ def main() -> None:
     ap.add_argument("--year", type=int, required=True)
     ap.add_argument("--batches", type=int, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--repo", default="jeleff1000/league-history-workers")
+    ap.add_argument("--repo", default="jeleff1000/mfl-league-fetcher")
     args = ap.parse_args()
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:

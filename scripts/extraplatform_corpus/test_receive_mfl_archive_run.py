@@ -22,7 +22,7 @@ def test_wait_for_successful_run_only_returns_after_actions_reports_success() ->
         return json.dumps(next(responses))
 
     result = wait_for_successful_run(
-        repo="jeleff1000/league-history-workers",
+        repo="jeleff1000/mfl-league-fetcher",
         run_id=456,
         poll_seconds=30,
         run_command=run_command,
@@ -38,7 +38,7 @@ def test_wait_for_successful_run_only_returns_after_actions_reports_success() ->
             "view",
             "456",
             "--repo",
-            "jeleff1000/league-history-workers",
+            "jeleff1000/mfl-league-fetcher",
             "--json",
             "status,conclusion",
         ],
@@ -48,7 +48,7 @@ def test_wait_for_successful_run_only_returns_after_actions_reports_success() ->
             "view",
             "456",
             "--repo",
-            "jeleff1000/league-history-workers",
+            "jeleff1000/mfl-league-fetcher",
             "--json",
             "status,conclusion",
         ],
@@ -58,7 +58,7 @@ def test_wait_for_successful_run_only_returns_after_actions_reports_success() ->
 def test_wait_for_successful_run_fails_closed_when_actions_fails() -> None:
     try:
         wait_for_successful_run(
-            repo="jeleff1000/league-history-workers",
+            repo="jeleff1000/mfl-league-fetcher",
             run_id=456,
             poll_seconds=30,
             run_command=lambda _command: '{"status":"completed","conclusion":"failure"}',

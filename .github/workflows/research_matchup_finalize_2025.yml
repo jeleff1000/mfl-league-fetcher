@@ -78,7 +78,7 @@ jobs:
         with:
           path: base_release
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.base_release_run }}
           name: research-matchup-release-${{ inputs.base_release_run }}
       - name: Download complete 2025 assembly
@@ -86,7 +86,7 @@ jobs:
         with:
           path: replacement_2025
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.assembled_2025_run }}
           name: research-matchup-assembled-2025-run-${{ inputs.assembled_2025_source_run }}
       - name: Download complete 2024 assembly
@@ -94,7 +94,7 @@ jobs:
         with:
           path: replacement_2024
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.assembled_2024_run }}
           name: research-matchup-assembled-2024-run-${{ inputs.assembled_2024_source_run }}
       - name: Download complete historical assembly
@@ -103,7 +103,7 @@ jobs:
         with:
           path: replacement_historical
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.assembled_historical_run }}
           name: research-matchup-assembled-historical-run-${{ inputs.assembled_historical_run }}
       - name: Install bounded dependencies

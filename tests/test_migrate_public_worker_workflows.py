@@ -42,11 +42,13 @@ steps:
   - run: gh api repos/league-history-workers/mfl-league-fetcher/actions/runs
   - run: gh api repos/jeleff1000/yahoo_oauth/actions/runs
   - run: gh workflow run job.yml -R league-history-workers/league-history-workers
+  - run: gh api repos/jeleff1000/league-history-workers/actions/runs
 """.lstrip()
 
     transformed = transform_workflow(source)
 
     assert "GH_TOKEN: ${{ github.token }}" in transformed
-    assert transformed.count("jeleff1000/league-history-workers") == 3
-    assert "mfl-league-fetcher" not in transformed
+    assert transformed.count("jeleff1000/mfl-league-fetcher") == 4
+    assert "jeleff1000/league-history-workers" not in transformed
+    assert "league-history-workers/mfl-league-fetcher" not in transformed
     assert "league-history-workers/league-history-workers" not in transformed

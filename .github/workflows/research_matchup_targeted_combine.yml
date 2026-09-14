@@ -28,7 +28,7 @@ jobs:
         with:
           path: targeted_shards
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.targeted_run }}
           pattern: research-matchup-targeted-*
           merge-multiple: false

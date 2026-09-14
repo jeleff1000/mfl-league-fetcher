@@ -68,7 +68,7 @@ jobs:
           from pathlib import Path
 
           token = os.environ['GH_TOKEN']
-          repo = 'jeleff1000/league-history-workers'
+          repo = 'jeleff1000/mfl-league-fetcher'
           prefix = f"research-matchup-{os.environ['YEAR_START']}-{os.environ['YEAR_END']}-batch"
           expected = int(os.environ['BATCHES'])
           headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json', 'User-Agent': 'global-weighted-assembly'}

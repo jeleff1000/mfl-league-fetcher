@@ -63,7 +63,7 @@ ESPN_LEAGUE_API = "https://lm-api-reads.fantasy.espn.com/apis/v3"
 YAHOO_API = "https://fantasysports.yahooapis.com"
 YAHOO_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
 
-GH_WORKERS_REPO = "jeleff1000/league-history-workers"
+GH_WORKERS_REPO = "jeleff1000/mfl-league-fetcher"
 WORKFLOW_IDS = {
     "sleeper_full": 244876060,
     "yahoo_full": 252727129,

@@ -58,7 +58,7 @@ jobs:
           if os.environ.get('RESCUE_SUPPLEMENTAL_RUN'):
               run_ids.append(os.environ['RESCUE_SUPPLEMENTAL_RUN'])
           year = int(os.environ['RESCUE_YEAR'])
-          api = 'https://api.github.com/repos/jeleff1000/league-history-workers/actions/runs'
+          api = 'https://api.github.com/repos/jeleff1000/mfl-league-fetcher/actions/runs'
           headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
           class NoAuthRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):

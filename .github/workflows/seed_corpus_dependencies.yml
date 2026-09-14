@@ -41,7 +41,7 @@ jobs:
       - name: Download private local-source bundle
         run: |
           gh release download "${{ inputs.release_tag }}" \
-            --repo jeleff1000/league-history-workers \
+            --repo jeleff1000/mfl-league-fetcher \
             --pattern corpus-dependencies.tar.gz
           mkdir -p corpus_dependencies
           tar -xzf corpus-dependencies.tar.gz -C corpus_dependencies --strip-components=1

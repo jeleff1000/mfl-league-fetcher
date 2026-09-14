@@ -14,10 +14,10 @@ def test_workflow_is_worker_owned_and_defaults_to_small_pilot() -> None:
     text = workflow_text()
 
     assert "name: Yahoo Corpus Pilot" in text
-    assert "github.repository == 'jeleff1000/league-history-workers'" in text
+    assert "github.repository == 'jeleff1000/mfl-league-fetcher'" in text
     assert "default: '12'" in text
     assert "default: '1'" in text
-    assert "default: 'main'" in text
+    assert "worker_ref" not in text
     assert "scripts/yahoo_corpus/cli.py" in text
 
 

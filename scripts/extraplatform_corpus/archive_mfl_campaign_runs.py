@@ -349,7 +349,7 @@ def _wait_for_artifact_removal(*, repo: str, artifact_id: int, timeout_seconds: 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Archive verified MFL campaign chunks to SFTP before removing completed Actions runs")
     parser.add_argument("--run-id", type=int, action="append", required=True)
-    parser.add_argument("--repo", default="jeleff1000/league-history-workers")
+    parser.add_argument("--repo", default="jeleff1000/mfl-league-fetcher")
     parser.add_argument("--remote-root", default="/home/kmffl/actions_artifacts/_github_archives")
     parser.add_argument("--sftp-site", default="kmffl@56.lw.itsby.design")
     parser.add_argument("--winscp", default=r"C:\Program Files (x86)\WinSCP\WinSCP.com")

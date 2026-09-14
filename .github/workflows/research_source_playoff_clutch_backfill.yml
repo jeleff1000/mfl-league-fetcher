@@ -70,7 +70,7 @@ jobs:
         run: |
           mkdir -p "$CORPUS_DIR"
           PART=$(printf '%02d' '${{ matrix.bucket }}')
-          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
+          gh release download "${{ inputs.release_tag }}" --repo jeleff1000/mfl-league-fetcher \
             --pattern "research-source-backfill-v1.tar.part-${PART}"
           tar -xf "research-source-backfill-v1.tar.part-${PART}" -C "$CORPUS_DIR"
       - name: Run playoff odds and clutch for shard

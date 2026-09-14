@@ -63,7 +63,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download research-native-id-crosswalk-v4 \
-            --repo jeleff1000/league-history-workers \
+            --repo jeleff1000/mfl-league-fetcher \
             --pattern native_id_crosswalk.parquet \
             --clobber \
             --dir research_public_lake
@@ -74,7 +74,7 @@ jobs:
         with:
           path: source_results
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.backfill_run }}
           pattern: research-source-backfill-result-*
           merge-multiple: true
@@ -149,9 +149,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers >/dev/null 2>&1 || \
-            gh release create "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
+          gh release view "${{ inputs.release_tag }}" --repo jeleff1000/mfl-league-fetcher >/dev/null 2>&1 || \
+            gh release create "${{ inputs.release_tag }}" --repo jeleff1000/mfl-league-fetcher \
               --title "${{ inputs.release_tag }}" --notes "Rebuilt public research lake"
-          gh release upload "${{ inputs.release_tag }}" --repo jeleff1000/league-history-workers \
+          gh release upload "${{ inputs.release_tag }}" --repo jeleff1000/mfl-league-fetcher \
             public_parts/research-public-lake.tar.part-* \
             research_public_lake/ops_cache.duckdb --clobber

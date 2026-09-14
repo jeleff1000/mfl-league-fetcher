@@ -160,12 +160,12 @@ def test_gh_cli_archive_download_writes_the_requested_artifact_to_the_staging_pa
         assert command == [
             "gh",
             "api",
-            "repos/jeleff1000/league-history-workers/actions/artifacts/9269839016/zip",
+            "repos/jeleff1000/mfl-league-fetcher/actions/artifacts/9269839016/zip",
         ]
         output.write_bytes(b"zip-bytes")
 
     download_artifact_with_gh_cli(
-        repo="jeleff1000/league-history-workers",
+        repo="jeleff1000/mfl-league-fetcher",
         artifact_id=9269839016,
         target=archive,
         run_command=run_command,

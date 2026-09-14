@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
-      REPOSITORY: jeleff1000/league-history-workers
+      REPOSITORY: jeleff1000/mfl-league-fetcher
       CACHE_KEY: research-public-lake-v4-Linux-20260806-signal-rescue-canonical
 
     steps:

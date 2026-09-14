@@ -40,7 +40,7 @@ jobs:
   worker:
     steps:
       - uses: actions/checkout@v5
-      - run: gh api repos/jeleff1000/league-history-workers/actions/runs
+      - run: gh api repos/jeleff1000/mfl-league-fetcher/actions/runs
 """.lstrip(),
         encoding="utf-8",
     )
@@ -63,3 +63,16 @@ def test_scan_repository_rejects_renamed_mutable_worker_ref(tmp_path: Path) -> N
     violations = scan_repository(tmp_path)
 
     assert [violation.rule for violation in violations] == ["mutable-worker-ref"]
+
+
+def test_scan_repository_rejects_redirected_public_repository_name(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "redirect.yml").write_text(
+        "steps:\n  - run: gh api repos/jeleff1000/league-history-workers/actions/runs\n",
+        encoding="utf-8",
+    )
+
+    violations = scan_repository(tmp_path)
+
+    assert [violation.rule for violation in violations] == ["redirected-public-repository"]

@@ -69,12 +69,12 @@ jobs:
           else
             all_keys="$(jq -cn '[range(0;110) | "nfl_player_stats_all-batch-" + (if . < 10 then "0" else "" end) + tostring] + ["player_bio-all"]')"
           fi
-          cached_keys="$(gh cache list --repo jeleff1000/league-history-workers --key "$CACHE_PREFIX" --limit 1000 --json key | jq -c '[.[].key | sub("^ops-cache-checkpoint-v4-Linux-"; "")]')"
+          cached_keys="$(gh cache list --repo jeleff1000/mfl-league-fetcher --key "$CACHE_PREFIX" --limit 1000 --json key | jq -c '[.[].key | sub("^ops-cache-checkpoint-v4-Linux-"; "")]')"
           artifact_keys='[]'
           for resume_id in "$RESUME_RUN_1" "$RESUME_RUN_2"; do
             if [ -n "$resume_id" ]; then
               gh api --paginate \
-                "/repos/jeleff1000/league-history-workers/actions/runs/$resume_id/artifacts" \
+                "/repos/jeleff1000/mfl-league-fetcher/actions/runs/$resume_id/artifacts" \
                 | jq -r '.artifacts[]?.name' \
                 | sed -n 's/^ops-checkpoint-//p' \
                 | jq -R -s 'split("\\n") | map(select(length > 0))' > /tmp/ops-artifacts.json
@@ -211,7 +211,7 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ github.event.inputs.resume_run_id }}
           pattern: ops-checkpoint-*
           path: ops_cache/checkpoints
@@ -222,7 +222,7 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           github-token: ${{ github.token }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ github.event.inputs.resume_run_id_2 }}
           pattern: ops-checkpoint-*
           path: ops_cache/checkpoints
@@ -240,7 +240,7 @@ jobs:
           IFS=',' read -ra run_ids <<< "$RESUME_RUN_IDS"
           for run_id in "${run_ids[@]}"; do
             gh api --paginate \
-              "/repos/jeleff1000/league-history-workers/actions/runs/$run_id/artifacts" \
+              "/repos/jeleff1000/mfl-league-fetcher/actions/runs/$run_id/artifacts" \
               | jq -r '.artifacts[]? | select(.name | startswith("ops-checkpoint-")) | .archive_download_url' \
               | while read -r url; do
                   [ -z "$url" ] && continue
@@ -844,15 +844,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if ! gh release view ops-cache-v5 --repo jeleff1000/league-history-workers >/dev/null 2>&1; then
+          if ! gh release view ops-cache-v5 --repo jeleff1000/mfl-league-fetcher >/dev/null 2>&1; then
             gh release create ops-cache-v5 \
-              --repo jeleff1000/league-history-workers \
+              --repo jeleff1000/mfl-league-fetcher \
               --target main \
               --title "Ops cache v5" \
               --notes "Validated ___ops cache published by the Seed Ops Cache workflow."
           fi
           gh release upload ops-cache-v5 ops_cache/ops_cache.duckdb#ops_cache.duckdb \
-            --repo jeleff1000/league-history-workers --clobber
+            --repo jeleff1000/mfl-league-fetcher --clobber
           echo "[ops-cache] durable-release=ops-cache-v5"
 
       - name: Record published generation

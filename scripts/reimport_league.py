@@ -114,7 +114,7 @@ def dispatch_sleeper(league: dict, mode: str, github_token: str):
     ).encode()
 
     req = urllib.request.Request(
-        "https://api.github.com/repos/jeleff1000/league-history-workers/dispatches",
+        "https://api.github.com/repos/jeleff1000/mfl-league-fetcher/dispatches",
         data=body,
         headers={
             "Authorization": f"token {github_token}",
@@ -187,7 +187,7 @@ def main():
 
     if dispatched:
         print(f"\n  Dispatched {dispatched} import(s)")
-        print("  Monitor: https://github.com/jeleff1000/league-history-workers/actions")
+        print("  Monitor: https://github.com/jeleff1000/mfl-league-fetcher/actions")
 
 
 if __name__ == "__main__":

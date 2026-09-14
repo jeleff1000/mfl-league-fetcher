@@ -73,7 +73,7 @@ jobs:
           from pathlib import Path
 
           token = os.environ['GH_TOKEN']
-          repo = 'jeleff1000/league-history-workers'
+          repo = 'jeleff1000/mfl-league-fetcher'
           years = {int(x) for x in json.loads(os.environ['YEARS'])}
           batches = int(os.environ['BATCHES'])
           run_ids = [os.environ['SHARED_RUN']] + [x.strip() for x in os.environ.get('SOURCE_RUNS','').split(',') if x.strip()]

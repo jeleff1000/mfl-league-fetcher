@@ -43,7 +43,7 @@ from multi_league.utils.credential_store import decrypt_token, get_encryption_ke
 # ---------------------------------------------------------------------------
 YAHOO_API_BASE = "https://fantasysports.yahooapis.com"
 YAHOO_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
-GH_WORKERS_REPO = "jeleff1000/league-history-workers"
+GH_WORKERS_REPO = "jeleff1000/mfl-league-fetcher"
 YAHOO_FULL_IMPORT_WORKFLOW_ID = 252727129
 
 # ---------------------------------------------------------------------------

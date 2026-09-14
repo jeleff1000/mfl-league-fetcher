@@ -70,7 +70,7 @@ jobs:
           if [ -n "${SUPPLEMENTAL_RUN}" ]; then runs="${runs},${SUPPLEMENTAL_RUN}"; fi
           ids="$(for run in ${runs//,/ }; do
             gh api --paginate \
-              "/repos/jeleff1000/league-history-workers/actions/runs/${run}/artifacts?per_page=100" \
+              "/repos/jeleff1000/mfl-league-fetcher/actions/runs/${run}/artifacts?per_page=100" \
               --jq ".artifacts[] | select(.name | startswith(\"${prefix}\")) | .id"
           done | sort -u | paste -sd, -)"
           count="$(tr ',' '\n' <<<"${ids}" | grep -c .)"
@@ -133,7 +133,7 @@ jobs:
           if supplemental:
               runs.extend(part.strip() for part in supplemental.split(',') if part.strip())
           for source_run in runs:
-              api = f"https://api.github.com/repos/jeleff1000/league-history-workers/actions/runs/{source_run}/artifacts"
+              api = f"https://api.github.com/repos/jeleff1000/mfl-league-fetcher/actions/runs/{source_run}/artifacts"
               page = 1
               while True:
                   payload = get_json(f'{api}?per_page=100&page={page}')

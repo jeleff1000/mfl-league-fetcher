@@ -74,7 +74,7 @@ jobs:
           import pyarrow.parquet as pq
 
           token = os.environ['GH_TOKEN']
-          repo = 'jeleff1000/league-history-workers'
+          repo = 'jeleff1000/mfl-league-fetcher'
           years = {int(x) for x in json.loads(os.environ['YEARS'])}
           batches = int(os.environ['BATCHES'])
           runs = [x.strip() for x in os.environ.get('SOURCE_RUNS', '').split(',') if x.strip()]

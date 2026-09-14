@@ -46,7 +46,7 @@ jobs:
       - run: python -m pip install duckdb==1.5.1 requests
       - uses: actions/download-artifact@v5
         with:
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.compact_run_id }}
           github-token: ${{ github.token }}
           name: ${{ inputs.artifact_name || format('compact-matchup-final-{0}', inputs.compact_run_id) }}

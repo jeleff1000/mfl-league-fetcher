@@ -24,7 +24,7 @@ import json
 import subprocess
 import sys
 
-REPO = "jeleff1000/league-history-workers"
+REPO = "jeleff1000/mfl-league-fetcher"
 
 
 def gh_json(path: str) -> dict:

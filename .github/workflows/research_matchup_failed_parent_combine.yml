@@ -25,7 +25,7 @@ jobs:
         with:
           path: shards/raw
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: jeleff1000/league-history-workers
+          repository: jeleff1000/mfl-league-fetcher
           run-id: ${{ inputs.subshard_run }}
       - name: Install bounded dependencies
         run: python -m pip install duckdb==1.5.1 pyarrow==15.0.2

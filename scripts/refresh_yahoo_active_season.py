@@ -401,7 +401,20 @@ def _active_source_snapshot_frames(
         # keeper_config contains the league-wide year=0 default (and possible
         # per-year overrides), so the active-season source snapshot must retain
         # all of it rather than narrowing to the NFL year.
-        if table_name != "keeper_config" and "year" in registry[table_name]["columns"]:
+        if table_name == "league_settings":
+            # A league's first refresh of a new NFL season has no active-year
+            # settings row yet. Seed the local quick-import database with the
+            # newest prior settings row; the provider fetch below replaces it
+            # with the authoritative active-year row before publish.
+            where_clause += (
+                " AND year = COALESCE("
+                f"(SELECT MAX(year) FROM {table_ref} "
+                f"WHERE db_name = {safe_db} AND year = {int(active_year)}), "
+                f"(SELECT MAX(year) FROM {table_ref} "
+                f"WHERE db_name = {safe_db} AND year < {int(active_year)})"
+                ")"
+            )
+        elif table_name != "keeper_config" and "year" in registry[table_name]["columns"]:
             where_clause += f" AND year = {int(active_year)}"
         query_parts.append(
             "(SELECT "

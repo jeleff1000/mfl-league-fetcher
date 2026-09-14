@@ -97,6 +97,31 @@ def test_success_requires_committed_receipt_and_cache_verification():
         )
 
 
+def test_success_rejects_a_committed_bundle_without_required_live_rows():
+    writer = Writer()
+    with pytest.raises(ValueError, match="required post-publish rows"):
+        record_league_update_status(
+            writer,
+            database_name="kmffl",
+            platform="yahoo",
+            status="succeeded",
+            dispatch_token="opaque",
+            receipt={
+                "status": "COMMITTED",
+                "source_year": 2026,
+                "source_week": 1,
+                "source_fingerprint": "fp",
+                "bundle_id": "bundle",
+                "post_publish_counts": {
+                    "player_fantasy": 0,
+                    "league_settings": 0,
+                    "homepage_league_summary": 10,
+                },
+            },
+            cache_verified=True,
+        )
+
+
 def test_verified_success_advances_fingerprint_with_token_guard():
     writer = Writer()
     assert record_league_update_status(
@@ -106,8 +131,18 @@ def test_verified_success_advances_fingerprint_with_token_guard():
         status="succeeded",
         dispatch_token="opaque",
         workflow_run_id=42,
-        receipt={"status": "COMMITTED", "source_year": 2026, "source_week": 2,
-                 "source_fingerprint": "fp", "bundle_id": "bundle"},
+        receipt={
+            "status": "COMMITTED",
+            "source_year": 2026,
+            "source_week": 2,
+            "source_fingerprint": "fp",
+            "bundle_id": "bundle",
+            "post_publish_counts": {
+                "player_fantasy": 1000,
+                "league_settings": 1,
+                "homepage_league_summary": 10,
+            },
+        },
         cache_verified=True,
     )
     assert "THEN excluded.source_fingerprint" in writer.sql

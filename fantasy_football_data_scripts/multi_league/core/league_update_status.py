@@ -9,6 +9,11 @@ from typing import Any
 
 VALID_STATUSES = {"running", "succeeded", "failed"}
 DEFAULT_GRANDFATHERED_LEAGUES = {"kmffl", "tfl_of_extraordinary_gentleman"}
+REQUIRED_SUCCESS_TABLES = (
+    "player_fantasy",
+    "league_settings",
+    "homepage_league_summary",
+)
 
 
 def _literal(value: object | None) -> str:
@@ -59,6 +64,18 @@ def record_league_update_status(
             raise ValueError("A succeeded league update requires cache verification")
         if not receipt.get("source_fingerprint"):
             raise ValueError("A succeeded league update requires a source fingerprint")
+        post_publish_counts = receipt.get("post_publish_counts")
+        missing_rows = [
+            table
+            for table in REQUIRED_SUCCESS_TABLES
+            if not isinstance(post_publish_counts, Mapping)
+            or int(post_publish_counts.get(table) or 0) < 1
+        ]
+        if missing_rows:
+            raise ValueError(
+                "A succeeded league update is missing required post-publish rows for: "
+                + ", ".join(missing_rows)
+            )
 
     run_id = int(workflow_run_id) if workflow_run_id not in (None, "") else None
     is_success = normalized == "succeeded"

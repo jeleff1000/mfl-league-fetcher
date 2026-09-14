@@ -1,6 +1,6 @@
 param(
     [string]$ReleaseTag = 'research-source-backfill-v1',
-    [string]$ReleaseRepo = 'jeleff1000/yahoo_oauth',
+    [string]$ReleaseRepo = 'jeleff1000/mfl-league-fetcher',
     [string]$PartsDir = 'D:\league-history-data\fantasy_leagues\sampling_corpus\source_backfill_release_v5',
     [int]$PartCount = 15
 )

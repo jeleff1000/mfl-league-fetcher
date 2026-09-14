@@ -22,7 +22,7 @@ _RULES = {
         r"league-history-workers/mfl-league-fetcher", re.IGNORECASE
     ),
     "private-application-checkout": re.compile(
-        r"(?:repository\s*:\s*|repos/|github\.com/)jeleff1000/yahoo_oauth",
+        r"jeleff1000/yahoo_oauth",
         re.IGNORECASE,
     ),
     "private-repository-token": re.compile(r"PRIVATE_REPO_PAT"),

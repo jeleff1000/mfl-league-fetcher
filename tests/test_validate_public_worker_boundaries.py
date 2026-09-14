@@ -76,3 +76,16 @@ def test_scan_repository_rejects_redirected_public_repository_name(tmp_path: Pat
     violations = scan_repository(tmp_path)
 
     assert [violation.rule for violation in violations] == ["redirected-public-repository"]
+
+
+def test_scan_repository_rejects_plain_private_repo_argument(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "release.ps1").write_text(
+        "$ReleaseRepo = 'jeleff1000/yahoo_oauth'\n",
+        encoding="utf-8",
+    )
+
+    violations = scan_repository(tmp_path)
+
+    assert [violation.rule for violation in violations] == ["private-application-checkout"]

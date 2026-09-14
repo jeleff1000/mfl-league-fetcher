@@ -2,7 +2,7 @@ name: Fleet Validation
 
 # Page-oriented, fleet-wide validator for ___leagues.
 # ~299 checks, ~20-35 queries via GROUP BY db_name batching.
-# Runs from league-history-workers (unlimited Actions minutes).
+# Runs from the public worker repository (unlimited Actions minutes).
 # Scheduled runs are intentionally disabled; use workflow_dispatch for manual runs.
 
 on:

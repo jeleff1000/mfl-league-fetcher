@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "sleeper_corpus"
 from build_corpus_snapshot import fold_league, open_snapshot  # noqa: E402
 
 # Env-overridable so this runs unchanged on a Linux GH runner (nothing on D: there).
-ROOT = Path(os.environ.get("YAHOO_OAUTH_ROOT", "d:/yahoo_oauth"))
+ROOT = Path(os.environ.get("YAHOO_OAUTH_ROOT") or Path(__file__).resolve().parents[2])
 CORPUS = Path(os.environ.get("CORPUS_DIR", "D:/league-history-data/fantasy_leagues/sampling_corpus"))
 SMPL_DIR = CORPUS / "leagues"
 OPS_CACHE = Path(os.environ.get("OPS_CACHE_PATH", str(CORPUS / "ops_cache.duckdb")))
@@ -255,7 +255,7 @@ def main() -> None:
             done.setdefault(_seed_key_from_db(platform, db), "done")
     landed_file = CORPUS / "landed_dbs.txt"
     if not landed_file.exists():
-        landed_file = ROOT / "league-history-workers" / "corpus_seed" / "landed_dbs.txt"
+        landed_file = ROOT / "corpus_seed" / "landed_dbs.txt"
     if landed_file.exists():
         for line in landed_file.read_text(encoding="utf-8").splitlines():
             db = line.strip()

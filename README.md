@@ -2,12 +2,12 @@
 
 GitHub Actions workflows for [League History](https://leaguehistory.app) data import and processing.
 
-This is a public runner repo — workflows check out code from the private source repository at runtime.
+This is the public, self-contained execution repository. Worker workflows use
+the code pinned by their own run SHA and do not check out a private source repo.
 
 ## Setup
 
-Required secrets:
-- `PRIVATE_REPO_PAT` — Fine-grained PAT with `contents: read` on the private repo
-- `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET`
-- `MOTHERDUCK_TOKEN`
-- `CREDENTIAL_ENCRYPTION_KEY`
+Configure only the platform and Fly credentials required by the workflows you
+run, such as `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`,
+`CREDENTIAL_ENCRYPTION_KEY`, and the `DATABASE_*` secrets. A private-repository
+token is neither required nor supported.

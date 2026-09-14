@@ -35,7 +35,7 @@ import duckdb
 
 LAKE = Path("D:/league-history-data/fantasy_leagues/sampling_corpus")
 COHORTS = Path("D:/league-history-data/fantasy_leagues/cohort_aggregates")
-SEEDS = Path("D:/yahoo_oauth/league-history-workers/corpus_seed")
+SEEDS = Path(__file__).resolve().parents[2] / "corpus_seed"
 
 IDP_COLS = ("roster_IDP", "roster_DL", "roster_LB", "roster_DB", "roster_DB_LB", "roster_DL_LB")
 

@@ -24,7 +24,7 @@ from build_corpus_snapshot import fold_league, open_snapshot
 
 # Paths are env-overridable so this runs unchanged on a Linux GH runner (see
 # corpus_crawl_worker.yml), where nothing lives on D:.
-ROOT = Path(os.environ.get("YAHOO_OAUTH_ROOT", "d:/yahoo_oauth"))
+ROOT = Path(os.environ.get("YAHOO_OAUTH_ROOT") or Path(__file__).resolve().parents[2])
 CORPUS = Path(os.environ.get("CORPUS_DIR", "D:/league-history-data/fantasy_leagues/sampling_corpus"))
 DRAIN = CORPUS / "discovery" / "drain_leagues.parquet"
 DRAFT_COHORT = Path(os.environ.get(
@@ -287,7 +287,7 @@ def main() -> None:
     # make zero net progress across refires.
     landed_file = CORPUS / "landed_dbs.txt"
     if not landed_file.exists():
-        landed_file = Path(__file__).resolve().parents[2] / "league-history-workers" / "corpus_seed" / "landed_dbs.txt"
+        landed_file = ROOT / "corpus_seed" / "landed_dbs.txt"
     if landed_file.exists():
         for line in landed_file.read_text().splitlines():
             name = line.strip()

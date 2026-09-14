@@ -8,7 +8,7 @@ Usage:
     python scripts/reimport_league.py --list  # show all leagues
 
 Looks up league metadata from MotherDuck, builds the same payload the frontend
-sends, and dispatches via repository_dispatch to league-history-workers.
+sends, and dispatches via repository_dispatch to the public worker repository.
 """
 
 import argparse

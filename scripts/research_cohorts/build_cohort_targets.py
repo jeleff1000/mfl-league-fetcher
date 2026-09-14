@@ -16,7 +16,7 @@ from pathlib import Path
 COHORTS = Path("D:/league-history-data/fantasy_leagues/cohort_aggregates")
 COVERAGE = COHORTS / "corpus_coverage.json"
 LADDER = COHORTS / "ladder_thresholds.json"
-OUT = Path("D:/yahoo_oauth/league-history-workers/corpus_seed/cohort_targets.json")
+OUT = Path(__file__).resolve().parents[2] / "corpus_seed" / "cohort_targets.json"
 
 # The metrics whose r75 sample size gates a cohort's usefulness. start_pct is the
 # cheapest rung (n_r75=273); adp is the draft-ladder rung (n_r75=402). A cohort is

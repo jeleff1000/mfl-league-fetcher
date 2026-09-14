@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PATTERN = re.compile(r"MotherDuck|MOTHERDUCK|md:|motherduck")
 ACTIVE_PATHS = (
     ".github",
-    "league-history-workers/.github",
     "duckdb-server",
     "fantasy_football_data_scripts/multi_league/core/delta_publish.py",
     "fantasy_football_data_scripts/multi_league/core/local_db.py",

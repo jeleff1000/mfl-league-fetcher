@@ -19,6 +19,11 @@ on:
         description: 'Stable import concurrency key, usually the resolved db_name'
         required: false
         type: string
+      verify_only:
+        description: 'Run the complete local pipeline without publishing or storing credentials'
+        required: true
+        type: boolean
+        default: false
   repository_dispatch:
     types: [yahoo_full_import]
 
@@ -51,6 +56,7 @@ jobs:
       FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: '1'
       OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
+      VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only || false }}
 
     steps:
       - name: Checkout code
@@ -203,6 +209,7 @@ jobs:
       # Store credentials immediately after token refresh so they're available
       # for debugging even if the import fails downstream.
       - name: Store credentials (early)
+        if: env.VERIFY_ONLY != 'true'
         env:
           CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
           DATABASE_NAME: ${{ steps.parse.outputs.credential_database_name }}
@@ -328,7 +335,11 @@ jobs:
           echo "========================================"
 
           set +e
-          python initial_import_v3.py --context ../league_context_quick.json --quick 2>&1 | tee ../quick_import.log
+          QUICK_ARGS=(--context ../league_context_quick.json --quick)
+          if [ "${VERIFY_ONLY}" = "true" ]; then
+            QUICK_ARGS+=(--skip-track-2-upload)
+          fi
+          python initial_import_v3.py "${QUICK_ARGS[@]}" 2>&1 | tee ../quick_import.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
 
@@ -605,7 +616,7 @@ jobs:
       # Upload all local tables (core + aggregation + sims) to the database.
       # This replaces the quick import data with the full historical dataset.
       - name: Upload league data
-        if: steps.import.outputs.exit_code == '0'
+        if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
         run: |
           echo "========================================"
           echo "Uploading all tables"
@@ -635,7 +646,7 @@ jobs:
 
       # ==================== REVALIDATE + WARM VERCEL CACHE ====================
       - name: Revalidate and warm Vercel cache
-        if: steps.import.outputs.exit_code == '0'
+        if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
         env:
           REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
           DB_NAME: ${{ env.DB_NAME }}
@@ -656,7 +667,7 @@ jobs:
       # Always store credentials, even if import fails — they're needed for
       # future re-imports and weekly updates.
       - name: Store credentials for weekly updates
-        if: always()
+        if: always() && env.VERIFY_ONLY != 'true'
         env:
           CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
           DATABASE_NAME: ${{ steps.parse.outputs.credential_database_name }}

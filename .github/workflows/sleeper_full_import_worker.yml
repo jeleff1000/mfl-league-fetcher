@@ -19,6 +19,11 @@ on:
         description: 'Stable import concurrency key, usually the resolved db_name'
         required: false
         type: string
+      verify_only:
+        description: 'Run the complete local pipeline without publishing or registering the league'
+        required: true
+        type: boolean
+        default: false
   repository_dispatch:
     types: [sleeper_full_import]
 
@@ -86,6 +91,7 @@ jobs:
       FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: '1'
       OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
+      VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only || false }}
       DB_NAME: ${{ github.event.inputs.league_data_b64 && '' || '' }}  # set after parse step
       DATA_DIR: ""  # set after parse step
 
@@ -177,6 +183,7 @@ jobs:
       # ==================== REGISTER LEAGUE (EARLY) ====================
       # Register league immediately so it's tracked even if import fails.
       - name: Register league (early)
+        if: env.VERIFY_ONLY != 'true'
         env:
           SLEEPER_LEAGUE_ID: ${{ steps.parse.outputs.sleeper_league_id }}
           LEAGUE_NAME: ${{ steps.parse.outputs.league_name }}
@@ -396,7 +403,7 @@ jobs:
 
       # ==================== UPLOAD LEAGUE DATA ====================
       - name: Upload league data
-        if: steps.import.outputs.exit_code == '0'
+        if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
         run: |
           cd fantasy_football_data_scripts
           python -c "
@@ -417,7 +424,7 @@ jobs:
       # historical canonical rows represented in matchup-derived and homepage
       # tables after every import.
       - name: Refresh centralized aggregates after merge
-        if: steps.import.outputs.exit_code == '0'
+        if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
         run: |
           cd fantasy_football_data_scripts
           python ../scripts/refresh_aggregates.py \
@@ -426,7 +433,7 @@ jobs:
 
       # ==================== REVALIDATE + WARM VERCEL CACHE ====================
       - name: Revalidate and warm Vercel cache
-        if: steps.import.outputs.exit_code == '0'
+        if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
         env:
           REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
           DB_NAME: ${{ env.DB_NAME }}

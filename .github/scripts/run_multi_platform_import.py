@@ -823,7 +823,13 @@ def persist_yahoo_refresh_token(segment: dict[str, Any], index: int) -> None:
         log(f"[credentials] WARN: could not persist Yahoo refresh token for segment {index}: {exc}")
 
 
-def import_segment(segment: dict[str, Any], index: int, *, is_target: bool) -> tuple[Path, Path]:
+def import_segment(
+    segment: dict[str, Any],
+    index: int,
+    *,
+    is_target: bool,
+    persist_credentials: bool = True,
+) -> tuple[Path, Path]:
     context_path, data_dir = build_context(segment, index)
     platform = segment["platform"]
     rel_context = os.path.relpath(context_path, FANTASY_DIR)
@@ -853,7 +859,7 @@ def import_segment(segment: dict[str, Any], index: int, *, is_target: bool) -> t
                 "--request-delay", str(segment.get("request_delay", 0.5)),
                 "--throttle-retries", str(segment.get("throttle_retries", 3)),
             ]
-            if not is_target:
+            if not is_target or not persist_credentials:
                 cmd.append("--skip-upload")
         else:
             cmd = ["python", "initial_import_v3.py", "--context", rel_context]
@@ -873,7 +879,8 @@ def import_segment(segment: dict[str, Any], index: int, *, is_target: bool) -> t
         log_file=log_path,
         env=env,
     )
-    persist_yahoo_refresh_token(segment, index)
+    if persist_credentials:
+        persist_yahoo_refresh_token(segment, index)
     return context_path, data_dir
 
 
@@ -1632,6 +1639,7 @@ def postprocess_and_upload_target(
     *,
     segments: list[dict[str, Any]] | None = None,
     target_index: int | None = None,
+    publish: bool = True,
 ) -> None:
     db_name = segment["database_name"]
     run_local_sql_enrichments_after_merge(segment, data_dir)
@@ -1685,6 +1693,10 @@ def postprocess_and_upload_target(
         log_file=LOG_DIR / "target_refresh_aggregates.log",
     )
 
+    if not publish:
+        log("[verify-only] Local merged target complete; skipping Fly upload, live validation, and cache warm")
+        return
+
     upload_local_db(
         segment,
         data_dir,
@@ -1732,6 +1744,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run a generic multi-platform full import")
     parser.add_argument("--payload", help="Path to payload JSON, or omit to use IMPORT_DATA_B64")
     parser.add_argument("--plan-only", action="store_true", help="Validate and print the import plan only")
+    parser.add_argument("--verify-only", action="store_true", help="Run locally without credentials or publication")
     args = parser.parse_args()
 
     LOG_DIR.mkdir(exist_ok=True)
@@ -1777,10 +1790,20 @@ def main() -> None:
                 f"source segment {idx + 1} requested reuse_existing_source, but the multi-platform worker "
                 "now merges local segment imports. Remove reuse_existing_source so the platform import can run locally."
             )
-        _, source_data_dir = import_segment(segment, idx + 1, is_target=False)
+        _, source_data_dir = import_segment(
+            segment,
+            idx + 1,
+            is_target=False,
+            persist_credentials=not args.verify_only,
+        )
         source_data_dirs[idx] = source_data_dir
 
-    _, target_data_dir = import_segment(segments[target_index], target_index + 1, is_target=True)
+    _, target_data_dir = import_segment(
+        segments[target_index],
+        target_index + 1,
+        is_target=True,
+        persist_credentials=not args.verify_only,
+    )
     trim_local_target_to_selected_years(segments[target_index], target_data_dir)
     merge_local_sources_into_target(
         segments=segments,
@@ -1793,6 +1816,7 @@ def main() -> None:
         target_data_dir,
         segments=segments,
         target_index=target_index,
+        publish=not args.verify_only,
     )
     log("")
     log("[multi-platform] import complete")

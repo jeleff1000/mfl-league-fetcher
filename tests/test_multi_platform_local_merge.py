@@ -360,6 +360,36 @@ def test_merge_local_source_into_target_rewrites_selected_years(tmp_path: Path) 
         conn.close()
 
 
+def test_verify_only_postprocessing_runs_local_work_without_publication(tmp_path, monkeypatch) -> None:
+    runner = load_runner()
+    commands: list[str] = []
+
+    monkeypatch.setattr(runner, "run_local_sql_enrichments_after_merge", lambda *_: None)
+    monkeypatch.setattr(runner, "local_matchup_count", lambda *_: 1)
+    monkeypatch.setattr(
+        runner,
+        "run_logged",
+        lambda name, *args, **kwargs: commands.append(name),
+    )
+    monkeypatch.setattr(
+        runner,
+        "upload_local_db",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected publication")),
+    )
+
+    runner.postprocess_and_upload_target(
+        {"database_name": "verify_only", "platform": "sleeper"},
+        tmp_path,
+        publish=False,
+    )
+
+    assert commands == [
+        "CALCULATE EXPECTED RECORDS",
+        "CALCULATE PLAYOFF ODDS",
+        "RUN AGGREGATIONS",
+    ]
+
+
 def test_local_merge_keeps_partial_historical_source_without_matchups(tmp_path: Path) -> None:
     """A source season with real roster/draft data must not abort the whole paid merge."""
     runner = load_runner()

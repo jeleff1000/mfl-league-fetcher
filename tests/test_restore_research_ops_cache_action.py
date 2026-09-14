@@ -8,6 +8,20 @@ from pathlib import Path
 from scripts import download_release_asset
 
 
+def test_public_ops_cache_fallback_does_not_consume_github_api_quota() -> None:
+    action = (
+        Path(__file__).resolve().parents[1]
+        / ".github"
+        / "actions"
+        / "restore-research-ops-cache"
+        / "action.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "releases/download/${{ inputs.release-tag }}/ops_cache.duckdb" in action
+    assert "curl --fail" in action
+    assert "download_release_asset.py" not in action
+
+
 def test_release_backup_retries_a_transient_github_failure(tmp_path: Path, monkeypatch) -> None:
     """A one-off GitHub 500 must not abort a full import before enrichment starts."""
     output_dir = tmp_path / "research_public_lake"

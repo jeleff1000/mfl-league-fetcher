@@ -24,17 +24,13 @@ runs:
     - name: Restore release backup when Actions cache is absent
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         rm -rf research_public_lake
         mkdir -p research_public_lake
-        python scripts/download_release_asset.py \
-          --release-tag "${{ inputs.release-tag }}" \
-          --release-repository "${{ inputs.release-repository }}" \
-          --pattern ops_cache.duckdb \
-          --dir research_public_lake
+        curl --fail --location --retry 3 --retry-all-errors \
+          --output research_public_lake/ops_cache.duckdb \
+          "https://github.com/${{ inputs.release-repository }}/releases/download/${{ inputs.release-tag }}/ops_cache.duckdb"
         test -s research_public_lake/ops_cache.duckdb
     - name: Verify durable ops cache
       shell: bash

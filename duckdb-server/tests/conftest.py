@@ -1,0 +1,7 @@
+"""Shared fixtures for duckdb-server tests."""
+
+import sys
+from pathlib import Path
+
+# Add parent directory to path so tests can import server modules
+sys.path.insert(0, str(Path(__file__).parent.parent))

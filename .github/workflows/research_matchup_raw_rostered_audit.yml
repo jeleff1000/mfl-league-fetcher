@@ -1,0 +1,135 @@
+name: Research matchup raw rostered audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        required: true
+        default: '2025'
+      position:
+        required: true
+        default: 'RB'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}/code
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          path: code
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/cache/restore@v5
+        with:
+          path: research_public_lake
+          key: research-public-lake-v4-Linux-20260806-championship-v2-final-playoff-anchor-outcomes-31147899613
+          fail-on-cache-miss: true
+      - run: python -m pip install duckdb==1.5.1
+      - name: Audit explicit-rostered candidate exposure and NFL-stat identity
+        run: |
+          python - <<'PY'
+          import json
+          import duckdb
+          from scripts.research_cohorts.compact_matchup_cells import research_position_sql
+
+          year = int('${{ inputs.year }}')
+          requested_position = '${{ inputs.position }}'
+          con = duckdb.connect()
+          con.execute("ATTACH 'research_public_lake/corpus_snapshot.duckdb' AS lake (READ_ONLY)")
+          con.execute("ATTACH 'research_public_lake/ops_cache.duckdb' AS ops (READ_ONLY)")
+          cache_position = research_position_sql('f.position')
+          stats_position = research_position_sql('s.position')
+          con.execute(f'''
+            CREATE TEMP TABLE candidates AS
+            SELECT
+              CAST(f.NFL_player_id AS VARCHAR) AS NFL_player_id,
+              MAX(CAST(f.position AS VARCHAR)) AS cache_position,
+              COUNT(DISTINCT CAST(f.db_name AS VARCHAR))::BIGINT AS explicit_rostered_leagues,
+              COUNT(*)::BIGINT AS explicit_rostered_league_weeks
+            FROM lake.public.player_fantasy f
+            WHERE CAST(f.year AS INTEGER)=? AND CAST(f.is_rostered AS INTEGER)=1
+              AND {cache_position}=? AND f.NFL_player_id IS NOT NULL
+            GROUP BY 1
+          ''', [year, requested_position])
+          con.execute(f'''
+            CREATE TEMP TABLE stats AS
+            SELECT
+              CAST(s.NFL_player_id AS VARCHAR) AS NFL_player_id,
+              MAX(CAST(s.player AS VARCHAR)) AS player,
+              MAX(CAST(s.position AS VARCHAR)) AS stats_position_raw,
+              MAX({stats_position}) AS stats_position,
+              COUNT(*) FILTER (
+                WHERE s.week IS NOT NULL AND COALESCE(s.season_type,'REG')='REG'
+              )::BIGINT AS regular_stat_rows,
+              COUNT(DISTINCT CAST(s.week AS INTEGER)) FILTER (
+                WHERE s.week IS NOT NULL AND COALESCE(s.season_type,'REG')='REG'
+              )::BIGINT AS regular_stat_weeks
+            FROM ops.nfl_historical.nfl_player_stats_all s
+            WHERE CAST(s.year AS INTEGER)=?
+            GROUP BY 1
+          ''', [year])
+          con.execute('''
+            COPY (
+              SELECT c.*,s.player,s.stats_position_raw,s.stats_position,
+                COALESCE(s.regular_stat_rows,0) AS regular_stat_rows,
+                COALESCE(s.regular_stat_weeks,0) AS regular_stat_weeks,
+                CASE
+                  WHEN c.explicit_rostered_league_weeks < 10 THEN '<10'
+                  WHEN c.explicit_rostered_league_weeks < 100 THEN '10-99'
+                  WHEN c.explicit_rostered_league_weeks < 1000 THEN '100-999'
+                  ELSE '1000+'
+                END AS exposure_band
+              FROM candidates c LEFT JOIN stats s USING(NFL_player_id)
+              ORDER BY c.explicit_rostered_league_weeks DESC,c.NFL_player_id
+            ) TO 'raw_rostered_candidates.csv' (HEADER, DELIMITER ',')
+          ''')
+          summary = con.execute('''
+            SELECT
+              COUNT(*) AS raw_candidates,
+              COUNT(*) FILTER(WHERE COALESCE(s.regular_stat_rows,0)>0) AS with_regular_stats,
+              COUNT(*) FILTER(WHERE COALESCE(s.regular_stat_rows,0)=0) AS no_regular_stats,
+              COUNT(*) FILTER(WHERE s.player IS NULL) AS missing_stats_identity,
+              SUM(c.explicit_rostered_leagues) AS rostered_league_sum,
+              SUM(c.explicit_rostered_league_weeks) AS rostered_league_week_sum
+            FROM candidates c LEFT JOIN stats s USING(NFL_player_id)
+          ''').fetchone()
+          bands = con.execute('''
+            SELECT exposure_band,COUNT(*) AS players,
+              COUNT(*) FILTER(WHERE regular_stat_rows>0) AS with_regular_stats
+            FROM (
+              SELECT c.NFL_player_id,COALESCE(s.regular_stat_rows,0) AS regular_stat_rows,
+                CASE WHEN c.explicit_rostered_league_weeks<10 THEN '<10'
+                  WHEN c.explicit_rostered_league_weeks<100 THEN '10-99'
+                  WHEN c.explicit_rostered_league_weeks<1000 THEN '100-999' ELSE '1000+' END AS exposure_band
+              FROM candidates c LEFT JOIN stats s USING(NFL_player_id)
+            ) GROUP BY 1 ORDER BY 1
+          ''').fetchall()
+          all_regular_ids = con.execute('''
+            SELECT COUNT(DISTINCT CAST(NFL_player_id AS VARCHAR))
+            FROM ops.nfl_historical.nfl_player_stats_all
+            WHERE CAST(year AS INTEGER)=? AND week IS NOT NULL
+              AND COALESCE(season_type,'REG')='REG'
+          ''', [year]).fetchone()[0]
+          evidence = {
+            'year': year, 'position': requested_position,
+            'raw_candidates': summary[0], 'with_regular_stats': summary[1],
+            'no_regular_stats': summary[2], 'missing_stats_identity': summary[3],
+            'rostered_league_sum': summary[4], 'rostered_league_week_sum': summary[5],
+            'exposure_bands': bands, 'all_nfl_regular_stat_ids': all_regular_ids,
+          }
+          print('raw_rostered_audit='+json.dumps(evidence))
+          assert summary[0] > 0, evidence
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raw-rostered-candidates-${{ inputs.year }}-${{ inputs.position }}-${{ github.run_id }}
+          path: raw_rostered_candidates.csv
+          retention-days: 7

@@ -1,0 +1,184 @@
+name: Migrate Encryption Key
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (decrypt + re-encrypt but do NOT write back)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      single_league:
+        description: 'Test on a single league_id (leave empty for all)'
+        required: false
+        type: string
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install cryptography
+
+      - name: Migrate credentials
+        env:
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+          DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
+          FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
+          OLD_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
+          NEW_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY_NEW }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SINGLE_LEAGUE: ${{ github.event.inputs.single_league }}
+        run: |
+          python - <<'PYEOF'
+          import json, os, re, urllib.request
+          from cryptography.fernet import Fernet
+
+          def _fly(sql, token_env, database="___ops"):
+              url = os.environ["DATABASE_SERVER_URL"].rstrip("/") + "/query"
+              token = os.environ[token_env]
+              data = json.dumps({"sql": sql, "database": database}).encode()
+              req = urllib.request.Request(url, data=data, headers={
+                  "Content-Type": "application/json",
+                  "Authorization": f"Bearer {token}",
+              })
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.loads(resp.read())
+
+          def fly_read(sql, database="___ops"):
+              return _fly(sql, "DATABASE_READ_TOKEN", database)
+
+          def fly_write(sql, database="___ops"):
+              return _fly(sql, "DATABASE_ADMIN_TOKEN", database)
+
+          def sql_str(value):
+              """SQL-escape a string literal."""
+              return "'" + str(value).replace("'", "''") + "'"
+
+          old_key = os.environ["OLD_KEY"]
+          new_key = os.environ["NEW_KEY"]
+          dry_run = os.environ.get("DRY_RUN", "true") == "true"
+          single_league = os.environ.get("SINGLE_LEAGUE", "").strip()
+
+          old_fernet = Fernet(old_key)
+          new_fernet = Fernet(new_key)
+
+          mode = "DRY RUN" if dry_run else "LIVE"
+          print(f"=== Migration Mode: {mode} ===")
+
+          # --- Yahoo credentials ---
+          print("\n--- Yahoo (league_credentials) ---")
+          if single_league:
+              esc = sql_str(single_league)
+              like = sql_str(f"%{single_league}%")
+              where = f"WHERE league_id = {esc} OR league_name ILIKE {like} OR database_name ILIKE {like}"
+          else:
+              where = ""
+          rows = fly_read(
+              f"SELECT league_id, league_name, database_name, encrypted_refresh_token "
+              f"FROM main.league_credentials {where}"
+          )
+          print(f"Found {len(rows)} Yahoo credential(s)")
+
+          yahoo_ok, yahoo_fail = 0, 0
+          for row in rows:
+              league_id = row["league_id"]
+              league_name = row["league_name"]
+              db_name = row["database_name"]
+              enc_token = row["encrypted_refresh_token"]
+              try:
+                  decrypted = old_fernet.decrypt(enc_token.encode()).decode()
+                  re_encrypted = new_fernet.encrypt(decrypted.encode()).decode()
+                  verify = new_fernet.decrypt(re_encrypted.encode()).decode()
+                  assert verify == decrypted, "Round-trip verification failed!"
+
+                  if not dry_run:
+                      fly_write(
+                          f"UPDATE main.league_credentials "
+                          f"SET encrypted_refresh_token = {sql_str(re_encrypted)} "
+                          f"WHERE league_id = {sql_str(league_id)}"
+                      )
+
+                  print(f"  OK: {league_name} ({league_id}) - db: {db_name}")
+                  yahoo_ok += 1
+              except Exception as e:
+                  print(f"  FAIL: {league_name} ({league_id}): {e}")
+                  yahoo_fail += 1
+
+          # --- ESPN credentials ---
+          print("\n--- ESPN (espn_leagues) ---")
+          espn_where = ""
+          if single_league:
+              try:
+                  espn_where = f"WHERE espn_league_id = {int(single_league)}"
+              except ValueError:
+                  espn_where = f"WHERE league_name ILIKE {sql_str('%' + single_league + '%')}"
+          espn_rows = fly_read(
+              "SELECT espn_league_id, league_name, database_name, "
+              "encrypted_espn_s2, encrypted_swid "
+              f"FROM main.espn_leagues {espn_where}"
+          )
+          print(f"Found {len(espn_rows)} ESPN credential(s)")
+
+          espn_ok, espn_fail = 0, 0
+          for row in espn_rows:
+              espn_id = row["espn_league_id"]
+              league_name = row["league_name"]
+              db_name = row["database_name"]
+              enc_s2 = row.get("encrypted_espn_s2")
+              enc_swid = row.get("encrypted_swid")
+              try:
+                  updates = {}
+                  if enc_s2:
+                      dec_s2 = old_fernet.decrypt(enc_s2.encode()).decode()
+                      new_s2 = new_fernet.encrypt(dec_s2.encode()).decode()
+                      assert new_fernet.decrypt(new_s2.encode()).decode() == dec_s2
+                      updates["encrypted_espn_s2"] = new_s2
+
+                  if enc_swid:
+                      dec_swid = old_fernet.decrypt(enc_swid.encode()).decode()
+                      new_swid = new_fernet.encrypt(dec_swid.encode()).decode()
+                      assert new_fernet.decrypt(new_swid.encode()).decode() == dec_swid
+                      updates["encrypted_swid"] = new_swid
+
+                  if not dry_run and updates:
+                      # Column names are hard-coded above; values are escaped
+                      set_clause = ", ".join(f"{col} = {sql_str(val)}" for col, val in updates.items())
+                      fly_write(
+                          f"UPDATE main.espn_leagues SET {set_clause} "
+                          f"WHERE espn_league_id = {int(espn_id)}"
+                      )
+
+                  print(f"  OK: {league_name} ({espn_id}) - db: {db_name}")
+                  espn_ok += 1
+              except Exception as e:
+                  print(f"  FAIL: {league_name} ({espn_id}): {e}")
+                  espn_fail += 1
+
+          print(f"\n=== Summary ({mode}) ===")
+          print(f"Yahoo: {yahoo_ok} OK, {yahoo_fail} FAIL")
+          print(f"ESPN:  {espn_ok} OK, {espn_fail} FAIL")
+
+          if yahoo_fail > 0 or espn_fail > 0:
+              print("\nSome credentials failed! Do NOT switch keys until resolved.")
+              exit(1)
+          else:
+              if dry_run:
+                  print("\nDry run passed. Re-run with dry_run=false to apply.")
+              else:
+                  print("\nMigration complete! Safe to switch CREDENTIAL_ENCRYPTION_KEY to the new value.")
+          PYEOF

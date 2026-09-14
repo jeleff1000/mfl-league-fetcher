@@ -1,0 +1,79 @@
+app = 'league-history-duckdb'
+primary_region = 'iad'
+# 4 GB swap cushion so a memory spike (e.g. during a large ___leagues replace)
+# swaps instead of triggering the OOM killer, which previously wedged the pool.
+swap_size_mb = 4096
+
+[build]
+
+[env]
+  DATA_DIR = '/data'
+  DB_POOL_SIZE = '8'
+  MAX_CONCURRENT_QUERIES = '8'
+  QUERY_QUEUE_TIMEOUT_SECONDS = '10'
+  # Per-connection cap. The pool opens DB_POOL_SIZE (+1 ops) independent DuckDB
+  # instances, each with its own budget, so worst-case = (POOL_SIZE+1) * this.
+  # (8+1)*1024MB = ~9GB declared vs 8GB RAM; the 4GB swapfile above absorbs the
+  # overflow spike (was 2048MB = ~18GB declared, which OOM-wedged the pool).
+  # Big queries spill to the 20GiB temp dir rather than growing in RAM.
+  DUCKDB_MEMORY_LIMIT = '1024MB'
+  DUCKDB_THREADS = '1'
+  DUCKDB_WRITE_THREADS = '2'
+  DUCKDB_MAX_TEMP_DIRECTORY_SIZE = '20GiB'
+  MERGE_STEP_TIMEOUT_SECONDS = '180'
+  MERGE_HARD_EXIT_SECONDS = '360'
+  MAX_INFLIGHT_DELTA_PUBLISHES = '1'
+  DELTA_ADMISSION_TIMEOUT_SECONDS = '30'
+  DELTA_BUSY_RETRY_AFTER_SECONDS = '15'
+  ASYNC_DB_STARTUP = '1'
+  DUCKDB_CHECKPOINT_WAL_MB = '512'
+  DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = '600'
+
+[[mounts]]
+  source = 'duckdb_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 16
+    hard_limit = 24
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    timeout = "5s"
+    method = "GET"
+    path = "/ready"
+
+  [http_service.http_options]
+    idle_timeout = 900
+
+[checks.server_state]
+  type = "http"
+  port = 8080
+  method = "get"
+  path = "/internal/server-state"
+  interval = "30s"
+  timeout = "5s"
+
+[deploy]
+  strategy = "rolling"
+  max_unavailable = 1
+
+[[restart]]
+  policy = "on-failure"
+  retries = 10
+
+[[vm]]
+  # 16gb/8cpu (2026-07-13): the 12GB ___leagues working set + concurrent
+  # analytical queries wedged the pool on 8gb. shared-cpu-8x allows 16gb.
+  memory = '16gb'
+  cpu_kind = 'shared'
+  cpus = 8

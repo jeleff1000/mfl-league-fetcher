@@ -1,12 +1,12 @@
 name: Verify Ops Cache
 
-# One-time/manual verification for the prebuilt worker ops cache.
-# This workflow never builds, updates, deletes, or saves the cache.
+# One-time/manual verification and cache seeding for the prebuilt worker ops cache.
 
 on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
 
 jobs:
@@ -29,6 +29,13 @@ jobs:
         with:
           cache-key: ${{ env.RESEARCH_LAKE_KEY }}
           release-tag: ${{ env.OPS_CACHE_RELEASE_TAG }}
+
+      - name: Seed the public repository cache
+        if: steps.research-lake.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: research_public_lake
+          key: ${{ env.RESEARCH_LAKE_KEY }}
 
       - name: Setup Python
         uses: actions/setup-python@v6

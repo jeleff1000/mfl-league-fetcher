@@ -19,4 +19,5 @@ def test_research_runtime_smoke_is_public_read_only_and_representative() -> None
     assert "DATABASE_WRITE_TOKEN" not in rendered
     assert "actions/upload-artifact" not in rendered
     assert "fantasy_football_data_scripts" in job["env"]["PYTHONPATH"]
+    assert "polars==1.35.2" in rendered
     assert any(step.get("uses") == "actions/checkout@v5" for step in job["steps"])

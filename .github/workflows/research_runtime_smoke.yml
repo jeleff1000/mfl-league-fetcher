@@ -1,0 +1,76 @@
+name: Research Runtime Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research-runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
+      PYTHONPATH: ${{ github.workspace }}/fantasy_football_data_scripts:${{ github.workspace }}/scripts/research_cohorts
+
+    steps:
+      - name: Checkout public worker runtime
+        uses: actions/checkout@v5
+
+      - name: Restore canonical research ops cache
+        uses: ./.github/actions/restore-research-ops-cache
+        with:
+          cache-key: research-public-lake-v5-Linux-2000-plus-player-bio
+          release-tag: ops-cache-v6-2000-plus-player-bio
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install bounded research dependencies
+        run: >-
+          python -m pip install
+          duckdb==1.5.1
+          numpy==1.26.4
+          pandas==2.2.3
+          pyarrow==15.0.2
+          pytest==8.3.3
+          requests==2.32.3
+
+      - name: Verify canonical cache is readable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "${OPS_CACHE_PATH}"
+          python - <<'PYEOF'
+          import os
+          import duckdb
+
+          expected = (
+              ("nfl_historical", "nfl_player_stats_all"),
+              ("nfl_historical", "player_bio"),
+              ("public", "espn_nfl_player_map"),
+              ("public", "sleeper_nfl_player_map"),
+              ("public", "yahoo_nfl_player_map"),
+          )
+          connection = duckdb.connect(os.environ["OPS_CACHE_PATH"], read_only=True)
+          try:
+              for schema, table in expected:
+                  count = connection.execute(
+                      f'SELECT COUNT(*) FROM "{schema}"."{table}"'
+                  ).fetchone()[0]
+                  if count <= 0:
+                      raise SystemExit(f"{schema}.{table} is empty")
+                  print(f"{schema}.{table}: {count:,} rows")
+          finally:
+              connection.close()
+          PYEOF
+
+      - name: Run representative research contracts
+        run: |
+          python -m pytest -q \
+            scripts/research_cohorts/test_matchup_metric_sql.py \
+            scripts/research_cohorts/test_source_backfill_readiness.py \
+            scripts/research_cohorts/test_release_gate_matchup_metrics.py

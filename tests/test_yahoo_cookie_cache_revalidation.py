@@ -21,13 +21,15 @@ def test_yahoo_cookie_worker_revalidates_and_warms_after_a_successful_import():
     source = WORKFLOW.read_text(encoding="utf-8")
 
     assert "REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}" in source
-    run_cookie_track = source.index("- name: Run Yahoo cookie track")
-    refresh_cache = source.index("- name: Revalidate and warm Vercel cache")
-    assert refresh_cache > run_cookie_track
-    assert "python scripts/warm_vercel_cache.py" in source[refresh_cache:]
-    assert '--db "${{ inputs.database_name }}"' in source[refresh_cache:]
-    assert "--strategy expire" in source[refresh_cache:]
-    assert "--strict" in source[refresh_cache:]
+    for mode in ("quick", "full"):
+        run_cookie_track = source.index(f"- name: Run {mode} Yahoo cookie track")
+        refresh_cache = source.index(f"- name: Publish {mode} cookie import")
+        assert refresh_cache > run_cookie_track
+        branch = source[refresh_cache:]
+        assert "python scripts/warm_vercel_cache.py" in branch
+        assert '--db "${{ inputs.database_name }}"' in branch
+        assert "--strategy expire" in branch
+        assert "--strict" in branch
 
 
 def test_cache_refresh_workflow_uses_the_authenticated_shared_warmer():

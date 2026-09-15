@@ -292,6 +292,8 @@ def _merge_active_payloads(
     player_cache = SleeperPlayerCache(ctx.cache_directory)
     player_cache.refresh_if_stale(client)
     final_matchup_weeks = [week for week in refresh_weeks if _sleeper_week_is_final(active_league, week)]
+    matchups = pd.DataFrame()
+    schedule = pd.DataFrame()
     if final_matchup_weeks:
         matchups = SleeperMatchupFetcher(ctx, client).fetch_matchups_for_year(active_year, weeks=final_matchup_weeks)
         if not matchups.empty:
@@ -352,6 +354,7 @@ def _merge_active_payloads(
             league_id=league_id,
         )
     draft_rows = 0
+    draft = pd.DataFrame()
     draft_fetcher = SleeperDraftFetcher(ctx, client, player_cache)
     has_hydrated_draft = local_db.table_exists("draft") and int(local_db.row_count("draft") or 0) > 0
     draft_manifest = draft_fetcher.fetch_draft_manifest_for_year(active_year) if has_hydrated_draft else None
@@ -371,6 +374,33 @@ def _merge_active_payloads(
             )
     else:
         print(f"[Sleeper] Verified hydrated {active_year} draft against provider manifest", flush=True)
+    from multi_league.core.league_update_validation import (
+        IncompleteSourceError,
+        validate_tabular_active_scope,
+    )
+
+    provider_rosters = client.get_league_rosters(league_id)
+    expected_ids = tuple(
+        str(roster.get("roster_id") or "").strip()
+        for roster in provider_rosters
+    )
+    if len(expected_ids) != int(active_league.get("total_rosters") or 0):
+        raise IncompleteSourceError(
+            "Sleeper roster identity count disagrees with active league settings"
+        )
+    validation = validate_tabular_active_scope(
+        provider="sleeper",
+        league_id=league_id,
+        season=active_year,
+        expected_team_ids=expected_ids,
+        requested_weeks=tuple(refresh_weeks),
+        finalized_weeks=tuple(final_matchup_weeks),
+        player_id_column="sleeper_player_id",
+        rosters=rosters,
+        matchups=matchups,
+        schedule=schedule,
+        draft=draft,
+    )
     return {
         "roster_rows": int(roster_rows),
         "final_matchup_rows": matchup_rows,
@@ -378,6 +408,7 @@ def _merge_active_payloads(
         "schedule_rows": schedule_rows,
         "transaction_rows": int(len(transactions)),
         "draft_rows": draft_rows,
+        "provider_validation": validation,
     }
 
 

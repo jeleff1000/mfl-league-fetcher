@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import pandas as pd
+
 
 class IncompleteSourceError(RuntimeError):
     """A provider response cannot prove the requested snapshot is complete."""
@@ -234,3 +236,107 @@ def validate_provider_snapshot(
         player_mappings=player_mappings,
         valid_empty_resources=valid_empty,
     )
+
+
+def validate_tabular_active_scope(
+    *,
+    provider: str,
+    league_id: str,
+    season: int,
+    expected_team_ids: tuple[str, ...],
+    requested_weeks: tuple[int, ...],
+    finalized_weeks: tuple[int, ...],
+    player_id_column: str,
+    rosters: pd.DataFrame,
+    matchups: pd.DataFrame,
+    schedule: pd.DataFrame,
+    draft: pd.DataFrame,
+) -> dict[str, int]:
+    """Validate actual weekly fetch frames before partial-week filtering/publication."""
+    expected_ids = {str(value).strip() for value in expected_team_ids}
+    if not expected_ids or "" in expected_ids or len(expected_ids) != len(expected_team_ids):
+        raise IncompleteSourceError(f"{provider} expected team identities are incomplete")
+    requested = {int(week) for week in requested_weeks}
+    finalized = {int(week) for week in finalized_weeks}
+    if not requested or any(week < 1 for week in requested) or not finalized <= requested:
+        raise IncompleteSourceError(f"{provider} requested week scope is invalid")
+
+    def coverage(frame: pd.DataFrame, *, name: str, weeks: set[int]) -> int:
+        if not isinstance(frame, pd.DataFrame):
+            raise IncompleteSourceError(f"{provider} {name} payload is malformed")
+        if not weeks:
+            if not frame.empty:
+                raise IncompleteSourceError(f"{provider} {name} includes an unfinalized week")
+            return 0
+        required = {"year", "week", "team_key"}
+        if not required <= set(frame.columns):
+            raise IncompleteSourceError(f"{provider} {name} ownership keys are missing")
+        try:
+            years = frame["year"].astype(int)
+            observed_weeks = frame["week"].astype(int)
+        except (TypeError, ValueError) as exc:
+            raise IncompleteSourceError(f"{provider} {name} season/week identity is invalid") from exc
+        if years.ne(int(season)).any():
+            raise IncompleteSourceError(f"{provider} {name} season identity changed")
+        team_ids = frame["team_key"].astype(str).str.strip()
+        if team_ids.eq("").any() or frame["team_key"].isna().any():
+            raise IncompleteSourceError(f"{provider} {name} includes a blank team identity")
+        observed = set(zip(observed_weeks.tolist(), team_ids.tolist(), strict=True))
+        expected = {(week, team_id) for week in weeks for team_id in expected_ids}
+        if observed != expected:
+            raise IncompleteSourceError(
+                f"{provider} {name} coverage mismatch: missing={sorted(expected - observed)}, "
+                f"extra={sorted(observed - expected)}"
+            )
+        return len(observed)
+
+    roster_keys = coverage(rosters, name="roster", weeks=requested)
+    if player_id_column not in rosters.columns:
+        raise IncompleteSourceError(f"{provider} roster provider player IDs are missing")
+    ids = rosters[player_id_column].astype(str).str.strip()
+    if rosters[player_id_column].isna().any() or ids.eq("").any():
+        raise IncompleteSourceError(f"{provider} roster has blank provider player IDs")
+    duplicate_players = rosters.assign(__provider_player_id=ids).duplicated(
+        ["week", "team_key", "__provider_player_id"], keep=False
+    )
+    if duplicate_players.any():
+        raise IncompleteSourceError(f"{provider} roster has duplicate provider player IDs")
+    matchup_keys = coverage(matchups, name="matchup", weeks=finalized)
+    schedule_for_validation = schedule
+    if isinstance(schedule, pd.DataFrame) and not schedule.empty and "team_key" not in schedule:
+        # Sleeper's schedule fetcher emits manager/team display fields but not
+        # the roster_id. Resolve only through an exact same-week matchup row;
+        # never infer team ownership from manager names alone.
+        join_keys = ["year", "week", "manager_week", "team_name"]
+        if not set(join_keys) <= set(schedule) or not set([*join_keys, "team_key"]) <= set(matchups):
+            raise IncompleteSourceError(f"{provider} schedule team identity cannot be resolved")
+        mapping = matchups[[*join_keys, "team_key"]].drop_duplicates()
+        if mapping.duplicated(join_keys, keep=False).any():
+            raise IncompleteSourceError(f"{provider} schedule team identity is ambiguous")
+        schedule_for_validation = schedule.merge(
+            mapping, on=join_keys, how="left", validate="many_to_one"
+        )
+        if schedule_for_validation["team_key"].isna().any():
+            raise IncompleteSourceError(f"{provider} schedule team identity is missing")
+    schedule_keys = coverage(schedule_for_validation, name="schedule", weeks=finalized)
+
+    if not isinstance(draft, pd.DataFrame):
+        raise IncompleteSourceError(f"{provider} draft payload is malformed")
+    if not draft.empty:
+        required = {"year", "draft_id", "round", "pick"}
+        if not required <= set(draft.columns):
+            raise IncompleteSourceError(f"{provider} draft identity keys are missing")
+        if draft[list(required)].isna().any().any():
+            raise IncompleteSourceError(f"{provider} draft has null identity keys")
+        if draft["year"].astype(int).ne(int(season)).any():
+            raise IncompleteSourceError(f"{provider} draft season identity changed")
+        if draft.duplicated(["draft_id", "pick"], keep=False).any():
+            raise IncompleteSourceError(f"{provider} draft has duplicate picks")
+    return {
+        "expected_team_weeks": len(expected_ids) * len(requested),
+        "observed_team_weeks": roster_keys,
+        "observed_final_matchup_weeks": len(finalized),
+        "matchup_team_weeks": matchup_keys,
+        "schedule_team_weeks": schedule_keys,
+        "draft_picks": len(draft),
+    }

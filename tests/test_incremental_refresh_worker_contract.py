@@ -101,3 +101,5 @@ def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     assert 'merge_provider_refresh_table(\n            local_db,\n            "player_fantasy"' in text
     assert '"player_fantasy": ("db_name", "player_week")' in ownership
     assert '"sleeper_player_id_original"' not in ownership
+    assert "validate_tabular_active_scope(" in text
+    assert text.index("validate_tabular_active_scope(") < text.index("bundle = build_fleet_partition_bundle(")

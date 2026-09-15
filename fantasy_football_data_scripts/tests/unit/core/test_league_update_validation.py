@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import pandas as pd
 import pytest
 
 from multi_league.core.league_update_validation import (
     IncompleteSourceError,
     ProviderSnapshotExpectations,
+    validate_tabular_active_scope,
     validate_provider_snapshot,
 )
 
@@ -116,3 +118,74 @@ def test_unknown_resource_completeness_is_rejected_even_when_other_tables_are_no
     del value["resource_status"]["rosters"]
     with pytest.raises(IncompleteSourceError, match="rosters.*unknown"):
         validate_provider_snapshot(value, expectations())
+
+
+def _tabular_scope():
+    return {
+        "rosters": pd.DataFrame([
+            {"year": 2026, "week": 1, "team_key": "1", "sleeper_player_id": "p1"},
+            {"year": 2026, "week": 1, "team_key": "2", "sleeper_player_id": "p2"},
+        ]),
+        "matchups": pd.DataFrame([
+            {"year": 2026, "week": 1, "team_key": "1", "matchup_id": "m1"},
+            {"year": 2026, "week": 1, "team_key": "2", "matchup_id": "m1"},
+        ]),
+        "schedule": pd.DataFrame([
+            {"year": 2026, "week": 1, "team_key": "1"},
+            {"year": 2026, "week": 1, "team_key": "2"},
+        ]),
+        "draft": pd.DataFrame([
+            {"year": 2026, "draft_id": "d1", "round": 1, "pick": 1},
+            {"year": 2026, "draft_id": "d1", "round": 1, "pick": 2},
+        ]),
+    }
+
+
+def _validate_tabular(**changes):
+    values = _tabular_scope() | changes
+    return validate_tabular_active_scope(
+        provider="sleeper", league_id="s26", season=2026,
+        expected_team_ids=("1", "2"), requested_weeks=(1,),
+        finalized_weeks=(1,), player_id_column="sleeper_player_id",
+        **values,
+    )
+
+
+def test_actual_weekly_tabular_payload_requires_every_team_week_and_draft_key():
+    assert _validate_tabular()["observed_team_weeks"] == 2
+    with pytest.raises(IncompleteSourceError, match="roster coverage"):
+        _validate_tabular(rosters=_tabular_scope()["rosters"].iloc[:1])
+    with pytest.raises(IncompleteSourceError, match="matchup coverage"):
+        _validate_tabular(matchups=_tabular_scope()["matchups"].iloc[:1])
+    duplicate = pd.concat([_tabular_scope()["draft"], _tabular_scope()["draft"].iloc[:1]])
+    with pytest.raises(IncompleteSourceError, match="draft.*duplicate"):
+        _validate_tabular(draft=duplicate)
+
+
+def test_actual_tabular_payload_allows_a_legitimately_live_unfinalized_week():
+    values = _tabular_scope()
+    assert validate_tabular_active_scope(
+        provider="sleeper", league_id="s26", season=2026,
+        expected_team_ids=("1", "2"), requested_weeks=(1,),
+        finalized_weeks=(), player_id_column="sleeper_player_id",
+        rosters=values["rosters"], matchups=pd.DataFrame(),
+        schedule=pd.DataFrame(), draft=values["draft"],
+    )["observed_final_matchup_weeks"] == 0
+
+
+def test_sleeper_schedule_fetch_only_names_map_to_exact_matchup_team_keys():
+    values = _tabular_scope()
+    matchups = values["matchups"].assign(
+        manager_week=["A_2026_1", "B_2026_1"],
+        team_name=["Team A", "Team B"],
+    )
+    schedule = values["schedule"].drop(columns=["team_key"]).assign(
+        manager_week=["A_2026_1", "B_2026_1"],
+        team_name=["Team A", "Team B"],
+    )
+    assert _validate_tabular(matchups=matchups, schedule=schedule)["schedule_team_weeks"] == 2
+    with pytest.raises(IncompleteSourceError, match="schedule.*team identity"):
+        _validate_tabular(
+            matchups=matchups,
+            schedule=schedule.assign(team_name=["Team A", "Wrong Team"]),
+        )

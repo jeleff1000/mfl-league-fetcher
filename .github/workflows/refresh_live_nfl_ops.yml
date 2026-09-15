@@ -270,6 +270,21 @@ jobs:
           )
           PY
 
+      - name: Materialize compact league-update NFL revisions
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        working-directory: code
+        env:
+          PYTHONPATH: ${{ github.workspace }}/code/fantasy_football_data_scripts
+          DATABASE_BACKEND: fly
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+          DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
+          FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
+        run: |
+          python scripts/materialize_league_update_nfl_revisions.py \
+            --year "${{ steps.scope.outputs.refresh_year }}" \
+            --week "${{ steps.scope.outputs.refresh_week }}"
+
       - name: Verify promoted Fly receipt
         if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
         env:

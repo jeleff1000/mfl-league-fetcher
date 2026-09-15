@@ -1,0 +1,28 @@
+{
+  "manifest": {
+    "schema_version": 1,
+    "database_name": "keeper_league",
+    "active_season": 2026,
+    "segments": [
+      {
+        "provider": "yahoo",
+        "active_league_id": "470.l.80971",
+        "seasons": [2026, 2025],
+        "renewal_chain": [[2026, "470.l.80971"], [2025, "461.l.90939"]]
+      }
+    ],
+    "nfl_revisions": [
+      {"provider": "nfl", "resource": "game", "scope": "2026:10:BUF@MIA", "revision": "nfl-week-10"},
+      {"provider": "nfl", "resource": "game", "scope": "2026:2:BUF@MIA", "revision": "nfl-week-2"}
+    ],
+    "provider_revisions": [
+      {"provider": "yahoo", "resource": "transactions", "scope": "2026", "revision": "tx-empty", "status": "ok", "expected_count": 0, "observed_count": 0},
+      {"provider": "yahoo", "resource": "rosters", "scope": "2026:10", "revision": "roster-10", "status": "ok", "expected_count": 10, "observed_count": 10},
+      {"provider": "yahoo", "resource": "settings", "scope": "2026", "revision": "settings-1", "status": "ok", "expected_count": 1, "observed_count": 1}
+    ],
+    "base_generation": 7,
+    "observed_at": "2026-09-14T12:00:00Z"
+  },
+  "canonical_json": "{\"active_season\":2026,\"database_name\":\"keeper_league\",\"nfl_revisions\":[{\"expected_count\":null,\"observed_count\":null,\"provider\":\"nfl\",\"resource\":\"game\",\"revision\":\"nfl-week-2\",\"scope\":\"2026:2:BUF@MIA\",\"status\":\"ok\"},{\"expected_count\":null,\"observed_count\":null,\"provider\":\"nfl\",\"resource\":\"game\",\"revision\":\"nfl-week-10\",\"scope\":\"2026:10:BUF@MIA\",\"status\":\"ok\"}],\"provider_revisions\":[{\"expected_count\":10,\"observed_count\":10,\"provider\":\"yahoo\",\"resource\":\"rosters\",\"revision\":\"roster-10\",\"scope\":\"2026:10\",\"status\":\"ok\"},{\"expected_count\":1,\"observed_count\":1,\"provider\":\"yahoo\",\"resource\":\"settings\",\"revision\":\"settings-1\",\"scope\":\"2026\",\"status\":\"ok\"},{\"expected_count\":0,\"observed_count\":0,\"provider\":\"yahoo\",\"resource\":\"transactions\",\"revision\":\"tx-empty\",\"scope\":\"2026\",\"status\":\"ok\"}],\"schema_version\":1,\"segments\":[{\"active_league_id\":\"470.l.80971\",\"provider\":\"yahoo\",\"renewal_chain\":[[2025,\"461.l.90939\"],[2026,\"470.l.80971\"]],\"seasons\":[2025,2026]}]}",
+  "digest": "3417e0fe57a28b43902be9b9bc4c229c39b7d1a3f6fa4e018bfd2a2c1fb17ba2"
+}

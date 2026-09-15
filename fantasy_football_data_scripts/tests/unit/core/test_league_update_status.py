@@ -65,6 +65,7 @@ def test_entitlement_uses_paid_fly_rows_and_only_explicit_grandfathers():
             self.calls += 1
             assert "tier, '')) = 'paid'" in sql
             assert "tier, '')) = 'grandfathered'" in sql
+            assert "ORDER BY updated_at DESC NULLS LAST LIMIT 1" in sql
             assert database == "___ops"
             return self.value
 

@@ -964,6 +964,7 @@ def test_replace_active_season_draft_replaces_the_full_authoritative_year():
     from multi_league.core.league_refresh import replace_active_season_draft
 
     class Local:
+        league_name = "league_a"
         saved = None
 
         def _normalize_table_frame(self, _table, frame, **_kwargs):
@@ -1013,6 +1014,48 @@ def test_replace_active_season_draft_skips_empty_provider_payload():
         league_id="123",
     ) == 0
     local_db.save_table.assert_not_called()
+
+
+def test_renewed_sleeper_draft_without_db_name_merges_into_the_existing_league(tmp_path):
+    """The real Sleeper fetcher omits db_name; LocalDB's save-time fill is too late for ownership."""
+    from multi_league.core.league_refresh import replace_active_season_draft
+    from multi_league.core.local_db import LocalLeagueDB
+
+    local_db = LocalLeagueDB(tmp_path, "mawhinney_s_vixens")
+    draft = pd.DataFrame([
+        {"year": 2026, "draft_id": "1389710321509232642", "round": 1, "pick": 1},
+        {"year": 2026, "draft_id": "1389710321509232642", "round": 1, "pick": 2},
+    ])
+    try:
+        assert replace_active_season_draft(
+            local_db, draft, year=2026, platform="sleeper",
+            league_id="1389710321509232641",
+        ) == 2
+        saved = local_db.read_table("draft")
+        assert set(saved["db_name"]) == {"mawhinney_s_vixens"}
+        assert set(saved["pick"]) == {1, 2}
+    finally:
+        local_db.close()
+
+
+def test_active_draft_rejects_a_foreign_db_name_before_replacing_history(tmp_path):
+    from multi_league.core.league_refresh import RefreshScopeError, replace_active_season_draft
+    from multi_league.core.local_db import LocalLeagueDB
+
+    local_db = LocalLeagueDB(tmp_path, "mawhinney_s_vixens")
+    foreign = pd.DataFrame([{
+        "db_name": "another_league", "year": 2026,
+        "draft_id": "draft-1", "round": 1, "pick": 1,
+    }])
+    try:
+        with pytest.raises(RefreshScopeError, match="different league"):
+            replace_active_season_draft(
+                local_db, foreign, year=2026, platform="sleeper",
+                league_id="1389710321509232641",
+            )
+        assert not local_db.table_exists("draft")
+    finally:
+        local_db.close()
 
 
 def test_weekly_yahoo_refresh_refetches_a_draft_with_missing_provider_ids():

@@ -715,6 +715,20 @@ def hydrate_local_refresh_sources(
     return hydrated
 
 
+def _bind_provider_db_name(
+    local_db: Any, table_name: str, normalized: pd.DataFrame
+) -> pd.DataFrame:
+    """Give an unscoped provider payload its validated local league identity."""
+    db_name = str(getattr(local_db, "league_name", "")).strip()
+    if not db_name:
+        raise RefreshScopeError(f"{table_name} local league identity is missing")
+    if "db_name" not in normalized.columns:
+        return normalized.assign(db_name=db_name)
+    if normalized["db_name"].astype(str).ne(db_name).any():
+        raise RefreshScopeError(f"{table_name} provider payload belongs to a different league")
+    return normalized
+
+
 def merge_provider_refresh_table(
     local_db: Any,
     table_name: str,
@@ -746,10 +760,7 @@ def merge_provider_refresh_table(
         # a publishable canonical column. Keep the strict ownership check for
         # every other unexpected field.
         normalized = normalized.drop(columns=["_raw"])
-    if "db_name" not in normalized.columns:
-        normalized = normalized.assign(db_name=str(local_db.league_name))
-    elif normalized["db_name"].astype(str).ne(str(local_db.league_name)).any():
-        raise RefreshScopeError(f"{table_name} provider payload belongs to a different league")
+    normalized = _bind_provider_db_name(local_db, table_name, normalized)
     contract = table_ownership(table_name)
     if table_name == "player_fantasy":
         # The roster normalizer carries two fetch-only NFL mapping hints that
@@ -879,6 +890,7 @@ def replace_active_season_draft(
         league_id=league_id,
         log_context="authoritative provider draft",
     )
+    normalized = _bind_provider_db_name(local_db, "draft", normalized)
     existing = (
         local_db.read_table("draft")
         if local_db.table_exists("draft")

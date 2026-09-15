@@ -124,11 +124,13 @@ def assert_league_update_entitled(reader: Any, *, database_name: str) -> None:
     if database_name.lower() in DEFAULT_GRANDFATHERED_LEAGUES | configured:
         return
     eligible = reader.query_scalar(
-        "SELECT COUNT(*) FROM accounts.league_inventory "
-        f"WHERE database_name = {_literal(database_name)} "
-        "AND LOWER(COALESCE(entitled_mode, '')) = 'full' "
+        "SELECT CASE WHEN LOWER(COALESCE(entitled_mode, '')) = 'full' "
         "AND ((LOWER(COALESCE(tier, '')) = 'paid' AND expires_at > NOW()) "
-        "OR LOWER(COALESCE(tier, '')) = 'grandfathered')",
+        "OR LOWER(COALESCE(tier, '')) = 'grandfathered') "
+        "THEN 1 ELSE 0 END FROM ("
+        "SELECT tier, entitled_mode, expires_at FROM accounts.league_inventory "
+        f"WHERE database_name = {_literal(database_name)} "
+        "ORDER BY updated_at DESC NULLS LAST LIMIT 1) latest",
         database="___ops",
     )
     if int(eligible or 0) < 1:

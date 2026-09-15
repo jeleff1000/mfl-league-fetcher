@@ -111,3 +111,19 @@ def test_sleeper_worker_rejects_wrong_intermediate_renewal_identity():
     assert not _renewal_chain_reaches_seed(
         "new", seed_league_id="old", get_league=leagues.get,
     )
+
+
+def test_active_sleeper_roster_scope_exposes_points_before_finalized_game_gate():
+    """The weekly gate consumes canonical scoring, while the fetcher emits points."""
+    import pandas as pd
+
+    from refresh_sleeper_active_season import _active_sleeper_roster_scope
+
+    source = pd.DataFrame(
+        [{"week": 1, "nfl_team": "CHI", "points": 21.5, "sleeper_player_id": "1"}]
+    )
+    actual = _active_sleeper_roster_scope(source)
+
+    assert actual["fantasy_points"].tolist() == [21.5]
+    assert actual["points"].tolist() == [21.5]
+    assert actual["nfl_team"].tolist() == ["CHI"]

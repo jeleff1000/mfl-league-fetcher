@@ -12,6 +12,24 @@ from multi_league.core.league_update_ownership import (
 )
 
 
+def test_overlay_ignores_legacy_null_ownership_keys_that_cannot_match_provider_rows():
+    """A historical bye shell with no key must not block a later active refresh."""
+    contract = table_ownership("matchup")
+    existing = pd.DataFrame(
+        [
+            {"db_name": "league", "manager_week": None, "manager": "legacy"},
+            {"db_name": "league", "manager_week": None, "manager": "legacy-two"},
+        ]
+    )
+    incoming = pd.DataFrame(
+        [{"db_name": "league", "manager_week": "manager_2026_1", "manager": "current"}]
+    )
+
+    actual = overlay_provider_columns(existing, incoming, contract)
+
+    assert actual["manager_week"].tolist() == ["manager_2026_1"]
+
+
 def _optimal_week_frames():
     old = pd.DataFrame([
         {"db_name": "afi_data", "year": 2026, "week": 1, "player_week": "p1_2026_1",

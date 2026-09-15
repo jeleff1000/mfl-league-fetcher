@@ -231,6 +231,17 @@ def overlay_provider_columns(
     )
     available = [column for column in protected if column in existing.columns]
     old = existing.loc[:, [*contract.key_columns, *available]].copy()
+    # Historical provider exports can retain a few bye/placeholder rows with
+    # no ownership identity at all. They cannot match an incoming canonical
+    # provider row, so they must not make the preservation join ambiguous.
+    # Nonblank keys remain strictly one-to-one and still fail closed below.
+    complete_key = pd.Series(True, index=old.index)
+    for column in contract.key_columns:
+        values = old[column]
+        complete_key &= values.notna() & ~values.astype(str).str.strip().str.lower().isin(
+            {"", "none", "nan", "<na>"}
+        )
+    old = old.loc[complete_key].copy()
     if old.duplicated(list(contract.key_columns), keep=False).any():
         raise OwnershipContractError(f"{contract.table_name} existing rows have duplicate ownership keys")
     old = old.rename(columns={column: f"__preserved_{column}" for column in available})

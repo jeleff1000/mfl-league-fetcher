@@ -51,6 +51,20 @@ def _sleeper_confirmed_no_draft(active_league: dict[str, Any], manifest: pd.Data
     return manifest.empty and not str(active_league.get("draft_id") or "").strip()
 
 
+def _active_sleeper_roster_scope(rosters: pd.DataFrame) -> pd.DataFrame:
+    """Expose Sleeper's raw ``points`` under the shared refresh score field.
+
+    The normalizer performs this rename later, before writing canonical
+    ``player_fantasy``.  The active-refresh completeness gate runs earlier so
+    it can hold rows from unfinalized NFL games; it therefore needs the same
+    scoring field without changing the fetcher's broad-import contract.
+    """
+    scoped = rosters.copy()
+    if "fantasy_points" not in scoped.columns and "points" in scoped.columns:
+        scoped["fantasy_points"] = scoped["points"]
+    return scoped
+
+
 def _renewal_chain_reaches_seed(
     candidate_league_id: str,
     *,
@@ -359,6 +373,7 @@ def _merge_active_payloads(
     rosters = SleeperRosterFetcher(ctx, client, player_cache).fetch_season_rosters(
         active_year, weeks=refresh_weeks, db=local_db
     )
+    rosters = _active_sleeper_roster_scope(rosters)
     roster_rows = 0
     pending_nfl_teams: set[str] = set()
     for week in refresh_weeks:

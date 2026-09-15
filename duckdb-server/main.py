@@ -1523,7 +1523,11 @@ async def server_state():
     }
 
 
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024  # 5GB
+# Full database replacement is admin-only and currently needs to accommodate
+# the verified wide NFL Ops snapshot. Keep the ceiling bounded (the smaller
+# delta lane has its own independent limit), but leave enough headroom for an
+# artifact that has outgrown the legacy 5 GiB cap.
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_FULL_DATABASE_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
 _FILE_PARAM = File(...)
 
 

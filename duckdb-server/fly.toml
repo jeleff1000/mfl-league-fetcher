@@ -28,6 +28,10 @@ swap_size_mb = 4096
   ASYNC_DB_STARTUP = '1'
   DUCKDB_CHECKPOINT_WAL_MB = '512'
   DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = '600'
+  # Admin-only full database replacements. The current verified ___ops_nfl
+  # artifact is larger than the former 5 GiB ceiling; incremental league
+  # bundles remain governed by MAX_DELTA_UPLOAD_BYTES.
+  MAX_FULL_DATABASE_UPLOAD_BYTES = '8589934592'
 
 [[mounts]]
   source = 'duckdb_data'

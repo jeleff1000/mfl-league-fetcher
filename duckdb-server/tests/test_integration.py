@@ -877,6 +877,13 @@ def test_replace_db_requires_admin(client):
     assert resp.status_code == 401
 
 
+def test_full_database_upload_limit_accommodates_verified_ops_artifacts():
+    """The full Ops snapshot is intentionally larger than the 5 GiB legacy cap."""
+    import main as main_mod
+
+    assert main_mod.MAX_UPLOAD_BYTES >= 8 * 1024 * 1024 * 1024
+
+
 def test_replace_db_rejects_invalid_name(client):
     resp = client.post(
         "/replace-db",

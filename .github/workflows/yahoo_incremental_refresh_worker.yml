@@ -33,6 +33,10 @@ on:
         required: false
         default: '1'
         type: string
+      observed_manifest_digest:
+        description: 'Exact provider/NFL source manifest claimed by the UI'
+        required: false
+        type: string
 permissions:
   contents: read
 
@@ -123,6 +127,7 @@ jobs:
           YEAR: ${{ inputs.year }}
           THROUGH_WEEK: ${{ inputs.through_week }}
           EXECUTE: ${{ inputs.execute }}
+          OBSERVED_MANIFEST_DIGEST: ${{ inputs.observed_manifest_digest }}
         run: |
           set -euo pipefail
           args=(--db "${DB_NAME}" --json-out yahoo_active_season_refresh.json)
@@ -135,6 +140,9 @@ jobs:
           fi
           if [ "${EXECUTE}" = "true" ]; then
             args+=(--execute)
+          fi
+          if [ -n "${OBSERVED_MANIFEST_DIGEST}" ]; then
+            args+=(--observed-manifest-digest "${OBSERVED_MANIFEST_DIGEST}")
           fi
           python scripts/refresh_yahoo_active_season.py "${args[@]}"
 

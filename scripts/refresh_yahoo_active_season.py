@@ -1156,6 +1156,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", required=True, help="Yahoo league db_name")
     parser.add_argument("--year", type=int, default=None, help="Active NFL season (default: current ops season)")
     parser.add_argument("--through-week", type=int, default=None, help="Optional final-week ceiling")
+    parser.add_argument("--observed-manifest-digest")
     parser.add_argument("--execute", action="store_true", help="Commit the scoped Fleet bundle to Fly")
     parser.add_argument("--json-out", type=Path, help="Optional non-secret run receipt path")
     args = parser.parse_args(argv)
@@ -1171,6 +1172,7 @@ def main(argv: list[str] | None = None) -> int:
         stage_refresh_partitions,
     )
     from multi_league.core.local_db import LocalLeagueDB
+    from multi_league.core.league_update_plan import load_persisted_refresh_plan
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
     from multi_league.core.yahoo_league_settings import discover_league_history
@@ -1190,12 +1192,27 @@ def main(argv: list[str] | None = None) -> int:
     if finalized_ops.empty:
         raise RuntimeError(f"No finalized regular-season ops facts for {active_year}")
     finalized_weeks = sorted({int(value) for value in finalized_ops["week"].dropna().tolist()})
-    refresh_weeks = completed_weeks_to_refresh(
-        finalized_weeks=finalized_weeks,
-        last_materialized_week=last_materialized_week,
+    persisted_plan = load_persisted_refresh_plan(
+        reader,
+        database_name=args.db,
+        active_season=active_year,
+        expected_observed_digest=args.observed_manifest_digest,
+    )
+    refresh_weeks = (
+        list(persisted_plan.weeks)
+        if persisted_plan is not None
+        else completed_weeks_to_refresh(
+            finalized_weeks=finalized_weeks,
+            last_materialized_week=last_materialized_week,
+        )
     )
     receipt: dict[str, Any] = {"db_name": args.db, "year": active_year, "refresh_weeks": refresh_weeks, "executed": bool(args.execute)}
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))
+    if persisted_plan is not None:
+        receipt["source_manifest_digest"] = persisted_plan.observed_manifest_digest
+        receipt["source_manifest_json"] = persisted_plan.observed_manifest_json
+        receipt["published_manifest_digest"] = persisted_plan.published_manifest_digest
+        receipt["refresh_reasons"] = list(persisted_plan.reasons)
     if not refresh_weeks:
         receipt["status"] = "NO_FINALIZED_WEEKS"
         print(json.dumps(receipt, sort_keys=True))

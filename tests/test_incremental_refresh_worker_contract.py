@@ -18,6 +18,7 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert "dispatch_token:" in text
     assert "attempt_id:" in text
     assert "claim_version:" in text
+    assert "observed_manifest_digest:" in text
     assert "push:" not in text
     assert "scripts/record_league_update_status.py" in text
     assert "--status running" in text
@@ -25,6 +26,7 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert text.count('--claim-version "${{ inputs.claim_version }}"') == 3
     assert "--require-entitled" in text
     assert f"scripts/refresh_{platform}_active_season.py" in text
+    assert '--observed-manifest-digest "${OBSERVED_MANIFEST_DIGEST}"' in text
     assert "scripts/warm_vercel_cache.py" in text
     assert "--strict" in text
     assert "--verify-hot" in text
@@ -45,6 +47,10 @@ def test_shared_active_refresh_publishes_data_and_homepage_in_one_bundle():
         assert "publish_homepage_refresh_bundle" not in text
         assert text.index("homepage = prepare_homepage_refresh(") < text.index("bundle = build_fleet_partition_bundle(")
         assert text.count("merge_fleet_partition(") == 1
+        assert 'parser.add_argument("--observed-manifest-digest")' in text
+        assert "load_persisted_refresh_plan(" in text
+        assert 'receipt["source_manifest_digest"]' in text
+        assert 'receipt["source_manifest_json"]' in text
 
 
 def test_sleeper_refresh_merges_rosters_on_canonical_player_id():

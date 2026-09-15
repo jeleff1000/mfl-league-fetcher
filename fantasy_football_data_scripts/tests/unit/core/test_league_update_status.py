@@ -1,8 +1,11 @@
+import json
+
 import pandas as pd
 import pytest
 import duckdb
 
 from multi_league.core.league_refresh import finalized_source_boundary
+from multi_league.core.league_update_manifest import manifest_digest, source_manifest_from_mapping
 from multi_league.core.league_update_status import assert_league_update_entitled, record_league_update_status
 
 
@@ -119,6 +122,29 @@ def test_verified_success_advances_fingerprint_with_token_guard():
     assert "TRUE" in writer.sql
 
 
+def test_manifest_aware_commit_promotes_only_the_exact_observed_snapshot():
+    writer = Writer()
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="committed",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+        receipt={
+            "status": "COMMITTED",
+            "source_year": 2026,
+            "source_week": 2,
+            "source_manifest_digest": "manifest-digest",
+            "bundle_id": "bundle",
+        },
+    )
+    assert "published_manifest_json = observed_manifest_json" in writer.sql
+    assert "published_manifest_digest = 'manifest-digest'" in writer.sql
+    assert "observed_manifest_digest = 'manifest-digest'" in writer.sql
+    assert "published_at = NOW()" in writer.sql
+
+
 def test_running_claim_has_a_short_crash_recovery_lease():
     writer = Writer()
     assert record_league_update_status(
@@ -141,6 +167,15 @@ class LocalWriter:
         return self.connection.execute(sql)
 
 
+def _seed_observed_manifest(writer: LocalWriter, *, digest: str = "manifest-digest") -> None:
+    writer.connection.execute(
+        "INSERT INTO accounts.league_update_manifests "
+        "(database_name, observed_manifest_json, observed_manifest_digest) "
+        "VALUES ('the_league', '{\"schema_version\":1}', ?)",
+        [digest],
+    )
+
+
 def _committed_receipt():
     return {
         "status": "COMMITTED",
@@ -149,6 +184,121 @@ def _committed_receipt():
         "source_fingerprint": "manifest-digest",
         "bundle_id": "bundle-1",
     }
+
+
+def test_committed_publication_promotes_matching_observed_manifest():
+    writer = LocalWriter()
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="running",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+    )
+    _seed_observed_manifest(writer)
+    receipt = _committed_receipt() | {"source_manifest_digest": "manifest-digest"}
+
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="committed",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+        receipt=receipt,
+    )
+    assert writer.connection.execute(
+        "SELECT published_manifest_json, published_manifest_digest "
+        "FROM accounts.league_update_manifests WHERE database_name = 'the_league'"
+    ).fetchone() == ('{"schema_version":1}', "manifest-digest")
+
+
+def test_commit_rejects_manifest_that_changed_after_dispatch():
+    writer = LocalWriter()
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="running",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+    )
+    _seed_observed_manifest(writer, digest="newer-probe")
+    receipt = _committed_receipt() | {"source_manifest_digest": "dispatched-probe"}
+
+    assert not record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="committed",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+        receipt=receipt,
+    )
+    assert writer.connection.execute(
+        "SELECT status FROM accounts.league_update_dispatches WHERE database_name = 'the_league'"
+    ).fetchone()[0] == "running"
+    assert writer.connection.execute(
+        "SELECT published_manifest_digest FROM accounts.league_update_manifests "
+        "WHERE database_name = 'the_league'"
+    ).fetchone()[0] is None
+
+
+def test_captured_manifest_can_publish_while_a_newer_probe_remains_observed():
+    writer = LocalWriter()
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="running",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+    )
+    _seed_observed_manifest(writer, digest="newer-probe")
+    source_json = (
+        '{"active_season":2026,"database_name":"the_league",'
+        '"nfl_revisions":[],"provider_revisions":[],"schema_version":1,'
+        '"segments":[]}'
+    )
+    source_digest = manifest_digest(source_manifest_from_mapping(json.loads(source_json)))
+    receipt = _committed_receipt() | {
+        "source_manifest_digest": source_digest,
+        "source_manifest_json": source_json,
+    }
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="committed",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+        receipt=receipt,
+    )
+    assert writer.connection.execute(
+        "SELECT observed_manifest_digest, published_manifest_digest "
+        "FROM accounts.league_update_manifests WHERE database_name = 'the_league'"
+    ).fetchone() == ("newer-probe", source_digest)
+
+
+def test_captured_manifest_digest_must_match_its_payload():
+    writer = Writer()
+    with pytest.raises(ValueError, match="digest does not match"):
+        record_league_update_status(
+            writer,
+            database_name="the_league",
+            platform="yahoo",
+            status="committed",
+            dispatch_token="opaque",
+            receipt=_committed_receipt() | {
+                "source_manifest_digest": "wrong",
+                "source_manifest_json": (
+                    '{"active_season":2026,"database_name":"the_league",'
+                    '"nfl_revisions":[],"provider_revisions":[],"schema_version":1,'
+                    '"segments":[]}'
+                ),
+            },
+        )
 
 
 def test_terminal_attempt_cannot_be_rewritten_by_same_token():

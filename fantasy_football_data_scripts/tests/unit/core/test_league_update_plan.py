@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from multi_league.core.league_update_manifest import (
+    LeagueSegment,
+    ResourceRevision,
+    SourceManifest,
+)
+from multi_league.core.league_update_manifest import canonical_manifest_json, manifest_digest
+from multi_league.core.league_update_plan import (
+    PersistedManifestError,
+    build_refresh_plan,
+    load_persisted_refresh_plan,
+)
+
+
+def resource(provider, kind, scope, revision):
+    return ResourceRevision(provider, kind, scope, revision)
+
+
+def manifest(*, nfl=(), provider=(), segments=None):
+    return SourceManifest(
+        schema_version=1,
+        database_name="league_a",
+        active_season=2026,
+        segments=segments or (
+            LeagueSegment("sleeper", "s26", (2025, 2026), ((2025, "s25"), (2026, "s26"))),
+        ),
+        nfl_revisions=tuple(nfl),
+        provider_revisions=tuple(provider),
+        base_generation=4,
+    )
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected_weeks", "expected_resources"),
+    [
+        (resource("nfl", "game", "2026:4:BUF@MIA", "final"), (4,), ("game",)),
+        (resource("nfl", "game", "2026:4:BUF@MIA", "corrected"), (4,), ("game",)),
+        (resource("nfl", "game", "2026:2:BUF@MIA", "corrected"), (2, 4), ("game",)),
+        (resource("sleeper", "settings", "2026", "new"), (1, 2, 3, 4), ("settings",)),
+        (resource("sleeper", "transactions", "2026:2", "new"), (2, 4), ("transactions",)),
+        (resource("sleeper", "draft", "2026", "new"), (4,), ("draft",)),
+        (resource("sleeper", "rosters", "2026:3", "new"), (3, 4), ("rosters",)),
+    ],
+)
+def test_manifest_diff_selects_every_changed_scope_without_latest_week_lower_bound(
+    changed,
+    expected_weeks,
+    expected_resources,
+):
+    base_nfl = tuple(resource("nfl", "game", f"2026:{week}:A@B", f"n{week}") for week in range(1, 5))
+    old_provider = (resource("sleeper", "settings", "2026", "old"),)
+    old = manifest(nfl=base_nfl, provider=old_provider)
+    if changed.provider == "nfl":
+        observed_nfl = tuple(row for row in base_nfl if (row.resource, row.scope) != (changed.resource, changed.scope)) + (changed,)
+        observed = manifest(nfl=observed_nfl, provider=old_provider)
+    else:
+        observed_provider = tuple(row for row in old_provider if (row.resource, row.scope) != (changed.resource, changed.scope)) + (changed,)
+        observed = manifest(nfl=base_nfl, provider=observed_provider)
+
+    plan = build_refresh_plan(observed, old, materialized_keys={(2026, 1), (2026, 2), (2026, 3), (2026, 4)})
+
+    assert plan.weeks == expected_weeks
+    assert tuple(sorted({row.resource for row in plan.changed_resources})) == expected_resources
+    assert plan.requires_refresh is True
+
+
+def test_missing_materialized_week_is_selected_even_without_a_revision_change():
+    nfl = tuple(resource("nfl", "game", f"2026:{week}:A@B", f"n{week}") for week in range(1, 5))
+    current = manifest(nfl=nfl)
+
+    plan = build_refresh_plan(
+        current,
+        current,
+        materialized_keys={(2026, 1), (2026, 3), (2026, 4)},
+    )
+
+    assert plan.weeks == (2, 4)
+    assert plan.reasons == ("missing_materialized_week",)
+
+
+def test_identical_complete_manifest_is_a_no_op():
+    nfl = (resource("nfl", "game", "2026:1:A@B", "n1"),)
+    current = manifest(nfl=nfl)
+    plan = build_refresh_plan(current, current, materialized_keys={(2026, 1)})
+    assert plan.requires_refresh is False
+    assert plan.weeks == ()
+    assert plan.changed_resources == ()
+
+
+def test_renewal_segment_change_refreshes_the_active_season():
+    nfl = tuple(resource("nfl", "game", f"2026:{week}:A@B", f"n{week}") for week in (1, 2, 3))
+    old = manifest(nfl=nfl)
+    changed_segment = (
+        LeagueSegment("sleeper", "s26-renewed", (2026,), ((2026, "s26-renewed"),)),
+    )
+    observed = replace(old, segments=changed_segment)
+    plan = build_refresh_plan(observed, old, materialized_keys={(2026, 1), (2026, 2), (2026, 3)})
+    assert plan.weeks == (1, 2, 3)
+    assert "segment_identity_changed" in plan.reasons
+
+
+def test_removed_resource_is_still_a_refresh_and_never_silently_ignored():
+    nfl = (resource("nfl", "game", "2026:1:A@B", "n1"),)
+    published = manifest(nfl=nfl, provider=(resource("sleeper", "transactions", "2026:1", "tx"),))
+    observed = manifest(nfl=nfl)
+    plan = build_refresh_plan(observed, published, materialized_keys={(2026, 1)})
+    assert plan.requires_refresh is True
+    assert plan.weeks == (1,)
+    assert plan.changed_resources[0].status == "removed"
+
+
+def test_different_database_manifests_are_rejected():
+    current = manifest()
+    with pytest.raises(ValueError, match="different leagues"):
+        build_refresh_plan(replace(current, database_name="other"), current, materialized_keys=set())
+
+
+class Reader:
+    def __init__(self, manifest_row, weeks=(1, 2, 3)):
+        self.manifest_row = manifest_row
+        self.weeks = weeks
+
+    def query(self, sql, *, database):
+        if database == "___ops":
+            return [self.manifest_row] if self.manifest_row else []
+        assert database == "___leagues"
+        return [{"week": week} for week in self.weeks]
+
+
+def test_persisted_plan_verifies_the_exact_ui_observation_and_selects_changed_week():
+    old = manifest(
+        nfl=(
+            resource("nfl", "game", "2026:1:A@B", "one"),
+            resource("nfl", "game", "2026:2:A@B", "old"),
+            resource("nfl", "game", "2026:3:A@B", "three"),
+        ),
+        provider=(resource("sleeper", "rosters", "2026:2", "old"),),
+    )
+    observed = replace(
+        old,
+        nfl_revisions=(
+            resource("nfl", "game", "2026:1:A@B", "one"),
+            resource("nfl", "game", "2026:2:A@B", "corrected"),
+            resource("nfl", "game", "2026:3:A@B", "three"),
+        ),
+    )
+    reader = Reader({
+        "observed_manifest_json": canonical_manifest_json(observed),
+        "observed_manifest_digest": manifest_digest(observed),
+        "published_manifest_json": canonical_manifest_json(old),
+        "published_manifest_digest": manifest_digest(old),
+    })
+
+    plan = load_persisted_refresh_plan(
+        reader,
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=manifest_digest(observed),
+    )
+
+    assert plan is not None
+    assert plan.weeks == (2, 3)
+    assert plan.observed_manifest_digest == manifest_digest(observed)
+    assert plan.observed_manifest_json == canonical_manifest_json(observed)
+
+
+def test_persisted_plan_rejects_a_stale_ui_digest_before_fetching_provider_data():
+    observed = manifest()
+    reader = Reader({
+        "observed_manifest_json": canonical_manifest_json(observed),
+        "observed_manifest_digest": manifest_digest(observed),
+        "published_manifest_json": None,
+        "published_manifest_digest": None,
+    })
+    with pytest.raises(PersistedManifestError, match="changed after dispatch"):
+        load_persisted_refresh_plan(
+            reader,
+            database_name="league_a",
+            active_season=2026,
+            expected_observed_digest="stale",
+        )
+
+
+def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():
+    assert load_persisted_refresh_plan(
+        Reader(None),
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=None,
+    ) is None

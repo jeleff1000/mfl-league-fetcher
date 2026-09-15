@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import os
+import json
 from collections.abc import Mapping
 from typing import Any
+
+from multi_league.core.league_update_manifest import (
+    canonical_manifest_json,
+    manifest_digest,
+    source_manifest_from_mapping,
+)
 
 
 VALID_STATUSES = {
@@ -128,6 +135,9 @@ def record_league_update_status(
     is_success = normalized == "succeeded"
     is_terminal = normalized in TERMINAL_STATUSES
     has_publication = normalized in PUBLICATION_STATUSES
+    manifest_aware_publication = bool(
+        has_publication and receipt.get("source_manifest_digest")
+    )
     source_year = int(receipt["source_year"]) if has_publication else None
     source_week = int(receipt["source_week"]) if has_publication else None
     source_fingerprint = (
@@ -135,6 +145,20 @@ def record_league_update_status(
         if has_publication
         else None
     )
+    captured_manifest_json: str | None = None
+    raw_manifest_json = receipt.get("source_manifest_json") if has_publication else None
+    if raw_manifest_json:
+        try:
+            parsed_manifest = source_manifest_from_mapping(json.loads(str(raw_manifest_json)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Published source manifest JSON is invalid") from exc
+        if manifest_digest(parsed_manifest) != str(source_fingerprint):
+            raise ValueError("Published source manifest digest does not match its payload")
+        if parsed_manifest.database_name != database_name:
+            raise ValueError("Published source manifest belongs to a different league")
+        if parsed_manifest.active_season != source_year:
+            raise ValueError("Published source manifest belongs to a different season")
+        captured_manifest_json = canonical_manifest_json(parsed_manifest)
     generation = receipt.get("bundle_id") if has_publication else None
     base_generation = receipt.get("base_generation") if has_publication else None
     allowed_prior = ", ".join(_literal(value) for value in sorted(ALLOWED_PRIOR_STATUSES[normalized]))
@@ -143,8 +167,36 @@ def record_league_update_status(
         if run_id is None
         else f"(workflow_run_id IS NULL OR workflow_run_id = {run_id})"
     )
+    manifest_guard = (
+        "EXISTS (SELECT 1 FROM accounts.league_update_manifests m "
+        f"WHERE m.database_name = {_literal(database_name)} "
+        f"AND m.observed_manifest_digest = {_literal(source_fingerprint)} "
+        "AND m.observed_manifest_json IS NOT NULL)"
+        if manifest_aware_publication and captured_manifest_json is None
+        else "TRUE"
+    )
+    published_guard = (
+        "AND EXISTS (SELECT 1 FROM accounts.league_update_manifests m "
+        "WHERE m.database_name = accounts.league_update_dispatches.database_name "
+        f"AND m.published_manifest_digest = {_literal(source_fingerprint)})"
+        if manifest_aware_publication
+        else ""
+    )
     sql = f"""
     CREATE SCHEMA IF NOT EXISTS accounts;
+    CREATE TABLE IF NOT EXISTS accounts.league_update_manifests (
+      database_name VARCHAR PRIMARY KEY,
+      platform VARCHAR, active_season INTEGER, through_week INTEGER,
+      observed_manifest_json VARCHAR, observed_manifest_digest VARCHAR,
+      published_manifest_json VARCHAR, published_manifest_digest VARCHAR,
+      published_at TIMESTAMP,
+      probe_status VARCHAR NOT NULL DEFAULT 'unknown', probe_error_code VARCHAR,
+      last_attempt_at TIMESTAMP, last_success_at TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE accounts.league_update_manifests ADD COLUMN IF NOT EXISTS published_manifest_json VARCHAR;
+    ALTER TABLE accounts.league_update_manifests ADD COLUMN IF NOT EXISTS published_manifest_digest VARCHAR;
+    ALTER TABLE accounts.league_update_manifests ADD COLUMN IF NOT EXISTS published_at TIMESTAMP;
     CREATE TABLE IF NOT EXISTS accounts.league_update_dispatches (
       database_name VARCHAR PRIMARY KEY, platform VARCHAR NOT NULL, status VARCHAR NOT NULL,
       workflow_file VARCHAR, workflow_run_id BIGINT, dispatch_token VARCHAR,
@@ -168,7 +220,7 @@ def record_league_update_status(
        started_at, completed_at, lease_expires_at, updated_at, error,
        attempt_id, claim_version, heartbeat_at, observed_manifest_digest,
        base_generation, bundle_id, cache_state, committed_at, cache_verified_at)
-    VALUES ({_literal(database_name)}, {_literal(platform)}, {_literal(normalized)},
+    SELECT {_literal(database_name)}, {_literal(platform)}, {_literal(normalized)},
       {run_id if run_id is not None else 'NULL'}, {_literal(dispatch_token)},
       {source_year if source_year is not None else 'NULL'},
       {source_week if source_week is not None else 'NULL'}, {_literal(source_fingerprint)},
@@ -181,7 +233,8 @@ def record_league_update_status(
       {'NOW()' if normalized == 'running' else 'NULL'}, {_literal(source_fingerprint)},
       {_literal(base_generation)}, {_literal(generation)}, {_literal(normalized)},
       {'NOW()' if normalized in PUBLICATION_STATUSES else 'NULL'},
-      {'NOW()' if normalized in {'cache_verified', 'succeeded'} else 'NULL'})
+      {'NOW()' if normalized in {'cache_verified', 'succeeded'} else 'NULL'}
+    WHERE {manifest_guard}
     ON CONFLICT (database_name) DO NOTHING;
     UPDATE accounts.league_update_dispatches SET
       platform = {_literal(platform)}, status = {_literal(normalized)},
@@ -211,9 +264,24 @@ def record_league_update_status(
       AND COALESCE(attempt_id, {_literal(normalized_attempt_id)}) = {_literal(normalized_attempt_id)}
       AND COALESCE(claim_version, 0) IN (0, {normalized_claim_version})
       AND {run_owner_guard}
+      AND {manifest_guard}
       AND status IN ({allowed_prior})
       AND NOT ({str(is_terminal).upper()} AND status = {_literal(normalized)})
     RETURNING database_name;
+    UPDATE accounts.league_update_manifests SET
+      published_manifest_json = {(_literal(captured_manifest_json) if captured_manifest_json is not None else 'observed_manifest_json')},
+      published_manifest_digest = {_literal(source_fingerprint)},
+      published_at = NOW(), updated_at = NOW()
+    WHERE {str(manifest_aware_publication).upper()}
+      AND database_name = {_literal(database_name)}
+      AND ({str(captured_manifest_json is not None).upper()}
+           OR observed_manifest_digest = {_literal(source_fingerprint)})
+      AND EXISTS (
+        SELECT 1 FROM accounts.league_update_dispatches d
+        WHERE d.database_name = {_literal(database_name)}
+          AND d.dispatch_token = {_literal(dispatch_token)}
+          AND d.status = {_literal(normalized)}
+      );
     SELECT database_name
     FROM accounts.league_update_dispatches
     WHERE database_name = {_literal(database_name)}
@@ -222,6 +290,7 @@ def record_league_update_status(
       AND COALESCE(claim_version, 0) IN (0, {normalized_claim_version})
       AND {run_owner_guard}
       AND status = {_literal(normalized)}
+      {published_guard}
     LIMIT 1;
     """
     response = writer.execute(sql, database="___ops")

@@ -2575,6 +2575,7 @@ def process_parquet_files(
     data_directory: str = None,
     settings_by_year: dict[int, dict] | None = None,
     data_dir: str | None = None,
+    target_year: int | None = None,
 ):
     """Process playoff odds using the supplied local DuckDB connection.
 
@@ -2690,8 +2691,14 @@ def process_parquet_files(
     # Fix DuckDB nullable boolean columns before any filtering
     for _bcol in ["is_bye_week", "is_playoffs", "is_consolation"]:
         if _bcol in df_matches.columns:
-            _boolish = df_matches[_bcol].astype(object).replace({True: 1, False: 0})
-            df_matches[_bcol] = pd.to_numeric(_boolish, errors="coerce").fillna(0).astype(int)
+            df_matches[_bcol] = (
+                df_matches[_bcol]
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .isin({"true", "1", "1.0"})
+                .astype(int)
+            )
 
     # NOTE: Bye/placeholder rows (is_bye_week=1, opponent=NULL) are KEPT in df_all.
     # They were created by enforce_postseason_flags and must persist through the
@@ -2737,9 +2744,19 @@ def process_parquet_files(
             df_sched[col] = pd.to_numeric(df_sched[col], errors="coerce")
 
     # Ensure target columns exist
-    for col in TARGET_COLS:
-        if col not in df_matches.columns:
-            df_matches[col] = np.nan
+    missing_targets = [col for col in TARGET_COLS if col not in df_matches.columns]
+    if missing_targets:
+        df_matches = pd.concat(
+            [
+                df_matches,
+                pd.DataFrame(
+                    np.nan,
+                    index=df_matches.index,
+                    columns=missing_targets,
+                ),
+            ],
+            axis=1,
+        )
 
     # Generate historical snapshots for kernel-based seed prediction
     # Note: For the first season in dataset, hist_df will be empty - this is handled
@@ -2751,6 +2768,10 @@ def process_parquet_files(
     hist_df = history_snapshots(_games_for_hist, PLAYOFF_SLOTS)
 
     seasons = sorted(df_matches["year"].dropna().unique().astype(int))
+    if target_year is not None:
+        seasons = [season for season in seasons if season == int(target_year)]
+        if not seasons:
+            raise ValueError(f"No matchup rows found for target year {target_year}")
 
     # A season whose playoff settings cannot be resolved by ANY source (e.g. an in-progress
     # successor year with zero playoff games, or a historical year the platform never exposed
@@ -2773,7 +2794,11 @@ def process_parquet_files(
             )
     seasons = simulatable
 
-    df_all = df_matches.copy()
+    df_all = (
+        df_matches.loc[pd.to_numeric(df_matches["year"], errors="coerce").eq(int(target_year))].copy()
+        if target_year is not None
+        else df_matches.copy()
+    )
 
     # Create placeholder rows for bye teams BEFORE processing playoff weeks
     # This ensures bye team rows exist when simulation results are written
@@ -3090,6 +3115,7 @@ Note:
     parser.add_argument(
         "--n-sims", type=int, default=None, help=f"Number of Monte Carlo simulations (default: {N_SIMS})"
     )
+    parser.add_argument("--target-year", type=int, help="Only recalculate and write this league season")
     parser.add_argument(
         "--data-dir",
         type=str,
@@ -3214,6 +3240,7 @@ Note:
             data_directory=str(args._data_dir),
             settings_by_year=args._settings_by_year,
             data_dir=args.data_dir,
+            target_year=args.target_year,
         )
         logger.info("SUCCESS - Playoff odds calculation complete!")
     except Exception as e:
@@ -3277,6 +3304,7 @@ Note:
             context=None,
             dry_run=False,
             backup=False,
+            target_year=args.target_year,
         )
         clutch_main(_clutch_args)
         logger.info("SUCCESS - Clutch equity calculation complete!")

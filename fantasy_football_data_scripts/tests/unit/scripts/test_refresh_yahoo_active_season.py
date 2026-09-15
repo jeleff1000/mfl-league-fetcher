@@ -188,7 +188,12 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
             return None
 
     class FakeLocalDb:
-        _conn = object()
+        class Connection:
+            @staticmethod
+            def execute(_sql, _params):
+                return SimpleNamespace(fetchone=lambda: (0, None))
+
+        _conn = Connection()
 
         def read_table(self, _table, *, year):
             assert year == 2026

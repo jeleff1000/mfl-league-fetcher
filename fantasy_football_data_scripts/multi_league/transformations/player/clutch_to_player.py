@@ -144,6 +144,7 @@ def main(args=None):
         parser = argparse.ArgumentParser(description="Calculate clutch equity scores for players")
         parser.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
         parser.add_argument("--backup", action="store_true", help="Create backup before modifying files")
+        parser.add_argument("--target-year", type=int, help="Only recalculate and write this league season")
 
         # Support both new --db/--data-dir and legacy --context
         from multi_league.core.import_args import add_import_args
@@ -193,6 +194,7 @@ def main(args=None):
     _is_local = data_dir is not None
     _db_filter = "" if _is_local else f"WHERE db_name = '{db_name}'"
     print(f"[Mode] {'local DuckDB' if _is_local else '___leagues (centralized)'}")
+    target_year = getattr(args, "target_year", None)
 
     # Table references — use unqualified public.table for local
     player_table = "public.player_fantasy"
@@ -221,6 +223,10 @@ def main(args=None):
 
     print(f"\n[Loading] Player data from {player_table} ({len(_sel_p)} columns)...")
     player_df = conn.execute(f'SELECT {", ".join(_sel_p)} FROM {player_table} {_db_filter}').fetchdf()
+    if target_year is not None:
+        player_df = player_df.loc[
+            pd.to_numeric(player_df["year"], errors="coerce").eq(int(target_year))
+        ].copy()
 
     if player_df.empty:
         print("[ERROR] player_fantasy table is empty")
@@ -234,6 +240,10 @@ def main(args=None):
 
     print(f"\n[Loading] Matchup data from {matchup_tbl} ({len(_sel_m)} columns)...")
     matchup_df = conn.execute(f'SELECT {", ".join(_sel_m)} FROM {matchup_tbl} {_db_filter}').fetchdf()
+    if target_year is not None:
+        matchup_df = matchup_df.loc[
+            pd.to_numeric(matchup_df["year"], errors="coerce").eq(int(target_year))
+        ].copy()
 
     if matchup_df.empty:
         print("[ERROR] matchup table is empty")

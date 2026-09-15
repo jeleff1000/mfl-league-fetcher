@@ -48,6 +48,21 @@ SOURCE_TABLES = (
     "league_rules",
     "manager_overrides",
     "standings_config",
+    "franchise_identity_audit",
+    "franchise_identity_registry",
+    "draft_manager_career",
+    "draft_player_career",
+    "matchup_career",
+    "matchup_h2h_career",
+    "player_fantasy_career",
+    "player_fantasy_career_all",
+    "transaction_manager_career",
+    "transaction_player_career",
+    "homepage_current_standings",
+    "homepage_league_summary",
+    "homepage_manager_profiles",
+    "homepage_manager_rankings",
+    "homepage_top_rivalries",
 )
 ACTIVE_REFRESH_SOURCE_TABLES = (
     "matchup",
@@ -61,6 +76,7 @@ ACTIVE_REFRESH_SOURCE_TABLES = (
     "keeper_config",
     "league_context",
 )
+UPDATE_REFRESH_SOURCE_TABLES = SOURCE_TABLES
 YAHOO_LEAGUE_KEY_RE = re.compile(r"^\d+\.l\.\d+$")
 
 
@@ -385,7 +401,7 @@ def _active_source_snapshot_frames(
     active_year: int,
     table_names: tuple[str, ...],
 ) -> dict[str, pd.DataFrame]:
-    """Read active source rows in one Fly round trip, preserving table schemas.
+    """Read scoped league source rows in one Fly round trip, preserving schemas.
 
     ``FlyReader.query_df`` is intentionally one-table-at-a-time.  The weekly
     path needs the same raw canonical rows but does not need seven sequential
@@ -401,21 +417,21 @@ def _active_source_snapshot_frames(
         # keeper_config contains the league-wide year=0 default (and possible
         # per-year overrides), so the active-season source snapshot must retain
         # all of it rather than narrowing to the NFL year.
-        if table_name == "league_settings":
-            # A league's first refresh of a new NFL season has no active-year
-            # settings row yet. Seed the local quick-import database with the
-            # newest prior settings row; the provider fetch below replaces it
-            # with the authoritative active-year row before publish.
-            where_clause += (
-                " AND year = COALESCE("
-                f"(SELECT MAX(year) FROM {table_ref} "
-                f"WHERE db_name = {safe_db} AND year = {int(active_year)}), "
-                f"(SELECT MAX(year) FROM {table_ref} "
-                f"WHERE db_name = {safe_db} AND year < {int(active_year)})"
-                ")"
-            )
-        elif table_name != "keeper_config" and "year" in registry[table_name]["columns"]:
-            where_clause += f" AND year = {int(active_year)}"
+        if active_year is not None:
+            if table_name == "league_settings":
+                # The first update of a new season may not have an active-year
+                # settings row yet. Hydrate the newest prior row until the
+                # authoritative provider response replaces it below.
+                where_clause += (
+                    " AND year = COALESCE("
+                    f"(SELECT MAX(year) FROM {table_ref} "
+                    f"WHERE db_name = {safe_db} AND year = {int(active_year)}), "
+                    f"(SELECT MAX(year) FROM {table_ref} "
+                    f"WHERE db_name = {safe_db} AND year < {int(active_year)})"
+                    ")"
+                )
+            elif table_name != "keeper_config" and "year" in registry[table_name]["columns"]:
+                where_clause += f" AND year = {int(active_year)}"
         query_parts.append(
             "(SELECT "
             f"{_sql_literal(table_name)} AS source_table, to_json(t) AS payload "
@@ -522,14 +538,12 @@ def _source_frames(
     unknown = sorted(set(requested_tables) - set(SOURCE_TABLES))
     if unknown:
         raise RuntimeError("unknown refresh source table(s): " + ", ".join(unknown))
-    if active_year is not None and tables is not None:
+    if tables is not None:
         for table_name in requested_tables:
             if table_name not in registry:
                 raise RuntimeError(f"{table_name} is not a canonical Fly table")
-            print(
-                f"[hydrate] retaining existing {table_name} active {active_year} for {db_name}",
-                flush=True,
-            )
+            scope = f"active {active_year}" if active_year is not None else "history"
+            print(f"[hydrate] retaining existing {table_name} {scope} for {db_name}", flush=True)
         return _active_source_snapshot_frames(
             reader,
             registry=registry,
@@ -781,6 +795,7 @@ def _merge_refresh_payloads(
         assert_provider_roster_merge,
         filter_matchups_to_final_results,
         filter_rosters_to_finalized_games,
+        merge_provider_refresh_table,
         missing_provider_draft_keys,
         needs_active_season_draft_fetch,
         provider_draft_manifest_matches,
@@ -799,7 +814,9 @@ def _merge_refresh_payloads(
         raise RuntimeError(f"Yahoo returned no settings for {year} ({league_key})")
     settings_row = pd.DataFrame([flatten_settings(raw_settings, "yahoo", year, league_key)])
     settings_row["db_name"] = local_db.league_name
-    local_db.merge_table("league_settings", settings_row, ["db_name", "year"], platform="yahoo", league_id=league_key)
+    merge_provider_refresh_table(
+        local_db, "league_settings", settings_row, platform="yahoo", league_id=league_key
+    )
 
     rosters, roster_failures = fetch_rosters_for_year(ctx, year, oauth_session=oauth, weeks=refresh_weeks)
     if roster_failures:
@@ -812,10 +829,10 @@ def _merge_refresh_payloads(
         safe_rows = filter_rosters_to_finalized_games(source, ops_slice)
         if safe_rows.empty:
             raise RuntimeError(f"No roster rows intersect finalized NFL games for {year} week {week}")
-        local_db.merge_table(
+        merge_provider_refresh_table(
+            local_db,
             "player_fantasy",
             safe_rows,
-            ["db_name", "year", "week", "yahoo_player_id"],
             platform="yahoo",
             league_id=league_key,
         )
@@ -837,10 +854,10 @@ def _merge_refresh_payloads(
             raise RuntimeError(f"Yahoo matchup fetch failed for {year} week {week}: {failures}")
         final_matchups = filter_matchups_to_final_results(scoreboards)
         if not final_matchups.empty:
-            local_db.merge_table(
+            merge_provider_refresh_table(
+                local_db,
                 "matchup",
                 final_matchups,
-                ["db_name", "manager_week"],
                 platform="yahoo",
                 league_id=league_key,
             )
@@ -855,10 +872,10 @@ def _merge_refresh_payloads(
             year,
             getattr(ctx, "manager_name_overrides", None) or {},
         )
-        local_db.merge_table(
+        merge_provider_refresh_table(
+            local_db,
             "schedule",
             schedule,
-            ["db_name", "manager_week"],
             platform="yahoo",
             league_id=league_key,
         )
@@ -881,10 +898,10 @@ def _merge_refresh_payloads(
         local_db=local_db,
     )
     if transactions is not None and not transactions.empty:
-        local_db.merge_table(
+        merge_provider_refresh_table(
+            local_db,
             "transactions",
             transactions,
-            ["db_name", "transaction_id", "transaction_sequence"],
             platform="yahoo",
             league_id=league_key,
         )
@@ -945,10 +962,10 @@ def _merge_refresh_payloads(
                     league_id=league_key,
                 )
             else:
-                local_db.merge_table(
+                merge_provider_refresh_table(
+                    local_db,
                     "draft",
                     draft,
-                    ["db_name", "year", "draft_id", "round", "pick"],
                     platform="yahoo",
                     league_id=league_key,
                 )
@@ -976,6 +993,55 @@ def _aggregate_subprocess_env() -> dict[str, str]:
     return env
 
 
+def _run_refresh_simulations(
+    *,
+    db_name: str,
+    active_year: int | None,
+    current_week: int,
+    work_dir: Path,
+    n_sims: int = 10_000,
+) -> None:
+    """Rebuild active-season luck, playoff, and clutch values deterministically."""
+    common = [
+        "--db",
+        db_name,
+        "--data-dir",
+        str(work_dir),
+        "--target-year",
+        str(int(active_year)),
+        "--n-sims",
+        str(int(n_sims)),
+    ]
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "multi_league.transformations.matchup.expected_record_v2",
+            *common,
+            "--current-year",
+            str(int(active_year)),
+            "--current-week",
+            str(int(current_week)),
+            "--seed",
+            "42",
+        ],
+        cwd=ROOT,
+        env=_aggregate_subprocess_env(),
+        check=True,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "multi_league.transformations.matchup.playoff_odds_import",
+            *common,
+        ],
+        cwd=ROOT,
+        env=_aggregate_subprocess_env(),
+        check=True,
+    )
+
+
 def _run_refresh_aggregates(
     local_db: Any,
     *,
@@ -995,19 +1061,31 @@ def _run_refresh_aggregates(
     finalized-score output equivalence is verified separately.
     """
     from multi_league.transformations.aggregation.aggregate_draft_context import (
+        aggregate_draft_manager_career,
         aggregate_draft_manager_season,
+        aggregate_draft_player_career,
+        create_draft_manager_career_table,
         create_draft_manager_season_table,
+        create_draft_player_career_table,
     )
     from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+        aggregate_fantasy_career,
+        aggregate_fantasy_career_all,
         aggregate_fantasy_season,
         aggregate_fantasy_season_all,
+        create_fantasy_career_table,
+        create_fantasy_career_table_all,
         create_fantasy_season_table,
         create_fantasy_season_table_all,
     )
     from multi_league.transformations.aggregation.aggregate_transaction_context import (
+        aggregate_transaction_manager_career,
         aggregate_transaction_manager_season,
+        aggregate_transaction_player_career,
         aggregate_transaction_report_card,
+        create_transaction_manager_career_table,
         create_transaction_manager_season_table,
+        create_transaction_player_career_table,
         create_transaction_report_card_table,
     )
     from multi_league.transformations.aggregation.aggregation_utils import configure_table_catalog
@@ -1018,10 +1096,22 @@ def _run_refresh_aggregates(
     aggregate_fantasy_season(conn, db_name, year=active_year)
     create_fantasy_season_table_all(conn, db_name)
     aggregate_fantasy_season_all(conn, db_name, year=active_year)
+    create_fantasy_career_table(conn, db_name)
+    aggregate_fantasy_career(conn, db_name)
+    create_fantasy_career_table_all(conn, db_name)
+    aggregate_fantasy_career_all(conn, db_name)
     create_draft_manager_season_table(conn, db_name)
     aggregate_draft_manager_season(conn, db_name)
+    create_draft_manager_career_table(conn, db_name)
+    aggregate_draft_manager_career(conn, db_name)
+    create_draft_player_career_table(conn, db_name)
+    aggregate_draft_player_career(conn, db_name)
     create_transaction_manager_season_table(conn, db_name)
     aggregate_transaction_manager_season(conn, db_name)
+    create_transaction_manager_career_table(conn, db_name)
+    aggregate_transaction_manager_career(conn, db_name)
+    create_transaction_player_career_table(conn, db_name)
+    aggregate_transaction_player_career(conn, db_name)
     create_transaction_report_card_table(conn, db_name)
     aggregate_transaction_report_card(conn, db_name)
 
@@ -1117,7 +1207,23 @@ def _run_local_pipeline(
             enricher.reapply_saved_identity_settings()
     finally:
         enricher.close()
-    has_finalized_matchups = local_db.table_exists("matchup") and local_db.row_count("matchup") > 0
+    active_matchup_row = local_db.connect().execute(
+        "SELECT COUNT(*), MAX(week) FROM public.matchup "
+        "WHERE db_name = ? AND year = ? AND team_points IS NOT NULL "
+        "AND opponent_points IS NOT NULL AND COALESCE(is_bye_week, FALSE) = FALSE",
+        [db_name, int(active_year)],
+    ).fetchone()
+    active_matchup_count = int(active_matchup_row[0] or 0)
+    has_finalized_matchups = active_matchup_count > 0
+    if has_finalized_matchups:
+        local_db.close()
+        _run_refresh_simulations(
+            db_name=db_name,
+            active_year=active_year,
+            current_week=int(active_matchup_row[1]),
+            work_dir=work_dir,
+        )
+        local_db.connect()
     _run_refresh_aggregates(
         local_db,
         db_name=db_name,
@@ -1225,11 +1331,13 @@ def main(argv: list[str] | None = None) -> int:
         source_frames = _source_frames(
             reader,
             db_name=args.db,
-            active_year=active_year,
-            tables=ACTIVE_REFRESH_SOURCE_TABLES,
+            tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
+        from multi_league.core.league_update_ownership import source_preservation_snapshot
+
+        preservation_witnesses = source_preservation_snapshot(source_frames)
         source_active_key = _active_yahoo_key_from_source_frames(
             source_frames,
             active_year=active_year,
@@ -1271,6 +1379,9 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 expected_platform="yahoo",
             )
+            from multi_league.core.league_update_ownership import local_preservation_snapshot
+
+            preservation_before = local_preservation_snapshot(local_db, preservation_witnesses)
             receipt["fetch_rows"] = _merge_refresh_payloads(
                 ctx=ctx,
                 local_db=local_db,
@@ -1340,11 +1451,24 @@ def main(argv: list[str] | None = None) -> int:
                 db_name=args.db,
                 active_year=active_year,
             )
+            from multi_league.core.league_update_ownership import (
+                assert_refresh_preservation,
+                local_preservation_snapshot,
+            )
+
+            receipt["preservation"] = assert_refresh_preservation(
+                preservation_before,
+                local_preservation_snapshot(local_db, preservation_before),
+                active_year=active_year,
+            )
             publish_tables = active_refresh_publish_tables(local_db.connect())
             publish_tables.extend(homepage["published_tables"])
             if receipt["renewal_chain_backfilled"]:
                 publish_tables.append("league_context")
             publish_tables = sorted(set(publish_tables))
+            from multi_league.core.league_update_ownership import assert_publish_table_ownership
+
+            receipt["ownership"] = assert_publish_table_ownership(publish_tables)
             stage = stage_refresh_partitions(
                 local_db.connect(),
                 db_name=args.db,

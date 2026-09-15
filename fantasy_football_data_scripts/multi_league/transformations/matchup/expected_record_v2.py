@@ -664,6 +664,7 @@ def main():
     )
     parser.add_argument("--current-week", type=int, help="Current week number (for weekly updates)")
     parser.add_argument("--current-year", type=int, help="Current year (for weekly updates)")
+    parser.add_argument("--target-year", type=int, help="Only recalculate and write this league season")
     parser.add_argument("--n-sims", type=int, default=N_SIMS, help=f"Number of simulations (default: {N_SIMS:,})")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (default: None/random)")
     parser.add_argument(
@@ -715,6 +716,10 @@ def main():
         select_cols = [c for c in needed_cols if c in available]
 
         matchup_df = db.read_table("matchup", columns=", ".join(select_cols))
+        if args.target_year is not None:
+            matchup_df = matchup_df.loc[
+                pd.to_numeric(matchup_df["year"], errors="coerce").eq(int(args.target_year))
+            ].copy()
         print(
             f"Loaded {len(matchup_df)} matchup records ({len(select_cols)} columns) "
             f"from {connection_target}"

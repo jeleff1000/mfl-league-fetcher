@@ -135,6 +135,7 @@ def _merge_active_payloads(
     from multi_league.core.league_refresh import (
         assert_provider_roster_merge,
         filter_rosters_to_finalized_games,
+        merge_provider_refresh_table,
         needs_active_season_draft_fetch,
         replace_active_season_draft,
     )
@@ -150,7 +151,9 @@ def _merge_active_payloads(
         raise RuntimeError(f"ESPN returned no settings for {active_year} ({league_id})")
     settings = pd.DataFrame([flatten_settings(raw_settings, "espn", active_year, league_id)])
     settings["db_name"] = local_db.league_name
-    local_db.merge_table("league_settings", settings, ["db_name", "year"], platform="espn", league_id=league_id)
+    merge_provider_refresh_table(
+        local_db, "league_settings", settings, platform="espn", league_id=league_id
+    )
 
     # This lower-level fetcher has an explicit week scope and does not call
     # LocalLeagueDB.save_table(), which would delete all prior active-season
@@ -173,10 +176,10 @@ def _merge_active_payloads(
         )
         if safe_rows.empty:
             continue
-        local_db.merge_table(
+        merge_provider_refresh_table(
+            local_db,
             "player_fantasy",
             safe_rows,
-            ["db_name", "year", "week", "espn_player_id"],
             platform="espn",
             league_id=league_id,
         )
@@ -194,10 +197,10 @@ def _merge_active_payloads(
     if final_matchup_weeks:
         matchups = fetch_espn_matchups(ctx, active_year, weeks=final_matchup_weeks)
         if matchups is not None and not matchups.empty:
-            local_db.merge_table(
+            merge_provider_refresh_table(
+                local_db,
                 "matchup",
                 matchups,
-                ["db_name", "manager_week"],
                 platform="espn",
                 league_id=league_id,
             )
@@ -211,10 +214,10 @@ def _merge_active_payloads(
         league=league,
     )
     if transactions is not None and not transactions.empty:
-        local_db.merge_table(
+        merge_provider_refresh_table(
+            local_db,
             "transactions",
             transactions,
-            ["db_name", "transaction_id", "espn_player_id", "transaction_type"],
             platform="espn",
             league_id=league_id,
         )
@@ -280,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
     from scripts.refresh_yahoo_active_season import (
-        ACTIVE_REFRESH_SOURCE_TABLES,
+        UPDATE_REFRESH_SOURCE_TABLES,
         OPS_DATABASE,
         _ensure_ops_cache_matches_live,
         _load_active_refresh_inputs,
@@ -339,11 +342,13 @@ def main(argv: list[str] | None = None) -> int:
         source_frames = _source_frames(
             reader,
             db_name=args.db,
-            active_year=active_year,
-            tables=ACTIVE_REFRESH_SOURCE_TABLES,
+            tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
+        from multi_league.core.league_update_ownership import source_preservation_snapshot
+
+        preservation_witnesses = source_preservation_snapshot(source_frames)
         ctx, context_path, client, league = _build_context(
             reader=reader,
             db_name=args.db,
@@ -363,6 +368,9 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 expected_platform="espn",
             )
+            from multi_league.core.league_update_ownership import local_preservation_snapshot
+
+            preservation_before = local_preservation_snapshot(local_db, preservation_witnesses)
             receipt["fetch_rows"] = _merge_active_payloads(
                 ctx=ctx,
                 client=client,
@@ -414,8 +422,21 @@ def main(argv: list[str] | None = None) -> int:
                 db_name=args.db,
                 active_year=active_year,
             )
+            from multi_league.core.league_update_ownership import (
+                assert_refresh_preservation,
+                local_preservation_snapshot,
+            )
+
+            receipt["preservation"] = assert_refresh_preservation(
+                preservation_before,
+                local_preservation_snapshot(local_db, preservation_before),
+                active_year=active_year,
+            )
             publish_tables = active_refresh_publish_tables(local_db.connect())
             publish_tables = sorted(set([*publish_tables, *homepage["published_tables"]]))
+            from multi_league.core.league_update_ownership import assert_publish_table_ownership
+
+            receipt["ownership"] = assert_publish_table_ownership(publish_tables)
             stage = stage_refresh_partitions(
                 local_db.connect(),
                 db_name=args.db,

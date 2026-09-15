@@ -53,9 +53,16 @@ def test_shared_active_refresh_publishes_data_and_homepage_in_one_bundle():
         assert 'receipt["source_manifest_json"]' in text
 
 
-def test_sleeper_refresh_merges_rosters_on_canonical_player_id():
+def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     text = (ROOT / "scripts" / "refresh_sleeper_active_season.py").read_text(encoding="utf-8")
-    roster_merge = text.split('local_db.merge_table(\n            "player_fantasy",', 1)[1].split(")", 1)[0]
+    ownership = (
+        ROOT
+        / "fantasy_football_data_scripts"
+        / "multi_league"
+        / "core"
+        / "league_update_ownership.py"
+    ).read_text(encoding="utf-8")
 
-    assert '"sleeper_player_id"' in roster_merge
-    assert '"sleeper_player_id_original"' not in roster_merge
+    assert 'merge_provider_refresh_table(\n            local_db,\n            "player_fantasy"' in text
+    assert '"player_fantasy": ("db_name", "player_week")' in ownership
+    assert '"sleeper_player_id_original"' not in ownership

@@ -645,8 +645,8 @@ def test_local_refresh_hydration_drops_other_platform_rows_from_active_year(tmp_
         local.close()
 
 
-def test_weekly_publish_selects_only_active_season_tables():
-    """The small first bundle must not publish active-only homepage rollups."""
+def test_weekly_publish_selects_source_and_rebuilt_homepage_tables():
+    """The publish bundle includes provider data and rebuilt homepage output."""
     import duckdb
 
     from multi_league.core.league_refresh import active_refresh_publish_tables
@@ -659,7 +659,25 @@ def test_weekly_publish_selects_only_active_season_tables():
         conn.execute("CREATE TABLE public.homepage_league_summary (db_name VARCHAR, league_name VARCHAR)")
         conn.execute("CREATE TABLE public.manager_overrides (db_name VARCHAR, id INTEGER)")
 
-        assert active_refresh_publish_tables(conn) == ["matchup"]
+        assert active_refresh_publish_tables(conn) == ["homepage_league_summary", "matchup"]
+    finally:
+        conn.close()
+
+
+def test_weekly_publish_includes_only_rebuilt_derived_rollups():
+    import duckdb
+
+    from multi_league.core.league_refresh import active_refresh_publish_tables
+
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.player_fantasy_career (db_name VARCHAR, games_rostered INTEGER)")
+        conn.execute("CREATE TABLE public.matchup_career (db_name VARCHAR, games INTEGER)")
+        conn.execute("CREATE TABLE public.league_context (db_name VARCHAR, league_name VARCHAR)")
+        conn.execute("CREATE TABLE public.manager_overrides (db_name VARCHAR, id INTEGER)")
+
+        assert active_refresh_publish_tables(conn) == ["matchup_career", "player_fantasy_career"]
     finally:
         conn.close()
 
@@ -943,11 +961,21 @@ def test_weekly_refresh_refetches_a_nonempty_draft_when_provider_manifest_has_a_
 
 def test_replace_active_season_draft_replaces_the_full_authoritative_year():
     """A complete provider draft must evict stale rows, not merge beside them."""
-    from unittest.mock import Mock
-
     from multi_league.core.league_refresh import replace_active_season_draft
 
-    local_db = Mock()
+    class Local:
+        saved = None
+
+        def _normalize_table_frame(self, _table, frame, **_kwargs):
+            return frame.assign(db_name="league_a")
+
+        def table_exists(self, _table):
+            return False
+
+        def save_table(self, table, frame, **kwargs):
+            self.saved = (table, frame, kwargs)
+
+    local_db = Local()
     provider_draft = pd.DataFrame(
         [
             {"year": 2026, "draft_id": "provider-draft", "round": 1, "pick": 1},
@@ -963,13 +991,10 @@ def test_replace_active_season_draft_replaces_the_full_authoritative_year():
         league_id="470.l.164172",
     ) == 2
 
-    local_db.save_table.assert_called_once_with(
-        "draft",
-        provider_draft,
-        year=2026,
-        platform="yahoo",
-        league_id="470.l.164172",
-    )
+    table, saved, kwargs = local_db.saved
+    assert table == "draft"
+    assert saved[["year", "draft_id", "round", "pick"]].to_dict("records") == provider_draft.to_dict("records")
+    assert kwargs == {"year": 2026, "platform": "yahoo", "league_id": "470.l.164172"}
 
 
 def test_replace_active_season_draft_skips_empty_provider_payload():
@@ -1016,8 +1041,8 @@ def test_weekly_yahoo_refresh_refetches_a_draft_with_missing_provider_ids():
     assert not needs_active_season_draft_fetch(_Local(), platform="sleeper")
 
 
-def test_yahoo_refresh_active_scope_reads_only_the_active_season(monkeypatch):
-    """The weekly worker must not hydrate older years before its quick rebuild."""
+def test_yahoo_refresh_history_snapshot_reads_all_league_years_in_one_round_trip(monkeypatch):
+    """Career rebuilds hydrate league history without walking the NFL lake."""
     from multi_league.core import delta_publish
     from scripts import refresh_yahoo_active_season
 
@@ -1034,19 +1059,33 @@ def test_yahoo_refresh_active_scope_reads_only_the_active_season(monkeypatch):
 
         def query(self, sql, **_kwargs):
             self.sql.append(sql)
-            return [{"year": 2024}, {"year": 2025}]
+            return [
+                {
+                    "source_table": "matchup",
+                    "payload": '{"db_name":"league_a","year":2024}',
+                },
+                {
+                    "source_table": "matchup",
+                    "payload": '{"db_name":"league_a","year":2025}',
+                },
+            ]
 
         def query_df(self, sql, **_kwargs):
             self.sql.append(sql)
             return pd.DataFrame([{"db_name": "league_a", "year": 2025}])
 
     reader = Reader()
-    frames = refresh_yahoo_active_season._source_frames(reader, db_name="league_a", active_year=2025)
+    frames = refresh_yahoo_active_season._source_frames(
+        reader,
+        db_name="league_a",
+        tables=refresh_yahoo_active_season.ACTIVE_REFRESH_SOURCE_TABLES,
+    )
 
-    assert set(frames) == set(refresh_yahoo_active_season.SOURCE_TABLES)
+    assert set(frames) == set(refresh_yahoo_active_season.ACTIVE_REFRESH_SOURCE_TABLES)
+    assert frames["matchup"]["year"].tolist() == [2024, 2025]
+    assert len(reader.sql) == 1
     assert not any("SELECT DISTINCT year" in sql for sql in reader.sql)
-    assert not any("year = 2024" in sql for sql in reader.sql)
-    assert sum("year = 2025" in sql for sql in reader.sql) == len(registry) - 1
+    assert not any("year =" in sql for sql in reader.sql)
 
 
 def test_yahoo_refresh_reads_only_quick_pipeline_source_tables(monkeypatch):
@@ -1349,14 +1388,46 @@ def test_yahoo_refresh_rebuilds_only_published_season_aggregates_without_subproc
         record("create_fantasy_season_all"),
     )
     monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_season_all", record("fantasy_season_all"))
+    monkeypatch.setattr(aggregate_fantasy_context, "create_fantasy_career_table", record("create_fantasy_career"))
+    monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_career", record("fantasy_career"))
+    monkeypatch.setattr(
+        aggregate_fantasy_context,
+        "create_fantasy_career_table_all",
+        record("create_fantasy_career_all"),
+    )
+    monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_career_all", record("fantasy_career_all"))
     monkeypatch.setattr(aggregate_draft_context, "create_draft_manager_season_table", record("create_draft_manager_season"))
     monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_manager_season", record("draft_manager_season"))
+    monkeypatch.setattr(aggregate_draft_context, "create_draft_manager_career_table", record("create_draft_manager_career"))
+    monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_manager_career", record("draft_manager_career"))
+    monkeypatch.setattr(aggregate_draft_context, "create_draft_player_career_table", record("create_draft_player_career"))
+    monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_player_career", record("draft_player_career"))
     monkeypatch.setattr(
         aggregate_transaction_context,
         "create_transaction_manager_season_table",
         record("create_transaction_manager_season"),
     )
     monkeypatch.setattr(aggregate_transaction_context, "aggregate_transaction_manager_season", record("transaction_manager_season"))
+    monkeypatch.setattr(
+        aggregate_transaction_context,
+        "create_transaction_manager_career_table",
+        record("create_transaction_manager_career"),
+    )
+    monkeypatch.setattr(
+        aggregate_transaction_context,
+        "aggregate_transaction_manager_career",
+        record("transaction_manager_career"),
+    )
+    monkeypatch.setattr(
+        aggregate_transaction_context,
+        "create_transaction_player_career_table",
+        record("create_transaction_player_career"),
+    )
+    monkeypatch.setattr(
+        aggregate_transaction_context,
+        "aggregate_transaction_player_career",
+        record("transaction_player_career"),
+    )
     monkeypatch.setattr(
         aggregate_transaction_context,
         "create_transaction_report_card_table",
@@ -1383,13 +1454,53 @@ def test_yahoo_refresh_rebuilds_only_published_season_aggregates_without_subproc
         ("fantasy_season", (connection, "league_a"), {"year": 2026}),
         ("create_fantasy_season_all", (connection, "league_a"), {}),
         ("fantasy_season_all", (connection, "league_a"), {"year": 2026}),
+        ("create_fantasy_career", (connection, "league_a"), {}),
+        ("fantasy_career", (connection, "league_a"), {}),
+        ("create_fantasy_career_all", (connection, "league_a"), {}),
+        ("fantasy_career_all", (connection, "league_a"), {}),
         ("create_draft_manager_season", (connection, "league_a"), {}),
         ("draft_manager_season", (connection, "league_a"), {}),
+        ("create_draft_manager_career", (connection, "league_a"), {}),
+        ("draft_manager_career", (connection, "league_a"), {}),
+        ("create_draft_player_career", (connection, "league_a"), {}),
+        ("draft_player_career", (connection, "league_a"), {}),
         ("create_transaction_manager_season", (connection, "league_a"), {}),
         ("transaction_manager_season", (connection, "league_a"), {}),
+        ("create_transaction_manager_career", (connection, "league_a"), {}),
+        ("transaction_manager_career", (connection, "league_a"), {}),
+        ("create_transaction_player_career", (connection, "league_a"), {}),
+        ("transaction_player_career", (connection, "league_a"), {}),
         ("create_transaction_report_card", (connection, "league_a"), {}),
         ("transaction_report_card", (connection, "league_a"), {}),
     ]
+
+
+def test_weekly_simulations_are_scoped_to_the_active_season(tmp_path, monkeypatch):
+    from scripts import refresh_yahoo_active_season
+
+    commands: list[list[str]] = []
+
+    def capture(command, **_kwargs):
+        commands.append(command)
+
+    monkeypatch.setattr(refresh_yahoo_active_season.subprocess, "run", capture)
+
+    refresh_yahoo_active_season._run_refresh_simulations(
+        db_name="league_a",
+        active_year=2026,
+        current_week=4,
+        work_dir=tmp_path,
+        n_sims=10_000,
+    )
+
+    assert len(commands) == 2
+    assert commands[0][2].endswith("expected_record_v2")
+    assert commands[1][2].endswith("playoff_odds_import")
+    for command in commands:
+        assert command[command.index("--target-year") + 1] == "2026"
+        assert command[command.index("--n-sims") + 1] == "10000"
+        assert "--data-dir" in command
+    assert commands[0][commands[0].index("--current-week") + 1] == "4"
 
 
 def test_yahoo_roster_adapter_forwards_the_incremental_week_selection(tmp_path, monkeypatch):
@@ -1669,14 +1780,34 @@ def test_refresh_aggregate_subprocess_releases_the_local_duckdb_lock(monkeypatch
     monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_season", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(aggregate_fantasy_context, "create_fantasy_season_table_all", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_season_all", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(aggregate_fantasy_context, "create_fantasy_career_table", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_career", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(aggregate_fantasy_context, "create_fantasy_career_table_all", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_career_all", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(aggregate_draft_context, "create_draft_manager_season_table", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_manager_season", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(aggregate_draft_context, "create_draft_manager_career_table", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_manager_career", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(aggregate_draft_context, "create_draft_player_career_table", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_player_career", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(
         aggregate_transaction_context,
         "create_transaction_manager_season_table",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(aggregate_transaction_context, "aggregate_transaction_manager_season", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        aggregate_transaction_context,
+        "create_transaction_manager_career_table",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(aggregate_transaction_context, "aggregate_transaction_manager_career", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        aggregate_transaction_context,
+        "create_transaction_player_career_table",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(aggregate_transaction_context, "aggregate_transaction_player_career", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(
         aggregate_transaction_context,
         "create_transaction_report_card_table",

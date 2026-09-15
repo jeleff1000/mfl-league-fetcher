@@ -673,6 +673,47 @@ def hydrate_local_refresh_sources(
     return hydrated
 
 
+def merge_provider_refresh_table(
+    local_db: Any,
+    table_name: str,
+    incoming: pd.DataFrame,
+    *,
+    platform: str,
+    league_id: str,
+) -> None:
+    """Merge a provider payload without granting it ownership of enrichments."""
+    if incoming is None or incoming.empty:
+        return
+    from multi_league.core.league_update_ownership import (
+        overlay_provider_columns,
+        table_ownership,
+    )
+
+    normalized = local_db._normalize_table_frame(
+        table_name,
+        incoming,
+        platform=platform,
+        league_id=league_id,
+        log_context="provider refresh ownership",
+    )
+    if normalized is None or normalized.empty:
+        raise RefreshScopeError(f"{table_name} provider payload normalized to no rows")
+    contract = table_ownership(table_name)
+    existing = (
+        local_db.read_table(table_name)
+        if local_db.table_exists(table_name)
+        else pd.DataFrame(columns=list(contract.classified_columns))
+    )
+    protected = overlay_provider_columns(existing, normalized, contract)
+    local_db.merge_table(
+        table_name,
+        protected,
+        list(contract.key_columns),
+        platform=platform,
+        league_id=league_id,
+    )
+
+
 def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str]:
     """Return locally-built tables safe to replace in an active-season refresh.
 
@@ -690,6 +731,23 @@ def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str
     # partition that could replace those rules.  Yahoo's renewal chain is added
     # explicitly by its worker only when a legacy context needs backfilling.
     excluded_config_tables = {"keeper_config", "league_context", "league_rules", "manager_overrides", "standings_config"}
+    rebuilt_rollups = {
+        "draft_manager_career",
+        "draft_player_career",
+        "franchise_identity_audit",
+        "franchise_identity_registry",
+        "homepage_current_standings",
+        "homepage_league_summary",
+        "homepage_manager_profiles",
+        "homepage_manager_rankings",
+        "homepage_top_rivalries",
+        "matchup_career",
+        "matchup_h2h_career",
+        "player_fantasy_career",
+        "player_fantasy_career_all",
+        "transaction_manager_career",
+        "transaction_player_career",
+    }
     available = {
         str(row[0])
         for row in source.execute(
@@ -706,7 +764,10 @@ def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str
         if (
             table in available
             and table not in excluded_config_tables
-            and str(spec["cadence_class"]) == CADENCE_ACTIVE_SEASON
+            and (
+                str(spec["cadence_class"]) == CADENCE_ACTIVE_SEASON
+                or table in rebuilt_rollups
+            )
         )
     )
 
@@ -730,14 +791,32 @@ def replace_active_season_draft(
     if provider_draft is None or provider_draft.empty:
         return 0
 
-    local_db.save_table(
+    from multi_league.core.league_update_ownership import (
+        overlay_provider_columns,
+        table_ownership,
+    )
+
+    normalized = local_db._normalize_table_frame(
         "draft",
         provider_draft,
+        platform=platform,
+        league_id=league_id,
+        log_context="authoritative provider draft",
+    )
+    existing = (
+        local_db.read_table("draft")
+        if local_db.table_exists("draft")
+        else pd.DataFrame(columns=list(table_ownership("draft").classified_columns))
+    )
+    protected = overlay_provider_columns(existing, normalized, table_ownership("draft"))
+    local_db.save_table(
+        "draft",
+        protected,
         year=int(year),
         platform=platform,
         league_id=str(league_id),
     )
-    return int(len(provider_draft))
+    return int(len(protected))
 
 
 def needs_active_season_draft_fetch(

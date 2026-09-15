@@ -61,17 +61,38 @@ def _resolve_active_renewal(
     active_year: int,
     known_league_ids: dict[str, str],
 ) -> dict[str, Any] | None:
-    """Resolve a persisted active-year ID and prove its actual lineage.
+    """Prove a persisted ID, or discover one through saved league members.
 
-    Sleeper's public API only exposes ``previous_league_id``.  It has no
-    safe reverse lookup from an old league to an unknown successor, so a
-    refresh must use the immutable chain captured during onboarding rather
-    than guessing from a manager's current league list.
+    The member list only supplies candidate IDs. A successor is accepted
+    solely when its provider predecessor chain reaches the stored seed.
     """
     active_id = str(known_league_ids.get(str(active_year)) or "")
     if not active_id:
-        return None
+        if not seed_league_id:
+            return None
+        candidates: set[str] = set()
+        members = client.get_league_users(seed_league_id)
+        for member in members:
+            user_id = str(member.get("user_id") or "").strip()
+            if not user_id:
+                continue
+            for league in client.get_user_leagues(user_id, "nfl", active_year):
+                candidate_id = str(league.get("league_id") or "").strip()
+                if candidate_id:
+                    candidates.add(candidate_id)
+        verified = [
+            candidate_id for candidate_id in sorted(candidates)
+            if str((client.get_league(candidate_id) or {}).get("season") or "") == str(active_year)
+            and _renewal_chain_reaches_seed(
+                candidate_id, seed_league_id=seed_league_id, get_league=client.get_league
+            )
+        ]
+        if len(verified) != 1:
+            return None
+        active_id = verified[0]
     candidate = client.get_league(active_id) or {}
+    if str(candidate.get("league_id") or "") != active_id:
+        return None
     if str(candidate.get("season") or "") != str(active_year):
         return None
     if not seed_league_id:
@@ -199,6 +220,7 @@ def _build_context(
     )
     if not renewal:
         return None, Path(), client, None
+    known_league_ids[str(active_year)] = str(renewal["league_id"])
 
     frontend_settings = _load_frontend_context_settings(reader, db_name.replace("'", "''"))
     league_name = (frontend_settings.get("league_name") or renewal.get("name") or frontend.get("league_name") or "").strip()

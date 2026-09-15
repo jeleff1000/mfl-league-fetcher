@@ -1920,6 +1920,85 @@ def test_sleeper_first_season_active_id_needs_no_predecessor():
     ) is None
 
 
+def test_sleeper_missing_successor_is_discovered_from_saved_members_not_one_manager():
+    from scripts.refresh_sleeper_active_season import _resolve_active_renewal
+
+    class Client:
+        def get_league(self, league_id):
+            return {
+                "2025": {"league_id": "2025", "season": "2025"},
+                "2026": {"league_id": "2026", "season": "2026", "previous_league_id": "2025"},
+            }.get(league_id)
+
+        def get_league_users(self, league_id):
+            assert league_id == "2025"
+            return [{"user_id": "quit"}, {"user_id": "retained"}]
+
+        def get_user_leagues(self, user_id, sport, season):
+            assert sport == "nfl" and season == 2026
+            return [] if user_id == "quit" else [{"league_id": "2026", "season": "2026"}]
+
+    assert _resolve_active_renewal(
+        Client(), seed_league_id="2025", active_year=2026,
+        known_league_ids={"2025": "2025"},
+    )["league_id"] == "2026"
+
+
+def test_sleeper_missing_successor_rejects_unrelated_member_league_and_fork():
+    from scripts.refresh_sleeper_active_season import _resolve_active_renewal
+
+    class Client:
+        def __init__(self, candidates):
+            self.candidates = candidates
+
+        def get_league(self, league_id):
+            return {
+                "saved": {"league_id": "saved", "season": "2025"},
+                "other": {"league_id": "other", "season": "2025"},
+                "unrelated": {"league_id": "unrelated", "season": "2026", "previous_league_id": "other"},
+                "renewed": {"league_id": "renewed", "season": "2026", "previous_league_id": "saved"},
+                "fork": {"league_id": "fork", "season": "2026", "previous_league_id": "saved"},
+            }.get(league_id)
+
+        def get_league_users(self, _league_id):
+            return [{"user_id": "member"}]
+
+        def get_user_leagues(self, _user_id, _sport, _season):
+            return [{"league_id": league_id} for league_id in self.candidates]
+
+    for candidates in (["unrelated"], ["renewed", "fork"]):
+        assert _resolve_active_renewal(
+            Client(candidates), seed_league_id="saved", active_year=2026,
+            known_league_ids={"2025": "saved"},
+        ) is None
+
+
+def test_sleeper_weekly_chain_uses_every_saved_segment_year_of_a_multiplatform_league():
+    from scripts.refresh_sleeper_active_season import _load_persisted_sleeper_chain
+
+    class Reader:
+        def query(self, sql, *, database):
+            assert database == "___leagues"
+            if "information_schema.columns" in sql:
+                return [{"column_name": "league_ids_json"}]
+            if "public.league_context" in sql:
+                return [{
+                    "league_id": "saved-2025", "league_name": "Mixed League",
+                    "league_ids_json": None, "manager_name_overrides_json": '{"shared":"Preferred"}',
+                }]
+            if "public.league_settings" in sql:
+                assert "LOWER(COALESCE(platform, '')) = 'sleeper'" in sql
+                return [
+                    {"year": 2019, "league_key": "saved-2019"},
+                    {"year": 2025, "league_key": "saved-2025"},
+                ]
+            raise AssertionError(sql)
+
+    context, chain = _load_persisted_sleeper_chain(Reader(), db_name="mixed_league")
+    assert context["manager_name_overrides_json"] == '{"shared":"Preferred"}'
+    assert chain == {"2019": "saved-2019", "2025": "saved-2025"}
+
+
 def test_update_source_snapshot_captures_generation_with_fly_frames(monkeypatch):
     import scripts.refresh_yahoo_active_season as worker
 

@@ -271,6 +271,50 @@ def test_espn_schedule_gate_requires_every_matchup_to_have_a_final_outcome():
     assert espn_schedule_is_final([{"winner": "HOME"}, {"winner": "AWAY"}, {"winner": "TIE"}])
 
 
+def test_espn_schedule_gate_rejects_a_missing_final_pair_despite_other_winners():
+    from multi_league.core.league_refresh import espn_schedule_is_final
+
+    raw = [
+        {"home": {"teamId": pair}, "away": {"teamId": pair + 1},
+         "winner": "HOME", "matchupPeriodId": 1, "playoffTierType": "NONE"}
+        for pair in (1, 3, 5, 7, 9)
+    ]
+    assert not espn_schedule_is_final(raw, expected_team_ids=tuple(str(i) for i in range(1, 13)))
+
+
+def test_espn_declared_playoff_byes_do_not_hold_a_complete_final_week_forever():
+    from multi_league.core.league_refresh import espn_schedule_is_final
+
+    raw = [
+        {"home": {"teamId": team}, "away": None, "winner": "UNDECIDED",
+         "matchupPeriodId": 15, "playoffTierType": "WINNERS_BRACKET"}
+        for team in (3, 12)
+    ] + [
+        {"home": {"teamId": pair}, "away": {"teamId": pair + 1},
+         "winner": "HOME", "matchupPeriodId": 15, "playoffTierType": "WINNERS_BRACKET"}
+        for pair in (1, 5, 7, 9, 10)
+    ]
+    # The real ESPN graph is one row per team, with playoff byes represented
+    # by a single home team and no away team.
+    raw[-1]["home"]["teamId"] = 4
+    raw[-1]["away"]["teamId"] = 11
+    assert espn_schedule_is_final(raw, expected_team_ids=tuple(str(i) for i in range(1, 13)))
+
+
+def test_espn_regular_row_missing_away_team_is_not_a_declared_bye():
+    from multi_league.core.league_refresh import espn_schedule_is_final
+
+    assert not espn_schedule_is_final([
+        {"home": {"teamId": 1}, "away": None, "winner": "UNDECIDED",
+         "matchupPeriodId": 1, "playoffTierType": "NONE"},
+    ], expected_team_ids=("1",))
+
+    assert not espn_schedule_is_final([
+        {"home": {"teamId": 1}, "away": None, "winner": "UNDECIDED",
+         "matchupPeriodId": 1, "playoffTierType": "UNKNOWN"},
+    ], expected_team_ids=("1",))
+
+
 def test_active_player_bio_cache_sync_updates_only_fetched_sleeper_identities(tmp_path):
     """Active workers see new roster identities without reloading the full bio table."""
     import duckdb
@@ -1567,6 +1611,8 @@ def test_yahoo_roster_adapter_forwards_the_incremental_week_selection(tmp_path, 
             return True
 
     class _Fetcher:
+        expected_team_keys = ("461.l.90939.t.1", "461.l.90939.t.2")
+
         def __init__(self, **_kwargs):
             pass
 
@@ -1584,6 +1630,7 @@ def test_yahoo_roster_adapter_forwards_the_incremental_week_selection(tmp_path, 
     )
 
     assert rows["player_id"].tolist() == ["p_ne"]
+    assert rows.attrs["expected_team_keys"] == ("461.l.90939.t.1", "461.l.90939.t.2")
     assert failed_weeks == []
     assert captured == {"year": 2026, "weeks": [1], "end_week": None}
 

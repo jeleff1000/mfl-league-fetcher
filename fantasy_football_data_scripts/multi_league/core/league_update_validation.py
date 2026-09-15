@@ -238,6 +238,129 @@ def validate_provider_snapshot(
     )
 
 
+def validate_provider_team_inventory(
+    *, provider: str, settings_team_count: object, team_ids: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Cross-check the provider team endpoint with independent league size."""
+    identities = tuple(str(team_id).strip() for team_id in team_ids)
+    if not identities or any(not team_id for team_id in identities) or len(set(identities)) != len(identities):
+        raise IncompleteSourceError(f"{provider} team identities are incomplete")
+    try:
+        expected_count = int(settings_team_count)
+    except (TypeError, ValueError) as exc:
+        raise IncompleteSourceError(f"{provider} active league team count is unavailable") from exc
+    if expected_count < 1 or len(identities) != expected_count:
+        raise IncompleteSourceError(
+            f"{provider} active league team count mismatch: settings={expected_count}, "
+            f"fetched={len(identities)}"
+        )
+    return identities
+
+
+def validate_active_roster_frame(
+    *,
+    provider: str,
+    season: int,
+    expected_team_ids: tuple[str, ...],
+    requested_weeks: tuple[int, ...],
+    player_id_column: str,
+    rosters: pd.DataFrame,
+) -> int:
+    """Check raw provider team/player coverage before NFL finality filtering."""
+    expected_ids = {str(value).strip() for value in expected_team_ids}
+    if not expected_ids or "" in expected_ids or len(expected_ids) != len(expected_team_ids):
+        raise IncompleteSourceError(f"{provider} expected team identities are incomplete")
+    requested = {int(week) for week in requested_weeks}
+    if not requested or any(week < 1 for week in requested):
+        raise IncompleteSourceError(f"{provider} requested week scope is invalid")
+    required = {"year", "week", "team_key", player_id_column}
+    if not isinstance(rosters, pd.DataFrame) or not required <= set(rosters.columns):
+        raise IncompleteSourceError(f"{provider} roster ownership/player keys are missing")
+    if rosters[list(required)].isna().any().any():
+        raise IncompleteSourceError(f"{provider} roster includes null ownership/player keys")
+    try:
+        years = rosters["year"].astype(int)
+        observed_weeks = rosters["week"].astype(int)
+    except (TypeError, ValueError) as exc:
+        raise IncompleteSourceError(f"{provider} roster season/week identity is invalid") from exc
+    if years.ne(int(season)).any():
+        raise IncompleteSourceError(f"{provider} roster season identity changed")
+    team_ids = rosters["team_key"].astype(str).str.strip()
+    player_ids = rosters[player_id_column].astype(str).str.strip()
+    if team_ids.eq("").any() or player_ids.eq("").any():
+        raise IncompleteSourceError(f"{provider} roster has blank team/provider player IDs")
+    observed = set(zip(observed_weeks.tolist(), team_ids.tolist(), strict=True))
+    expected = {(week, team_id) for week in requested for team_id in expected_ids}
+    if observed != expected:
+        raise IncompleteSourceError(
+            f"{provider} roster coverage mismatch: missing={sorted(expected - observed)}, "
+            f"extra={sorted(observed - expected)}"
+        )
+    duplicate_players = rosters.assign(__team_id=team_ids, __player_id=player_ids).duplicated(
+        ["week", "__team_id", "__player_id"], keep=False
+    )
+    if duplicate_players.any():
+        raise IncompleteSourceError(f"{provider} roster has duplicate provider player IDs")
+    return len(observed)
+
+
+def validate_espn_final_matchup_frame(
+    *,
+    season: int,
+    week: int,
+    expected_team_ids: tuple[str, ...],
+    raw_schedule: list[dict[str, Any]],
+    matchups: pd.DataFrame,
+) -> int:
+    """Compare ESPN's fetched final rows with its already-read raw pair graph."""
+    from multi_league.core.league_refresh import espn_schedule_is_final
+
+    expected = {str(team_id).strip() for team_id in expected_team_ids}
+    if not espn_schedule_is_final(raw_schedule, expected_team_ids=expected_team_ids):
+        raise IncompleteSourceError("ESPN raw final matchup graph is incomplete")
+    required = {"year", "week", "team_key", "matchup_id", "is_bye_week", "team_points"}
+    if not isinstance(matchups, pd.DataFrame) or not required <= set(matchups):
+        raise IncompleteSourceError("ESPN fetched final matchup identity/score keys are missing")
+    if matchups[["year", "week", "team_key", "matchup_id", "is_bye_week"]].isna().any().any():
+        raise IncompleteSourceError("ESPN fetched final matchup has null identity keys")
+    try:
+        years = matchups["year"].astype(int)
+        weeks = matchups["week"].astype(int)
+    except (TypeError, ValueError) as exc:
+        raise IncompleteSourceError("ESPN fetched final matchup season/week is invalid") from exc
+    if years.ne(int(season)).any() or weeks.ne(int(week)).any():
+        raise IncompleteSourceError("ESPN fetched final matchup season/week changed")
+    team_ids = matchups["team_key"].astype(str).str.strip()
+    if team_ids.eq("").any() or team_ids.duplicated().any() or set(team_ids) != expected:
+        raise IncompleteSourceError(
+            f"ESPN final matchup coverage mismatch: missing={sorted(expected - set(team_ids))}, "
+            f"extra={sorted(set(team_ids) - expected)}"
+        )
+    rows = matchups.assign(__team_id=team_ids).set_index("__team_id", verify_integrity=True)
+    bye_flags = rows["is_bye_week"].astype(str).str.strip().str.lower().isin({"true", "1"})
+    for raw in raw_schedule:
+        home_id = str((raw.get("home") or {}).get("teamId") or "").strip()
+        away = raw.get("away")
+        away_id = str((away or {}).get("teamId") or "").strip() if isinstance(away, dict) else ""
+        if not away_id:
+            if not bool(bye_flags.loc[home_id]):
+                raise IncompleteSourceError("ESPN declared bye is missing from final matchup frame")
+            continue
+        home = rows.loc[home_id]
+        visitor = rows.loc[away_id]
+        if bool(bye_flags.loc[home_id]) or bool(bye_flags.loc[away_id]):
+            raise IncompleteSourceError("ESPN scored pair was mislabeled as a bye")
+        if home["matchup_id"] != visitor["matchup_id"]:
+            raise IncompleteSourceError("ESPN fetched final matchup pair identity changed")
+        pair_id = home["matchup_id"]
+        pair_teams = set(rows.loc[rows["matchup_id"] == pair_id].index)
+        if pair_teams != {home_id, away_id}:
+            raise IncompleteSourceError("ESPN fetched final matchup pair coverage changed")
+        if pd.to_numeric(pd.Series([home["team_points"], visitor["team_points"]]), errors="coerce").isna().any():
+            raise IncompleteSourceError("ESPN fetched final matchup score is missing")
+    return len(matchups)
+
+
 def validate_tabular_active_scope(
     *,
     provider: str,
@@ -290,17 +413,14 @@ def validate_tabular_active_scope(
             )
         return len(observed)
 
-    roster_keys = coverage(rosters, name="roster", weeks=requested)
-    if player_id_column not in rosters.columns:
-        raise IncompleteSourceError(f"{provider} roster provider player IDs are missing")
-    ids = rosters[player_id_column].astype(str).str.strip()
-    if rosters[player_id_column].isna().any() or ids.eq("").any():
-        raise IncompleteSourceError(f"{provider} roster has blank provider player IDs")
-    duplicate_players = rosters.assign(__provider_player_id=ids).duplicated(
-        ["week", "team_key", "__provider_player_id"], keep=False
+    roster_keys = validate_active_roster_frame(
+        provider=provider,
+        season=season,
+        expected_team_ids=expected_team_ids,
+        requested_weeks=requested_weeks,
+        player_id_column=player_id_column,
+        rosters=rosters,
     )
-    if duplicate_players.any():
-        raise IncompleteSourceError(f"{provider} roster has duplicate provider player IDs")
     matchup_keys = coverage(matchups, name="matchup", weeks=finalized)
     schedule_for_validation = schedule
     if isinstance(schedule, pd.DataFrame) and not schedule.empty and "team_key" not in schedule:

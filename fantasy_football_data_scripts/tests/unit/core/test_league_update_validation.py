@@ -8,9 +8,111 @@ import pytest
 from multi_league.core.league_update_validation import (
     IncompleteSourceError,
     ProviderSnapshotExpectations,
+    validate_active_roster_frame,
+    validate_espn_final_matchup_frame,
+    validate_provider_team_inventory,
     validate_tabular_active_scope,
     validate_provider_snapshot,
 )
+
+
+def test_provider_team_inventory_requires_settings_count_and_exact_unique_ids():
+    assert validate_provider_team_inventory(
+        provider="espn", settings_team_count=2, team_ids=("1", "2")
+    ) == ("1", "2")
+    with pytest.raises(IncompleteSourceError, match="team count mismatch"):
+        validate_provider_team_inventory(
+            provider="espn", settings_team_count=3, team_ids=("1", "2")
+        )
+    with pytest.raises(IncompleteSourceError, match="identities are incomplete"):
+        validate_provider_team_inventory(
+            provider="yahoo", settings_team_count=2, team_ids=("1", "1")
+        )
+
+
+def _espn_final_graph_fixture():
+    raw = [
+        {"home": {"teamId": 1}, "away": {"teamId": 2}, "winner": "HOME", "playoffTierType": "NONE"},
+        {"home": {"teamId": 3}, "away": {"teamId": 4}, "winner": "AWAY", "playoffTierType": "NONE"},
+        {"home": {"teamId": 5}, "away": None, "winner": "UNDECIDED", "playoffTierType": "WINNERS_BRACKET"},
+    ]
+    frame = pd.DataFrame([
+        {"year": 2026, "week": 15, "team_key": "1", "matchup_id": 0, "is_bye_week": False, "team_points": 10.0},
+        {"year": 2026, "week": 15, "team_key": "2", "matchup_id": 0, "is_bye_week": False, "team_points": 9.0},
+        {"year": 2026, "week": 15, "team_key": "3", "matchup_id": 1, "is_bye_week": False, "team_points": 8.0},
+        {"year": 2026, "week": 15, "team_key": "4", "matchup_id": 1, "is_bye_week": False, "team_points": 11.0},
+        {"year": 2026, "week": 15, "team_key": "5", "matchup_id": 2, "is_bye_week": True, "team_points": None},
+    ])
+    return raw, frame
+
+
+def test_espn_final_matchup_frame_matches_raw_pairs_and_declared_byes():
+    raw, frame = _espn_final_graph_fixture()
+    assert validate_espn_final_matchup_frame(
+        season=2026, week=15, expected_team_ids=("1", "2", "3", "4", "5"),
+        raw_schedule=raw, matchups=frame,
+    ) == 5
+
+
+def test_espn_final_matchup_frame_rejects_missing_pair_member():
+    raw, frame = _espn_final_graph_fixture()
+    with pytest.raises(IncompleteSourceError, match="coverage mismatch"):
+        validate_espn_final_matchup_frame(
+            season=2026, week=15, expected_team_ids=("1", "2", "3", "4", "5"),
+            raw_schedule=raw, matchups=frame.loc[frame["team_key"] != "4"],
+        )
+
+
+def test_espn_final_matchup_frame_rejects_broken_pair_or_blank_score():
+    raw, frame = _espn_final_graph_fixture()
+    wrong_pair = frame.assign(matchup_id=[0, 1, 1, 1, 2])
+    with pytest.raises(IncompleteSourceError, match="pair"):
+        validate_espn_final_matchup_frame(
+            season=2026, week=15, expected_team_ids=("1", "2", "3", "4", "5"),
+            raw_schedule=raw, matchups=wrong_pair,
+        )
+    blank_score = frame.copy()
+    blank_score.loc[blank_score["team_key"] == "2", "team_points"] = None
+    with pytest.raises(IncompleteSourceError, match="score"):
+        validate_espn_final_matchup_frame(
+            season=2026, week=15, expected_team_ids=("1", "2", "3", "4", "5"),
+            raw_schedule=raw, matchups=blank_score,
+        )
+
+
+def test_espn_raw_roster_scope_rejects_missing_team_even_when_other_rows_exist():
+    rosters = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "1", "espn_player_id": "p1"},
+    ])
+    with pytest.raises(IncompleteSourceError, match="missing.*2"):
+        validate_active_roster_frame(
+            provider="espn", season=2026, expected_team_ids=("1", "2"),
+            requested_weeks=(1,), player_id_column="espn_player_id", rosters=rosters,
+        )
+
+
+def test_espn_raw_roster_scope_admits_complete_live_week_without_final_scores():
+    rosters = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "1", "espn_player_id": "p1", "fantasy_points": 1.0},
+        {"year": 2026, "week": 1, "team_key": "2", "espn_player_id": "p2", "fantasy_points": None},
+    ])
+    assert validate_active_roster_frame(
+        provider="espn", season=2026, expected_team_ids=("1", "2"),
+        requested_weeks=(1,), player_id_column="espn_player_id", rosters=rosters,
+    ) == 2
+
+
+def test_raw_roster_scope_rejects_duplicate_provider_player_ownership():
+    rosters = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "1", "espn_player_id": "p1"},
+        {"year": 2026, "week": 1, "team_key": "1", "espn_player_id": "p1"},
+        {"year": 2026, "week": 1, "team_key": "2", "espn_player_id": "p2"},
+    ])
+    with pytest.raises(IncompleteSourceError, match="duplicate provider player"):
+        validate_active_roster_frame(
+            provider="espn", season=2026, expected_team_ids=("1", "2"),
+            requested_weeks=(1,), player_id_column="espn_player_id", rosters=rosters,
+        )
 
 
 def snapshot():

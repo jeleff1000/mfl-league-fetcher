@@ -807,6 +807,7 @@ class YahooRosterFetcher:
 
         # Fetch teams first
         teams = self.fetch_teams()
+        self.expected_team_keys = tuple(teams)
 
         if not teams:
             log("No teams found!")
@@ -1475,6 +1476,10 @@ def fetch_rosters_for_year(
         df = fetcher.fetch_season_rosters(
             year=year, weeks=resolved_weeks, end_week=int(settings_end_week) if settings_end_week else None
         )
+        # The fetcher already retrieved the complete league-team set. Keep it
+        # with the frame so an incremental caller can detect a partial batch
+        # without adding a second Yahoo API request.
+        df.attrs["expected_team_keys"] = tuple(getattr(fetcher, "expected_team_keys", ()))
 
         # Determine failed weeks
         failed_weeks: list[int] = []

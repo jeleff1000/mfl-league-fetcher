@@ -32,15 +32,24 @@ def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _finalized_espn_matchup_weeks(client: Any, *, year: int, weeks: list[int]) -> list[int]:
+def _finalized_espn_matchup_weeks(
+    client: Any,
+    *,
+    year: int,
+    weeks: list[int],
+    expected_team_ids: tuple[str, ...],
+    schedule_out: dict[int, list[dict[str, Any]]] | None = None,
+) -> list[int]:
     """Return weeks for which ESPN has finalized every fantasy matchup."""
     from multi_league.core.league_refresh import espn_schedule_is_final
 
     finalized: list[int] = []
     for week in weeks:
         schedule_rows = client.get_raw_schedule(year, int(week))
-        if espn_schedule_is_final(schedule_rows):
+        if espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids):
             finalized.append(int(week))
+            if schedule_out is not None:
+                schedule_out[int(week)] = schedule_rows
         else:
             print(f"[ESPN] {year} week {week}: fantasy outcomes are still live; holding matchup rows", flush=True)
     return finalized
@@ -144,6 +153,11 @@ def _merge_active_payloads(
 ) -> dict[str, Any]:
     """Fetch ESPN state without letting a provider adapter replace old weeks."""
     from multi_league.core.canonical_settings import flatten_settings
+    from multi_league.core.league_update_validation import (
+        validate_active_roster_frame,
+        validate_espn_final_matchup_frame,
+        validate_provider_team_inventory,
+    )
     from multi_league.core.league_refresh import (
         assert_provider_roster_merge,
         filter_rosters_to_finalized_games,
@@ -163,6 +177,11 @@ def _merge_active_payloads(
     if not raw_settings:
         raise RuntimeError(f"ESPN returned no settings for {active_year} ({league_id})")
     settings = pd.DataFrame([flatten_settings(raw_settings, "espn", active_year, league_id)])
+    expected_team_ids = validate_provider_team_inventory(
+        provider="espn",
+        settings_team_count=settings.iloc[0]["num_teams"],
+        team_ids=tuple(str(int(team.team_id)) for team in league.teams),
+    )
     settings["db_name"] = local_db.league_name
     merge_provider_refresh_table(
         local_db, "league_settings", settings, platform="espn", league_id=league_id
@@ -179,6 +198,14 @@ def _merge_active_payloads(
         weeks=refresh_weeks,
         client=client,
         league=league,
+    )
+    provider_roster_team_weeks = validate_active_roster_frame(
+        provider="espn",
+        season=active_year,
+        expected_team_ids=expected_team_ids,
+        requested_weeks=tuple(int(week) for week in refresh_weeks),
+        player_id_column="espn_player_id",
+        rosters=rosters,
     )
     roster_rows = 0
     pending_nfl_teams: set[str] = set()
@@ -208,19 +235,37 @@ def _merge_active_payloads(
         )
         roster_rows += len(safe_rows)
 
-    final_matchup_weeks = _finalized_espn_matchup_weeks(client, year=active_year, weeks=refresh_weeks)
+    final_schedule_graphs: dict[int, list[dict[str, Any]]] = {}
+    final_matchup_weeks = _finalized_espn_matchup_weeks(
+        client,
+        year=active_year,
+        weeks=refresh_weeks,
+        expected_team_ids=expected_team_ids,
+        schedule_out=final_schedule_graphs,
+    )
     matchup_rows = 0
     if final_matchup_weeks:
         matchups = fetch_espn_matchups(ctx, active_year, weeks=final_matchup_weeks)
-        if matchups is not None and not matchups.empty:
-            merge_provider_refresh_table(
-                local_db,
-                "matchup",
-                matchups,
-                platform="espn",
-                league_id=league_id,
+        for week in final_matchup_weeks:
+            weekly_matchups = (
+                matchups.loc[matchups["week"].astype(int) == int(week)].copy()
+                if isinstance(matchups, pd.DataFrame) and "week" in matchups else pd.DataFrame()
             )
-            matchup_rows = len(matchups)
+            validate_espn_final_matchup_frame(
+                season=active_year,
+                week=week,
+                expected_team_ids=expected_team_ids,
+                raw_schedule=final_schedule_graphs[week],
+                matchups=weekly_matchups,
+            )
+        merge_provider_refresh_table(
+            local_db,
+            "matchup",
+            matchups,
+            platform="espn",
+            league_id=league_id,
+        )
+        matchup_rows = len(matchups)
 
     transactions = fetch_espn_transactions(
         ctx,
@@ -256,6 +301,7 @@ def _merge_active_payloads(
     else:
         print(f"[ESPN] Verified hydrated {active_year} draft against provider manifest", flush=True)
     return {
+        "provider_roster_team_weeks": provider_roster_team_weeks,
         "roster_rows": int(roster_rows),
         "final_matchup_rows": int(matchup_rows),
         "final_matchup_weeks": len(final_matchup_weeks),

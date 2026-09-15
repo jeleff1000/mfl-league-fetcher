@@ -780,6 +780,16 @@ def _ensure_ops_cache_matches_live(
     return current
 
 
+def yahoo_source_manifest_complete(*, refresh_weeks: list[int], fetch_rows: dict[str, Any]) -> bool:
+    """Keep the observed Yahoo source pending until all scored games/results are admitted."""
+    return (
+        "pending_nfl_teams" in fetch_rows
+        and "final_matchup_weeks" in fetch_rows
+        and not fetch_rows["pending_nfl_teams"]
+        and int(fetch_rows["final_matchup_weeks"] or 0) == len(refresh_weeks)
+    )
+
+
 def _merge_refresh_payloads(
     *,
     ctx: Any,
@@ -791,6 +801,10 @@ def _merge_refresh_payloads(
 ) -> dict[str, int]:
     """Fetch provider state and merge only safe active-season rows locally."""
     from multi_league.core.canonical_settings import flatten_settings
+    from multi_league.core.league_update_validation import (
+        validate_active_roster_frame,
+        validate_provider_team_inventory,
+    )
     from multi_league.core.league_refresh import (
         assert_provider_roster_merge,
         filter_matchups_to_final_results,
@@ -798,6 +812,7 @@ def _merge_refresh_payloads(
         merge_provider_refresh_table,
         missing_provider_draft_keys,
         needs_active_season_draft_fetch,
+        pending_provider_nfl_teams,
         provider_draft_manifest_matches,
         replace_active_season_draft,
     )
@@ -821,11 +836,26 @@ def _merge_refresh_payloads(
     rosters, roster_failures = fetch_rosters_for_year(ctx, year, oauth_session=oauth, weeks=refresh_weeks)
     if roster_failures:
         raise RuntimeError(f"Yahoo roster fetch failed for weeks: {roster_failures}")
+    expected_team_keys = validate_provider_team_inventory(
+        provider="yahoo",
+        settings_team_count=settings_row.iloc[0]["num_teams"],
+        team_ids=tuple(rosters.attrs.get("expected_team_keys") or ()),
+    )
     rosters = normalize_yahoo_roster_provider_identity(rosters)
+    provider_roster_team_weeks = validate_active_roster_frame(
+        provider="yahoo",
+        season=year,
+        expected_team_ids=expected_team_keys,
+        requested_weeks=tuple(int(week) for week in refresh_weeks),
+        player_id_column="yahoo_player_id",
+        rosters=rosters,
+    )
     roster_rows = 0
+    pending_nfl_teams: set[str] = set()
     for week in refresh_weeks:
         source = rosters[rosters["week"].astype(int) == int(week)].copy()
         ops_slice = finalized_ops[finalized_ops["week"].astype(int) == int(week)]
+        pending_nfl_teams.update(pending_provider_nfl_teams(source, ops_slice))
         safe_rows = filter_rosters_to_finalized_games(source, ops_slice)
         if safe_rows.empty:
             raise RuntimeError(f"No roster rows intersect finalized NFL games for {year} week {week}")
@@ -846,6 +876,7 @@ def _merge_refresh_payloads(
         roster_rows += len(safe_rows)
 
     matchup_rows = 0
+    final_matchup_weeks = 0
     schedule_rows = 0
     current_schedule_frames: list[pd.DataFrame] = []
     for week in refresh_weeks:
@@ -853,6 +884,8 @@ def _merge_refresh_payloads(
         if failures:
             raise RuntimeError(f"Yahoo matchup fetch failed for {year} week {week}: {failures}")
         final_matchups = filter_matchups_to_final_results(scoreboards)
+        if "team_key" in final_matchups and set(final_matchups["team_key"].astype(str)) == set(expected_team_keys):
+            final_matchup_weeks += 1
         if not final_matchups.empty:
             merge_provider_refresh_table(
                 local_db,
@@ -974,6 +1007,9 @@ def _merge_refresh_payloads(
         print(f"[Yahoo] Verified hydrated {year} draft against provider manifest", flush=True)
 
     return {
+        "provider_roster_team_weeks": provider_roster_team_weeks,
+        "pending_nfl_teams": sorted(pending_nfl_teams),
+        "final_matchup_weeks": final_matchup_weeks,
         "roster_rows": int(roster_rows),
         "final_matchup_rows": int(matchup_rows),
         "schedule_rows": int(schedule_rows),
@@ -1413,6 +1449,9 @@ def main(argv: list[str] | None = None) -> int:
                 year=active_year,
                 refresh_weeks=refresh_weeks,
                 finalized_ops=finalized_ops,
+            )
+            receipt["source_manifest_complete"] = yahoo_source_manifest_complete(
+                refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"]
             )
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"

@@ -103,3 +103,25 @@ def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     assert '"sleeper_player_id_original"' not in ownership
     assert "validate_tabular_active_scope(" in text
     assert text.index("validate_tabular_active_scope(") < text.index("bundle = build_fleet_partition_bundle(")
+
+
+def test_espn_refresh_validates_raw_roster_team_coverage_before_safe_filtering():
+    text = (ROOT / "scripts" / "refresh_espn_active_season.py").read_text(encoding="utf-8")
+    assert "validate_active_roster_frame(" in text
+    assert "validate_provider_team_inventory(" in text
+    assert text.index("validate_active_roster_frame(") < text.index("filter_rosters_to_finalized_games(")
+    assert text.index("validate_active_roster_frame(") < text.index("bundle = build_fleet_partition_bundle(")
+    assert "espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids)" in text
+    assert "validate_espn_final_matchup_frame(" in text
+    assert text.index("validate_espn_final_matchup_frame(") < text.index(
+        'merge_provider_refresh_table(\n            local_db,\n            "matchup"'
+    )
+
+
+def test_yahoo_refresh_uses_already_fetched_team_keys_to_gate_raw_roster_coverage():
+    text = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")
+    assert 'rosters.attrs.get("expected_team_keys")' in text
+    assert "validate_provider_team_inventory(" in text
+    assert "validate_active_roster_frame(" in text
+    assert text.index("validate_active_roster_frame(") < text.index("filter_rosters_to_finalized_games(")
+    assert text.index("validate_active_roster_frame(") < text.index("bundle = build_fleet_partition_bundle(")

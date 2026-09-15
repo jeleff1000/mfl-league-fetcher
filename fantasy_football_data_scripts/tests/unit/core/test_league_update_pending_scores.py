@@ -2,6 +2,7 @@ import pandas as pd
 
 from multi_league.core.league_refresh import pending_provider_nfl_teams
 from scripts.refresh_espn_active_season import espn_source_manifest_complete
+from scripts.refresh_yahoo_active_season import yahoo_source_manifest_complete
 
 
 def test_live_espn_score_from_missing_monday_game_keeps_manifest_pending():
@@ -39,4 +40,17 @@ def test_espn_manifest_requires_every_changed_game_and_matchup_result():
     assert espn_source_manifest_complete(
         refresh_weeks=[1],
         fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1},
+    )
+
+
+def test_yahoo_manifest_must_not_advance_for_partial_game_or_matchup_week():
+    assert not yahoo_source_manifest_complete(
+        refresh_weeks=[1], fetch_rows={"pending_nfl_teams": ["DEN"], "final_matchup_weeks": 0}
+    )
+    assert not yahoo_source_manifest_complete(
+        refresh_weeks=[1], fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 0}
+    )
+    assert not yahoo_source_manifest_complete(refresh_weeks=[1], fetch_rows={})
+    assert yahoo_source_manifest_complete(
+        refresh_weeks=[1], fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1}
     )

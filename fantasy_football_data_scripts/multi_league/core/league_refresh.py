@@ -641,7 +641,11 @@ def filter_matchups_to_final_results(
     return matchups.loc[outcomes.ne("") & outcomes.str.upper().ne("UNDECIDED")].copy()
 
 
-def espn_schedule_is_final(schedule_rows: Iterable[dict[str, Any]]) -> bool:
+def espn_schedule_is_final(
+    schedule_rows: Iterable[dict[str, Any]],
+    *,
+    expected_team_ids: Iterable[str] | None = None,
+) -> bool:
     """Whether ESPN has resolved every matchup in one scoring period.
 
     ESPN leaves every pair's ``winner`` as ``UNDECIDED`` while scores are
@@ -652,7 +656,32 @@ def espn_schedule_is_final(schedule_rows: Iterable[dict[str, Any]]) -> bool:
     if not rows:
         return False
     final_outcomes = {"HOME", "AWAY", "TIE"}
-    return all(str(row.get("winner") or "").strip().upper() in final_outcomes for row in rows)
+    observed_teams: set[str] = set()
+    for row in rows:
+        home = row.get("home") or {}
+        away = row.get("away")
+        home_id = str(home.get("teamId") or "").strip() if isinstance(home, dict) else ""
+        away_id = str(away.get("teamId") or "").strip() if isinstance(away, dict) else ""
+        playoff_tier = str(row.get("playoffTierType") or "").strip().upper()
+        declared_bye = (
+            home_id != ""
+            and away is None
+            and playoff_tier.endswith(("_BRACKET", "_LADDER"))
+        )
+        outcome = str(row.get("winner") or "").strip().upper()
+        if outcome not in final_outcomes and not (declared_bye and outcome == "UNDECIDED"):
+            return False
+        if expected_team_ids is not None:
+            if not home_id or (not away_id and not declared_bye):
+                return False
+            observed_teams.add(home_id)
+            if away_id:
+                observed_teams.add(away_id)
+    if expected_team_ids is not None:
+        expected = {str(team_id).strip() for team_id in expected_team_ids}
+        if not expected or "" in expected or observed_teams != expected:
+            return False
+    return True
 
 
 def hydrate_local_refresh_sources(

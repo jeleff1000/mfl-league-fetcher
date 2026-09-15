@@ -38,14 +38,13 @@ def _normalized_scope(scope: dict[str, Any]) -> dict[str, Any]:
         year = int(scope["year"])
         week = int(scope["week"])
         season_type = str(scope["season_type"]).strip().upper()
-        game_date = date.fromisoformat(str(scope["game_date"])).isoformat()
-        game_ids = sorted({str(value).strip() for value in scope["game_ids"] if str(value).strip()})
+        raw_game_date = scope.get("game_date")
+        game_date = None if raw_game_date in (None, "") else date.fromisoformat(str(raw_game_date)).isoformat()
+        game_ids = sorted({str(value).strip() for value in scope.get("game_ids", ()) if str(value).strip()})
     except (KeyError, TypeError, ValueError) as error:
         raise FlyReceiptError(f"invalid finalized refresh scope: {error}") from error
     if season_type not in {"REG", "POST"}:
         raise FlyReceiptError(f"invalid finalized refresh season type: {season_type!r}")
-    if not game_ids:
-        raise FlyReceiptError("finalized refresh scope has no game IDs")
     return {
         "year": year,
         "week": week,
@@ -57,14 +56,40 @@ def _normalized_scope(scope: dict[str, Any]) -> dict[str, Any]:
 
 def _weekly_filter(scope: dict[str, Any], *, alias: str = "") -> str:
     prefix = f"{alias}." if alias else ""
-    return " AND ".join(
-        (
-            f"{prefix}year = {scope['year']}",
-            f"{prefix}week = {scope['week']}",
-            f"{prefix}season_type = '{scope['season_type']}'",
-            f"{prefix}game_date = '{scope['game_date']}'",
-        )
-    )
+    predicates = [
+        f"{prefix}year = {scope['year']}",
+        f"{prefix}week = {scope['week']}",
+        f"{prefix}season_type = '{scope['season_type']}'",
+    ]
+    if scope["game_date"] is not None:
+        predicates.append(f"{prefix}game_date = '{scope['game_date']}'")
+    return " AND ".join(predicates)
+
+
+def _candidate_game_rows(candidate: Path, scope: dict[str, Any]) -> dict[str, int]:
+    """Read the exact promoted game set from the verified candidate artifact."""
+    if not candidate.is_file():
+        raise FlyReceiptError(f"candidate artifact does not exist: {candidate}")
+    import duckdb
+
+    with duckdb.connect(str(candidate), read_only=True) as connection:
+        rows = connection.execute(
+            f'''\
+            SELECT game_id, COUNT(*) AS rows
+            FROM nfl_historical."nfl_player_stats_all"
+            WHERE {_weekly_filter(scope)}
+            GROUP BY game_id
+            ORDER BY game_id
+            '''
+        ).fetchall()
+    game_rows = {
+        str(game_id).strip(): int(row_count or 0)
+        for game_id, row_count in rows
+        if str(game_id or "").strip()
+    }
+    if not game_rows or any(rows <= 0 for rows in game_rows.values()):
+        raise FlyReceiptError("candidate artifact has no complete game rows for the finalized scope")
+    return game_rows
 
 
 def _read_single(reader: Any, sql: str) -> dict[str, Any]:
@@ -92,7 +117,12 @@ def _aggregate_coverage_sql(table: str, scope: dict[str, Any]) -> str:
     """
 
 
-def collect_fly_receipt(reader: Any, scope: dict[str, Any]) -> dict[str, Any]:
+def collect_fly_receipt(
+    reader: Any,
+    scope: dict[str, Any],
+    *,
+    expected_game_rows: dict[str, int] | None = None,
+) -> dict[str, Any]:
     """Return a fail-closed Fly receipt for one finalized NFL date scope."""
     normalized = _normalized_scope(scope)
     weekly_rows = reader.query(
@@ -110,13 +140,24 @@ def collect_fly_receipt(reader: Any, scope: dict[str, Any]) -> dict[str, Any]:
         for row in weekly_rows
         if str(row.get("game_id", "")).strip()
     }
-    if set(observed_game_rows) != set(normalized["game_ids"]):
+    expected_rows = expected_game_rows or {
+        game_id: None for game_id in normalized["game_ids"]
+    }
+    if not expected_rows:
+        raise FlyReceiptError("verification needs the candidate artifact or explicit finalized game IDs")
+    if set(observed_game_rows) != set(expected_rows):
         raise FlyReceiptError(
             "Fly weekly game IDs do not exactly match the finalized refresh scope: "
-            f"expected={normalized['game_ids']}, observed={sorted(observed_game_rows)}"
+            f"expected={sorted(expected_rows)}, observed={sorted(observed_game_rows)}"
         )
     if any(rows <= 0 for rows in observed_game_rows.values()):
         raise FlyReceiptError("Fly weekly receipt includes a finalized game with zero player rows")
+    if any(
+        expected_rows[game_id] is not None and observed_game_rows[game_id] != expected_rows[game_id]
+        for game_id in expected_rows
+    ):
+        raise FlyReceiptError("Fly weekly game row counts do not match the verified candidate artifact")
+    normalized["game_ids"] = sorted(expected_rows)
 
     aggregates: dict[str, dict[str, int]] = {}
     for table in ALL_AGGREGATES:
@@ -147,6 +188,7 @@ def collect_fly_receipt(reader: Any, scope: dict[str, Any]) -> dict[str, Any]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", type=Path, required=True, help="ready refresh_scope.json emitted by discovery")
+    parser.add_argument("--candidate", type=Path, required=True, help="verified complete candidate DuckDB artifact")
     parser.add_argument("--output", type=Path, required=True, help="Fly read-path JSON receipt")
     return parser.parse_args(argv)
 
@@ -159,7 +201,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from multi_league.core.readers.fly_reader import FlyReader
 
-    receipt = collect_fly_receipt(FlyReader(), payload["scope"])
+    normalized = _normalized_scope(payload["scope"])
+    expected_game_rows = _candidate_game_rows(args.candidate, normalized)
+    receipt = collect_fly_receipt(FlyReader(), normalized, expected_game_rows=expected_game_rows)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(receipt, sort_keys=True))

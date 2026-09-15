@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 
+import duckdb
 import pytest
 
 
@@ -91,3 +92,59 @@ def test_fly_receipt_fails_closed_when_an_aggregate_misses_a_refreshed_player():
 
     with pytest.raises(module.FlyReceiptError, match="player_nfl_career_all"):
         module.collect_fly_receipt(_Reader(missing_aggregate="player_nfl_career_all"), SCOPE)
+
+
+def test_fly_receipt_uses_candidate_games_for_a_manual_whole_week_scope():
+    module = _module()
+    manual_scope = {
+        "year": 2026,
+        "week": 1,
+        "season_type": "REG",
+        "game_date": None,
+    }
+
+    receipt = module.collect_fly_receipt(
+        _Reader(),
+        manual_scope,
+        expected_game_rows={"2026_01_CHI_DET": 41, "2026_01_DAL_NYG": 44},
+    )
+
+    assert receipt["scope"]["game_date"] is None
+    assert receipt["weekly"] == {
+        "game_ids": ["2026_01_CHI_DET", "2026_01_DAL_NYG"],
+        "rows": 85,
+    }
+
+
+def test_candidate_game_receipt_accepts_a_manual_whole_week_scope(tmp_path):
+    module = _module()
+    candidate = tmp_path / "ops.duckdb"
+    with duckdb.connect(str(candidate)) as connection:
+        connection.execute("CREATE SCHEMA nfl_historical")
+        connection.execute(
+            '''
+            CREATE TABLE nfl_historical.nfl_player_stats_all (
+                game_id VARCHAR,
+                year INTEGER,
+                week INTEGER,
+                season_type VARCHAR,
+                game_date DATE
+            )
+            '''
+        )
+        connection.execute(
+            "INSERT INTO nfl_historical.nfl_player_stats_all VALUES "
+            "('2026_01_CHI_DET', 2026, 1, 'REG', '2026-09-09'), "
+            "('2026_01_CHI_DET', 2026, 1, 'REG', '2026-09-09'), "
+            "('2026_01_DAL_NYG', 2026, 1, 'REG', '2026-09-14'), "
+            "('2026_02_CHI_GB', 2026, 2, 'REG', '2026-09-20')"
+        )
+
+    scope = module._normalized_scope(
+        {"year": 2026, "week": 1, "season_type": "REG", "game_date": None}
+    )
+
+    assert module._candidate_game_rows(candidate, scope) == {
+        "2026_01_CHI_DET": 2,
+        "2026_01_DAL_NYG": 1,
+    }

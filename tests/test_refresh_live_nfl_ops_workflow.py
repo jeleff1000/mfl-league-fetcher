@@ -54,6 +54,7 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     ]["if"]
     assert "Verify promoted Fly receipt" in steps_by_name
     assert "scripts/verify_live_nfl_ops_receipt.py" in text
+    assert '--candidate "$OUTPUT_PATH"' in text
     assert "output/ops_nfl.fly-receipt.json" in text
 
 

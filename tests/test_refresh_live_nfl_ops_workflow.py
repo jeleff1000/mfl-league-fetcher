@@ -56,6 +56,20 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     assert "output/ops_nfl.fly-receipt.json" in text
 
 
+def test_ops_dispatch_gate_runs_only_after_its_public_source_checkout():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["refresh"]["steps"]
+    names = [step["name"] for step in steps]
+    assert names.index("Checkout pipeline source") < names.index(
+        "Authorize dispatched refresh in the Eastern window"
+    )
+    checkout = steps[names.index("Checkout pipeline source")]
+    assert checkout["with"]["path"] == "code"
+    assert "repository" not in checkout["with"]
+    gate = steps[names.index("Authorize dispatched refresh in the Eastern window")]
+    assert "python code/scripts/live_nfl_ops_dispatch_gate.py" in gate["run"]
+
+
 def test_dispatch_gate_admits_manual_runs_and_only_the_0130_to_0500_et_dispatch_window():
     assert GATE.is_file(), "the workflow boundary must call a testable gate command"
 

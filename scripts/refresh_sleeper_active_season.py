@@ -30,6 +30,16 @@ if str(DATA_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(DATA_SCRIPTS))
 
 
+def sleeper_source_manifest_complete(*, refresh_weeks: list[int], fetch_rows: dict[str, Any]) -> bool:
+    """Only a wholly admitted provider/NFL scope may advance persisted freshness."""
+    return (
+        fetch_rows.get("draft_validated") is True
+        and "pending_nfl_teams" in fetch_rows
+        and not fetch_rows["pending_nfl_teams"]
+        and int(fetch_rows.get("final_matchup_weeks") or 0) == len(refresh_weeks)
+    )
+
+
 def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -268,8 +278,8 @@ def _merge_active_payloads(
         assert_provider_roster_merge,
         filter_rosters_to_finalized_games,
         merge_provider_refresh_table,
-        needs_active_season_draft_fetch,
-        replace_active_season_draft,
+        pending_provider_nfl_teams,
+        refresh_authoritative_draft_partition,
     )
     from multi_league.data_fetchers.sleeper.sleeper_draft import SleeperDraftFetcher
     from multi_league.data_fetchers.sleeper.sleeper_league_settings import fetch_sleeper_settings
@@ -316,8 +326,13 @@ def _merge_active_payloads(
         active_year, weeks=refresh_weeks, db=local_db
     )
     roster_rows = 0
+    pending_nfl_teams: set[str] = set()
     for week in refresh_weeks:
         source = rosters.loc[rosters["week"].astype(int) == int(week)].copy() if not rosters.empty else pd.DataFrame()
+        pending_nfl_teams.update(pending_provider_nfl_teams(
+            source,
+            finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)],
+        ))
         safe_rows = filter_rosters_to_finalized_games(
             source,
             finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)],
@@ -356,24 +371,20 @@ def _merge_active_payloads(
     draft_rows = 0
     draft = pd.DataFrame()
     draft_fetcher = SleeperDraftFetcher(ctx, client, player_cache)
-    has_hydrated_draft = local_db.table_exists("draft") and int(local_db.row_count("draft") or 0) > 0
-    draft_manifest = draft_fetcher.fetch_draft_manifest_for_year(active_year) if has_hydrated_draft else None
-    if needs_active_season_draft_fetch(
+    draft_manifest = draft_fetcher.fetch_draft_manifest_for_year(active_year)
+    draft_rows = refresh_authoritative_draft_partition(
         local_db,
         provider_manifest=draft_manifest,
-        manifest_key_columns=("draft_id", "pick") if draft_manifest is not None else (),
-    ):
-        draft = draft_fetcher.fetch_draft_for_year(active_year)
-        if not draft.empty:
-            draft_rows = replace_active_season_draft(
-                local_db,
-                draft,
-                year=active_year,
-                platform="sleeper",
-                league_id=league_id,
-            )
-    else:
-        print(f"[Sleeper] Verified hydrated {active_year} draft against provider manifest", flush=True)
+        key_columns=("draft_id", "pick"),
+        fetch_full=lambda: draft_fetcher.fetch_draft_for_year(active_year),
+        year=active_year,
+        platform="sleeper",
+        league_id=league_id,
+        confirmed_no_draft=(
+            draft_manifest.empty
+            and not str(active_league.get("draft_id") or "").strip()
+        ),
+    )
     from multi_league.core.league_update_validation import (
         IncompleteSourceError,
         validate_tabular_active_scope,
@@ -408,6 +419,8 @@ def _merge_active_payloads(
         "schedule_rows": schedule_rows,
         "transaction_rows": int(len(transactions)),
         "draft_rows": draft_rows,
+        "draft_validated": True,
+        "pending_nfl_teams": sorted(pending_nfl_teams),
         "provider_validation": validation,
     }
 
@@ -545,6 +558,10 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 refresh_weeks=refresh_weeks,
                 finalized_ops=finalized_ops,
+            )
+            receipt["source_manifest_complete"] = sleeper_source_manifest_complete(
+                refresh_weeks=refresh_weeks,
+                fetch_rows=receipt["fetch_rows"],
             )
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"

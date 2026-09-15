@@ -8,7 +8,7 @@ week with a zero placeholder score.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 import hashlib
 from pathlib import Path
 import re
@@ -1085,6 +1085,77 @@ def provider_draft_manifest_matches(
         len(hydrated_keys) == len(provider_keys)
         and len(hydrated_keys) == len(set(hydrated_keys))
         and set(hydrated_keys) == set(provider_keys)
+    )
+
+
+def assert_authoritative_draft_refetch(
+    fetched: pd.DataFrame | None,
+    provider_manifest: pd.DataFrame,
+    *,
+    key_columns: tuple[str, ...],
+    confirmed_no_draft: bool = False,
+) -> bool:
+    """Admit a full draft refetch only when its pick keys match the provider witness.
+
+    Returns false solely for a provider-confirmed season without any draft.
+    A failed or partial fetch must not leave a stale hydrated partition looking
+    publishable.
+    """
+    if provider_manifest is None:
+        raise RefreshScopeError("authoritative draft has no provider pick manifest")
+    if provider_manifest.empty:
+        if confirmed_no_draft and (fetched is None or fetched.empty):
+            return False
+        raise RefreshScopeError("authoritative draft no-draft status is unconfirmed")
+    if fetched is None or fetched.empty:
+        raise RefreshScopeError("authoritative draft refetch returned no completed picks")
+    try:
+        matches = provider_draft_manifest_matches(
+            fetched, provider_manifest, key_columns=key_columns
+        )
+    except ValueError as exc:
+        raise RefreshScopeError("authoritative draft refetch lacks pick identities") from exc
+    if not matches:
+        raise RefreshScopeError("authoritative draft refetch has incomplete pick identities")
+    return True
+
+
+def refresh_authoritative_draft_partition(
+    local_db: Any,
+    *,
+    provider_manifest: pd.DataFrame,
+    key_columns: tuple[str, ...],
+    fetch_full: Callable[[], pd.DataFrame | None],
+    year: int,
+    platform: str,
+    league_id: str,
+    confirmed_no_draft: bool = False,
+) -> int:
+    """Reuse the quick draft fetch/replacement only after exact-key admission."""
+    has_local = local_db.table_exists("draft") and int(local_db.row_count("draft") or 0) > 0
+    if provider_manifest.empty and confirmed_no_draft and not has_local:
+        return 0
+    if not needs_active_season_draft_fetch(
+        local_db,
+        platform=platform,
+        provider_manifest=provider_manifest,
+        manifest_key_columns=key_columns,
+    ):
+        return 0
+    fetched = fetch_full()
+    if not assert_authoritative_draft_refetch(
+        fetched,
+        provider_manifest,
+        key_columns=key_columns,
+        confirmed_no_draft=confirmed_no_draft,
+    ):
+        return 0
+    return replace_active_season_draft(
+        local_db,
+        fetched,
+        year=year,
+        platform=platform,
+        league_id=league_id,
     )
 
 

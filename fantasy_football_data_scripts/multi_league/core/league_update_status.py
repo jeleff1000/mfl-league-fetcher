@@ -96,7 +96,7 @@ def build_cache_recovery_receipt(
     digest = str(row.get("source_fingerprint") or "")
     if not digest or digest != str(receipt.get("source_manifest_digest") or ""):
         raise ValueError("Committed publication manifest identity changed")
-    if receipt.get("source_manifest_complete") is not False \
+    if receipt.get("source_manifest_complete") is True \
        and digest != str(row.get("published_manifest_digest") or ""):
         raise ValueError("published manifest does not match the committed receipt")
     if not receipt.get("source_manifest_json"):
@@ -175,7 +175,7 @@ def record_league_update_status(
         has_publication and receipt.get("source_manifest_digest")
     )
     can_promote_manifest = (
-        manifest_aware_publication and receipt.get("source_manifest_complete") is not False
+        manifest_aware_publication and receipt.get("source_manifest_complete") is True
     )
     source_year = int(receipt["source_year"]) if has_publication else None
     source_week = int(receipt["source_week"]) if has_publication else None
@@ -207,7 +207,7 @@ def record_league_update_status(
         "source_week": source_week,
         "source_manifest_digest": source_fingerprint,
         "source_manifest_json": receipt.get("source_manifest_json"),
-        "source_manifest_complete": receipt.get("source_manifest_complete", True),
+        "source_manifest_complete": receipt.get("source_manifest_complete") is True,
         "bundle_id": generation,
         "base_generation": base_generation,
     }, sort_keys=True, separators=(",", ":")) if has_publication else None

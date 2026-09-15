@@ -280,6 +280,7 @@ def _committed_receipt():
         "source_week": 2,
         "source_fingerprint": "manifest-digest",
         "bundle_id": "bundle-1",
+        "source_manifest_complete": True,
     }
 
 
@@ -309,6 +310,25 @@ def test_committed_publication_promotes_matching_observed_manifest():
         "SELECT published_manifest_json, published_manifest_digest "
         "FROM accounts.league_update_manifests WHERE database_name = 'the_league'"
     ).fetchone() == ('{"schema_version":1}', "manifest-digest")
+
+
+def test_missing_source_completeness_never_promotes_an_observed_manifest():
+    writer = LocalWriter()
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="sleeper", status="running",
+        dispatch_token="opaque", workflow_run_id=42,
+    )
+    _seed_observed_manifest(writer)
+    receipt = _committed_receipt() | {"source_manifest_digest": "manifest-digest"}
+    receipt.pop("source_manifest_complete")
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="sleeper", status="committed",
+        dispatch_token="opaque", workflow_run_id=42, receipt=receipt,
+    )
+    assert writer.connection.execute(
+        "SELECT published_manifest_digest FROM accounts.league_update_manifests "
+        "WHERE database_name = 'the_league'"
+    ).fetchone() == (None,)
 
 
 def test_partial_espn_score_publication_does_not_mark_observed_manifest_current():

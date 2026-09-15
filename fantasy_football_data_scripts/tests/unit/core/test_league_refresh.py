@@ -964,6 +964,134 @@ def test_draft_manifest_requires_an_exact_local_key_set():
     assert not provider_draft_manifest_matches(unexpected, provider, key_columns=("round", "pick"))
 
 
+def test_authoritative_draft_refetch_rejects_a_missing_provider_pick():
+    """A successful but truncated refetch must not preserve stale draft rows."""
+    from multi_league.core.league_refresh import RefreshScopeError, assert_authoritative_draft_refetch
+
+    manifest = pd.DataFrame([{"round": 1, "pick": 1}, {"round": 1, "pick": 2}])
+    partial = pd.DataFrame([{"round": 1, "pick": 1, "player": "One"}])
+    with pytest.raises(RefreshScopeError, match="authoritative draft"):
+        assert_authoritative_draft_refetch(
+            partial, manifest, key_columns=("round", "pick")
+        )
+
+
+def test_authoritative_draft_refetch_rejects_empty_completed_draft():
+    """An empty endpoint reply is not proof that a known completed draft vanished."""
+    from multi_league.core.league_refresh import RefreshScopeError, assert_authoritative_draft_refetch
+
+    manifest = pd.DataFrame([{"draft_id": "d1", "pick": 1}])
+    with pytest.raises(RefreshScopeError, match="authoritative draft"):
+        assert_authoritative_draft_refetch(
+            pd.DataFrame(), manifest, key_columns=("draft_id", "pick")
+        )
+
+
+def test_authoritative_draft_refetch_accepts_exact_keys_or_confirmed_absence():
+    """A provider-confirmed no-draft season is valid only without retained picks."""
+    from multi_league.core.league_refresh import RefreshScopeError, assert_authoritative_draft_refetch
+
+    manifest = pd.DataFrame([{"pick": 1}, {"pick": 2}])
+    fetched = pd.DataFrame([{"pick": 2}, {"pick": 1}])
+    assert assert_authoritative_draft_refetch(
+        fetched, manifest, key_columns=("pick",)
+    )
+    empty = pd.DataFrame(columns=["pick"])
+    assert not assert_authoritative_draft_refetch(
+        empty, empty, key_columns=("pick",), confirmed_no_draft=True
+    )
+    with pytest.raises(RefreshScopeError, match="no-draft"):
+        assert_authoritative_draft_refetch(
+            empty, empty, key_columns=("pick",)
+        )
+
+
+def test_refresh_draft_partition_refuses_partial_refetch_before_local_replacement():
+    """The actual weekly draft branch cannot silently skip a short provider frame."""
+    from multi_league.core.league_refresh import RefreshScopeError, refresh_authoritative_draft_partition
+
+    class Local:
+        league_name = "league_a"
+        saved = None
+
+        def table_exists(self, _table):
+            return False
+
+        def row_count(self, _table):
+            return 0
+
+        def _normalize_table_frame(self, _table, frame, **_kwargs):
+            return frame.assign(db_name="league_a")
+
+        def save_table(self, table, frame, **kwargs):
+            self.saved = (table, frame, kwargs)
+
+    local = Local()
+    manifest = pd.DataFrame([{"pick": 1}, {"pick": 2}])
+    partial = pd.DataFrame([{"year": 2026, "pick": 1}])
+    with pytest.raises(RefreshScopeError, match="authoritative draft"):
+        refresh_authoritative_draft_partition(
+            local,
+            provider_manifest=manifest,
+            key_columns=("pick",),
+            fetch_full=lambda: partial,
+            year=2026,
+            platform="espn",
+            league_id="2026-1",
+        )
+    assert local.saved is None
+
+
+def test_refresh_draft_partition_replaces_exact_picks_and_skips_confirmed_absence():
+    """Complete picks replace a year; an evidenced no-draft season is a no-op."""
+    from multi_league.core.league_refresh import refresh_authoritative_draft_partition
+
+    class Local:
+        league_name = "league_a"
+        saved = None
+
+        def table_exists(self, _table):
+            return False
+
+        def row_count(self, _table):
+            return 0
+
+        def _normalize_table_frame(self, _table, frame, **_kwargs):
+            return frame.assign(db_name="league_a")
+
+        def save_table(self, table, frame, **kwargs):
+            self.saved = (table, frame, kwargs)
+
+    local = Local()
+    manifest = pd.DataFrame([{"pick": 1}, {"pick": 2}])
+    complete = pd.DataFrame([
+        {"year": 2026, "pick": 2, "round": 1, "draft_id": "d1"},
+        {"year": 2026, "pick": 1, "round": 1, "draft_id": "d1"},
+    ])
+    assert refresh_authoritative_draft_partition(
+        local,
+        provider_manifest=manifest,
+        key_columns=("pick",),
+        fetch_full=lambda: complete,
+        year=2026,
+        platform="espn",
+        league_id="2026-1",
+    ) == 2
+    assert local.saved[0] == "draft"
+    untouched = Local()
+    assert refresh_authoritative_draft_partition(
+        untouched,
+        provider_manifest=pd.DataFrame(columns=["pick"]),
+        key_columns=("pick",),
+        fetch_full=lambda: (_ for _ in ()).throw(AssertionError("no draft fetch expected")),
+        year=2026,
+        platform="espn",
+        league_id="2026-1",
+        confirmed_no_draft=True,
+    ) == 0
+    assert untouched.saved is None
+
+
 def test_weekly_refresh_refetches_a_nonempty_draft_when_provider_manifest_has_a_missing_pick():
     """A partial draft must take the same fetch branch as an absent draft."""
     from multi_league.core.league_refresh import needs_active_season_draft_fetch

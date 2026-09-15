@@ -62,7 +62,8 @@ def espn_source_manifest_complete(
 ) -> bool:
     """Do not call a safe partial ESPN publication fully source-current."""
     return (
-        not fetch_rows.get("pending_nfl_teams")
+        fetch_rows.get("draft_validated") is True
+        and not fetch_rows.get("pending_nfl_teams")
         and int(fetch_rows.get("final_matchup_weeks") or 0) == len(refresh_weeks)
     )
 
@@ -162,9 +163,8 @@ def _merge_active_payloads(
         assert_provider_roster_merge,
         filter_rosters_to_finalized_games,
         merge_provider_refresh_table,
-        needs_active_season_draft_fetch,
+        refresh_authoritative_draft_partition,
         pending_provider_nfl_teams,
-        replace_active_season_draft,
     )
     from multi_league.data_fetchers.espn.espn_draft import fetch_espn_draft
     from multi_league.data_fetchers.espn.espn_league_settings import fetch_espn_settings
@@ -284,22 +284,20 @@ def _merge_active_payloads(
         )
     draft_rows = 0
     draft_manifest = _espn_draft_manifest(league)
-    if needs_active_season_draft_fetch(
+    draft_rows = refresh_authoritative_draft_partition(
         local_db,
         provider_manifest=draft_manifest,
-        manifest_key_columns=("pick",),
-    ):
-        draft = fetch_espn_draft(ctx, active_year)
-        if draft is not None and not draft.empty:
-            draft_rows = replace_active_season_draft(
-                local_db,
-                draft,
-                year=active_year,
-                platform="espn",
-                league_id=league_id,
-            )
-    else:
-        print(f"[ESPN] Verified hydrated {active_year} draft against provider manifest", flush=True)
+        key_columns=("pick",),
+        fetch_full=lambda: fetch_espn_draft(ctx, active_year),
+        year=active_year,
+        platform="espn",
+        league_id=league_id,
+        confirmed_no_draft=(
+            hasattr(league, "draft")
+            and getattr(league, "draft") is not None
+            and len(league.draft) == 0
+        ),
+    )
     return {
         "provider_roster_team_weeks": provider_roster_team_weeks,
         "roster_rows": int(roster_rows),
@@ -307,6 +305,7 @@ def _merge_active_payloads(
         "final_matchup_weeks": len(final_matchup_weeks),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
+        "draft_validated": True,
         "pending_nfl_teams": sorted(pending_nfl_teams),
     }
 

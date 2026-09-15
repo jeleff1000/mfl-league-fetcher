@@ -783,6 +783,8 @@ def _ensure_ops_cache_matches_live(
 def yahoo_source_manifest_complete(*, refresh_weeks: list[int], fetch_rows: dict[str, Any]) -> bool:
     """Keep the observed Yahoo source pending until all scored games/results are admitted."""
     return (
+        fetch_rows.get("draft_validated") is True
+        and
         "pending_nfl_teams" in fetch_rows
         and "final_matchup_weeks" in fetch_rows
         and not fetch_rows["pending_nfl_teams"]
@@ -807,6 +809,7 @@ def _merge_refresh_payloads(
     )
     from multi_league.core.league_refresh import (
         assert_provider_roster_merge,
+        assert_authoritative_draft_refetch,
         filter_matchups_to_final_results,
         filter_rosters_to_finalized_games,
         merge_provider_refresh_table,
@@ -941,7 +944,9 @@ def _merge_refresh_payloads(
 
     draft_rows = 0
     has_hydrated_draft = local_db.table_exists("draft") and int(local_db.row_count("draft") or 0) > 0
-    identity_rows = None
+    # One bulk pick manifest is the independent witness for both a hydrated
+    # draft and the first weekly publication of a newly renewed league.
+    identity_rows = _fetch_yahoo_draft_identities(oauth=oauth, league_key=league_key, year=year)
     missing_provider_keys: set[tuple[str, ...]] = set()
     provider_manifest_matches = True
     fetched_authoritative_draft = False
@@ -949,7 +954,6 @@ def _merge_refresh_payloads(
         # ``draftresults/players`` is a single Yahoo request.  It provides the
         # immutable pick manifest without the 12+ roster calls in the complete
         # draft fetch, so every weekly run can prove its retained draft is whole.
-        identity_rows = _fetch_yahoo_draft_identities(oauth=oauth, league_key=league_key, year=year)
         missing_provider_keys = missing_provider_draft_keys(
             local_db.read_table("draft"),
             identity_rows,
@@ -985,6 +989,16 @@ def _merge_refresh_payloads(
         else:
             draft = fetch_draft_data(ctx=ctx, year=year)
             fetched_authoritative_draft = True
+        if fetched_authoritative_draft:
+            assert_authoritative_draft_refetch(
+                draft,
+                identity_rows,
+                key_columns=_YAHOO_DRAFT_IDENTITY_KEYS,
+                confirmed_no_draft=(
+                    str((raw_settings.get("metadata") or {}).get("draft_status") or "").lower()
+                    == "predraft"
+                ),
+            )
         if draft is not None and not draft.empty:
             if fetched_authoritative_draft:
                 draft_rows = replace_active_season_draft(
@@ -1015,6 +1029,7 @@ def _merge_refresh_payloads(
         "schedule_rows": int(schedule_rows),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
+        "draft_validated": True,
     }
 
 

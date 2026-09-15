@@ -39,7 +39,7 @@ def test_espn_manifest_requires_every_changed_game_and_matchup_result():
     )
     assert espn_source_manifest_complete(
         refresh_weeks=[1],
-        fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1},
+        fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1, "draft_validated": True},
     )
 
 
@@ -52,5 +52,16 @@ def test_yahoo_manifest_must_not_advance_for_partial_game_or_matchup_week():
     )
     assert not yahoo_source_manifest_complete(refresh_weeks=[1], fetch_rows={})
     assert yahoo_source_manifest_complete(
-        refresh_weeks=[1], fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1}
+        refresh_weeks=[1], fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1, "draft_validated": True}
     )
+
+
+def test_no_provider_can_promote_a_manifest_without_exact_draft_admission():
+    """A complete game result cannot conceal an unchecked completed draft."""
+    from scripts.refresh_sleeper_active_season import sleeper_source_manifest_complete
+    complete_games = {"pending_nfl_teams": [], "final_matchup_weeks": 1}
+    assert not yahoo_source_manifest_complete(refresh_weeks=[1], fetch_rows=complete_games)
+    assert not espn_source_manifest_complete(refresh_weeks=[1], fetch_rows=complete_games)
+    assert not sleeper_source_manifest_complete(refresh_weeks=[1], fetch_rows=complete_games)
+    admitted = {**complete_games, "draft_validated": True}
+    assert sleeper_source_manifest_complete(refresh_weeks=[1], fetch_rows=admitted)

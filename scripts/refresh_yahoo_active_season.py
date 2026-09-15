@@ -1303,6 +1303,10 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.yahoo_league_settings import discover_league_history
 
     reader = FlyReader()
+    if args.execute:
+        from multi_league.core.league_update_status import assert_league_update_entitled
+
+        assert_league_update_entitled(reader, database_name=args.db)
     active_year = args.year
     if active_year is None:
         active_year = int(

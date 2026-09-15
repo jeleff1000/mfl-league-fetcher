@@ -51,6 +51,7 @@ ALLOWED_PRIOR_STATUSES = {
     "committed": {"running", "committed"},
     "cache_verified": {"committed", "committed_cache_pending", "cache_verified"},
     "committed_cache_pending": {
+        "running",
         "committed",
         "cache_verified",
         "committed_cache_pending",
@@ -73,6 +74,39 @@ ALLOWED_PRIOR_STATUSES = {
     "validation_failed": {"running", "validation_failed"},
 }
 DEFAULT_GRANDFATHERED_LEAGUES = {"kmffl", "tfl_of_extraordinary_gentleman"}
+
+
+def build_cache_recovery_receipt(
+    row: Mapping[str, Any], *, current_generation: int
+) -> dict[str, Any]:
+    """Rebuild only the durable committed receipt; never fetch or republish data."""
+    if str(row.get("status") or "") != "committed_cache_pending":
+        raise ValueError("League is not eligible for cache recovery")
+    base = row.get("base_generation")
+    if base in (None, "") or int(current_generation) != int(base) + 1:
+        raise ValueError("A newer publication superseded this cache recovery")
+    try:
+        receipt = json.loads(str(row.get("publication_receipt_json") or ""))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Committed publication receipt is missing") from exc
+    if not isinstance(receipt, dict) or receipt.get("status") != "COMMITTED":
+        raise ValueError("Committed publication receipt is invalid")
+    if receipt.get("executed") is not True:
+        raise ValueError("Committed publication was not executed")
+    digest = str(row.get("source_fingerprint") or "")
+    if not digest or digest != str(receipt.get("source_manifest_digest") or ""):
+        raise ValueError("Committed publication manifest identity changed")
+    if receipt.get("source_manifest_complete") is not False \
+       and digest != str(row.get("published_manifest_digest") or ""):
+        raise ValueError("published manifest does not match the committed receipt")
+    if not receipt.get("source_manifest_json"):
+        raise ValueError("Committed publication manifest is missing")
+    if str(receipt.get("bundle_id") or "") != str(row.get("bundle_id") or "") \
+       or int(receipt.get("source_year") or 0) != int(row.get("source_year") or 0) \
+       or int(receipt.get("source_week") or 0) != int(row.get("source_week") or 0) \
+       or int(receipt.get("base_generation") if receipt.get("base_generation") is not None else -1) != int(base):
+        raise ValueError("Committed publication identity changed")
+    return receipt
 
 
 def _literal(value: object | None) -> str:
@@ -164,6 +198,17 @@ def record_league_update_status(
         captured_manifest_json = canonical_manifest_json(parsed_manifest)
     generation = receipt.get("bundle_id") if has_publication else None
     base_generation = receipt.get("base_generation") if has_publication else None
+    durable_receipt_json = json.dumps({
+        "status": "COMMITTED",
+        "executed": True,
+        "source_year": source_year,
+        "source_week": source_week,
+        "source_manifest_digest": source_fingerprint,
+        "source_manifest_json": receipt.get("source_manifest_json"),
+        "source_manifest_complete": receipt.get("source_manifest_complete", True),
+        "bundle_id": generation,
+        "base_generation": base_generation,
+    }, sort_keys=True, separators=(",", ":")) if has_publication else None
     allowed_prior = ", ".join(_literal(value) for value in sorted(ALLOWED_PRIOR_STATUSES[normalized]))
     run_owner_guard = (
         "workflow_run_id IS NULL"
@@ -217,12 +262,14 @@ def record_league_update_status(
     ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS cache_state VARCHAR;
     ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS committed_at TIMESTAMP;
     ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS cache_verified_at TIMESTAMP;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS publication_receipt_json VARCHAR;
     INSERT INTO accounts.league_update_dispatches
       (database_name, platform, status, workflow_run_id, dispatch_token,
        source_year, source_week, source_fingerprint, publish_generation, healthy,
        started_at, completed_at, lease_expires_at, updated_at, error,
        attempt_id, claim_version, heartbeat_at, observed_manifest_digest,
-       base_generation, bundle_id, cache_state, committed_at, cache_verified_at)
+       base_generation, bundle_id, cache_state, committed_at, cache_verified_at,
+       publication_receipt_json)
     SELECT {_literal(database_name)}, {_literal(platform)}, {_literal(normalized)},
       {run_id if run_id is not None else 'NULL'}, {_literal(dispatch_token)},
       {source_year if source_year is not None else 'NULL'},
@@ -236,7 +283,8 @@ def record_league_update_status(
       {'NOW()' if normalized == 'running' else 'NULL'}, {_literal(source_fingerprint)},
       {_literal(base_generation)}, {_literal(generation)}, {_literal(normalized)},
       {'NOW()' if normalized in PUBLICATION_STATUSES else 'NULL'},
-      {'NOW()' if normalized in {'cache_verified', 'succeeded'} else 'NULL'}
+      {'NOW()' if normalized in {'cache_verified', 'succeeded'} else 'NULL'},
+      {_literal(durable_receipt_json)}
     WHERE {manifest_guard}
     ON CONFLICT (database_name) DO NOTHING;
     UPDATE accounts.league_update_dispatches SET
@@ -251,6 +299,7 @@ def record_league_update_status(
       publish_generation = CASE WHEN {str(has_publication).upper()} THEN {_literal(generation)} ELSE publish_generation END,
       base_generation = CASE WHEN {str(has_publication).upper()} THEN {_literal(base_generation)} ELSE base_generation END,
       bundle_id = CASE WHEN {str(has_publication).upper()} THEN {_literal(generation)} ELSE bundle_id END,
+      publication_receipt_json = CASE WHEN {str(has_publication).upper()} THEN {_literal(durable_receipt_json)} ELSE publication_receipt_json END,
       cache_state = {_literal(normalized)}, healthy = {'TRUE' if is_success else 'FALSE'},
       started_at = CASE WHEN {_literal(normalized)} = 'running' THEN COALESCE(started_at, NOW()) ELSE started_at END,
       heartbeat_at = CASE WHEN {_literal(normalized)} = 'running' THEN NOW() ELSE heartbeat_at END,

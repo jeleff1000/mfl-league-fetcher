@@ -145,6 +145,102 @@ def test_manifest_aware_commit_promotes_only_the_exact_observed_snapshot():
     assert "published_at = NOW()" in writer.sql
 
 
+def test_recovery_receipt_requires_durable_matching_publication_and_generation():
+    from multi_league.core.league_update_status import build_cache_recovery_receipt
+
+    manifest = {"schema_version": 1, "database_name": "the_league", "active_season": 2026}
+    # The parser validates the actual manifest shape and digest in the publication recorder.
+    row = {
+        "database_name": "the_league", "platform": "yahoo", "status": "committed_cache_pending",
+        "dispatch_token": "opaque", "attempt_id": "opaque", "claim_version": 2,
+        "source_year": 2026, "source_week": 1, "source_fingerprint": "digest",
+        "bundle_id": "bundle", "base_generation": "3", "workflow_run_id": 42,
+        "published_manifest_digest": "digest", "published_manifest_json": json.dumps(manifest),
+        "publication_receipt_json": json.dumps({
+            "status": "COMMITTED", "executed": True, "source_year": 2026,
+            "source_week": 1, "source_manifest_digest": "digest",
+            "source_manifest_json": json.dumps(manifest),
+            "source_manifest_complete": True, "bundle_id": "bundle",
+            "base_generation": 3,
+        }),
+    }
+    receipt = build_cache_recovery_receipt(row, current_generation=4)
+    assert receipt["status"] == "COMMITTED"
+    assert receipt["source_manifest_digest"] == "digest"
+    assert receipt["bundle_id"] == "bundle"
+    with pytest.raises(ValueError, match="newer publication"):
+        build_cache_recovery_receipt(row, current_generation=5)
+    with pytest.raises(ValueError, match="published manifest"):
+        build_cache_recovery_receipt(row | {"published_manifest_digest": "other"}, current_generation=4)
+    with pytest.raises(ValueError, match="cache recovery"):
+        build_cache_recovery_receipt(row | {"status": "running"}, current_generation=4)
+    partial = json.loads(row["publication_receipt_json"])
+    partial["source_manifest_complete"] = False
+    recovered = build_cache_recovery_receipt(
+        row | {
+            "publication_receipt_json": json.dumps(partial),
+            "published_manifest_digest": "older",
+        },
+        current_generation=4,
+    )
+    assert recovered["source_manifest_complete"] is False
+
+
+def test_partial_commit_cache_recovery_does_not_promote_incomplete_source_current():
+    from pathlib import Path
+    from multi_league.core.league_update_manifest import canonical_manifest_json
+    from multi_league.core.league_update_status import build_cache_recovery_receipt
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[2] / "fixtures" / "league_update_manifest_v1.json").read_text()
+    )
+    source = fixture["manifest"] | {"database_name": "the_league"}
+    manifest = source_manifest_from_mapping(source)
+    digest = manifest_digest(manifest)
+    receipt = {
+        "status": "COMMITTED", "executed": True,
+        "source_year": 2026, "source_week": 1,
+        "source_manifest_digest": digest,
+        "source_manifest_json": canonical_manifest_json(manifest),
+        "source_manifest_complete": False,
+        "bundle_id": "bundle-4", "base_generation": 3,
+    }
+    writer = LocalWriter()
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="yahoo", status="running",
+        dispatch_token="opaque", workflow_run_id=42, claim_version=2,
+    )
+    _seed_observed_manifest(writer, digest=digest)
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="yahoo",
+        status="committed_cache_pending", dispatch_token="opaque",
+        workflow_run_id=42, claim_version=2, receipt=receipt,
+    )
+    row = writer.connection.execute(
+        "SELECT d.*, m.published_manifest_digest "
+        "FROM accounts.league_update_dispatches d "
+        "JOIN accounts.league_update_manifests m ON m.database_name = d.database_name "
+        "WHERE d.database_name = 'the_league'"
+    ).df().iloc[0].to_dict()
+    recovered = build_cache_recovery_receipt(row, current_generation=4)
+    assert recovered["source_manifest_complete"] is False
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="yahoo",
+        status="succeeded", dispatch_token="opaque", workflow_run_id=42,
+        claim_version=2, receipt=recovered, cache_verified=True,
+    )
+    status = writer.connection.execute(
+        "SELECT status FROM accounts.league_update_dispatches "
+        "WHERE database_name = 'the_league'"
+    ).fetchone()[0]
+    published = writer.connection.execute(
+        "SELECT published_manifest_digest FROM accounts.league_update_manifests "
+        "WHERE database_name = 'the_league'"
+    ).fetchone()[0]
+    assert status == "succeeded"
+    assert published is None
+
+
 def test_running_claim_has_a_short_crash_recovery_lease():
     writer = Writer()
     assert record_league_update_status(
@@ -464,6 +560,22 @@ def test_committed_cache_retry_can_finish_without_republishing():
         cache_verified=True,
         **common,
     )
+
+
+def test_cache_failure_after_an_ambiguous_commit_status_write_keeps_publication_recoverable():
+    writer = LocalWriter()
+    common = {
+        "database_name": "the_league", "platform": "yahoo",
+        "dispatch_token": "opaque", "attempt_id": "attempt-1",
+        "claim_version": 1, "workflow_run_id": 42,
+    }
+    assert record_league_update_status(writer, status="running", **common)
+    assert record_league_update_status(
+        writer, status="committed_cache_pending", receipt=_committed_receipt(), **common,
+    )
+    assert writer.connection.execute(
+        "SELECT status FROM accounts.league_update_dispatches WHERE database_name = 'the_league'"
+    ).fetchone()[0] == "committed_cache_pending"
 
 
 @pytest.mark.parametrize(

@@ -20,6 +20,11 @@ on:
         required: true
         type: boolean
         default: false
+      cache_only:
+        description: 'Finish a previously committed cache publication without refetching'
+        required: false
+        type: boolean
+        default: false
       dispatch_token:
         description: 'Opaque UI claim token; blank for manual/QA runs'
         required: false
@@ -80,12 +85,14 @@ jobs:
           python-version: '3.11'
 
       - name: Restore canonical research ops cache
+        if: ${{ !inputs.cache_only }}
         uses: ./.github/actions/restore-research-ops-cache
         with:
           cache-key: research-public-lake-v5-Linux-2000-plus-player-bio
           release-tag: ops-cache-v6-2000-plus-player-bio
 
       - name: Verify ops cache
+        if: ${{ !inputs.cache_only }}
         run: test -s "${OPS_CACHE_PATH}"
 
       - name: Cache Python virtualenv
@@ -109,8 +116,27 @@ jobs:
       - name: Activate virtualenv
         run: echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"
 
+      - name: Validate cache-only recovery request
+        if: inputs.cache_only
+        env:
+          UI_DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
+          EXECUTE: ${{ inputs.execute }}
+        run: |
+          test "${EXECUTE}" = "true"
+          test -n "${UI_DISPATCH_TOKEN}"
+
+      - name: Recover committed cache publication
+        if: inputs.cache_only && inputs.execute && inputs.dispatch_token != ''
+        run: >-
+          python scripts/recover_league_update_cache.py
+          --db "${{ inputs.db_name }}"
+          --platform yahoo
+          --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
+
       - name: Claim paid UI update
-        if: inputs.dispatch_token != ''
+        if: ${{ !inputs.cache_only && inputs.dispatch_token != '' }}
         run: >-
           python scripts/record_league_update_status.py
           --db "${{ inputs.db_name }}"
@@ -122,6 +148,7 @@ jobs:
           --require-entitled
 
       - name: Refresh Yahoo active season
+        if: ${{ !inputs.cache_only }}
         env:
           DB_NAME: ${{ inputs.db_name }}
           YEAR: ${{ inputs.year }}
@@ -146,8 +173,33 @@ jobs:
           fi
           python scripts/refresh_yahoo_active_season.py "${args[@]}"
 
+      - name: Classify Fly publication
+        id: publication
+        if: ${{ !inputs.cache_only && inputs.execute }}
+        env:
+          UI_DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
+        run: |
+          set -euo pipefail
+          args=(--receipt yahoo_active_season_refresh.json)
+          if [ -n "${UI_DISPATCH_TOKEN}" ]; then
+            args+=(--require-publication)
+          fi
+          python scripts/league_update_workflow_receipt.py "${args[@]}"
+
+      - name: Record Fly commit
+        if: inputs.execute && inputs.dispatch_token != '' && steps.publication.outputs.committed == 'true'
+        run: >-
+          python scripts/record_league_update_status.py
+          --db "${{ inputs.db_name }}"
+          --platform yahoo
+          --status committed
+          --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
+          --receipt yahoo_active_season_refresh.json
+
       - name: Publish refreshed cache
-        if: inputs.execute && inputs.dispatch_token != ''
+        if: inputs.execute && steps.publication.outputs.committed == 'true'
         run: >-
           python scripts/warm_vercel_cache.py
           --db "${{ inputs.db_name }}"
@@ -160,7 +212,7 @@ jobs:
           --verify-hot
 
       - name: Complete UI update
-        if: inputs.execute && inputs.dispatch_token != ''
+        if: inputs.execute && inputs.dispatch_token != '' && steps.publication.outputs.committed == 'true'
         run: >-
           python scripts/record_league_update_status.py
           --db "${{ inputs.db_name }}"
@@ -173,16 +225,24 @@ jobs:
           --cache-verified
 
       - name: Fail UI update
-        if: failure() && inputs.dispatch_token != ''
-        run: >-
-          python scripts/record_league_update_status.py
-          --db "${{ inputs.db_name }}"
-          --platform yahoo
-          --status failed
-          --dispatch-token "${{ inputs.dispatch_token }}"
-          --attempt-id "${{ inputs.attempt_id }}"
-          --claim-version "${{ inputs.claim_version }}"
-          --error "Yahoo active-season refresh or cache verification failed"
+        if: ${{ failure() && !inputs.cache_only && inputs.dispatch_token != '' }}
+        run: |
+          set -euo pipefail
+          recovery_status=$(python scripts/league_update_workflow_receipt.py --receipt yahoo_active_season_refresh.json --failure-status)
+          args=(
+            --db "${{ inputs.db_name }}"
+            --platform yahoo
+            --status "${recovery_status}"
+            --dispatch-token "${{ inputs.dispatch_token }}"
+            --attempt-id "${{ inputs.attempt_id }}"
+            --claim-version "${{ inputs.claim_version }}"
+          )
+          if [ "${recovery_status}" = "committed_cache_pending" ]; then
+            args+=(--receipt yahoo_active_season_refresh.json --error "Data published; cache finalization requires retry")
+          else
+            args+=(--error "Yahoo active-season refresh did not publish")
+          fi
+          python scripts/record_league_update_status.py "${args[@]}"
 
       - name: Upload refresh receipt
         if: always()

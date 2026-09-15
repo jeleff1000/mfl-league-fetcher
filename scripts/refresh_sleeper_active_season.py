@@ -423,6 +423,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     reader = FlyReader()
+    if args.execute:
+        from multi_league.core.league_update_status import assert_league_update_entitled
+
+        assert_league_update_entitled(reader, database_name=args.db)
     active_year = args.year or int(
         reader.query_scalar("SELECT MAX(year) FROM nfl_historical.nfl_player_stats_all", database=OPS_DATABASE)
     )

@@ -305,10 +305,9 @@ def main(argv: list[str] | None = None) -> int:
         _ensure_ops_cache_matches_live,
         _load_active_refresh_inputs,
         _frontend_settings_from_source_context,
-        _publish_generation,
+        _capture_update_source_frames,
         _run_local_pipeline,
         _scope_counts,
-        _source_frames,
     )
 
     reader = FlyReader()
@@ -356,11 +355,12 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"{args.db}_weekly_refresh_") as temp_dir:
         work_dir = Path(temp_dir)
-        source_frames = _source_frames(
+        source_frames, base_generation = _capture_update_source_frames(
             reader,
             db_name=args.db,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
+        receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
         from multi_league.core.league_update_ownership import source_preservation_snapshot
@@ -467,11 +467,10 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if not publish_tables:
                     raise RuntimeError("refresh pipeline produced no active-season publish tables")
-                generation = _publish_generation(reader, args.db)
                 bundle = build_fleet_partition_bundle(
                     stage,
                     active_year=active_year,
-                    league_generations={args.db: generation},
+                    league_generations={args.db: base_generation},
                     tables=publish_tables,
                     output_dir=work_dir / "bundle",
                 )

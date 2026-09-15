@@ -25,7 +25,6 @@ import os
 import tarfile
 import tempfile
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
@@ -382,8 +381,6 @@ def build_fleet_partition_bundle(
         "db_name": FLEET_DB_SENTINEL,
         "mode": "weekly",
         "active_year": int(active_year),
-        "import_run_id": run_id,
-        "publish_sequence": sequence,
         "db_name_count": len(union_db_names),
         "db_names": sorted(union_db_names),
         "league_generations": {
@@ -407,7 +404,7 @@ def build_fleet_partition_bundle(
         "omitted_tables": omitted_tables,
     }
     bundle_hash = _sha256_json(logical_payload)
-    bundle_id = f"fleet-{run_id}-{sequence}-{bundle_hash[:12]}-{uuid.uuid4().hex[:8]}"
+    bundle_id = f"fleet-{bundle_hash}"
 
     manifest = {
         **logical_payload,
@@ -415,6 +412,8 @@ def build_fleet_partition_bundle(
         "producer": FLEET_PRODUCER,
         "producer_version": version,
         "created_at": datetime.now(UTC).isoformat(),
+        "import_run_id": run_id,
+        "publish_sequence": sequence,
         "bundle_id": bundle_id,
         "bundle_hash": bundle_hash,
     }

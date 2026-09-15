@@ -200,10 +200,16 @@ def test_fleet_partition_idempotent_replay(data_dir, client, tmp_path):  # noqa:
     assert replay.status_code == 200, replay.text
     assert replay.json().get("idempotent_replay") is True
     assert _fingerprint(client, "matchup", "db_name = 'league_alpha'") == after_first
+    same_content_new_run = _build_bundle(tmp_path, import_run_id="2500", publish_sequence=2)
+    assert same_content_new_run.bundle_id == bundle.bundle_id
+    replay_new_run = _post_bundle(client, same_content_new_run)
+    assert replay_new_run.status_code == 200, replay_new_run.text
+    assert replay_new_run.json().get("idempotent_replay") is True
+    assert _fingerprint(client, "matchup", "db_name = 'league_alpha'") == after_first
 
 
 def test_fleet_partition_rejects_older_bundle(data_dir, client, tmp_path):  # noqa: F811
-    newer = _build_bundle(tmp_path, import_run_id="3000", publish_sequence=2)
+    newer = _build_bundle(tmp_path, import_run_id="3000", publish_sequence=2, matchup_points=121.5)
     assert _post_bundle(client, newer).status_code == 200
 
     older = _build_bundle(tmp_path, import_run_id="2999", publish_sequence=1)
@@ -417,7 +423,7 @@ def test_g14_generation_conflict_rejects_bundle(data_dir, client, tmp_path):  # 
     first = _build_bundle(tmp_path, import_run_id="5000", publish_sequence=1)
     assert _post_bundle(client, first).status_code == 200  # bumps gens to 1
 
-    stale = _build_bundle(tmp_path, import_run_id="5001", publish_sequence=1)  # gens still 0
+    stale = _build_bundle(tmp_path, import_run_id="5001", publish_sequence=1, matchup_points=121.5)  # gens still 0
     resp = _post_bundle(client, stale)
     assert resp.status_code == 409
     assert "republished since bundle build" in resp.text

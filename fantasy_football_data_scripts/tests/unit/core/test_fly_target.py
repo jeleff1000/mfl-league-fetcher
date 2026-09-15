@@ -109,6 +109,70 @@ def test_merge_fleet_partition_posts_a_scoped_bundle(fly_env, tmp_path):
     assert kwargs["headers"]["X-Bundle-Hash"] == "bundle-hash"
 
 
+def test_fleet_publish_reconciles_a_post_commit_http_failure(fly_env, tmp_path):
+    bundle = tmp_path / "bundle.tar.gz"
+    bundle.write_bytes(b"fleet")
+    target = FlyTarget()
+    target.max_upload_retries = 1
+    with (
+        patch("multi_league.core.targets.fly_target.requests.post", return_value=_resp(500, {"detail": "response failed"}, text="response failed")),
+        patch.object(target, "get_delta_merge_status", return_value={"status": "COMMITTED", "bundle_id": "fleet-hash", "bundle_hash": "hash"}) as status,
+    ):
+        result = target.merge_fleet_partition(bundle, bundle_id="fleet-hash", bundle_hash="hash")
+    assert result["status"] == "COMMITTED"
+    assert result["recovered_after_ambiguous_failure"] is True
+    status.assert_called_once_with("___fleet", "fleet-hash")
+
+
+def test_fleet_publish_reconciles_a_commit_followed_by_retry_conflict(fly_env, tmp_path):
+    bundle = tmp_path / "bundle.tar.gz"
+    bundle.write_bytes(b"fleet")
+    target = FlyTarget()
+    target.max_upload_retries = 1
+    with (
+        patch("multi_league.core.targets.fly_target.requests.post", return_value=_resp(409, {"detail": "retry collided"}, text="retry collided")),
+        patch.object(target, "get_delta_merge_status", return_value={"status": "COMMITTED", "bundle_id": "fleet-hash", "bundle_hash": "hash"}) as status,
+    ):
+        result = target.merge_fleet_partition(bundle, bundle_id="fleet-hash", bundle_hash="hash")
+    assert result["status"] == "COMMITTED"
+    assert result["recovered_after_ambiguous_failure"] is True
+    status.assert_called_once_with("___fleet", "fleet-hash")
+
+
+def test_fleet_publish_rejects_an_ambiguous_receipt_for_another_content_hash(fly_env, tmp_path):
+    bundle = tmp_path / "bundle.tar.gz"
+    bundle.write_bytes(b"fleet")
+    target = FlyTarget()
+    target.max_upload_retries = 1
+    with (
+        patch("multi_league.core.targets.fly_target.requests.post", return_value=_resp(500, {"detail": "response failed"}, text="response failed")),
+        patch.object(target, "get_delta_merge_status", return_value={"status": "COMMITTED", "bundle_id": "fleet-hash", "bundle_hash": "other"}),
+    ):
+        with pytest.raises(RuntimeError, match="bundle hash mismatch"):
+            target.merge_fleet_partition(bundle, bundle_id="fleet-hash", bundle_hash="hash")
+
+
+def test_fleet_publish_retries_the_same_bundle_only_when_no_commit_was_recorded(fly_env, tmp_path):
+    bundle = tmp_path / "bundle.tar.gz"
+    bundle.write_bytes(b"fleet")
+    target = FlyTarget()
+    target.max_upload_retries = 1
+    with (
+        patch("multi_league.core.targets.fly_target.requests.post", side_effect=[
+            _resp(500, {"detail": "response failed"}, text="response failed"),
+            _resp(200, {"status": "COMMITTED", "bundle_id": "fleet-hash", "bundle_hash": "hash"}),
+        ]) as post,
+        patch.object(target, "get_delta_merge_status", return_value={"status": "UNKNOWN"}) as status,
+    ):
+        with pytest.raises(RuntimeError, match="Fleet partition merge failed"):
+            target.merge_fleet_partition(bundle, bundle_id="fleet-hash", bundle_hash="hash")
+        result = target.merge_fleet_partition(bundle, bundle_id="fleet-hash", bundle_hash="hash")
+    assert result["status"] == "COMMITTED"
+    assert post.call_count == 2
+    assert [call.kwargs["headers"]["X-Bundle-Id"] for call in post.call_args_list] == ["fleet-hash", "fleet-hash"]
+    status.assert_called_once_with("___fleet", "fleet-hash")
+
+
 def test_merge_league_targets_primary_only(fly_env, monkeypatch, tmp_path):
     monkeypatch.setenv("FLY_PRIMARY_MACHINE_ID", "machine-primary")
     db_path = tmp_path / "league.duckdb"
@@ -258,7 +322,7 @@ def test_merge_league_delta_recovers_committed_status_after_transport_failure(fl
         patch.object(
             target,
             "get_delta_merge_status",
-            return_value={"status": "COMMITTED", "bundle_id": "bundle-1"},
+            return_value={"status": "COMMITTED", "bundle_id": "bundle-1", "bundle_hash": "hash-1"},
         ) as mock_status,
     ):
         result = target.merge_league_delta("td_s_beer", bundle, bundle_id="bundle-1", bundle_hash="hash-1")
@@ -276,7 +340,7 @@ def test_merge_league_delta_rejects_conflict(fly_env, tmp_path):
     with patch(
         "multi_league.core.targets.fly_target.requests.post",
         return_value=_resp(409, {"status": "CONFLICT"}, text="conflict"),
-    ):
+    ), patch.object(target, "get_delta_merge_status", return_value={"status": "CONFLICT"}):
         with pytest.raises(RuntimeError, match="conflict"):
             target.merge_league_delta("td_s_beer", bundle, bundle_id="bundle-1", bundle_hash="hash-1")
 
@@ -293,7 +357,7 @@ def test_merge_league_delta_skips_stale_bundle_conflict(fly_env, tmp_path):
             {"detail": "Older bundle cannot commit over newer committed state"},
             text='{"detail":"Older bundle cannot commit over newer committed state"}',
         ),
-    ):
+    ), patch.object(target, "get_delta_merge_status", return_value={"status": "CONFLICT"}):
         result = target.merge_league_delta("td_s_beer", bundle, bundle_id="bundle-1", bundle_hash="hash-1")
 
     assert result["status"] == "STALE_SKIPPED"

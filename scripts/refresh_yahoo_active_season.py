@@ -1242,6 +1242,25 @@ def _publish_generation(reader: Any, db_name: str) -> int:
     return int(value or 0)
 
 
+def _capture_update_source_frames(
+    reader: Any,
+    *,
+    db_name: str,
+    tables: tuple[str, ...],
+) -> tuple[dict[str, pd.DataFrame], int]:
+    """Bind the bounded league source frames to one publish generation.
+
+    Fly reads are independent requests. A monotonic generation check on both
+    sides of hydration detects any commit that landed between those requests;
+    a later commit is rejected by the server when this base generation merges.
+    """
+    base_generation = _publish_generation(reader, db_name)
+    frames = _source_frames(reader, db_name=db_name, tables=tables)
+    if _publish_generation(reader, db_name) != base_generation:
+        raise RuntimeError(f"{db_name} changed during source snapshot; retry the update")
+    return frames, base_generation
+
+
 def _scope_counts(reader: Any, *, db_name: str, active_year: int, tables: list[str]) -> dict[str, int]:
     from multi_league.core.delta_publish import CADENCE_ACTIVE_SEASON, canonical_table_registry
 
@@ -1328,11 +1347,12 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"{args.db}_weekly_refresh_") as temp_dir:
         work_dir = Path(temp_dir)
-        source_frames = _source_frames(
+        source_frames, base_generation = _capture_update_source_frames(
             reader,
             db_name=args.db,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
+        receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
         from multi_league.core.league_update_ownership import source_preservation_snapshot
@@ -1478,11 +1498,10 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if not publish_tables:
                     raise RuntimeError("refresh pipeline produced no active-season publish tables")
-                generation = _publish_generation(reader, args.db)
                 bundle = build_fleet_partition_bundle(
                     stage,
                     active_year=active_year,
-                    league_generations={args.db: generation},
+                    league_generations={args.db: base_generation},
                     tables=publish_tables,
                     output_dir=work_dir / "bundle",
                 )

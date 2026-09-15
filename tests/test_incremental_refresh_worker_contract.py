@@ -53,6 +53,18 @@ def test_shared_active_refresh_publishes_data_and_homepage_in_one_bundle():
         assert 'receipt["source_manifest_json"]' in text
 
 
+def test_all_platform_updates_publish_against_the_hydrated_source_generation():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        assert "source_frames, base_generation = _capture_update_source_frames(" in text
+        assert "league_generations={args.db: base_generation}" in text
+        assert "generation = _publish_generation(reader, args.db)" not in text
+    yahoo = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")
+    snapshot = yahoo.split("def _capture_update_source_frames(", 1)[1].split("\ndef ", 1)[0]
+    assert snapshot.count("_publish_generation(reader, db_name)") == 2
+    assert snapshot.index("frames = _source_frames(") < snapshot.index("if _publish_generation(")
+
+
 def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     text = (ROOT / "scripts" / "refresh_sleeper_active_season.py").read_text(encoding="utf-8")
     ownership = (

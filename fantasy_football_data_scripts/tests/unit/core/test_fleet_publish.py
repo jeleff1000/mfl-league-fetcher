@@ -139,6 +139,43 @@ def test_build_bundle_manifest_shape(tmp_path):
     assert loaded["bundle_hash"] == bundle.bundle_hash
 
 
+def test_identical_fleet_content_and_base_generation_reuse_one_bundle_identity(tmp_path):
+    conn = _staged_conn()
+    try:
+        first = build_fleet_partition_bundle(
+            conn, active_year=ACTIVE_YEAR,
+            league_generations={"league_a": 3, "league_b": 3},
+            tables=["matchup"], output_dir=tmp_path / "first",
+            import_run_id="123", publish_sequence=1,
+        )
+        replay = build_fleet_partition_bundle(
+            conn, active_year=ACTIVE_YEAR,
+            league_generations={"league_a": 3, "league_b": 3},
+            tables=["matchup"], output_dir=tmp_path / "replay",
+            import_run_id="456", publish_sequence=2,
+        )
+        newer_base = build_fleet_partition_bundle(
+            conn, active_year=ACTIVE_YEAR,
+            league_generations={"league_a": 4, "league_b": 3},
+            tables=["matchup"], output_dir=tmp_path / "newer-base",
+            import_run_id="456", publish_sequence=2,
+        )
+        conn.execute("UPDATE public.matchup SET manager = 'corrected' WHERE db_name = 'league_a' AND week = 1")
+        correction = build_fleet_partition_bundle(
+            conn, active_year=ACTIVE_YEAR,
+            league_generations={"league_a": 3, "league_b": 3},
+            tables=["matchup"], output_dir=tmp_path / "correction",
+            import_run_id="456", publish_sequence=2,
+        )
+    finally:
+        conn.close()
+    assert first.bundle_id == replay.bundle_id
+    assert first.bundle_hash == replay.bundle_hash
+    assert first.manifest["import_run_id"] != replay.manifest["import_run_id"]
+    assert first.bundle_id != newer_base.bundle_id
+    assert first.bundle_id != correction.bundle_id
+
+
 def test_build_bundle_rejects_out_of_scope_year(tmp_path):
     conn = _staged_conn(extra_year=2025)
     try:

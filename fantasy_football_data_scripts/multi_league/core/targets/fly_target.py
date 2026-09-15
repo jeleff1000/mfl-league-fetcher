@@ -177,10 +177,9 @@ class FlyTarget:
                 extra_headers=extra_headers,
             )
         except Exception:
-            status = self.get_delta_merge_status(db_name, bundle_id)
-            if status.get("status") == "COMMITTED":
-                status["recovered_after_ambiguous_failure"] = True
-                return status
+            recovered = self._reconcile_committed_merge(db_name, bundle_id, bundle_hash)
+            if recovered is not None:
+                return recovered
             raise
 
         if resp.status_code == 200:
@@ -188,6 +187,11 @@ class FlyTarget:
 
         if resp.status_code == 202:
             return resp.json()
+
+        if resp.status_code == 409 or resp.status_code >= 500:
+            recovered = self._reconcile_committed_merge(db_name, bundle_id, bundle_hash)
+            if recovered is not None:
+                return recovered
 
         if resp.status_code == 409:
             payload = _response_payload(resp)
@@ -233,17 +237,31 @@ class FlyTarget:
                 extra_headers=extra_headers,
             )
         except Exception:
-            status = self.get_delta_merge_status("___fleet", bundle_id)
-            if status.get("status") == "COMMITTED":
-                status["recovered_after_ambiguous_failure"] = True
-                return status
+            recovered = self._reconcile_committed_merge("___fleet", bundle_id, bundle_hash)
+            if recovered is not None:
+                return recovered
             raise
 
         if resp.status_code == 200:
             return resp.json()
         if resp.status_code == 202:
             return resp.json()
+        if resp.status_code == 409 or resp.status_code >= 500:
+            recovered = self._reconcile_committed_merge("___fleet", bundle_id, bundle_hash)
+            if recovered is not None:
+                return recovered
         raise RuntimeError(f"Fleet partition merge failed ({resp.status_code}): {resp.text}")
+
+    def _reconcile_committed_merge(self, db_name: str, bundle_id: str, bundle_hash: str) -> dict | None:
+        """Trust an ambiguous response only when the durable receipt matches content."""
+        status = self.get_delta_merge_status(db_name, bundle_id)
+        if str(status.get("status") or "").upper() != "COMMITTED":
+            return None
+        if status.get("bundle_id") != bundle_id:
+            raise RuntimeError("Committed merge receipt bundle ID mismatch")
+        if status.get("bundle_hash") != bundle_hash:
+            raise RuntimeError("Committed merge receipt bundle hash mismatch")
+        return {**status, "recovered_after_ambiguous_failure": True}
 
     def get_delta_merge_status(self, db_name: str, bundle_id: str) -> dict:
         headers = {"Authorization": f"Bearer {self.token}"}

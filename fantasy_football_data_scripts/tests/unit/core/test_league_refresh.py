@@ -1918,3 +1918,29 @@ def test_sleeper_first_season_active_id_needs_no_predecessor():
         active_year=2026,
         known_league_ids={"2026": "first-season"},
     ) is None
+
+
+def test_update_source_snapshot_captures_generation_with_fly_frames(monkeypatch):
+    import scripts.refresh_yahoo_active_season as worker
+
+    source = {"league_context": pd.DataFrame({"db_name": ["the_league"]})}
+    generations = iter([7, 7])
+    monkeypatch.setattr(worker, "_publish_generation", lambda reader, db_name: next(generations))
+    monkeypatch.setattr(worker, "_source_frames", lambda reader, **kwargs: source)
+    frames, generation = worker._capture_update_source_frames(
+        object(), db_name="the_league", tables=("league_context",),
+    )
+    assert frames is source
+    assert generation == 7
+
+
+def test_update_source_snapshot_rejects_concurrent_publication(monkeypatch):
+    import scripts.refresh_yahoo_active_season as worker
+
+    generations = iter([7, 8])
+    monkeypatch.setattr(worker, "_publish_generation", lambda reader, db_name: next(generations))
+    monkeypatch.setattr(worker, "_source_frames", lambda reader, **kwargs: {})
+    with pytest.raises(RuntimeError, match="changed during source snapshot"):
+        worker._capture_update_source_frames(
+            object(), db_name="the_league", tables=("league_context",),
+        )

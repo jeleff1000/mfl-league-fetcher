@@ -260,6 +260,8 @@ def test_all_platform_updates_publish_against_the_hydrated_source_generation():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
         assert "source_frames, base_generation = _capture_update_source_frames(" in text
+        capture_call = text.split("source_frames, base_generation = _capture_update_source_frames(", 1)[1].split(")", 1)[0]
+        assert "active_year=active_year" in capture_call
         assert "league_generations={args.db: base_generation}" in text
         assert "generation = _publish_generation(reader, args.db)" not in text
     yahoo = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")

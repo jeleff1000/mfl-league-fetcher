@@ -440,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         source_frames, base_generation = _capture_update_source_frames(
             reader,
             db_name=args.db,
+            active_year=active_year,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
         timer.mark("source_snapshot")

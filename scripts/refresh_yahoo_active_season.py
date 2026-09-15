@@ -1327,6 +1327,7 @@ def _capture_update_source_frames(
     reader: Any,
     *,
     db_name: str,
+    active_year: int,
     tables: tuple[str, ...],
 ) -> tuple[dict[str, pd.DataFrame], int]:
     """Bind the bounded league source frames to one publish generation.
@@ -1336,7 +1337,12 @@ def _capture_update_source_frames(
     a later commit is rejected by the server when this base generation merges.
     """
     base_generation = _publish_generation(reader, db_name)
-    frames = _source_frames(reader, db_name=db_name, tables=tables)
+    frames = _source_frames(
+        reader,
+        db_name=db_name,
+        active_year=active_year,
+        tables=tables,
+    )
     if _publish_generation(reader, db_name) != base_generation:
         raise RuntimeError(f"{db_name} changed during source snapshot; retry the update")
     return frames, base_generation
@@ -1439,6 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
         source_frames, base_generation = _capture_update_source_frames(
             reader,
             db_name=args.db,
+            active_year=active_year,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
         timer.mark("source_snapshot")

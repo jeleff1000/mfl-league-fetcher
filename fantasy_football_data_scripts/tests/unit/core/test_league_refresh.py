@@ -2376,10 +2376,32 @@ def test_update_source_snapshot_captures_generation_with_fly_frames(monkeypatch)
     monkeypatch.setattr(worker, "_publish_generation", lambda reader, db_name: next(generations))
     monkeypatch.setattr(worker, "_source_frames", lambda reader, **kwargs: source)
     frames, generation = worker._capture_update_source_frames(
-        object(), db_name="the_league", tables=("league_context",),
+        object(), db_name="the_league", active_year=2026, tables=("league_context",),
     )
     assert frames is source
     assert generation == 7
+
+
+def test_update_source_snapshot_scopes_weekly_source_rows_to_active_year(monkeypatch):
+    import scripts.refresh_yahoo_active_season as worker
+
+    source = {"league_context": pd.DataFrame({"db_name": ["the_league"]})}
+    generations = iter([7, 7])
+    captured = {}
+    monkeypatch.setattr(worker, "_publish_generation", lambda reader, db_name: next(generations))
+
+    def capture_source_frames(reader, **kwargs):
+        captured.update(kwargs)
+        return source
+
+    monkeypatch.setattr(worker, "_source_frames", capture_source_frames)
+    frames, generation = worker._capture_update_source_frames(
+        object(), db_name="the_league", active_year=2026, tables=("league_context",),
+    )
+
+    assert frames is source
+    assert generation == 7
+    assert captured["active_year"] == 2026
 
 
 def test_update_source_snapshot_rejects_concurrent_publication(monkeypatch):
@@ -2390,5 +2412,5 @@ def test_update_source_snapshot_rejects_concurrent_publication(monkeypatch):
     monkeypatch.setattr(worker, "_source_frames", lambda reader, **kwargs: {})
     with pytest.raises(RuntimeError, match="changed during source snapshot"):
         worker._capture_update_source_frames(
-            object(), db_name="the_league", tables=("league_context",),
+            object(), db_name="the_league", active_year=2026, tables=("league_context",),
         )

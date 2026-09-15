@@ -1878,3 +1878,43 @@ def test_sleeper_active_renewal_uses_the_persisted_chain_not_league_members():
         )
         is None
     )
+
+
+def test_sleeper_first_season_active_id_needs_no_predecessor():
+    from scripts.refresh_sleeper_active_season import _resolve_active_renewal
+
+    active = {
+        "league_id": "first-season",
+        "season": "2026",
+        "previous_league_id": None,
+    }
+
+    class Client:
+        @staticmethod
+        def get_league(league_id):
+            return active if league_id == "first-season" else None
+
+    assert _resolve_active_renewal(
+        Client(),
+        seed_league_id=None,
+        active_year=2026,
+        known_league_ids={"2026": "first-season"},
+    ) == active
+    assert _resolve_active_renewal(
+        Client(),
+        seed_league_id=None,
+        active_year=2026,
+        known_league_ids={},
+    ) is None
+
+    class WrongLineage:
+        @staticmethod
+        def get_league(league_id):
+            return {**active, "previous_league_id": "unrelated"}
+
+    assert _resolve_active_renewal(
+        WrongLineage(),
+        seed_league_id=None,
+        active_year=2026,
+        known_league_ids={"2026": "first-season"},
+    ) is None

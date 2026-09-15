@@ -240,6 +240,16 @@ def test_partial_espn_score_publication_does_not_mark_observed_manifest_current(
         "SELECT status, publish_generation FROM accounts.league_update_dispatches "
         "WHERE database_name = 'the_league'"
     ).fetchone() == ("committed", "bundle-1")
+    for status in ("cache_verified", "succeeded"):
+        assert record_league_update_status(
+            writer, database_name="the_league", platform="espn", status=status,
+            dispatch_token="opaque", workflow_run_id=42, receipt=receipt,
+            cache_verified=True,
+        )
+    assert writer.connection.execute(
+        "SELECT published_manifest_digest FROM accounts.league_update_manifests "
+        "WHERE database_name = 'the_league'"
+    ).fetchone() == (None,)
 
 
 def test_commit_rejects_manifest_that_changed_after_dispatch():

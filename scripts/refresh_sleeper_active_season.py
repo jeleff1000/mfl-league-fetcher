@@ -3,7 +3,7 @@
 
 The saved Sleeper league ID is normally the last completed season. This
 entrypoint resolves the current season from the persisted league-ID chain,
-requires a real ``previous_league_id`` chain back to that saved ID, hydrates
+validates a predecessor chain when one is stored, hydrates
 the existing Fly history, and publishes only the active-year partition plus
 recomputed league rollups.
 """
@@ -57,7 +57,7 @@ def _renewal_chain_reaches_seed(
 def _resolve_active_renewal(
     client: Any,
     *,
-    seed_league_id: str,
+    seed_league_id: str | None,
     active_year: int,
     known_league_ids: dict[str, str],
 ) -> dict[str, Any] | None:
@@ -74,6 +74,12 @@ def _resolve_active_renewal(
     candidate = client.get_league(active_id) or {}
     if str(candidate.get("season") or "") != str(active_year):
         return None
+    if not seed_league_id:
+        if str(candidate.get("league_id") or "") != active_id:
+            return None
+        if candidate.get("previous_league_id"):
+            return None
+        return candidate
     if _renewal_chain_reaches_seed(
         active_id,
         seed_league_id=seed_league_id,
@@ -181,9 +187,9 @@ def _build_context(
         for year, league_id in known_league_ids.items()
         if str(year).isdigit() and int(year) < int(active_year) and league_id
     ]
-    if not predecessors:
-        raise RuntimeError(f"Fly has no historical Sleeper chain predecessor for {db_name}")
-    seed_league_id = max(predecessors)[1]
+    seed_league_id = max(predecessors)[1] if predecessors else None
+    if seed_league_id is None and not known_league_ids.get(str(active_year)):
+        raise RuntimeError(f"Fly has no active Sleeper league ID for {db_name}")
     client = SleeperAPIClient()
     renewal = _resolve_active_renewal(
         client,

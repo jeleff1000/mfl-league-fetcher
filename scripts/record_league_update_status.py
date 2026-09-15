@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
             "stale",
             "credential_required",
             "incomplete_source",
+            "no_change",
             "validation_failed",
             "committed_cache_pending",
         ),

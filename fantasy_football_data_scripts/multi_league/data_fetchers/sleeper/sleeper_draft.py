@@ -201,7 +201,9 @@ class SleeperDraftFetcher:
 
         return year_drafts
 
-    def fetch_draft_manifest_for_year(self, year: int) -> pd.DataFrame:
+    def fetch_draft_manifest_for_year(
+        self, year: int, *, expected_primary_draft_id: str = ""
+    ) -> pd.DataFrame:
         """Read the immutable identity of every active-season Sleeper draft pick.
 
         This is intentionally narrower than :meth:`fetch_draft_for_year`: a
@@ -215,15 +217,37 @@ class SleeperDraftFetcher:
             return pd.DataFrame(columns=["draft_id", "pick"])
 
         rows: list[dict[str, object]] = []
+        primary_seen = False
         for draft in self._get_drafts_for_year(str(league_id), year):
             draft_id = str(draft.get("draft_id") or "").strip()
             if not draft_id:
                 raise ValueError(f"Sleeper returned a {year} draft without draft_id")
-            for pick in self.client.get_draft_picks(draft_id):
+            picks = self.client.get_draft_picks(draft_id)
+            if draft_id == expected_primary_draft_id:
+                primary_seen = True
+                if str(draft.get("status") or "").lower() != "complete":
+                    raise ValueError(f"Sleeper primary draft {draft_id} is not complete")
+                try:
+                    rounds = int((draft.get("settings") or {})["rounds"])
+                    participants = len(draft["draft_order"])
+                    configured_teams = int((draft.get("settings") or {}).get("teams", participants))
+                    actual = [int(pick["pick_no"]) for pick in picks]
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(f"Sleeper primary draft {draft_id} lacks a complete pick witness") from exc
+                expected = rounds * participants
+                if (
+                    rounds < 1 or participants < 1 or configured_teams != participants
+                    or sorted(actual) != list(range(1, expected + 1))
+                ):
+                    raise ValueError(f"Sleeper primary draft {draft_id} has incomplete picks")
+            for pick in picks:
                 pick_no = pick.get("pick_no")
                 if pick_no is None:
                     raise ValueError(f"Sleeper returned a {year} draft pick without pick_no ({draft_id})")
                 rows.append({"draft_id": draft_id, "pick": pick_no})
+
+        if expected_primary_draft_id and not primary_seen:
+            raise ValueError(f"Sleeper primary draft {expected_primary_draft_id} is missing")
 
         return pd.DataFrame(rows, columns=["draft_id", "pick"])
 

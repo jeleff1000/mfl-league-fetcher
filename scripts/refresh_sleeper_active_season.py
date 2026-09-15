@@ -44,6 +44,13 @@ def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _sleeper_confirmed_no_draft(active_league: dict[str, Any], manifest: pd.DataFrame) -> bool:
+    """An empty draft is authoritative only when both provider surfaces say so."""
+    if "draft_id" not in active_league:
+        raise ValueError("Sleeper active league omitted its draft_id field")
+    return manifest.empty and not str(active_league.get("draft_id") or "").strip()
+
+
 def _renewal_chain_reaches_seed(
     candidate_league_id: str,
     *,
@@ -59,6 +66,8 @@ def _renewal_chain_reaches_seed(
             return True
         seen.add(current_id)
         current = get_league(current_id) or {}
+        if str(current.get("league_id") or "") != current_id:
+            return False
         previous = current.get("previous_league_id")
         current_id = str(previous) if previous else ""
     return False
@@ -170,6 +179,8 @@ def _load_persisted_sleeper_chain(reader: Any, *, db_name: str) -> tuple[dict[st
     ]
     # Older rows predate ``league_ids_json``.  Their per-year canonical
     # settings remain enough to reconstruct the already imported chain.
+    if "platform" in context_columns:
+        context_select.insert(0, "platform")
     if "league_ids_json" in context_columns:
         context_select.insert(2, "league_ids_json")
     context_rows = reader.query(
@@ -179,20 +190,40 @@ def _load_persisted_sleeper_chain(reader: Any, *, db_name: str) -> tuple[dict[st
     if not context_rows:
         raise RuntimeError(f"Fly has no Sleeper league context for {db_name}")
     context = context_rows[0]
-    known = _json_map(context.get("league_ids_json"))
+    # A multiplatform context may retain another provider's onboarding IDs.
+    # Only matching-platform context IDs can seed Sleeper renewal discovery;
+    # per-year Sleeper settings remain the canonical imported witness.
+    context_platform = str(context.get("platform") or "").strip().lower()
+    known = _json_map(context.get("league_ids_json")) if context_platform in ("", "sleeper") else {}
     setting_rows = reader.query(
-        "SELECT year, league_key FROM public.league_settings "
-        f"WHERE db_name = {quoted_db} AND LOWER(COALESCE(platform, '')) = 'sleeper' "
-        "AND league_key IS NOT NULL",
+        "SELECT year, platform, league_key FROM public.league_settings "
+        f"WHERE db_name = {quoted_db} AND platform IS NOT NULL",
         database="___leagues",
     )
+    imported_owners: dict[str, set[str]] = {}
     for row in setting_rows:
+        try:
+            year = str(int(row["year"]))
+        except (TypeError, ValueError):
+            continue
+        imported_owners.setdefault(year, set()).add(str(row.get("platform") or "").strip().lower())
+    if any("sleeper" in owners and owners != {"sleeper"} for owners in imported_owners.values()):
+        raise RuntimeError("Fly has overlapping provider ownership for a Sleeper season")
+    known = {
+        year: league_id for year, league_id in known.items()
+        if not imported_owners.get(year) or imported_owners[year] == {"sleeper"}
+    }
+    for row in setting_rows:
+        if str(row.get("platform") or "").strip().lower() != "sleeper":
+            continue
         try:
             year = str(int(row["year"]))
         except (TypeError, ValueError):
             continue
         league_id = str(row.get("league_key") or "").strip()
         if league_id:
+            if year in known and known[year] != league_id:
+                raise RuntimeError("Fly has conflicting Sleeper league IDs for one imported season")
             known.setdefault(year, league_id)
     return context, known
 
@@ -212,6 +243,9 @@ def _build_context(
 
     frontend, known_league_ids = _load_persisted_sleeper_chain(reader, db_name=db_name)
     if active_league_id:
+        saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
+        if saved_active_id and saved_active_id != str(active_league_id).strip():
+            raise RuntimeError("Fly and caller have conflicting active Sleeper league IDs")
         known_league_ids[str(active_year)] = str(active_league_id)
     predecessors = [
         (int(year), league_id)
@@ -369,9 +403,10 @@ def _merge_active_payloads(
             league_id=league_id,
         )
     draft_rows = 0
-    draft = pd.DataFrame()
     draft_fetcher = SleeperDraftFetcher(ctx, client, player_cache)
-    draft_manifest = draft_fetcher.fetch_draft_manifest_for_year(active_year)
+    draft_manifest = draft_fetcher.fetch_draft_manifest_for_year(
+        active_year, expected_primary_draft_id=str(active_league.get("draft_id") or "").strip()
+    )
     draft_rows = refresh_authoritative_draft_partition(
         local_db,
         provider_manifest=draft_manifest,
@@ -380,10 +415,7 @@ def _merge_active_payloads(
         year=active_year,
         platform="sleeper",
         league_id=league_id,
-        confirmed_no_draft=(
-            draft_manifest.empty
-            and not str(active_league.get("draft_id") or "").strip()
-        ),
+        confirmed_no_draft=_sleeper_confirmed_no_draft(active_league, draft_manifest),
     )
     from multi_league.core.league_update_validation import (
         IncompleteSourceError,
@@ -399,6 +431,7 @@ def _merge_active_payloads(
         raise IncompleteSourceError(
             "Sleeper roster identity count disagrees with active league settings"
         )
+    draft = local_db.read_table("draft", year=active_year) if local_db.table_exists("draft") else pd.DataFrame()
     validation = validate_tabular_active_scope(
         provider="sleeper",
         league_id=league_id,
@@ -454,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.league_update_plan import load_persisted_refresh_plan
+    from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
     from scripts.refresh_yahoo_active_season import (
@@ -466,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
         _scope_counts,
     )
 
+    timer = PhaseTimer()
     reader = FlyReader()
     if args.execute:
         from multi_league.core.league_update_status import assert_league_update_entitled
@@ -503,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         "executed": bool(args.execute),
     }
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))
+    timer.mark("source_plan")
     if persisted_plan is not None:
         receipt["source_manifest_digest"] = persisted_plan.observed_manifest_digest
         receipt["source_manifest_json"] = persisted_plan.observed_manifest_json
@@ -510,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         receipt["refresh_reasons"] = list(persisted_plan.reasons)
     if not refresh_weeks:
         receipt["status"] = "NO_FINALIZED_WEEKS"
+        receipt["phase_seconds"] = timer.finish()
         _write_receipt(receipt, args.json_out)
         return 0
 
@@ -524,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if ctx is None:
             receipt["status"] = "NO_ACTIVE_RENEWAL"
+            receipt["phase_seconds"] = timer.finish()
             _write_receipt(receipt, args.json_out)
             return 0
         receipt["league_id"] = str(active_league["league_id"])
@@ -532,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
             db_name=args.db,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
+        timer.mark("source_snapshot")
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
@@ -550,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
             from multi_league.core.league_update_ownership import local_preservation_snapshot
 
             preservation_before = local_preservation_snapshot(local_db, preservation_witnesses)
+            timer.mark("local_hydration")
             receipt["fetch_rows"] = _merge_active_payloads(
                 ctx=ctx,
                 client=client,
@@ -563,10 +603,26 @@ def main(argv: list[str] | None = None) -> int:
                 refresh_weeks=refresh_weeks,
                 fetch_rows=receipt["fetch_rows"],
             )
+            timer.mark("provider_fetch")
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"
+                receipt["phase_seconds"] = timer.finish()
                 _write_receipt(receipt, args.json_out)
                 return 0
+
+            from multi_league.core.league_update_validation import (
+                assert_transformed_active_matchup_scope,
+                assert_transformed_active_player_scope,
+                capture_active_final_matchup_scope,
+                capture_active_provider_player_scope,
+            )
+            expected_player_keys = capture_active_provider_player_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="sleeper_player_id",
+            )
+            expected_matchup_scores = capture_active_final_matchup_scope(
+                local_db.connect(), db_name=args.db, year=active_year, weeks=refresh_weeks,
+            )
 
             active_connection = local_db.connect()
             receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(
@@ -582,6 +638,7 @@ def main(argv: list[str] | None = None) -> int:
                     reader, finalized_ops, year=active_year, weeks=refresh_weeks, work_dir=work_dir
                 )
             )
+            timer.mark("player_ops_cache")
             _run_local_pipeline(
                 ctx=ctx,
                 context_path=context_path,
@@ -591,6 +648,16 @@ def main(argv: list[str] | None = None) -> int:
                 work_dir=work_dir,
                 platform="sleeper",
                 keeper_config_hydrated="keeper_config" in source_frames,
+            )
+            timer.mark("shared_transformations")
+            receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="sleeper_player_id",
+                expected_keys=expected_player_keys,
+            )
+            receipt["transformed_matchup_scope"] = assert_transformed_active_matchup_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
             local_db.connect()
             from multi_league.core.homepage_refresh import prepare_homepage_refresh
@@ -613,6 +680,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             publish_tables = active_refresh_publish_tables(local_db.connect())
             publish_tables = sorted(set([*publish_tables, *homepage["published_tables"]]))
+            from multi_league.core.league_update_validation import assert_refresh_derived_output_health
+
+            receipt["derived_health"] = assert_refresh_derived_output_health(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="sleeper_player_id",
+                published_tables=publish_tables,
+            )
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 
             receipt["ownership"] = assert_publish_table_ownership(publish_tables)
@@ -634,6 +708,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
             finally:
                 stage.close()
+            timer.mark("homepage_preservation_stage")
+            from multi_league.core.league_update_publish_claim import renew_claim_for_publication
+
+            renew_claim_for_publication(reader, database_name=args.db, platform="sleeper")
+            timer.mark("prepublish_claim")
             result = FlyTarget().merge_fleet_partition(
                 bundle.path,
                 bundle_id=bundle.bundle_id,
@@ -647,15 +726,18 @@ def main(argv: list[str] | None = None) -> int:
             receipt["homepage_bundle_id"] = bundle.bundle_id
             receipt["homepage_rows"] = homepage["rows"]
             receipt["published_tables"] = publish_tables
+            timer.mark("fly_publication")
             receipt["post_publish_counts"] = _scope_counts(
                 reader,
                 db_name=args.db,
                 active_year=active_year,
                 tables=receipt["published_tables"],
             )
+            timer.mark("post_publish_verification")
         finally:
             local_db.close()
 
+    receipt["phase_seconds"] = timer.finish()
     _write_receipt(receipt, args.json_out)
     return 0
 

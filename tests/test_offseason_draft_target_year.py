@@ -17,6 +17,74 @@ import check_offseason_drafts as subject  # noqa: E402
 import update_sleeper_offseason_draft as update_subject  # noqa: E402
 
 
+def test_complete_offseason_refresh_captures_generation_before_hydrating_live_inputs(monkeypatch):
+    events = []
+    class Local:
+        def close(self):
+            events.append("close")
+
+    def generation(_conn, _db):
+        events.append("generation")
+        return 7
+
+    def hydrate(_conn, _plan, _draft):
+        events.append("hydrate")
+        return Local()
+
+    def publish(_conn, _local, _plan, *, base_generation):
+        events.append(("publish", base_generation))
+
+    monkeypatch.setattr(update_subject, "league_publish_generation", generation)
+    monkeypatch.setattr(update_subject, "_hydrate_local_offseason_draft_db", hydrate)
+    monkeypatch.setattr(update_subject, "publish_local_offseason_outputs", publish)
+    plan = update_subject.OffseasonDraftPlan(
+        db_name="kmffl", league_name="KMFFL", sleeper_league_id="123", draft_year=2026,
+        completed_season=2025, manager_name_overrides={},
+    )
+    update_subject.run_complete_local_offseason_update(
+        object(), plan, pd.DataFrame({"year": [2026]}),
+        include_ops_enrichments=False, strict_sql_enrichments=True,
+        skip_sql_enrichments=True, skip_aggregates=True, skip_homepage=True,
+        chunk_size=100,
+    )
+    assert events == ["generation", "hydrate", ("publish", 7), "close"]
+
+
+def test_fleet_offseason_checker_captures_generation_before_provider_refetch(monkeypatch):
+    events = []
+    plan = subject.PlatformDraftPlan(
+        db_name="kmffl", platform="yahoo", league_id="470.l.1", league_name="KMFFL",
+        draft_year=2026, completed_season=2025, manager_name_overrides={},
+    )
+    result = subject.DraftCheckResult(
+        db_name="kmffl", platform="yahoo", league_name="KMFFL",
+        league_id="470.l.1", draft_year=2026, status="changed",
+    )
+    monkeypatch.setattr(subject, "league_publish_generation", lambda *_: events.append("generation") or 7,
+                        raising=False)
+    monkeypatch.setattr(subject, "fetch_platform_draft_dataframe",
+                        lambda *_a, **_k: events.append("fetch") or pd.DataFrame({"year": [2026]}))
+    monkeypatch.setattr(subject, "run_complete_local_offseason_update",
+                        lambda *_a, **kw: events.append(("publish", kw["base_generation"])))
+    monkeypatch.setattr(subject, "snapshot_from_dataframe", lambda *_a, **_k: ([], []))
+    monkeypatch.setattr(subject, "stored_draft_snapshot", lambda *_a, **_k: ([], []))
+    subject.execute_update(
+        object(), result, plan, allow_incomplete_draft=False, api_retries=1,
+        skip_sql_enrichments=False, include_ops_enrichments=False,
+        strict_sql_enrichments=True, skip_aggregates=False, skip_homepage=False,
+        chunk_size=100,
+    )
+    assert events == ["generation", "fetch", ("publish", 7)]
+
+
+def test_fleet_offseason_checker_binds_version_before_first_provider_check():
+    text = (SCRIPTS_DIR / "check_offseason_drafts.py").read_text(encoding="utf-8")
+    loop = text.split("    for row in rows:\n", 1)[1]
+    assert loop.index("base_generation = league_publish_generation(conn, str(row.get(") < loop.index(
+        "result, plan, checker_draft_df = check_one(")
+    assert "base_generation=base_generation," in loop.split("execute_update(", 1)[1]
+
+
 class _September2026:
     @classmethod
     def now(cls, tz=None):
@@ -344,6 +412,7 @@ def test_platform_draft_snapshot_uses_display_name_when_player_id_is_missing():
 
 
 def test_update_is_not_marked_complete_when_fly_draft_fingerprint_differs(monkeypatch):
+    monkeypatch.setattr(subject, "league_publish_generation", lambda *_: 0)
     plan = subject.PlatformDraftPlan(
         db_name="active_league",
         platform="sleeper",
@@ -416,6 +485,7 @@ def test_update_is_not_marked_complete_when_fly_draft_fingerprint_differs(monkey
 
 def test_sleeper_update_uses_publish_rows_not_checker_snapshot(monkeypatch):
     """The checker snapshot is intentionally small and cannot be published."""
+    monkeypatch.setattr(subject, "league_publish_generation", lambda *_: 0)
     plan = subject.PlatformDraftPlan(
         db_name="the_fucking_catalina_wine_mixer",
         platform="sleeper",
@@ -488,6 +558,7 @@ def test_sleeper_update_uses_publish_rows_not_checker_snapshot(monkeypatch):
 
 def test_yahoo_update_reuses_the_checker_draft_dataframe(monkeypatch):
     """Yahoo must publish the already-fetched canonical rows, not fetch twice."""
+    monkeypatch.setattr(subject, "league_publish_generation", lambda *_: 0)
     plan = subject.PlatformDraftPlan(
         db_name="kmffl",
         platform="yahoo",
@@ -587,6 +658,8 @@ def test_yahoo_update_reuses_the_checker_draft_dataframe(monkeypatch):
 
 def test_complete_update_uses_the_local_stateful_stage_before_any_fly_publish(monkeypatch):
     """Product updates must not bypass grades, rollups, or homepage rebuilds."""
+    monkeypatch.setattr(subject, "league_publish_generation",
+                        lambda *_: pytest.fail("pre-check version must not be recaptured"))
     plan = subject.PlatformDraftPlan(
         db_name="kmffl",
         platform="yahoo",
@@ -634,6 +707,7 @@ def test_complete_update_uses_the_local_stateful_stage_before_any_fly_publish(mo
         skip_aggregates=False,
         skip_homepage=False,
         chunk_size=50,
+        base_generation=6,
     )
 
     assert captured["plan"] == plan
@@ -643,11 +717,13 @@ def test_complete_update_uses_the_local_stateful_stage_before_any_fly_publish(mo
     assert captured["skip_sql_enrichments"] is False
     assert captured["skip_aggregates"] is False
     assert captured["skip_homepage"] is False
+    assert captured["base_generation"] == 6
     assert result.updated is True
 
 
 def test_draft_only_refresh_preserves_unaffected_homepage_outputs(monkeypatch):
     """A 2026 draft has no player/matchup mutation to justify a history pull."""
+    monkeypatch.setattr(update_subject, "league_publish_generation", lambda *_: 0)
     plan = update_subject.OffseasonDraftPlan(
         db_name="kmffl",
         league_name="KMFFL",
@@ -670,7 +746,7 @@ def test_draft_only_refresh_preserves_unaffected_homepage_outputs(monkeypatch):
         "rebuild_homepage_tables",
         lambda *_args, **_kwargs: pytest.fail("draft-only refresh must preserve homepage outputs"),
     )
-    monkeypatch.setattr(update_subject, "publish_local_offseason_outputs", lambda *_args: calls.append("publish"))
+    monkeypatch.setattr(update_subject, "publish_local_offseason_outputs", lambda *_args, **_kwargs: calls.append("publish"))
 
     update_subject.run_complete_local_offseason_update(
         object(),

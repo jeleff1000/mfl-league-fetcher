@@ -2,12 +2,16 @@ import duckdb
 import pytest
 
 from multi_league.transformations.aggregation.homepage_summary import (
+    _latest_matchup_year_week,
     _compute_best_trade,
     _compute_manager_career_stats,
+    _compute_league_records,
+    _compute_manager_player_leaders,
     _compute_manager_draft_profile,
     _compute_manager_txn_profile,
     _compute_transaction_highlights,
     _normalize_platform_id_sql,
+    _trade_partner_sql,
     compute_all_manager_profiles,
     compute_current_standings,
     compute_manager_rankings,
@@ -16,11 +20,43 @@ from multi_league.transformations.aggregation.homepage_summary import (
 from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext
 
 
+def test_homepage_watermark_pairs_latest_year_with_its_own_latest_week():
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year VARCHAR, week VARCHAR)")
+        db_name = conn.execute("SELECT current_database()").fetchone()[0]
+        conn.executemany(
+            "INSERT INTO public.matchup VALUES (?, ?, ?)",
+            [(db_name, "2025", "17"), (db_name, "2026", "01"),
+             ("other_league", "2026", "18")],
+        )
+        assert _latest_matchup_year_week(conn, db_name) == (2026, 1)
+        assert _latest_matchup_year_week(conn, "missing_league") == (None, None)
+    finally:
+        conn.close()
+
+
 def test_normalize_platform_id_sql_casts_to_string():
     sql = _normalize_platform_id_sql("bio.sleeper_player_id")
 
     assert "CAST(bio.sleeper_player_id AS VARCHAR)" in sql
     assert "REGEXP_REPLACE" in sql
+
+
+def test_trade_partner_sql_accepts_numeric_provider_manager_ids():
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE TABLE transactions (source_manager BIGINT)")
+        conn.execute("INSERT INTO transactions VALUES (951993), (951993), (NULL)")
+        select_sql, filter_sql = _trade_partner_sql(("source_manager",))
+        actual = conn.execute(
+            f"SELECT {select_sql} FROM transactions t WHERE TRUE {filter_sql}"
+        ).fetchone()[0]
+        assert actual == "951993"
+        assert _trade_partner_sql(()) == ("NULL as partner", "")
+    finally:
+        conn.close()
 
 
 def test_compute_manager_rankings_handles_text_year_week_columns():
@@ -61,6 +97,103 @@ def test_compute_manager_rankings_handles_text_year_week_columns():
 
     assert set(rankings["manager"]) == {"Alice", "Bob"}
     assert set(standings["manager"]) == {"Alice", "Bob"}
+
+
+def test_tied_career_rank_uses_stable_franchise_identity_across_row_orders():
+    def rankings_for(order):
+        conn = duckdb.connect(":memory:")
+        try:
+            conn.execute("CREATE SCHEMA public")
+            db_name = conn.execute("SELECT current_database()").fetchone()[0]
+            conn.execute(
+                "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+                "manager VARCHAR, franchise_id VARCHAR, team_name VARCHAR, team_points DOUBLE, "
+                "win INTEGER, loss INTEGER, tie INTEGER, is_playoffs INTEGER, "
+                "is_consolation INTEGER, is_bye_week INTEGER)"
+            )
+            rows = {
+                "fid_a": (db_name, 2026, 1, "Alice", "fid_a", "Alpha", 100.0, 1, 0, 0, 0, 0, 0),
+                "fid_b": (db_name, 2026, 1, "Bob", "fid_b", "Beta", 100.0, 1, 0, 0, 0, 0, 0),
+            }
+            conn.executemany(
+                "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [rows[franchise] for franchise in order],
+            )
+            result = compute_manager_rankings(conn, db_name)
+            return result.set_index("franchise_id")["career_rank"].to_dict()
+        finally:
+            conn.close()
+
+    assert rankings_for(("fid_a", "fid_b")) == {"fid_a": 1, "fid_b": 2}
+    assert rankings_for(("fid_b", "fid_a")) == {"fid_a": 1, "fid_b": 2}
+
+
+def test_tied_championship_count_uses_stable_franchise_identity():
+    def leader_for(order):
+        conn = duckdb.connect(":memory:")
+        try:
+            conn.execute("CREATE SCHEMA public")
+            db_name = conn.execute("SELECT current_database()").fetchone()[0]
+            conn.execute(
+                "CREATE TABLE public.matchup (db_name VARCHAR, franchise_id VARCHAR, "
+                "year INTEGER, manager VARCHAR, champion INTEGER)"
+            )
+            rows = {
+                "fid_a": (db_name, "fid_a", 2025, "Alice", 1),
+                "fid_b": (db_name, "fid_b", 2025, "Bob", 1),
+            }
+            conn.executemany(
+                "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?)",
+                [rows[identity] for identity in order],
+            )
+            return _compute_league_records(conn, db_name, {"champion", "franchise_id"})[
+                "most_championships_manager"
+            ]
+        finally:
+            conn.close()
+
+    assert leader_for(("fid_a", "fid_b")) == "Alice"
+    assert leader_for(("fid_b", "fid_a")) == "Alice"
+
+
+def test_tied_clutch_leaders_use_stable_nfl_identity():
+    def leaders_for(order):
+        conn = duckdb.connect(":memory:")
+        try:
+            conn.execute("CREATE SCHEMA public")
+            conn.execute("ATTACH ':memory:' AS ___ops")
+            conn.execute("CREATE SCHEMA ___ops.nfl_historical")
+            conn.execute(
+                "CREATE TABLE ___ops.nfl_historical.player_bio "
+                "(NFL_player_id VARCHAR, player VARCHAR, headshot_url VARCHAR)"
+            )
+            conn.execute(
+                "INSERT INTO ___ops.nfl_historical.player_bio VALUES "
+                "('nfl_a', 'Alice Player', 'https://a'), "
+                "('nfl_b', 'Bob Player', 'https://b')"
+            )
+            db_name = conn.execute("SELECT current_database()").fetchone()[0]
+            conn.execute(
+                "CREATE TABLE public.player_fantasy (db_name VARCHAR, franchise_id VARCHAR, "
+                "NFL_player_id VARCHAR, player VARCHAR, year INTEGER, week INTEGER, "
+                "manager_lamar DOUBLE, clutch_equity DOUBLE, is_started INTEGER)"
+            )
+            rows = {
+                "nfl_a": (db_name, "fid_a", "nfl_a", "Alice Player", 2026, 1, 10, 1, 1),
+                "nfl_b": (db_name, "fid_a", "nfl_b", "Bob Player", 2026, 1, 10, 1, 1),
+            }
+            conn.executemany(
+                "INSERT INTO public.player_fantasy VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [rows[identity] for identity in order],
+            )
+            return _compute_manager_player_leaders(conn, db_name, "fid_a", platform="yahoo")
+        finally:
+            conn.close()
+
+    for order in (("nfl_a", "nfl_b"), ("nfl_b", "nfl_a")):
+        result = leaders_for(order)
+        assert result["best_season_clutch_player"] == "Alice Player"
+        assert result["best_career_clutch_player"] == "Alice Player"
 
 
 def test_compute_manager_rankings_uses_season_power_when_weekly_power_is_null():

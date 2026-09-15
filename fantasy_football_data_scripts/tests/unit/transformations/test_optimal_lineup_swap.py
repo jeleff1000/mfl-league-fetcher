@@ -24,11 +24,82 @@ for path in (SCRIPTS_DIR, SCRIPTS_DIR / "multi_league"):
         sys.path.insert(0, path_str)
 
 from multi_league.transformations.aggregation.sql_aggregation_enrichments import AggregationEnrichmentsMixin
+from multi_league.transformations.aggregation.modules.optimal_lineup import RosterHelpers, position_rank
 from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
 
 
 class _AggregationRunner(AggregationEnrichmentsMixin, SQLEnrichmentsBase):
     pass
+
+
+def test_position_alltime_rank_uses_ops_history_not_active_year_subset():
+    """A quick refresh must never call a single current-week player #1 ever.
+
+    The historical rank is precomputed in the OPS super table.  The local
+    refresh database deliberately contains only the active partition, so
+    recomputing an all-time window there turns every lone player-week into
+    rank 1.
+    """
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___ops")
+    conn.execute("CREATE SCHEMA ___ops.nfl_historical")
+    conn.execute(
+        "CREATE TABLE ___ops.nfl_historical.player_bio "
+        "(NFL_player_id VARCHAR, nfl_position VARCHAR)"
+    )
+    conn.execute(
+        "CREATE TABLE ___ops.nfl_historical.nfl_player_stats_all "
+        "(player_week VARCHAR, position VARCHAR, rank_qb_4pt INTEGER, rank_alltime_qb_4pt INTEGER)"
+    )
+    conn.execute("INSERT INTO ___ops.nfl_historical.player_bio VALUES ('caleb', 'QB')")
+    conn.execute(
+        "INSERT INTO ___ops.nfl_historical.nfl_player_stats_all VALUES ('2026_01_caleb', 'QB', 1, 222)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE player_fantasy (
+            db_name VARCHAR, player_week VARCHAR, NFL_player_id VARCHAR,
+            year INTEGER, week INTEGER, position VARCHAR, fantasy_points DOUBLE,
+            position_rank INTEGER, position_week_rank INTEGER,
+            position_season_rank INTEGER, position_alltime_rank INTEGER,
+            flex_week_rank INTEGER, flex_season_rank INTEGER, flex_alltime_rank INTEGER,
+            sflex_week_rank INTEGER, sflex_season_rank INTEGER, sflex_alltime_rank INTEGER,
+            season_ppg DOUBLE, alltime_ppg DOUBLE
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO player_fantasy VALUES "
+        "('quick_scope', '2026_01_caleb', 'caleb', 2026, 1, 'QB', 18.76, "
+        "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
+    )
+    helpers = RosterHelpers(
+        available_settings_years=lambda: [2026],
+        resolve_settings_year=lambda year: year,
+        get_dedicated_slots=lambda _settings: {},
+        identify_flex_positions=lambda _settings: {},
+        position_eligibility_sql=lambda column, position: f"UPPER({column}) = '{position}'",
+        flex_eligibility_sql=lambda _column, _positions: "FALSE",
+        preferred_flex_rank_column=lambda *_args: None,
+        front7_eligibility_sql=lambda _column: "FALSE",
+        primary_position_sql=lambda column: f"UPPER({column})",
+        group_years_by_scoring=lambda years, _settings: [(
+            {"rank_cols": {"QB": "rank_qb_4pt"}},
+            years,
+        )],
+    )
+
+    position_rank(
+        conn,
+        "player_fantasy",
+        {2026: {}},
+        helpers,
+        db_name="quick_scope",
+    )
+
+    assert conn.execute(
+        "SELECT position_alltime_rank FROM player_fantasy WHERE player_week = '2026_01_caleb'"
+    ).fetchone()[0] == 222
 
 
 def _create_player_fantasy(conn) -> None:

@@ -40,17 +40,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True)
     parser.add_argument("--platform", required=True, choices=("yahoo", "espn", "sleeper"))
-    parser.add_argument("--dispatch-token", required=True)
-    parser.add_argument("--attempt-id", required=True)
-    parser.add_argument("--claim-version", required=True, type=int)
+    parser.add_argument("--dispatch-token", default="")
+    parser.add_argument("--attempt-id", default="")
+    parser.add_argument("--claim-version", type=int, default=0)
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[a-z0-9_]{1,63}", args.db):
         raise ValueError("Invalid league database name")
-    if not args.dispatch_token or not args.attempt_id or args.claim_version < 1:
+    manual_pending = not args.dispatch_token and not args.attempt_id and args.claim_version == 0
+    if not manual_pending and (not args.dispatch_token or not args.attempt_id or args.claim_version < 1):
         raise ValueError("Invalid cache recovery claim")
 
     reader = FlyReader()
     assert_league_update_entitled(reader, database_name=args.db)
+    claim_predicate = (
+        "AND d.dispatch_token LIKE 'manual-%' AND d.attempt_id = d.dispatch_token "
+        if manual_pending else
+        f"AND d.dispatch_token = {_literal(args.dispatch_token)} "
+        f"AND d.attempt_id = {_literal(args.attempt_id)} "
+        f"AND d.claim_version = {args.claim_version} "
+    )
     rows = reader.query(
         "SELECT d.database_name, d.platform, d.status, d.dispatch_token, "
         "d.attempt_id, d.claim_version, d.workflow_run_id, d.source_year, "
@@ -61,9 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         "JOIN accounts.league_update_manifests m "
         "ON m.database_name = d.database_name "
         f"WHERE d.database_name = {_literal(args.db)} "
-        f"AND d.dispatch_token = {_literal(args.dispatch_token)} "
-        f"AND d.attempt_id = {_literal(args.attempt_id)} "
-        f"AND d.claim_version = {args.claim_version} "
+        f"{claim_predicate}"
         f"AND d.platform = {_literal(args.platform)} "
         "AND d.status = 'committed_cache_pending' LIMIT 1",
         database="___ops",
@@ -71,6 +77,15 @@ def main(argv: list[str] | None = None) -> int:
     if len(rows) != 1:
         raise RuntimeError("Committed league update recovery claim is unavailable")
     row = rows[0]
+    if manual_pending:
+        token = str(row.get("dispatch_token") or "")
+        if not re.fullmatch(r"manual-[1-9][0-9]*-[1-9][0-9]*", token) \
+           or str(row.get("attempt_id") or "") != token \
+           or int(row.get("claim_version") or 0) < 1:
+            raise RuntimeError("Committed league update recovery claim is unavailable")
+        args.dispatch_token = token
+        args.attempt_id = token
+        args.claim_version = int(row["claim_version"])
     receipt = build_cache_recovery_receipt(
         row, current_generation=_current_generation(reader, args.db)
     )

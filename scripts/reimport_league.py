@@ -7,7 +7,7 @@ Usage:
     python scripts/reimport_league.py cool_guy_dynasty henningbowl_friends_aeaa72  # multiple
     python scripts/reimport_league.py --list  # show all leagues
 
-Looks up league metadata from MotherDuck, builds the same payload the frontend
+Looks up league metadata from Fly, builds the same payload the frontend
 sends, and dispatches via repository_dispatch to the public worker repository.
 """
 
@@ -35,16 +35,6 @@ if str(FFS_DIR) not in sys.path:
     sys.path.insert(0, str(FFS_DIR))
 
 
-def get_motherduck_token():
-    """Return MotherDuck token, or None on Fly backend."""
-    if os.environ.get("DATABASE_BACKEND") == "fly":
-        return None
-    token = os.environ.get("MOTHERDUCK_TOKEN") or os.environ.get("motherduck_token")
-    if not token:
-        sys.exit("MOTHERDUCK_TOKEN not set in environment or .env (set DATABASE_BACKEND=fly for Fly)")
-    return token
-
-
 def get_github_token():
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -53,7 +43,7 @@ def get_github_token():
 
 
 def lookup_league(db_name: str, reader) -> dict:
-    """Look up league metadata from MotherDuck."""
+    """Look up league metadata from Fly."""
     rows = reader.query(
         f"SELECT year, league_key, platform, num_teams "
         f"FROM public.league_settings "
@@ -106,6 +96,7 @@ def dispatch_sleeper(league: dict, mode: str, github_token: str):
             "event_type": event_type,
             "client_payload": {
                 "league_data_b64": b64,
+                "import_lock_key": league["db_name"],
                 "user_id": hashlib.sha256(
                     f"{league['latest_league_id']}_{league['latest_year']}_{datetime.now().isoformat()}".encode()
                 ).hexdigest()[:16],
@@ -136,6 +127,7 @@ def dispatch_sleeper(league: dict, mode: str, github_token: str):
 
 
 def main():
+    os.environ["DATABASE_BACKEND"] = "fly"
     parser = argparse.ArgumentParser(description="Reimport league(s) by database name")
     parser.add_argument("db_names", nargs="*", help="Database name(s) to reimport")
     parser.add_argument("--mode", choices=["full", "quick"], default="full", help="Import mode (default: full)")
@@ -168,7 +160,7 @@ def main():
     for db_name in args.db_names:
         league = lookup_league(db_name, reader)
         if not league:
-            print(f"  {db_name}: NOT FOUND in MotherDuck")
+            print(f"  {db_name}: NOT FOUND in Fly")
             continue
 
         platform = league["platform"]

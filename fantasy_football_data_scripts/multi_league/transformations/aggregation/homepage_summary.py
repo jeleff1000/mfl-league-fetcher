@@ -648,6 +648,21 @@ def _lookup_headshot_for_player(
 # ============================================================================
 
 
+def _latest_matchup_year_week(conn, db_name: str) -> tuple[int | None, int | None]:
+    """Return the latest played matchup week from one season, not independent maxima."""
+    configure_table_catalog(conn)
+    row = conn.execute(f"""
+        SELECT TRY_CAST(year AS INT), TRY_CAST(week AS INT)
+        FROM {central_table('matchup')}
+        WHERE {league_db_filter(db_name)}
+          AND TRY_CAST(year AS INT) IS NOT NULL
+          AND TRY_CAST(week AS INT) IS NOT NULL
+        ORDER BY TRY_CAST(year AS INT) DESC, TRY_CAST(week AS INT) DESC
+        LIMIT 1
+    """).fetchone()
+    return (int(row[0]), int(row[1])) if row else (None, None)
+
+
 def compute_league_summary(
     conn, db_name: str, platform: str = "yahoo", cache: "ColumnCache | None" = None
 ) -> pd.DataFrame:
@@ -673,14 +688,7 @@ def compute_league_summary(
 
     log("Computing league-wide summary...")
 
-    # Get latest year/week
-    latest = conn.execute(f"""
-        SELECT MAX(TRY_CAST(year AS INT)) as year, MAX(TRY_CAST(week AS INT)) as week
-        FROM {central_table('matchup')}
-        WHERE {league_db_filter(db_name)}
-    """).fetchone()
-    data_year = latest[0] if latest else None
-    data_week = latest[1] if latest else None
+    data_year, data_week = _latest_matchup_year_week(conn, db_name)
 
     summary = {
         "last_updated": datetime.now(),
@@ -821,7 +829,7 @@ def _compute_league_records(conn, db_name: str, matchup_cols: set = None) -> dic
                 SELECT ARG_MAX(manager, year) as manager, SUM(is_champion) as championships
                 FROM manager_year_champs
                 GROUP BY franchise_id
-                ORDER BY championships DESC LIMIT 1
+                ORDER BY championships DESC, franchise_id ASC LIMIT 1
             """).fetchone()
             if row:
                 records["most_championships_manager"] = row[0]
@@ -1507,9 +1515,9 @@ def compute_manager_rankings(
                ROUND(CAST(wins AS FLOAT) / NULLIF(wins + losses + ties, 0), 3) as win_pct,
                championships, playoff_appearances, total_years as seasons,
                ROUND(avg_power_rating, 1) as power_rating, first_year, last_year,
-               ROW_NUMBER() OVER (ORDER BY wins DESC, championships DESC) as career_rank
+               ROW_NUMBER() OVER (ORDER BY wins DESC, championships DESC, franchise_id ASC) as career_rank
         FROM manager_stats
-        ORDER BY wins DESC, championships DESC
+        ORDER BY wins DESC, championships DESC, franchise_id ASC
     """).fetchdf()
 
     log(f"  Computed rankings for {len(df)} managers")
@@ -2726,7 +2734,7 @@ def _compute_manager_player_leaders(
                   AND f.clutch_equity != 0 AND f.is_started = 1
                 GROUP BY f.NFL_player_id, f.year
                 HAVING SUM(f.clutch_equity) != 0
-                ORDER BY total_clutch DESC LIMIT 1
+                ORDER BY total_clutch DESC, f.NFL_player_id ASC, f.year DESC LIMIT 1
             """).fetchone()
             if row:
                 profile["best_season_clutch_player"] = row[0]
@@ -2762,7 +2770,7 @@ def _compute_manager_player_leaders(
                   AND f.clutch_equity != 0 AND f.is_started = 1
                 GROUP BY f.NFL_player_id
                 HAVING SUM(f.clutch_equity) != 0
-                ORDER BY total_clutch DESC LIMIT 1
+                ORDER BY total_clutch DESC, f.NFL_player_id ASC LIMIT 1
             """).fetchone()
             if row:
                 profile["best_career_clutch_player"] = row[0]

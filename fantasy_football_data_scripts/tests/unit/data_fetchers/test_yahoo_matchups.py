@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -82,6 +84,25 @@ def test_parse_matchups_preserves_yahoo_team_key():
     rows = parse_matchups_for_week(oauth, "371.l.2116", 2017, 1)
 
     assert [row["team_key"] for row in rows] == ["371.l.2116.t.2", "371.l.2116.t.3"]
+
+
+def test_yahoo_scoreboard_declared_matchup_count_rejects_truncated_response():
+    oauth = SimpleNamespace(session=_FakeSession(
+        _scoreboard_xml(15).replace("<matchups>", '<matchups count="2">')
+    ))
+    with pytest.raises(RuntimeError, match="declared matchup count"):
+        parse_matchups_for_week(oauth, "124.l.644100", 2025, 15)
+
+
+def test_yahoo_scoreboard_rejects_unparsed_single_team_matchup():
+    xml = _scoreboard_xml(15).replace("<matchups>", '<matchups count="1">')
+    # The fixture's paired match is intentionally reduced to one team.
+    start = xml.index('<team>\n                  <team_key>124.l.644100.t.2')
+    end = xml.index('</team>', start) + len('</team>')
+    xml = xml[:start] + xml[end:]
+    oauth = SimpleNamespace(session=_FakeSession(xml))
+    with pytest.raises(RuntimeError, match="team cardinality"):
+        parse_matchups_for_week(oauth, "124.l.644100", 2025, 15)
 
 
 def test_parse_matchups_recovers_hidden_yahoo_team_key_from_url():

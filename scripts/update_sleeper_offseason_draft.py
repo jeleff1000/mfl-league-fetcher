@@ -404,6 +404,7 @@ def replace_draft_year(
     *,
     chunk_size: int,
     dry_run: bool,
+    base_generation: int | None = None,
 ) -> int:
     if draft_df.empty:
         raise SystemExit("Fetched draft dataframe is empty; refusing to delete existing draft rows")
@@ -429,7 +430,8 @@ def replace_draft_year(
     from multi_league.core.targets.fly_target import FlyTarget
 
     _ = chunk_size  # Parquet bundle publishing has no client-side SQL chunks.
-    generation = league_publish_generation(conn, plan.db_name)
+    generation = (base_generation if base_generation is not None
+                  else league_publish_generation(conn, plan.db_name))
     with tempfile.TemporaryDirectory(prefix="offseason_draft_publish_") as temp_dir:
         stage = duckdb.connect(":memory:")
         try:
@@ -730,6 +732,8 @@ def publish_local_offseason_outputs(
     source_conn: FlyDuckDBConnection,
     local_conn: Any,
     plan: OffseasonDraftPlan,
+    *,
+    base_generation: int,
 ) -> dict[str, Any]:
     """Atomically publish only the selected year plus refreshed league rollups."""
     import duckdb
@@ -740,7 +744,6 @@ def publish_local_offseason_outputs(
     for table_name in OFFSEASON_PUBLISH_TABLES:
         _require_local_publish_rows(local_conn, table_name, plan.db_name, plan.draft_year)
 
-    generation = league_publish_generation(source_conn, plan.db_name)
     with tempfile.TemporaryDirectory(prefix="offseason_draft_full_publish_") as temp_dir:
         stage = duckdb.connect(":memory:")
         try:
@@ -761,7 +764,7 @@ def publish_local_offseason_outputs(
             bundle = build_fleet_partition_bundle(
                 stage,
                 active_year=plan.draft_year,
-                league_generations={plan.db_name: generation},
+                league_generations={plan.db_name: base_generation},
                 tables=OFFSEASON_PUBLISH_TABLES,
                 output_dir=temp_dir,
             )
@@ -788,8 +791,13 @@ def run_complete_local_offseason_update(
     skip_aggregates: bool,
     skip_homepage: bool,
     chunk_size: int,
+    base_generation: int | None = None,
 ) -> None:
     """Run the same complete draft enrichment/rollup sequence as imports locally."""
+    # The local stage copies live league inputs. Bind its publication version
+    # before hydration so a newer weekly writer cannot be overwritten later.
+    if base_generation is None:
+        base_generation = league_publish_generation(conn, plan.db_name)
     local = _hydrate_local_offseason_draft_db(conn, plan, draft_df)
     try:
         if not skip_sql_enrichments:
@@ -810,7 +818,7 @@ def run_complete_local_offseason_update(
 
         # Fly sees one scoped fleet bundle only after every local computation
         # succeeds: no raw interim draft can replace the live year.
-        publish_local_offseason_outputs(conn, local, plan)
+        publish_local_offseason_outputs(conn, local, plan, base_generation=base_generation)
     finally:
         local.close()
 

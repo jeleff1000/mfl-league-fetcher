@@ -5,20 +5,52 @@ from multi_league.core.league_refresh import (
     merge_provider_refresh_table,
 )
 from multi_league.core.local_db import LocalLeagueDB
+from multi_league.core.aggregate_ddl import ensure_aggregate_table
 
 
-def test_active_refresh_hydrates_existing_noncanonical_career_and_homepage_tables(tmp_path):
-    """The real ESPN source snapshot includes aggregates without local DDL."""
+def test_existing_career_hydration_preserves_canonical_integer_and_timestamp_types(tmp_path):
+    """The full weekly aggregate runner must be able to rebuild the preserved table."""
+    local = LocalLeagueDB(tmp_path, "afi_data")
+    try:
+        source = pd.DataFrame([{
+            "db_name": "afi_data", "NFL_player_id": "00-001",
+            "wins": 61, "games_rostered": 101,
+            "last_updated": "2026-09-15 12:00:00",
+        }])
+        hydrate_local_refresh_sources(
+            local, {"player_fantasy_career": source},
+            db_name="afi_data", active_year=2026, expected_platform="espn",
+        )
+        catalog = local.connect().execute("SELECT current_database()").fetchone()[0]
+        ensure_aggregate_table(local.connect(), catalog, "player_fantasy_career")
+        rows = local.connect().execute(
+            "SELECT wins, games_rostered, last_updated "
+            "FROM public.player_fantasy_career WHERE db_name='afi_data'"
+        ).fetchall()
+        assert rows[0][0:2] == (61, 101)
+        types = {
+            name: dtype for name, dtype, *_ in
+            local.connect().execute("DESCRIBE public.player_fantasy_career").fetchall()
+        }
+        assert types["wins"] == "INTEGER"
+        assert types["last_updated"] == "TIMESTAMP"
+    finally:
+        local.close()
+
+
+def test_active_refresh_hydrates_existing_career_and_homepage_tables(tmp_path):
+    """The ESPN source snapshot uses canonical aggregate DDL, not Pandas inference."""
     local = LocalLeagueDB(tmp_path, "afi_data")
     try:
         frames = {
             "draft_manager_career": pd.DataFrame([{
                 "db_name": "afi_data", "franchise_id": "f-gray", "manager": "Gray",
-                "picks": 14,
+                "draft_category": "snake",
+                "total_picks": 14,
             }]),
             "homepage_manager_profiles": pd.DataFrame([{
                 "db_name": "afi_data", "franchise_id": "f-gray", "manager": "Gray",
-                "games": 1,
+                "best_career_lamar_value": 1.0,
             }]),
         }
 
@@ -26,8 +58,8 @@ def test_active_refresh_hydrates_existing_noncanonical_career_and_homepage_table
             local, frames, db_name="afi_data", active_year=2026,
             expected_platform="espn",
         ) == {"draft_manager_career": 1, "homepage_manager_profiles": 1}
-        assert local.read_table("draft_manager_career")["picks"].tolist() == [14]
-        assert local.read_table("homepage_manager_profiles")["games"].tolist() == [1]
+        assert local.read_table("draft_manager_career")["total_picks"].tolist() == [14]
+        assert local.read_table("homepage_manager_profiles")["best_career_lamar_value"].tolist() == [1.0]
     finally:
         local.close()
 

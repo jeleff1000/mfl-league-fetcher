@@ -7,6 +7,7 @@ import yaml
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "refresh_live_nfl_ops.yml"
 GATE = Path(__file__).resolve().parents[1] / "scripts" / "live_nfl_ops_dispatch_gate.py"
+LEGACY_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "update_nfl_super_table.yml"
 
 
 def test_live_nfl_ops_workflow_accepts_only_manual_or_dedicated_scheduler_dispatches():
@@ -99,3 +100,18 @@ def test_durable_baseline_checksum_uses_the_reconstructed_artifact_path() -> Non
     assert 'actual_hash=$(sha256sum "$BASELINE_PATH" | awk \'{print $1}\')' in text
     assert "durable baseline SHA-256 mismatch" in text
     assert "(cd baseline && sha256sum --check ops_nfl.duckdb.sha256)" not in text
+
+
+def test_legacy_in_place_ops_writer_is_fail_closed() -> None:
+    """No manual workflow may bypass the full-artifact rank rebuild.
+
+    ``update_nfl_super_table.py`` receives only the active week, so publishing
+    through it makes current-week leaders first in all-time history.  The
+    durable-artifact workflow is the only allowed production writer.
+    """
+    text = LEGACY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "LEGACY_OPS_WRITER_DISABLED" in text
+    assert "update_nfl_super_table.py" not in text
+    assert "aggregate_nfl_stats.py" not in text
+    assert "DATABASE_ADMIN_TOKEN" not in text

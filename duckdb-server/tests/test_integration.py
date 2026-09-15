@@ -5,6 +5,7 @@ import json
 import tarfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import patch
 
 import duckdb
@@ -35,6 +36,7 @@ def _make_delta_bundle(
     bundle_id=None,
     import_run_id="1000",
     publish_sequence=1,
+    base_generation=None,
 ):
     rows = rows or [
         (db_name, 2026, 1, "alice_2026_1", "Alice"),
@@ -123,6 +125,8 @@ def _make_delta_bundle(
         ],
         "omitted_tables": omitted_tables,
     }
+    if base_generation is not None:
+        logical_payload["base_generation"] = base_generation
     bundle_hash = _json_hash(logical_payload)
     manifest = {
         **logical_payload,
@@ -1296,9 +1300,12 @@ def test_merge_league_delta_admission_control_returns_retryable_busy(data_dir, c
     original_retry_after = main_mod.DELTA_BUSY_RETRY_AFTER_SECONDS
     main_mod.DELTA_ADMISSION_TIMEOUT_SECONDS = 0.1
     main_mod.DELTA_BUSY_RETRY_AFTER_SECONDS = 1.0
+    merge_entered = Event()
+    release_merge = Event()
 
     def slow_merge(leagues_path, parsed_manifest, extract_dir):
-        time.sleep(0.4)
+        merge_entered.set()
+        assert release_merge.wait(timeout=30), "admission-control challengers did not release the merge"
         return {
             "status": "COMMITTED",
             "db_name": parsed_manifest["db_name"],
@@ -1325,6 +1332,18 @@ def test_merge_league_delta_admission_control_returns_retryable_busy(data_dir, c
         upload_paths.append(path)
         manifests.append(manifest)
 
+    # Archive validation has its own tests. Keep this admission test independent
+    # of concurrent tar/Parquet work, which can delay requests past the held merge.
+    by_bundle_id = {manifest["bundle_id"]: manifest for manifest in manifests}
+
+    def validated_archive(_path, *, db_name, expected_bundle_id, expected_bundle_hash):
+        manifest = by_bundle_id[expected_bundle_id]
+        assert manifest["db_name"] == db_name
+        assert manifest["bundle_hash"] == expected_bundle_hash
+        return manifest, data_dir
+
+    monkeypatch.setattr(main_mod, "_validate_delta_archive", validated_archive)
+
     def upload_one(i: int):
         with open(upload_paths[i], "rb") as fh:
             resp = client.post(
@@ -1341,8 +1360,14 @@ def test_merge_league_delta_admission_control_returns_retryable_busy(data_dir, c
 
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
-            results = list(pool.map(upload_one, range(3)))
+            first = pool.submit(upload_one, 0)
+            assert merge_entered.wait(timeout=10), "first upload did not acquire the merge slot"
+            challengers = [pool.submit(upload_one, i) for i in (1, 2)]
+            busy_results = [future.result(timeout=10) for future in challengers]
+            release_merge.set()
+            results = [first.result(timeout=10), *busy_results]
     finally:
+        release_merge.set()
         main_mod.DELTA_ADMISSION_TIMEOUT_SECONDS = original_timeout
         main_mod.DELTA_BUSY_RETRY_AFTER_SECONDS = original_retry_after
 
@@ -1838,6 +1863,103 @@ def test_merge_league_delta_rejects_same_bundle_id_different_hash(data_dir, clie
             files={"file": (changed_archive.name, fh, "application/gzip")},
         )
     assert conflict.status_code == 409
+
+
+def test_delta_rollout_gate_rejects_new_unfenced_imports_but_replays_prior_commit(
+    data_dir, client, monkeypatch
+):
+    import main as main_mod
+
+    def post(path, manifest):
+        with open(path, "rb") as fh:
+            return client.post(
+                "/merge-league-delta",
+                headers={
+                    "Authorization": "Bearer test-admin",
+                    "x-db-name": "test_league",
+                    "x-bundle-id": manifest["bundle_id"],
+                    "x-bundle-hash": manifest["bundle_hash"],
+                },
+                files={"file": (path.name, fh, "application/gzip")},
+            )
+
+    old_path, old_manifest = _make_delta_bundle(data_dir, main_mod, import_run_id="1001")
+    assert post(old_path, old_manifest).status_code == 200
+    monkeypatch.setenv("REQUIRE_DELTA_BASE_GENERATION", "1")
+
+    replay = post(old_path, old_manifest)
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+
+    unfenced_path, unfenced_manifest = _make_delta_bundle(
+        data_dir, main_mod, import_run_id="1002"
+    )
+    unfenced = post(unfenced_path, unfenced_manifest)
+    assert unfenced.status_code == 409
+    assert "base_generation" in unfenced.text
+
+    result = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT COUNT(*) AS n FROM public.matchup WHERE db_name = 'test_league'"},
+    )
+    assert result.status_code == 200
+    assert result.json()[0]["n"] == 2
+
+
+def test_delta_snapshot_generation_rejects_stale_import_after_other_publication(
+    data_dir, client
+):
+    import main as main_mod
+
+    def post(archive_path, manifest):
+        with open(archive_path, "rb") as fh:
+            return client.post(
+                "/merge-league-delta",
+                headers={
+                    "Authorization": "Bearer test-admin",
+                    "x-db-name": "test_league",
+                    "x-bundle-id": manifest["bundle_id"],
+                    "x-bundle-hash": manifest["bundle_hash"],
+                },
+                files={"file": (archive_path.name, fh, "application/gzip")},
+            )
+
+    first_path, first_manifest = _make_delta_bundle(
+        data_dir, main_mod, import_run_id="1001", base_generation=0
+    )
+    assert post(first_path, first_manifest).status_code == 200
+
+    stale_path, stale_manifest = _make_delta_bundle(
+        data_dir, main_mod, import_run_id="1002", base_generation=0,
+        rows=[
+            ("test_league", 2026, 1, "alice_2026_1", "Stale Alice"),
+            ("test_league", 2026, 1, "bob_2026_1", "Bob"),
+        ],
+    )
+    stale = post(stale_path, stale_manifest)
+    assert stale.status_code == 409, stale.text
+    assert "generation" in stale.text.lower()
+
+    current_path, current_manifest = _make_delta_bundle(
+        data_dir, main_mod, import_run_id="1003", base_generation=1,
+        rows=[
+            ("test_league", 2026, 1, "alice_2026_1", "Current Alice"),
+            ("test_league", 2026, 1, "bob_2026_1", "Bob"),
+        ],
+    )
+    assert post(current_path, current_manifest).status_code == 200
+    result = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={
+            "sql": "SELECT manager FROM public.matchup "
+                   "WHERE db_name = 'test_league' AND manager_week = 'alice_2026_1'",
+            "database": "___leagues",
+        },
+    )
+    assert result.status_code == 200
+    assert result.json()[0]["manager"] == "Current Alice"
 
 
 def test_merge_league_delta_validation_failure_preserves_old_state(data_dir, client):

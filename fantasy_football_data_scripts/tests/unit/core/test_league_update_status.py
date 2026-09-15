@@ -599,6 +599,21 @@ def test_cache_failure_after_an_ambiguous_commit_status_write_keeps_publication_
     ).fetchone()[0] == "committed_cache_pending"
 
 
+def test_paid_manual_no_change_settles_claim_without_a_fabricated_publication():
+    writer = LocalWriter()
+    common = {
+        "database_name": "the_league", "platform": "yahoo",
+        "dispatch_token": "manual-42-1", "attempt_id": "manual-42-1",
+        "claim_version": 1, "workflow_run_id": 42,
+    }
+    assert record_league_update_status(writer, status="running", **common)
+    assert record_league_update_status(writer, status="no_change", **common)
+    assert writer.connection.execute(
+        "SELECT status, publication_receipt_json, publish_generation, lease_expires_at "
+        "FROM accounts.league_update_dispatches WHERE database_name = 'the_league'"
+    ).fetchone() == ("no_change", None, None, None)
+
+
 @pytest.mark.parametrize(
     "status",
     ["committed", "cache_verified", "committed_cache_pending", "cancelled"],

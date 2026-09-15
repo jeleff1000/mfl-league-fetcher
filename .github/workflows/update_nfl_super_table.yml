@@ -1,122 +1,21 @@
-name: Update NFL Super Table
+name: Retired NFL Super Table Writer
 
-# Updates the NFL super table in ___ops with latest NFLverse data.
-# League imports read from this table - they no longer fetch from NFLverse directly.
-# Run platform fleet imports (yahoo_fleet_import / sleeper_fleet_import / espn_fleet_import)
-# manually after this workflow completes to refresh league-level aggregates.
-
+# This compatibility entry point is deliberately fail-closed. The former
+# in-place writer receives only an active-week source frame and can overwrite
+# all-time rank fields with current-week-only values. Production Ops changes
+# must use Refresh Live NFL Ops, which rebuilds the rank surface against its
+# complete durable artifact before atomically promoting it.
 on:
   workflow_dispatch:
-    inputs:
-      year:
-        description: 'NFL season year (leave empty for current)'
-        required: false
-        type: string
-      week:
-        description: 'Specific week to update (leave empty for all weeks of current year)'
-        required: false
-        type: string
 
 permissions:
   contents: read
 
 jobs:
-  update-super-table:
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
+      - name: Explain the safe replacement
         run: |
-          pip install pandas duckdb pyarrow requests
-
-      - name: Update NFL Super Table
-        env:
-          DATABASE_BACKEND: fly
-          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
-          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
-          DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
-          FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
-          GITHUB_ACTIONS: 'true'
-        run: |
-          cd fantasy_football_data_scripts/multi_league/data_fetchers
-
-          # Build command with optional parameters
-          CMD="python update_nfl_super_table.py"
-
-          if [ -n "${{ github.event.inputs.year }}" ]; then
-            CMD="$CMD --year ${{ github.event.inputs.year }}"
-          fi
-
-          if [ -n "${{ github.event.inputs.week }}" ]; then
-            CMD="$CMD --week ${{ github.event.inputs.week }}"
-          fi
-
-          # If no year specified, use --auto to detect current NFL week
-          if [ -z "${{ github.event.inputs.year }}" ]; then
-            CMD="$CMD --auto"
-          fi
-
-          echo "Running: $CMD"
-          $CMD
-
-      - name: Update Season/Career Aggregations
-        env:
-          DATABASE_BACKEND: fly
-          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
-          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
-          DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
-          FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
-        run: |
-          cd fantasy_football_data_scripts/multi_league/data_fetchers
-
-          # Aggregate stats for the year being updated
-          if [ -n "${{ github.event.inputs.year }}" ]; then
-            python aggregate_nfl_stats.py --year ${{ github.event.inputs.year }}
-          else
-            # Default: current year
-            python aggregate_nfl_stats.py
-          fi
-
-      - name: Verify update
-        env:
-          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
-          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
-        run: |
-          python - <<'PYEOF'
-          import json, os, urllib.request
-          from datetime import datetime
-
-          def fly_query(sql, database="___ops"):
-              url = os.environ["DATABASE_SERVER_URL"].rstrip("/") + "/query"
-              token = os.environ["DATABASE_READ_TOKEN"]
-              data = json.dumps({"sql": sql, "database": database}).encode()
-              req = urllib.request.Request(url, data=data, headers={
-                  "Content-Type": "application/json",
-                  "Authorization": f"Bearer {token}",
-              })
-              with urllib.request.urlopen(req, timeout=30) as resp:
-                  return json.loads(resp.read())
-
-          current_year = datetime.now().year
-          rows = fly_query(f"""
-              SELECT year, COUNT(*) as rows, MAX(week) as max_week
-              FROM nfl_historical.nfl_player_stats_all
-              WHERE year = {current_year}
-              GROUP BY year
-          """)
-
-          if rows:
-              r = rows[0]
-              print(f"Super table {current_year}: {r['rows']:,} rows, through week {r['max_week']}")
-          else:
-              print(f"WARNING: No data found for {current_year}")
-          PYEOF
+          echo "::error::LEGACY_OPS_WRITER_DISABLED: use the Refresh Live NFL Ops workflow instead."
+          exit 1

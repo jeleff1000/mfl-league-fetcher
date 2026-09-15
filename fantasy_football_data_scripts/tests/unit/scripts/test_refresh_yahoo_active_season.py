@@ -6,12 +6,61 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import duckdb
 import pandas as pd
+
+
+def test_yahoo_active_worker_checks_provider_pair_graph_before_staging():
+    text = (Path(__file__).resolve().parents[4] / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")
+    block = text.split("for week in refresh_weeks:\n        scoreboards", 1)[1].split("transaction_windows =", 1)[0]
+    assert "validate_yahoo_week_matchup_scope(" in block
+    assert block.index("validate_yahoo_week_matchup_scope(") < block.index("merge_provider_refresh_table(")
 
 
 ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def test_weekly_snapshot_reads_each_franchise_identity_row_once():
+    from multi_league.core.delta_publish import canonical_table_registry
+    from refresh_yahoo_active_season import UPDATE_REFRESH_SOURCE_TABLES, _source_frames
+
+    class LocalReader:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def query(self, sql, *, database):
+            assert database == "___leagues"
+            result = self.conn.execute(sql)
+            columns = [item[0] for item in result.description]
+            return [dict(zip(columns, row)) for row in result.fetchall()]
+
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        for table_name in set(UPDATE_REFRESH_SOURCE_TABLES):
+            assert table_name in canonical_table_registry()
+            conn.execute(
+                f'CREATE TABLE public."{table_name}" '
+                '(db_name VARCHAR, year INTEGER, marker VARCHAR)'
+            )
+        conn.execute(
+            "INSERT INTO public.franchise_identity_audit VALUES "
+            "('league_a', 2026, 'audit_once')"
+        )
+        conn.execute(
+            "INSERT INTO public.franchise_identity_registry VALUES "
+            "('league_a', 2026, 'registry_once')"
+        )
+        frames = _source_frames(
+            LocalReader(conn), db_name="league_a", active_year=2026,
+            tables=UPDATE_REFRESH_SOURCE_TABLES,
+        )
+        assert frames["franchise_identity_audit"]["marker"].tolist() == ["audit_once"]
+        assert frames["franchise_identity_registry"]["marker"].tolist() == ["registry_once"]
+    finally:
+        conn.close()
 
 
 def test_identity_repair_preserves_hydrated_draft_metadata_and_fills_yahoo_ids():
@@ -159,6 +208,45 @@ def test_active_history_rejects_a_discovered_chain_that_rewrites_saved_identity(
                 "2025": "461.l.12345",
                 "2026": "470.l.164172",
             },
+        )
+
+
+def test_active_yahoo_key_fast_path_retains_saved_multiplatform_lineage():
+    from refresh_yahoo_active_season import _active_yahoo_history
+
+    history = _active_yahoo_history(
+        SimpleNamespace(league_id="461.l.9", league_ids={
+            "2014": "331.l.1", "2025": "461.l.9", "2024": "sleeper-2024",
+        }),
+        oauth=object(), active_year=2026, source_active_key="470.l.10",
+        discover=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("fast path must not discover")),
+    )
+    assert history == {"2014": "331.l.1", "2024": "sleeper-2024", "2025": "461.l.9", "2026": "470.l.10"}
+
+
+def test_active_yahoo_key_fast_path_rejects_saved_fly_conflict():
+    from refresh_yahoo_active_season import _active_yahoo_history
+    import pytest
+
+    with pytest.raises(RuntimeError, match="conflicting active Yahoo league keys"):
+        _active_yahoo_history(
+            SimpleNamespace(league_id="470.l.10", league_ids={"2026": "470.l.10"}),
+            oauth=object(), active_year=2026, source_active_key="470.l.11",
+            discover=lambda *_args, **_kwargs: {},
+        )
+
+
+def test_active_yahoo_history_rejects_a_non_yahoo_active_id_before_fetch():
+    from refresh_yahoo_active_season import _active_yahoo_history
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no valid active Yahoo league key"):
+        _active_yahoo_history(
+            SimpleNamespace(league_id="461.l.9", league_ids={
+                "2025": "461.l.9", "2026": "1389710321509232641",
+            }),
+            oauth=object(), active_year=2026,
+            discover=lambda *_args, **_kwargs: {},
         )
 
 

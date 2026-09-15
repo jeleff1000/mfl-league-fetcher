@@ -919,6 +919,7 @@ class LocalLeagueDB:
         import json
         import shutil
         import tempfile
+        import uuid
 
         from multi_league.core.targets.fly_target import FlyTarget
 
@@ -1001,6 +1002,22 @@ class LocalLeagueDB:
         if publish_format == "delta":
             from multi_league.core.delta_publish import build_delta_bundle
 
+            snapshot_raw = os.environ.get("LEAGUE_IMPORT_BASE_GENERATION")
+            if snapshot_raw is None:
+                if _env_bool("REQUIRE_IMPORT_BASE_GENERATION", False):
+                    raise RuntimeError(
+                        "Delta import has no pre-fetch Fly publication generation; "
+                        "refusing an unfenced league write"
+                    )
+                base_generation = None
+            else:
+                try:
+                    base_generation = int(snapshot_raw)
+                except ValueError as exc:
+                    raise RuntimeError("Invalid pre-fetch Fly publication generation") from exc
+                if base_generation < 0:
+                    raise RuntimeError("Invalid pre-fetch Fly publication generation")
+
             bundle = None
             try:
                 bundle_start = time.perf_counter()
@@ -1013,6 +1030,7 @@ class LocalLeagueDB:
                     or os.environ.get("SLEEPER_LEAGUE_ID")
                     or os.environ.get("YAHOO_LEAGUE_ID")
                     or os.environ.get("ESPN_LEAGUE_ID"),
+                    base_generation=base_generation,
                 )
                 manifest_path = self.data_dir / "delta_publish_manifest.json"
                 manifest_path.write_text(
@@ -1091,9 +1109,13 @@ class LocalLeagueDB:
         def sql_literal(value: str | Path) -> str:
             return "'" + str(value).replace("'", "''") + "'"
 
-        upload_path = Path(tempfile.gettempdir()) / f"{db_name}_upload.duckdb"
-        if upload_path.exists():
-            upload_path.unlink()
+        # This is an owned staging artifact, not a shared league-wide path.
+        # A parallel same-name import must never unlink another writer's file.
+        safe_db_name = "".join(
+            ch if (ch.isascii() and ch.isalnum()) or ch == "_" else "_"
+            for ch in str(db_name)
+        )[:64] or "league"
+        upload_path = Path(tempfile.gettempdir()) / f"{safe_db_name}_upload_{uuid.uuid4().hex}.duckdb"
 
         staging_start = time.perf_counter()
         staged_tables = 0
@@ -1143,21 +1165,24 @@ class LocalLeagueDB:
             if attached_upload:
                 conn.execute(f"DETACH {qident(upload_alias)}")
 
-        upload_conn = duckdb.connect(str(upload_path))
-        upload_conn.execute("CHECKPOINT")
-        upload_conn.close()
-        upload_size_mb = upload_path.stat().st_size / (1024 * 1024)
-        print(
-            f"[UPLOAD-FLY] Staged {staged_tables} tables / {staged_rows:,} rows "
-            f"into {upload_path.name} ({upload_size_mb:.1f} MB) "
-            f"in {time.perf_counter() - staging_start:.1f}s"
-        )
+        try:
+            upload_conn = duckdb.connect(str(upload_path))
+            try:
+                upload_conn.execute("CHECKPOINT")
+            finally:
+                upload_conn.close()
+            upload_size_mb = upload_path.stat().st_size / (1024 * 1024)
+            print(
+                f"[UPLOAD-FLY] Staged {staged_tables} tables / {staged_rows:,} rows "
+                f"into {upload_path.name} ({upload_size_mb:.1f} MB) "
+                f"in {time.perf_counter() - staging_start:.1f}s"
+            )
 
-        target = FlyTarget()
-        merge_start = time.perf_counter()
-        result = target.merge_league(db_name, upload_path)
-        print(f"[UPLOAD-FLY] merge-league completed in {time.perf_counter() - merge_start:.1f}s")
-        finalize_inventory_and_merge_source(target)
-
-        upload_path.unlink(missing_ok=True)
-        logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
+            target = FlyTarget()
+            merge_start = time.perf_counter()
+            result = target.merge_league(db_name, upload_path)
+            print(f"[UPLOAD-FLY] merge-league completed in {time.perf_counter() - merge_start:.1f}s")
+            finalize_inventory_and_merge_source(target)
+            logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
+        finally:
+            upload_path.unlink(missing_ok=True)

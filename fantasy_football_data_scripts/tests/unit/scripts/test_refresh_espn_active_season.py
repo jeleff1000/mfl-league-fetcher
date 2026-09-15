@@ -79,10 +79,66 @@ def test_build_context_reuses_supplied_frontend_settings(tmp_path, monkeypatch):
     assert context_path.is_file()
 
 
-def test_espn_draft_manifest_uses_the_complete_loaded_draft_order():
-    """A retained ESPN draft can be checked without a second league request."""
+def _draft_payload(*, drafted=True, pick_count=6, rounds=2):
+    return {
+        "draftDetail": {
+            "drafted": drafted,
+            "inProgress": False,
+            "picks": [{"overallPickNumber": i} for i in range(1, pick_count + 1)],
+        },
+        "settings": {
+            "size": 3,
+            "rosterSettings": {"lineupSlotCounts": {"0": 1, "20": rounds - 1, "21": 2}},
+            "draftSettings": {"type": "SNAKE", "pickOrder": [1, 2, 3]},
+        },
+    }
+
+
+def test_espn_draft_manifest_accepts_verified_afi_2026_pick_shape():
     from refresh_espn_active_season import _espn_draft_manifest
 
-    league = SimpleNamespace(draft=[SimpleNamespace(), SimpleNamespace(), SimpleNamespace()])
+    # Fly's encrypted credential yielded a complete ESPN response with 12
+    # teams, 14 non-IR roster slots and overall picks 1..168.
+    payload = _draft_payload(pick_count=168, rounds=14)
+    payload["settings"]["size"] = 12
+    payload["settings"]["draftSettings"]["pickOrder"] = list(range(1, 13))
+    payload["settings"]["rosterSettings"]["lineupSlotCounts"] = {
+        "0": 1, "2": 2, "4": 2, "6": 1, "16": 1, "17": 1,
+        "20": 5, "21": 2, "23": 1,
+    }
+    client = SimpleNamespace(get_raw_league=lambda *_args: payload)
+    league = SimpleNamespace(draft=[object()] * 168)
+    manifest, no_draft = _espn_draft_manifest(client, league, 2026)
+    assert not no_draft
+    assert len(manifest) == 168
 
-    assert _espn_draft_manifest(league).equals(pd.DataFrame({"pick": [1, 2, 3]}))
+
+def test_espn_draft_manifest_requires_raw_complete_pick_identities():
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    client = SimpleNamespace(get_raw_league=lambda *_args: _draft_payload())
+    league = SimpleNamespace(draft=[SimpleNamespace() for _ in range(6)])
+    manifest, absent = _espn_draft_manifest(client, league, 2026)
+    assert manifest.equals(pd.DataFrame({"pick": [1, 2, 3, 4, 5, 6]}))
+    assert absent is False
+
+
+def test_espn_draft_manifest_rejects_empty_or_short_parsed_and_raw_drafts():
+    import pytest
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    for raw_count, parsed_count in ((6, 0), (3, 3), (6, 3)):
+        client = SimpleNamespace(get_raw_league=lambda *_args, n=raw_count: _draft_payload(pick_count=n))
+        league = SimpleNamespace(draft=[SimpleNamespace() for _ in range(parsed_count)])
+        with pytest.raises(RefreshScopeError):
+            _espn_draft_manifest(client, league, 2026)
+
+
+def test_espn_draft_manifest_confirms_absence_only_from_raw_undrafted_status():
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    client = SimpleNamespace(get_raw_league=lambda *_args: _draft_payload(drafted=False, pick_count=0))
+    manifest, absent = _espn_draft_manifest(client, SimpleNamespace(draft=[]), 2026)
+    assert manifest.empty
+    assert absent is True

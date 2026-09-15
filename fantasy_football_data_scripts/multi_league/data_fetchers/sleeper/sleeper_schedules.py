@@ -632,6 +632,7 @@ class SleeperScheduleFetcher:
         roster_map = self._get_roster_mappings(league_id)
         log(f"Found {len(roster_map)} teams")
 
+        explicit_week_scope = weeks is not None
         if weeks is None:
             # Fetch up to 22 weeks to cover regular season (18) + playoffs (4)
             # Sleeper will return empty/phantom data for weeks that haven't happened
@@ -655,7 +656,7 @@ class SleeperScheduleFetcher:
                     consecutive_empty_weeks += 1
                     if _verbose:
                         log(f"  Week {week}: No schedule data - skipping")
-                    if consecutive_empty_weeks >= 3:
+                    if not explicit_week_scope and consecutive_empty_weeks >= 3:
                         if _verbose:
                             log("    3+ consecutive empty weeks - stopping")
                         break
@@ -668,6 +669,8 @@ class SleeperScheduleFetcher:
                     log(f"  Week {week}: {len(week_data)} schedule entries")
 
             except Exception as e:
+                if explicit_week_scope:
+                    raise
                 log(f"  Error fetching week {week}: {e}")
                 continue
 

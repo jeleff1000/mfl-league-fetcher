@@ -26,6 +26,8 @@ _ops_lock = threading.Lock()
 _metadata: dict[str, dict] = {}
 _active_count: int = 0
 _count_lock = threading.Lock()
+_temp_limit_lock = threading.Lock()
+_temp_limit_by_data_dir: dict[Path, str] = {}
 
 
 def _compute_memory_limit() -> str:
@@ -49,13 +51,21 @@ def _compute_temp_directory_limit(data_dir: Path | None) -> str:
         return explicit
     if not data_dir:
         return f"{DEFAULT_DUCKDB_TEMP_LIMIT_GIB}GiB"
-    try:
-        usage = shutil.disk_usage(data_dir)
-        free_gib = usage.free // (1024**3)
-        limit_gib = max(2, min(DEFAULT_DUCKDB_TEMP_LIMIT_GIB, int(free_gib * 0.75)))
-        return f"{limit_gib}GiB"
-    except Exception:
-        return f"{DEFAULT_DUCKDB_TEMP_LIMIT_GIB}GiB"
+    # This value is a connect-time DuckDB database-instance setting. Recomputing
+    # it from current free space for each pool/writer connection can make the
+    # second connection incompatible with the first as the disk crosses a GiB
+    # boundary. The actual free disk still limits spills independently.
+    key = Path(data_dir).resolve()
+    with _temp_limit_lock:
+        if key not in _temp_limit_by_data_dir:
+            try:
+                usage = shutil.disk_usage(key)
+                free_gib = usage.free // (1024**3)
+                limit_gib = max(2, min(DEFAULT_DUCKDB_TEMP_LIMIT_GIB, int(free_gib * 0.75)))
+                _temp_limit_by_data_dir[key] = f"{limit_gib}GiB"
+            except Exception:
+                _temp_limit_by_data_dir[key] = f"{DEFAULT_DUCKDB_TEMP_LIMIT_GIB}GiB"
+        return _temp_limit_by_data_dir[key]
 
 
 def duckdb_connection_config(data_dir: Path | None = None, *, threads: int | None = None) -> dict:

@@ -333,10 +333,10 @@ def _assert_derived_values_not_erased(
     table_name: str,
     old: pd.DataFrame,
     new: pd.DataFrame,
-) -> None:
+) -> int:
     """Prevent an active provider refresh from turning valid enrichment into NULL."""
     if old.empty:
-        return
+        return 0
     contract = table_ownership(table_name)
     keys = list(contract.key_columns)
     if any(column not in old.columns or column not in new.columns for column in keys):
@@ -346,6 +346,25 @@ def _assert_derived_values_not_erased(
     if old_index.index.has_duplicates or new_index.index.has_duplicates:
         raise PreservationError(f"duplicate source identity in {table_name}: {keys}")
     derived = sorted(contract.derived_columns & set(old.columns) & set(new.columns))
+    optimal_deselections = 0
+    if (
+        table_name == "player_fantasy"
+        and {"db_name", "year", "week", "league_wide_optimal_player", "league_wide_optimal_position"}
+        <= set(old.columns) & set(new.columns)
+    ):
+        new_flags = pd.to_numeric(new["league_wide_optimal_player"], errors="coerce").eq(1)
+        new_labels = new["league_wide_optimal_position"].fillna("").astype(str).str.strip().ne("")
+        if (new_flags & ~new_labels).any():
+            raise PreservationError("selected league-wide optimal player has no recomputed slot label")
+        old_selected = old.loc[
+            pd.to_numeric(old["league_wide_optimal_player"], errors="coerce").eq(1),
+            ["db_name", "year", "week"],
+        ].drop_duplicates()
+        new_selected = set(
+            map(tuple, new.loc[new_flags, ["db_name", "year", "week"]].itertuples(index=False, name=None))
+        )
+        if any(tuple(scope) not in new_selected for scope in old_selected.itertuples(index=False, name=None)):
+            raise PreservationError("league-wide optimal recomputation removed every selected player in a week")
     for key, old_row in old_index.iterrows():
         if key not in new_index.index:
             # Active provider corrections may legitimately remove or re-key a
@@ -355,9 +374,20 @@ def _assert_derived_values_not_erased(
         new_row = new_index.loc[key]
         for column in derived:
             if pd.notna(old_row[column]) and pd.isna(new_row[column]):
+                if table_name == "player_fantasy" and column == "league_wide_optimal_position":
+                    old_flag = pd.to_numeric(
+                        pd.Series([old_row.get("league_wide_optimal_player")]), errors="coerce"
+                    ).iloc[0]
+                    new_flag = pd.to_numeric(
+                        pd.Series([new_row.get("league_wide_optimal_player")]), errors="coerce"
+                    ).iloc[0]
+                    if old_flag == 1 and new_flag == 0:
+                        optimal_deselections += 1
+                        continue
                 raise PreservationError(
                     f"derived value became null in {table_name}.{column} for {key}"
                 )
+    return optimal_deselections
 
 
 def assert_refresh_preservation(
@@ -373,6 +403,7 @@ def assert_refresh_preservation(
 
     _assert_active_aliases_preserved(before, after, active_year=active_year)
 
+    semantic_optimal_deselections = 0
     for table_name in sorted(_SOURCE_FACT_TABLES & before.keys()):
         if table_name not in after:
             raise PreservationError(f"historical source table disappeared: {table_name}")
@@ -380,7 +411,7 @@ def assert_refresh_preservation(
         new_history = _historical_source_witness(after[table_name], table_name, active_year)
         if _frame_fingerprint(old_history) != _frame_fingerprint(new_history):
             raise PreservationError(f"historical source rows changed in {table_name}")
-        _assert_derived_values_not_erased(
+        semantic_optimal_deselections += _assert_derived_values_not_erased(
             table_name,
             before[table_name],
             after[table_name],
@@ -419,6 +450,7 @@ def assert_refresh_preservation(
         "historical_rows_preserved": True,
         "homepage_values_preserved": True,
         "user_configuration_preserved": True,
+        "semantic_optimal_deselections": semantic_optimal_deselections,
     }
 
 

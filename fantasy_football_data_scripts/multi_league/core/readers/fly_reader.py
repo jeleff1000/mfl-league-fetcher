@@ -86,7 +86,20 @@ class FlyReader:
                     f"[database={database}; sql={self._sql_preview(sql)}]"
                 ) from e
 
-            if resp.status_code in self.RETRY_STATUS and attempt < self.MAX_RETRIES - 1:
+            # Fly's query endpoint currently wraps DuckDB's deterministic
+            # missing-table Catalog Error in HTTP 500. Retrying that binder
+            # result six times adds ~30 seconds without any chance of success.
+            text_lower = (resp.text or "").lower()
+            missing_catalog_table = (
+                resp.status_code == 500
+                and "catalog error" in text_lower
+                and "does not exist" in text_lower
+            )
+            if (
+                resp.status_code in self.RETRY_STATUS
+                and attempt < self.MAX_RETRIES - 1
+                and not missing_catalog_table
+            ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
                 time.sleep(self._retry_delay(attempt, resp))
                 continue
@@ -96,7 +109,6 @@ class FlyReader:
                     f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'} "
                     f"[database={database}; sql={self._sql_preview(sql)}]"
                 )
-                text_lower = resp.text.lower()
                 if "does not exist" in text_lower or "table not found" in text_lower:
                     raise FlyReaderTableNotFound(msg)
                 raise FlyReaderError(msg)

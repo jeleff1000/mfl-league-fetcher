@@ -12,8 +12,8 @@ on:
         required: true
         type: string
       import_lock_key:
-        description: 'Stable merge concurrency key, usually target/source db names'
-        required: false
+        description: 'Target db_name used by the shared league publication queue'
+        required: true
         type: string
   repository_dispatch:
     types: [league_admin_merge]
@@ -23,8 +23,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key || github.event.inputs.user_id || github.event.client_payload.user_id || github.run_id }}
+  group: league-update-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   merge-league:
@@ -40,6 +41,30 @@ jobs:
       FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
 
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
+      - name: Validate target league lock
+        env:
+          MERGE_DATA_B64: ${{ github.event.inputs.merge_data_b64 || github.event.client_payload.merge_data_b64 }}
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re
+          key = os.environ.get('IMPORT_LOCK_KEY', '')
+          if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
+              raise SystemExit('Target league import_lock_key is required')
+          payload = json.loads(base64.b64decode(os.environ['MERGE_DATA_B64']))
+          if payload.get('target_db') != key:
+              raise SystemExit('Target league lock does not match merge target_db')
+          PY
+
       - name: Checkout code
         uses: actions/checkout@v5
 

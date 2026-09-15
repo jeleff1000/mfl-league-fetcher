@@ -48,6 +48,7 @@ from update_sleeper_offseason_draft import (  # noqa: E402
     FlyDuckDBConnection,
     fly_rows,
     fly_scalar,
+    league_publish_generation,
     load_dotenv,
     parse_json_field,
     replace_draft_year,
@@ -911,7 +912,13 @@ def execute_update(
     skip_aggregates: bool,
     skip_homepage: bool,
     chunk_size: int,
+    base_generation: int | None = None,
 ) -> None:
+    # Bind the version of the league that this provider refetch is allowed to
+    # replace. A fleet sweep has no per-league GitHub queue; Fly rejects a
+    # bundle if a weekly/import writer advanced this generation meanwhile.
+    if base_generation is None:
+        base_generation = league_publish_generation(conn, plan.db_name)
     if plan.platform == "sleeper":
         # The check fetch is deliberately a small source fingerprint and does
         # not include publish fields such as ``year``. Fetch canonical rows
@@ -928,7 +935,8 @@ def execute_update(
     if skip_sql_enrichments and skip_aggregates and skip_homepage:
         # Explicit draft-table-only maintenance remains available for operators.
         # Product-triggered updates always use the complete local stage below.
-        replace_draft_year(conn, plan, draft_df, chunk_size=chunk_size, dry_run=False)
+        replace_draft_year(conn, plan, draft_df, chunk_size=chunk_size, dry_run=False,
+                           base_generation=base_generation)
     else:
         run_complete_local_offseason_update(
             conn,
@@ -940,6 +948,7 @@ def execute_update(
             skip_aggregates=skip_aggregates,
             skip_homepage=skip_homepage,
             chunk_size=chunk_size,
+            base_generation=base_generation,
         )
 
     snapshot_columns = snapshot_columns_for_platform(plan.platform)
@@ -1175,6 +1184,9 @@ def main() -> int:
                 results.append(result)
                 continue
         try:
+            # Yahoo may publish the first checker fetch directly. Capture the
+            # Fly version before even that read, not only before a refetch.
+            base_generation = league_publish_generation(conn, str(row.get("db_name") or "")) if args.execute else None
             result, plan, checker_draft_df = check_one(
                 conn,
                 row,
@@ -1198,6 +1210,7 @@ def main() -> int:
                     skip_aggregates=args.skip_aggregates,
                     skip_homepage=args.skip_homepage,
                     chunk_size=args.chunk_size,
+                    base_generation=base_generation,
                 )
                 print(f"  updated={result.updated}")
         except (Exception, SystemExit) as exc:

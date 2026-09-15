@@ -69,8 +69,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.database_name || github.event.client_payload.database_name || github.event.inputs.league_id || github.event.client_payload.league_id || github.run_id }}
+  group: league-update-${{ github.event.inputs.database_name || github.event.client_payload.database_name || 'fleaflicker_public_30323' }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   import-fleaflicker:
@@ -90,6 +91,7 @@ jobs:
       FLY_UPLOAD_RETRY_MAX_DELAY: 30
       FLY_UPLOAD_RETRY_JITTER_SECONDS: 2
       FLY_PUBLISH_FORMAT: delta
+      REQUIRE_IMPORT_BASE_GENERATION: '1'
       FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: '1'
       OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
@@ -108,6 +110,15 @@ jobs:
       DATA_DIR: ${{ github.workspace }}/fantasy_football_data/fleaflicker
 
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
       - name: Checkout yahoo_oauth
         uses: actions/checkout@v5
         with:
@@ -125,6 +136,9 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+
+      - name: Capture Fleaflicker import generation
+        run: python scripts/capture_import_generation.py --db-name "${DB_NAME}"
 
       - name: Restore canonical research public lake
         id: research-lake

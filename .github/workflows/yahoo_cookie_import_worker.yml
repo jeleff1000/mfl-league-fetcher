@@ -70,8 +70,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: yahoo-cookie-${{ inputs.database_name }}
+  group: league-update-${{ inputs.database_name }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   import:
@@ -89,12 +90,23 @@ jobs:
       DRAFT_GLOBAL_SOURCE_PATH: ${{ github.workspace }}/corpus_dependencies/draft_global_source.parquet
       CORPUS_DEPENDENCY_KEY: corpus-dependencies-v1-Linux-20260717
       FLY_PUBLISH_FORMAT: delta
+      REQUIRE_IMPORT_BASE_GENERATION: '1'
+      FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: "1"
       REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
       DATABASE_NAME: ${{ inputs.database_name }}
       COOKIE_DATA_DIR: ${{ github.workspace }}/yahoo_oauth/cookie_worker_output
       COOKIE_BACKUP_CACHE_ONLY: ${{ inputs.cache_only && '1' || '0' }}
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
       - name: Checkout worker
         uses: actions/checkout@v5
 
@@ -107,6 +119,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
+      - name: Capture quick cookie import generation
+        working-directory: yahoo_oauth
+        run: python scripts/capture_import_generation.py --db-name "${DATABASE_NAME}"
 
       - name: Install dependencies
         working-directory: yahoo_oauth
@@ -213,6 +229,12 @@ jobs:
           --strict
           --verify-hot
 
+      - name: Capture full cookie import generation
+        id: full_snapshot
+        if: inputs.import_mode == 'full'
+        working-directory: yahoo_oauth
+        run: python scripts/capture_import_generation.py --db-name "${DATABASE_NAME}"
+
       - name: Run full Yahoo cookie track
         if: inputs.import_mode == 'full'
         working-directory: yahoo_oauth
@@ -260,6 +282,8 @@ jobs:
 
       - name: Upload full cookie import
         if: inputs.import_mode == 'full'
+        env:
+          LEAGUE_IMPORT_BASE_GENERATION: ${{ steps.full_snapshot.outputs.base_generation }}
         working-directory: yahoo_oauth/fantasy_football_data_scripts
         run: |
           python - <<'PY'

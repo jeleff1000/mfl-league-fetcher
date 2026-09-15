@@ -674,6 +674,8 @@ def espn_schedule_is_final(
         if expected_team_ids is not None:
             if not home_id or (not away_id and not declared_bye):
                 return False
+            if home_id in observed_teams or (away_id and away_id in observed_teams):
+                return False
             observed_teams.add(home_id)
             if away_id:
                 observed_teams.add(away_id)
@@ -700,6 +702,8 @@ def hydrate_local_refresh_sources(
     deliberate defense-in-depth: the scoped Fly query and the local build
     must agree before a bundle can be created.
     """
+    from multi_league.core.aggregate_ddl import AGGREGATE_TABLE_SPECS, ensure_aggregate_table
+
     hydrated: dict[str, int] = {}
     for table_name in sorted(source_frames):
         frame = source_frames[table_name]
@@ -729,16 +733,32 @@ def hydrate_local_refresh_sources(
                 str(expected_platform).strip().lower()
             )
             if stale_active_rows.any():
-                frame = frame.loc[~stale_active_rows].copy()
+                conflicting = sorted(set(platforms.loc[stale_active_rows]))
+                raise RefreshScopeError(
+                    f"source frame {table_name!r} has overlapping active platform rows "
+                    f"for {active_year}: {', '.join(conflicting)}"
+                )
 
         local_db.ensure_table(table_name)
+        if table_name in AGGREGATE_TABLE_SPECS:
+            conn = local_db.connect()
+            catalog = str(conn.execute("SELECT current_database()").fetchone()[0])
+            ensure_aggregate_table(conn, catalog, table_name)
+            canonical_columns = {
+                str(name) for name, *_ in conn.execute(f"DESCRIBE public.{table_name}").fetchall()
+            }
+            unsupported = sorted(set(frame.columns) - canonical_columns)
+            if unsupported:
+                raise RefreshScopeError(
+                    f"source aggregate {table_name!r} has unsupported Fly columns: "
+                    + ", ".join(unsupported)
+                )
         if not frame.empty:
             if local_db.table_exists(table_name):
                 local_db._insert_into_table(table_name, frame)
             else:
-                # Career/homepage aggregates have no canonical local DDL.
-                # Seed their exact Fly schema from the bounded league frame;
-                # later transformations can then rebuild them normally.
+                # Non-aggregate tables without registered local DDL retain
+                # their bounded Fly column shape for downstream readers.
                 local_db.save_table(table_name, frame)
         hydrated[table_name] = int(len(frame))
     return hydrated
@@ -942,6 +962,7 @@ def needs_active_season_draft_fetch(
     platform: str | None = None,
     provider_manifest: pd.DataFrame | None = None,
     manifest_key_columns: tuple[str, ...] = (),
+    year: int | None = None,
 ) -> bool:
     """Whether a weekly worker still needs the one-time active-season draft.
 
@@ -952,7 +973,16 @@ def needs_active_season_draft_fetch(
     player IDs, which cannot be resolved downstream until the one bulk
     ``draftresults/players`` request is made.
     """
-    if not local_db.table_exists("draft") or int(local_db.row_count("draft") or 0) == 0:
+    if not local_db.table_exists("draft"):
+        return True
+    if year is not None:
+        try:
+            active_draft = local_db.read_table("draft", year=year)
+        except (AttributeError, duckdb.Error):
+            return True
+        if active_draft.empty:
+            return True
+    elif int(local_db.row_count("draft") or 0) == 0:
         return True
 
     if provider_manifest is not None:
@@ -961,7 +991,7 @@ def needs_active_season_draft_fetch(
         if not manifest_key_columns:
             raise ValueError("provider draft manifest requires identity columns")
         try:
-            hydrated = local_db.read_table("draft")
+            hydrated = active_draft if year is not None else local_db.read_table("draft")
         except (AttributeError, duckdb.Error):
             return True
         if missing_provider_draft_keys(
@@ -1132,14 +1162,20 @@ def refresh_authoritative_draft_partition(
     confirmed_no_draft: bool = False,
 ) -> int:
     """Reuse the quick draft fetch/replacement only after exact-key admission."""
-    has_local = local_db.table_exists("draft") and int(local_db.row_count("draft") or 0) > 0
-    if provider_manifest.empty and confirmed_no_draft and not has_local:
+    if provider_manifest.empty and confirmed_no_draft:
+        active_draft = (
+            local_db.read_table("draft", year=year)
+            if local_db.table_exists("draft") else pd.DataFrame()
+        )
+        if not active_draft.empty:
+            raise RefreshScopeError("provider-confirmed no-draft season has retained active picks")
         return 0
     if not needs_active_season_draft_fetch(
         local_db,
         platform=platform,
         provider_manifest=provider_manifest,
         manifest_key_columns=key_columns,
+        year=year,
     ):
         return 0
     fetched = fetch_full()

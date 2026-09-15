@@ -50,17 +50,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: sleeper-active-season-refresh-${{ inputs.db_name }}
+  group: league-update-${{ inputs.db_name }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   sleeper-active-season-refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      data_committed: ${{ steps.publication.outputs.committed == 'true' || steps.cache_recovery.outcome == 'success' }}
+      cache_verified: ${{ steps.cache_publish.outcome == 'success' || steps.cache_recovery.outcome == 'success' }}
+      diagnostics_uploaded: ${{ steps.diagnostic_artifact.outcome == 'success' }}
 
     env:
       PYTHONUNBUFFERED: 1
       DATABASE_BACKEND: fly
+      LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}
+      INPUT_DB_NAME: ${{ inputs.db_name }}
+      INPUT_DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
+      INPUT_ATTEMPT_ID: ${{ inputs.attempt_id }}
+      INPUT_CLAIM_VERSION: ${{ inputs.claim_version }}
       DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
       DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
       DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
@@ -68,6 +78,16 @@ jobs:
       REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
 
     steps:
+      - name: Require canonical public main for publication
+        if: inputs.execute
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
       - name: Checkout application code
         uses: actions/checkout@v5
         with:
@@ -84,6 +104,48 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+
+      - name: Install Fly claim dependency
+        if: inputs.execute && !inputs.cache_only
+        run: python -m pip install --disable-pip-version-check --quiet requests
+
+      - name: Claim paid manual update
+        id: manual_claim
+        if: inputs.execute && !inputs.cache_only && inputs.dispatch_token == ''
+        run: >-
+          python scripts/claim_manual_league_update.py
+          --db "${INPUT_DB_NAME}"
+          --platform sleeper
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+
+      - name: Claim paid UI update
+        if: inputs.execute && !inputs.cache_only && inputs.dispatch_token != ''
+        run: >-
+          python scripts/record_league_update_status.py
+          --db "${INPUT_DB_NAME}"
+          --platform sleeper
+          --status running
+          --dispatch-token "${INPUT_DISPATCH_TOKEN}"
+          --attempt-id "${INPUT_ATTEMPT_ID}"
+          --claim-version "${INPUT_CLAIM_VERSION}"
+          --require-entitled
+
+      - name: Start paid manual update
+        if: inputs.execute && !inputs.cache_only && steps.manual_claim.outcome == 'success'
+        env:
+          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version }}
+        run: >-
+          python scripts/record_league_update_status.py
+          --db "${INPUT_DB_NAME}"
+          --platform sleeper
+          --status running
+          --dispatch-token "${UPDATE_TOKEN}"
+          --attempt-id "${UPDATE_ATTEMPT_ID}"
+          --claim-version "${UPDATE_CLAIM_VERSION}"
+          --require-entitled
 
       - name: Restore canonical research ops cache
         if: ${{ !inputs.cache_only }}
@@ -120,38 +182,30 @@ jobs:
       - name: Validate cache-only recovery request
         if: inputs.cache_only
         env:
-          UI_DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
           EXECUTE: ${{ inputs.execute }}
         run: |
           test "${EXECUTE}" = "true"
-          test -n "${UI_DISPATCH_TOKEN}"
 
       - name: Recover committed cache publication
-        if: inputs.cache_only && inputs.execute && inputs.dispatch_token != ''
-        run: >-
-          python scripts/recover_league_update_cache.py
-          --db "${{ inputs.db_name }}"
-          --platform sleeper
-          --dispatch-token "${{ inputs.dispatch_token }}"
-          --attempt-id "${{ inputs.attempt_id }}"
-          --claim-version "${{ inputs.claim_version }}"
-
-      - name: Claim paid UI update
-        if: ${{ !inputs.cache_only && inputs.dispatch_token != '' }}
-        run: >-
-          python scripts/record_league_update_status.py
-          --db "${{ inputs.db_name }}"
-          --platform sleeper
-          --status running
-          --dispatch-token "${{ inputs.dispatch_token }}"
-          --attempt-id "${{ inputs.attempt_id }}"
-          --claim-version "${{ inputs.claim_version }}"
-          --require-entitled
+        id: cache_recovery
+        if: inputs.cache_only && inputs.execute
+        run: |
+          set -euo pipefail
+          args=(--db "${INPUT_DB_NAME}" --platform sleeper)
+          if [ -n "${INPUT_DISPATCH_TOKEN}" ]; then
+            args+=(--dispatch-token "${INPUT_DISPATCH_TOKEN}"
+                   --attempt-id "${INPUT_ATTEMPT_ID}"
+                   --claim-version "${INPUT_CLAIM_VERSION}")
+          fi
+          python scripts/recover_league_update_cache.py "${args[@]}"
 
       - name: Refresh Sleeper active season
         if: ${{ !inputs.cache_only }}
         env:
           DB_NAME: ${{ inputs.db_name }}
+          LEAGUE_UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
+          LEAGUE_UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
+          LEAGUE_UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
           LEAGUE_ID: ${{ inputs.league_id }}
           YEAR: ${{ inputs.year }}
           THROUGH_WEEK: ${{ inputs.through_week }}
@@ -191,23 +245,44 @@ jobs:
           fi
           python scripts/league_update_workflow_receipt.py "${args[@]}"
 
-      - name: Record Fly commit
-        if: inputs.execute && inputs.dispatch_token != '' && steps.publication.outputs.committed == 'true'
+      - name: Settle unchanged paid manual update
+        if: inputs.execute && !inputs.cache_only && steps.manual_claim.outputs.token != '' && steps.publication.outputs.no_op == 'true'
+        env:
+          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version }}
         run: >-
           python scripts/record_league_update_status.py
-          --db "${{ inputs.db_name }}"
+          --db "${INPUT_DB_NAME}"
+          --platform sleeper
+          --status no_change
+          --dispatch-token "${UPDATE_TOKEN}"
+          --attempt-id "${UPDATE_ATTEMPT_ID}"
+          --claim-version "${UPDATE_CLAIM_VERSION}"
+          --require-entitled
+
+      - name: Record Fly commit
+        if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
+        env:
+          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
+        run: >-
+          python scripts/record_league_update_status.py
+          --db "${INPUT_DB_NAME}"
           --platform sleeper
           --status committed
-          --dispatch-token "${{ inputs.dispatch_token }}"
-          --attempt-id "${{ inputs.attempt_id }}"
-          --claim-version "${{ inputs.claim_version }}"
+          --dispatch-token "${UPDATE_TOKEN}"
+          --attempt-id "${UPDATE_ATTEMPT_ID}"
+          --claim-version "${UPDATE_CLAIM_VERSION}"
           --receipt sleeper_active_season_refresh.json
 
       - name: Publish refreshed cache
+        id: cache_publish
         if: inputs.execute && steps.publication.outputs.committed == 'true'
         run: >-
           python scripts/warm_vercel_cache.py
-          --db "${{ inputs.db_name }}"
+          --db "${INPUT_DB_NAME}"
           --secret "${REVALIDATION_SECRET}"
           --site-url "https://www.leaguehistory.app"
           --mode quick
@@ -216,31 +291,53 @@ jobs:
           --strict
           --verify-hot
 
-      - name: Complete UI update
-        if: inputs.execute && inputs.dispatch_token != '' && steps.publication.outputs.committed == 'true'
+      - name: Complete league update
+        if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
+        env:
+          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
         run: >-
           python scripts/record_league_update_status.py
-          --db "${{ inputs.db_name }}"
+          --db "${INPUT_DB_NAME}"
           --platform sleeper
           --status succeeded
-          --dispatch-token "${{ inputs.dispatch_token }}"
-          --attempt-id "${{ inputs.attempt_id }}"
-          --claim-version "${{ inputs.claim_version }}"
+          --dispatch-token "${UPDATE_TOKEN}"
+          --attempt-id "${UPDATE_ATTEMPT_ID}"
+          --claim-version "${UPDATE_CLAIM_VERSION}"
           --receipt sleeper_active_season_refresh.json
           --cache-verified
 
-      - name: Fail UI update
-        if: ${{ failure() && !inputs.cache_only && inputs.dispatch_token != '' }}
+      - name: Settle failed partial manual claim
+        if: ${{ failure() && inputs.execute && !inputs.cache_only && inputs.dispatch_token == '' && steps.manual_claim.outcome == 'failure' }}
+        continue-on-error: true
+        run: >-
+          python scripts/claim_manual_league_update.py
+          --db "${INPUT_DB_NAME}"
+          --platform sleeper
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+          --fail-owned-claim
+
+      - name: Fail league update
+        if: ${{ (failure() || cancelled()) && !inputs.cache_only && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') }}
+        env:
+          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
+          WORKFLOW_WAS_CANCELLED: ${{ cancelled() && '1' || '0' }}
         run: |
           set -euo pipefail
-          recovery_status=$(python scripts/league_update_workflow_receipt.py --receipt sleeper_active_season_refresh.json --failure-status)
+          classifier_args=(--receipt sleeper_active_season_refresh.json --failure-status)
+          if [ "${WORKFLOW_WAS_CANCELLED}" = "1" ]; then classifier_args+=(--cancelled); fi
+          recovery_status=$(python scripts/league_update_workflow_receipt.py "${classifier_args[@]}")
           args=(
-            --db "${{ inputs.db_name }}"
+            --db "${INPUT_DB_NAME}"
             --platform sleeper
             --status "${recovery_status}"
-            --dispatch-token "${{ inputs.dispatch_token }}"
-            --attempt-id "${{ inputs.attempt_id }}"
-            --claim-version "${{ inputs.claim_version }}"
+            --dispatch-token "${UPDATE_TOKEN}"
+            --attempt-id "${UPDATE_ATTEMPT_ID}"
+            --claim-version "${UPDATE_CLAIM_VERSION}"
           )
           if [ "${recovery_status}" = "committed_cache_pending" ]; then
             args+=(--receipt sleeper_active_season_refresh.json --error "Data published; cache finalization requires retry")
@@ -250,16 +347,19 @@ jobs:
           python scripts/record_league_update_status.py "${args[@]}"
 
       - name: Upload refresh receipt
+        id: diagnostic_artifact
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: sleeper-active-season-refresh-${{ github.run_id }}
           path: sleeper_active_season_refresh.json
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Summary
         if: always()
+        continue-on-error: true
         run: |
           echo "# Sleeper Active-Season Refresh" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

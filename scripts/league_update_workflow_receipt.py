@@ -30,7 +30,7 @@ def classify_publication(receipt: Mapping[str, Any] | None, *, require_publicati
     raise ValueError(f"refresh publication receipt is not valid: {status or 'missing status'}")
 
 
-def failure_status(receipt: Mapping[str, Any] | None) -> str:
+def failure_status(receipt: Mapping[str, Any] | None, *, cancelled: bool = False) -> str:
     """Keep an already committed publication recoverable if cache finalization fails."""
     status = str((receipt or {}).get("status") or "").upper()
     if status == "COMMITTED" and (receipt or {}).get("executed") is True and (
@@ -39,7 +39,7 @@ def failure_status(receipt: Mapping[str, Any] | None) -> str:
         return "committed_cache_pending"
     if status in MANUAL_NO_OP_STATUSES:
         return "incomplete_source"
-    return "failed"
+    return "cancelled" if cancelled else "failed"
 
 
 def _read_receipt(path: Path) -> dict[str, Any] | None:
@@ -55,16 +55,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--require-publication", action="store_true")
     parser.add_argument("--failure-status", action="store_true")
+    parser.add_argument("--cancelled", action="store_true")
     args = parser.parse_args(argv)
     receipt = _read_receipt(args.receipt)
     if args.failure_status:
-        print(failure_status(receipt))
+        print(failure_status(receipt, cancelled=args.cancelled))
         return 0
     committed = classify_publication(receipt, require_publication=args.require_publication)
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with Path(output).open("a", encoding="utf-8") as handle:
             handle.write(f"committed={str(committed).lower()}\n")
+            handle.write(f"no_op={str(not committed).lower()}\n")
+            if not committed:
+                handle.write(f"no_op_status={str((receipt or {}).get('status') or '').upper()}\n")
     print("COMMITTED" if committed else "NO_PUBLICATION")
     return 0
 

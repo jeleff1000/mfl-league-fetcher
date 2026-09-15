@@ -136,10 +136,43 @@ def _build_context(
     return ctx, context_path, client, league
 
 
-def _espn_draft_manifest(league: Any) -> pd.DataFrame:
-    """Return ESPN's complete active-draft identity list from the loaded league."""
-    draft = getattr(league, "draft", None) or []
-    return pd.DataFrame({"pick": list(range(1, len(draft) + 1))})
+def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFrame, bool]:
+    """Prove parsed picks against ESPN's raw draft and configured draft size."""
+    from multi_league.core.league_refresh import RefreshScopeError
+
+    raw = client.get_raw_league(year, ("mDraftDetail", "mSettings"))
+    detail = raw.get("draftDetail") if isinstance(raw, dict) else None
+    settings = raw.get("settings") if isinstance(raw, dict) else None
+    if not isinstance(detail, dict) or not isinstance(settings, dict):
+        raise RefreshScopeError("ESPN draft witness lacks raw draft detail or settings")
+    picks = detail.get("picks")
+    parsed = getattr(league, "draft", None)
+    if not isinstance(picks, list) or parsed is None:
+        raise RefreshScopeError("ESPN draft witness lacks an explicit pick list")
+    if detail.get("drafted") is False and not picks and not parsed:
+        return pd.DataFrame(columns=["pick"]), True
+    if detail.get("drafted") is not True or detail.get("inProgress") is True:
+        raise RefreshScopeError("ESPN active draft is not confirmed complete")
+
+    roster = settings.get("rosterSettings") or {}
+    slots = roster.get("lineupSlotCounts") if isinstance(roster, dict) else None
+    try:
+        teams = int(settings["size"])
+        # ESPN slot 21 is injured reserve and has no draft pick. All other
+        # positive lineup and bench slots require one draft pick per team.
+        rounds = sum(int(count) for slot, count in slots.items() if str(slot) != "21")
+        pick_numbers = [int(pick["overallPickNumber"]) for pick in picks]
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise RefreshScopeError("ESPN draft witness lacks team, slot, or pick identities") from exc
+    expected = teams * rounds
+    if teams < 1 or rounds < 1 or len(pick_numbers) != expected or len(parsed) != expected:
+        raise RefreshScopeError("ESPN draft pick count disagrees with configured draft size")
+    if sorted(pick_numbers) != list(range(1, expected + 1)):
+        raise RefreshScopeError("ESPN raw draft has missing or duplicate overall picks")
+    pick_order = (settings.get("draftSettings") or {}).get("pickOrder")
+    if pick_order and len(pick_order) != teams:
+        raise RefreshScopeError("ESPN draft order disagrees with league team count")
+    return pd.DataFrame({"pick": sorted(pick_numbers)}), False
 
 
 def _merge_active_payloads(
@@ -283,7 +316,7 @@ def _merge_active_payloads(
             league_id=league_id,
         )
     draft_rows = 0
-    draft_manifest = _espn_draft_manifest(league)
+    draft_manifest, confirmed_no_draft = _espn_draft_manifest(client, league, active_year)
     draft_rows = refresh_authoritative_draft_partition(
         local_db,
         provider_manifest=draft_manifest,
@@ -292,11 +325,7 @@ def _merge_active_payloads(
         year=active_year,
         platform="espn",
         league_id=league_id,
-        confirmed_no_draft=(
-            hasattr(league, "draft")
-            and getattr(league, "draft") is not None
-            and len(league.draft) == 0
-        ),
+        confirmed_no_draft=confirmed_no_draft,
     )
     return {
         "provider_roster_team_weeks": provider_roster_team_weeks,
@@ -342,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.league_update_plan import load_persisted_refresh_plan
+    from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
     from scripts.refresh_yahoo_active_season import (
@@ -355,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         _scope_counts,
     )
 
+    timer = PhaseTimer()
     reader = FlyReader()
     if args.execute:
         from multi_league.core.league_update_status import assert_league_update_entitled
@@ -392,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
         "executed": bool(args.execute),
     }
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))
+    timer.mark("source_plan")
     if persisted_plan is not None:
         receipt["source_manifest_digest"] = persisted_plan.observed_manifest_digest
         receipt["source_manifest_json"] = persisted_plan.observed_manifest_json
@@ -399,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         receipt["refresh_reasons"] = list(persisted_plan.reasons)
     if not refresh_weeks:
         receipt["status"] = "NO_FINALIZED_WEEKS"
+        receipt["phase_seconds"] = timer.finish()
         _write_receipt(receipt, args.json_out)
         return 0
 
@@ -409,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
             db_name=args.db,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
+        timer.mark("source_snapshot")
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
@@ -437,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
             from multi_league.core.league_update_ownership import local_preservation_snapshot
 
             preservation_before = local_preservation_snapshot(local_db, preservation_witnesses)
+            timer.mark("local_hydration")
             receipt["fetch_rows"] = _merge_active_payloads(
                 ctx=ctx,
                 client=client,
@@ -450,10 +485,26 @@ def main(argv: list[str] | None = None) -> int:
                 refresh_weeks=refresh_weeks,
                 fetch_rows=receipt["fetch_rows"],
             )
+            timer.mark("provider_fetch")
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"
+                receipt["phase_seconds"] = timer.finish()
                 _write_receipt(receipt, args.json_out)
                 return 0
+
+            from multi_league.core.league_update_validation import (
+                assert_transformed_active_matchup_scope,
+                assert_transformed_active_player_scope,
+                capture_active_final_matchup_scope,
+                capture_active_provider_player_scope,
+            )
+            expected_player_keys = capture_active_provider_player_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="espn_player_id",
+            )
+            expected_matchup_scores = capture_active_final_matchup_scope(
+                local_db.connect(), db_name=args.db, year=active_year, weeks=refresh_weeks,
+            )
 
             active_connection = local_db.connect()
             receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(
@@ -473,6 +524,7 @@ def main(argv: list[str] | None = None) -> int:
                     work_dir=work_dir,
                 )
             )
+            timer.mark("player_ops_cache")
             _run_local_pipeline(
                 ctx=ctx,
                 context_path=context_path,
@@ -482,6 +534,16 @@ def main(argv: list[str] | None = None) -> int:
                 work_dir=work_dir,
                 platform="espn",
                 keeper_config_hydrated="keeper_config" in source_frames,
+            )
+            timer.mark("shared_transformations")
+            receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="espn_player_id",
+                expected_keys=expected_player_keys,
+            )
+            receipt["transformed_matchup_scope"] = assert_transformed_active_matchup_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
             local_db.connect()
             from multi_league.core.homepage_refresh import prepare_homepage_refresh
@@ -504,6 +566,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             publish_tables = active_refresh_publish_tables(local_db.connect())
             publish_tables = sorted(set([*publish_tables, *homepage["published_tables"]]))
+            from multi_league.core.league_update_validation import assert_refresh_derived_output_health
+
+            receipt["derived_health"] = assert_refresh_derived_output_health(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="espn_player_id",
+                published_tables=publish_tables,
+            )
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 
             receipt["ownership"] = assert_publish_table_ownership(publish_tables)
@@ -525,6 +594,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
             finally:
                 stage.close()
+            timer.mark("homepage_preservation_stage")
+            from multi_league.core.league_update_publish_claim import renew_claim_for_publication
+
+            renew_claim_for_publication(reader, database_name=args.db, platform="espn")
+            timer.mark("prepublish_claim")
             result = FlyTarget().merge_fleet_partition(
                 bundle.path,
                 bundle_id=bundle.bundle_id,
@@ -538,15 +612,18 @@ def main(argv: list[str] | None = None) -> int:
             receipt["homepage_bundle_id"] = bundle.bundle_id
             receipt["homepage_rows"] = homepage["rows"]
             receipt["published_tables"] = publish_tables
+            timer.mark("fly_publication")
             receipt["post_publish_counts"] = _scope_counts(
                 reader,
                 db_name=args.db,
                 active_year=active_year,
                 tables=receipt["published_tables"],
             )
+            timer.mark("post_publish_verification")
         finally:
             local_db.close()
 
+    receipt["phase_seconds"] = timer.finish()
     _write_receipt(receipt, args.json_out)
     return 0
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 import pandas as pd
@@ -304,6 +305,438 @@ def validate_active_roster_frame(
     return len(observed)
 
 
+_ACTIVE_PROVIDER_PLAYER_COLUMNS = frozenset({
+    "yahoo_player_id", "espn_player_id", "sleeper_player_id",
+})
+
+
+def _active_player_rows(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+    provider_id_column: str, require_mappings: bool,
+) -> list[tuple[Any, ...]]:
+    """Read only affected league-week provider keys, never the NFL lake."""
+    if provider_id_column not in _ACTIVE_PROVIDER_PLAYER_COLUMNS:
+        raise IncompleteSourceError("unsupported provider player identity column")
+    selected_weeks = tuple(sorted({int(week) for week in weeks}))
+    if not selected_weeks or any(week < 1 for week in selected_weeks):
+        raise IncompleteSourceError("active player week scope is invalid")
+    columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'player_fantasy'"
+        ).fetchall()
+    }
+    required = {"db_name", "year", "week", provider_id_column}
+    if require_mappings:
+        required |= {"NFL_player_id", "fantasy_points"}
+    if not required <= columns:
+        missing = sorted(required - columns)
+        raise IncompleteSourceError(
+            "active player provider player identity column or mapping inputs are missing: "
+            + ", ".join(missing)
+        )
+    week_placeholders = ", ".join("?" for _ in selected_weeks)
+    identity = '"' + provider_id_column + '"'
+    select = f"week, CAST({identity} AS VARCHAR)"
+    if require_mappings:
+        select += ", CAST(NFL_player_id AS VARCHAR), fantasy_points"
+    return conn.execute(
+        f"SELECT {select} FROM public.player_fantasy "
+        f"WHERE db_name = ? AND year = ? AND week IN ({week_placeholders}) "
+        f"AND {identity} IS NOT NULL",
+        [str(db_name), int(year), *selected_weeks],
+    ).fetchall()
+
+
+def _provider_player_key(week: Any, player_id: Any) -> tuple[int, str]:
+    raw = str(player_id).strip()
+    if raw.endswith(".0") and raw[:-2].lstrip("-").isdigit():
+        raw = raw[:-2]
+    if not raw:
+        raise IncompleteSourceError("active provider player ID is blank")
+    return int(week), raw
+
+
+def capture_active_provider_player_scope(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+    provider_id_column: str,
+) -> set[tuple[int, str]]:
+    """Bind merged provider player ownership before shared transformations."""
+    rows = _active_player_rows(
+        conn, db_name=db_name, year=year, weeks=weeks,
+        provider_id_column=provider_id_column, require_mappings=False,
+    )
+    keys = {_provider_player_key(week, player_id) for week, player_id in rows}
+    if not keys:
+        raise IncompleteSourceError("active provider player scope has no admitted rows")
+    return keys
+
+
+def assert_transformed_active_player_scope(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+    provider_id_column: str, expected_keys: set[tuple[int, str]],
+) -> dict[str, int]:
+    """Fail before staging if shared transforms lose provider IDs or scored mappings."""
+    rows = _active_player_rows(
+        conn, db_name=db_name, year=year, weeks=weeks,
+        provider_id_column=provider_id_column, require_mappings=True,
+    )
+    observed = {_provider_player_key(week, player_id) for week, player_id, _, _ in rows}
+    missing = expected_keys - observed
+    if missing:
+        raise IncompleteSourceError(
+            f"provider player IDs disappeared after transformations: "
+            f"{len(expected_keys) - len(missing)}/{len(expected_keys)} preserved"
+        )
+    if observed != expected_keys:
+        raise IncompleteSourceError("transformed provider player inventory changed")
+    mapped_scored = 0
+    unmapped_scored = 0
+    for _, _, nfl_id, points in rows:
+        score = pd.to_numeric(pd.Series([points]), errors="coerce").iloc[0]
+        if pd.isna(score) or not isfinite(float(score)):
+            raise IncompleteSourceError("transformed provider player score is malformed")
+        if score == 0:
+            continue
+        identity = str(nfl_id or "").strip()
+        if not identity or identity.upper().startswith(("ESPN-", "YAHOO-", "SLEEPER-")):
+            unmapped_scored += 1
+        else:
+            mapped_scored += 1
+    if unmapped_scored:
+        raise IncompleteSourceError(
+            f"{unmapped_scored} scored provider players lack NFL mappings after transformations"
+        )
+    return {"provider_player_keys": len(observed), "mapped_scored_players": mapped_scored}
+
+
+def _active_matchup_scores(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+) -> dict[tuple[int, str], tuple[float | None, float | None]]:
+    selected_weeks = tuple(sorted({int(week) for week in weeks}))
+    if not selected_weeks or any(week < 1 for week in selected_weeks):
+        raise IncompleteSourceError("active matchup week scope is invalid")
+    columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'matchup'"
+        ).fetchall()
+    }
+    if not columns:
+        return {}
+    required = {"db_name", "year", "week", "team_key", "team_points", "opponent_points"}
+    if not required <= columns:
+        raise IncompleteSourceError(
+            "active matchup identity or score columns are missing: "
+            + ", ".join(sorted(required - columns))
+        )
+    placeholders = ", ".join("?" for _ in selected_weeks)
+    rows = conn.execute(
+        "SELECT week, CAST(team_key AS VARCHAR), team_points, opponent_points "
+        "FROM public.matchup WHERE db_name = ? AND year = ? "
+        f"AND week IN ({placeholders}) "
+        "AND (team_points IS NOT NULL OR opponent_points IS NOT NULL)",
+        [str(db_name), int(year), *selected_weeks],
+    ).fetchall()
+    result: dict[tuple[int, str], tuple[float | None, float | None]] = {}
+    for week, team_key, team_points, opponent_points in rows:
+        team = str(team_key or "").strip()
+        if not team:
+            raise IncompleteSourceError("scored matchup has no provider team identity")
+        key = (int(week), team)
+        if key in result:
+            raise IncompleteSourceError(f"duplicate scored matchup team-week: {key}")
+
+        def score(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise IncompleteSourceError("scored matchup has malformed points") from exc
+            if not isfinite(number):
+                raise IncompleteSourceError("scored matchup has nonfinite points")
+            return number
+
+        result[key] = (score(team_points), score(opponent_points))
+    return result
+
+
+def capture_active_final_matchup_scope(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+) -> dict[tuple[int, str], tuple[float | None, float | None]]:
+    """Pin exact provider score rows before the shared graph transforms."""
+    return _active_matchup_scores(conn, db_name=db_name, year=year, weeks=weeks)
+
+
+def assert_transformed_active_matchup_scope(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+    expected_scores: dict[tuple[int, str], tuple[float | None, float | None]],
+) -> dict[str, int]:
+    """A late provider correction cannot be dropped by enrichment/staging."""
+    observed = _active_matchup_scores(conn, db_name=db_name, year=year, weeks=weeks)
+    missing = expected_scores.keys() - observed.keys()
+    if missing:
+        raise IncompleteSourceError(
+            f"scored team-weeks disappeared after transformations: {len(missing)}"
+        )
+    if observed.keys() != expected_scores.keys():
+        raise IncompleteSourceError("transformed scored team-week inventory changed")
+    for key, expected_pair in expected_scores.items():
+        actual_pair = observed[key]
+        if any(
+            (old is None) != (new is None)
+            or (old is not None and new is not None and abs(old - new) > 1e-6)
+            for old, new in zip(expected_pair, actual_pair, strict=True)
+        ):
+            raise IncompleteSourceError(f"provider score changed after transformations: {key}")
+    return {"scored_team_weeks": len(observed)}
+
+
+def _derived_id_rows(
+    conn: Any, *, db_name: str, table_name: str, identity_column: str,
+    required_columns: frozenset[str],
+) -> dict[str, dict[str, Any]]:
+    available = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = ?", [table_name],
+        ).fetchall()
+    }
+    if not required_columns <= available:
+        raise IncompleteSourceError(
+            f"{table_name} derived output columns are missing: "
+            + ", ".join(sorted(required_columns - available))
+        )
+    select_columns = sorted(required_columns - {"db_name"})
+    rows = conn.execute(
+        f"SELECT {', '.join(select_columns)} FROM public.{table_name} WHERE db_name = ?",
+        [str(db_name)],
+    ).fetchall()
+    identity_index = select_columns.index(identity_column)
+    keyed: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        identity = str(row[identity_index] or "").strip()
+        if not identity or identity in keyed:
+            raise IncompleteSourceError(f"{table_name} has blank/duplicate derived identity")
+        keyed[identity] = dict(zip(select_columns, row, strict=True))
+    return keyed
+
+
+def assert_refresh_derived_output_health(
+    conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
+    provider_id_column: str, published_tables: tuple[str, ...] | list[str],
+) -> dict[str, int]:
+    """Check source-to-career/homepage coverage and bundle ownership before Fly."""
+    if provider_id_column not in _ACTIVE_PROVIDER_PLAYER_COLUMNS:
+        raise IncompleteSourceError("unsupported provider player identity column")
+    selected_weeks = tuple(sorted({int(week) for week in weeks}))
+    if not selected_weeks:
+        raise IncompleteSourceError("derived output week scope is invalid")
+    placeholders = ", ".join("?" for _ in selected_weeks)
+    identity = '"' + provider_id_column + '"'
+    active_players = {
+        str(row[0]).strip() for row in conn.execute(
+            "SELECT DISTINCT CAST(NFL_player_id AS VARCHAR) FROM public.player_fantasy "
+            f"WHERE db_name = ? AND year = ? AND week IN ({placeholders}) "
+            f"AND {identity} IS NOT NULL AND fantasy_points IS NOT NULL "
+            "AND fantasy_points <> 0",
+            [str(db_name), int(year), *selected_weeks],
+        ).fetchall()
+    }
+    if "" in active_players or "None" in active_players:
+        raise IncompleteSourceError("scored provider player lacks canonical NFL identity")
+    matchup_columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'matchup'"
+        ).fetchall()
+    }
+    active_franchises: set[str] = set()
+    if matchup_columns:
+        required_matchup = {
+            "db_name", "year", "week", "franchise_id", "team_points", "opponent_points",
+        }
+        if not required_matchup <= matchup_columns:
+            raise IncompleteSourceError("scored matchup franchise derivation inputs are missing")
+        active_franchises = {
+            str(row[0] or "").strip() for row in conn.execute(
+                "SELECT DISTINCT CAST(franchise_id AS VARCHAR) FROM public.matchup "
+                f"WHERE db_name = ? AND year = ? AND week IN ({placeholders}) "
+                "AND team_points IS NOT NULL AND opponent_points IS NOT NULL",
+                [str(db_name), int(year), *selected_weeks],
+            ).fetchall()
+        }
+        if "" in active_franchises:
+            raise IncompleteSourceError("scored matchup has no stable franchise identity")
+    required_publish = {"homepage_league_summary"}
+    if active_players:
+        required_publish |= {"player_fantasy_career", "player_fantasy_career_all"}
+    if active_franchises:
+        required_publish |= {
+            "matchup_career", "homepage_manager_rankings", "homepage_current_standings",
+        }
+    missing_publish = required_publish - set(published_tables)
+    if missing_publish:
+        raise IncompleteSourceError(
+            "derived output not in the publication bundle: " + ", ".join(sorted(missing_publish))
+        )
+    summary = conn.execute(
+        "SELECT COUNT(*) FROM public.homepage_league_summary WHERE db_name = ?",
+        [str(db_name)],
+    ).fetchone()[0]
+    if int(summary or 0) != 1:
+        raise IncompleteSourceError("homepage_league_summary must contain exactly one league row")
+    for table in ("player_fantasy_career", "player_fantasy_career_all"):
+        if not active_players:
+            continue
+        rows = _derived_id_rows(
+            conn, db_name=db_name, table_name=table, identity_column="NFL_player_id",
+            required_columns=frozenset({"db_name", "NFL_player_id", "games_rostered", "fantasy_points"}),
+        )
+        missing = active_players - rows.keys()
+        if missing:
+            raise IncompleteSourceError(
+                f"{table} lacks {len(missing)} scored active provider player(s)"
+            )
+        for player_id in active_players:
+            row = rows[player_id]
+            try:
+                games = int(row["games_rostered"])
+            except (TypeError, ValueError) as exc:
+                raise IncompleteSourceError(f"{table} has invalid career values for {player_id}") from exc
+            if row["fantasy_points"] is None or games < 1:
+                raise IncompleteSourceError(f"{table} has invalid career values for {player_id}")
+    for table, metric, positive in (
+        ("matchup_career", "games", True),
+        ("homepage_manager_rankings", "seasons", True),
+        ("homepage_current_standings", "wins", False),
+    ):
+        if not active_franchises:
+            continue
+        rows = _derived_id_rows(
+            conn, db_name=db_name, table_name=table, identity_column="franchise_id",
+            required_columns=frozenset({"db_name", "franchise_id", metric}),
+        )
+        missing = active_franchises - rows.keys()
+        if missing:
+            raise IncompleteSourceError(f"{table} lacks {len(missing)} active franchise(s)")
+        for franchise_id in active_franchises:
+            try:
+                value = int(rows[franchise_id][metric])
+            except (TypeError, ValueError) as exc:
+                raise IncompleteSourceError(
+                    f"{table} has invalid derived {metric} for {franchise_id}"
+                ) from exc
+            if value < (1 if positive else 0):
+                raise IncompleteSourceError(
+                    f"{table} has invalid derived {metric} for {franchise_id}"
+                )
+    return {
+        "active_scored_career_players": len(active_players),
+        "active_scored_career_franchises": len(active_franchises),
+        "homepage_summary_rows": int(summary),
+    }
+
+
+def validate_yahoo_scoreboard_pair_graph(
+    frame: pd.DataFrame,
+    *,
+    season: int,
+    week: int,
+    expected_team_keys: tuple[str, ...],
+    require_full_teams: bool,
+) -> int:
+    """Prove each Yahoo team row against its reciprocal fetched opponent row."""
+    expected = {str(value).strip() for value in expected_team_keys}
+    if not expected or "" in expected or len(expected) != len(expected_team_keys):
+        raise IncompleteSourceError("Yahoo expected team identities are incomplete")
+    required = {
+        "year", "week", "team_key", "opponent_team_key", "team_points", "opponent_points",
+    }
+    if not isinstance(frame, pd.DataFrame) or not required <= set(frame.columns):
+        raise IncompleteSourceError("Yahoo scoreboard pair identities or scores are missing")
+    if frame.empty and not require_full_teams:
+        return 0
+    if frame[list(required)].isna().any().any():
+        raise IncompleteSourceError("Yahoo scoreboard includes null pair identities or scores")
+    try:
+        years = frame["year"].astype(int)
+        weeks = frame["week"].astype(int)
+        scores = frame[["team_points", "opponent_points"]].apply(pd.to_numeric, errors="coerce")
+    except (TypeError, ValueError) as exc:
+        raise IncompleteSourceError("Yahoo scoreboard season/week/scores are invalid") from exc
+    if years.ne(int(season)).any() or weeks.ne(int(week)).any() or scores.isna().any().any():
+        raise IncompleteSourceError("Yahoo scoreboard returned the wrong week or invalid scores")
+    rows = frame.assign(
+        __team=frame["team_key"].astype(str).str.strip(),
+        __opponent=frame["opponent_team_key"].astype(str).str.strip(),
+    )
+    if rows["__team"].duplicated().any() or rows["__team"].eq("").any():
+        raise IncompleteSourceError("Yahoo scoreboard has duplicate or blank teams")
+    observed = set(rows["__team"])
+    if not observed <= expected or (require_full_teams and observed != expected):
+        raise IncompleteSourceError("Yahoo scoreboard team coverage is incomplete or changed")
+    indexed = rows.set_index("__team", verify_integrity=True)
+    for team_id, row in indexed.iterrows():
+        opponent_id = row["__opponent"]
+        if opponent_id == team_id or opponent_id not in indexed.index:
+            raise IncompleteSourceError("Yahoo scoreboard reciprocal opponent is missing")
+        opponent = indexed.loc[opponent_id]
+        if opponent["__opponent"] != team_id or abs(float(row["team_points"]) - float(opponent["opponent_points"])) > 1e-6 or abs(float(row["opponent_points"]) - float(opponent["team_points"])) > 1e-6:
+            raise IncompleteSourceError("Yahoo scoreboard reciprocal pair scores or IDs disagree")
+    return len(indexed)
+
+
+def validate_yahoo_week_matchup_scope(
+    *,
+    raw_schedule: pd.DataFrame,
+    final_matchups: pd.DataFrame,
+    season: int,
+    week: int,
+    expected_team_keys: tuple[str, ...],
+    playoff_start_week: int | None,
+) -> bool:
+    """Require regular-season inventory or the Yahoo-declared playoff pair graph.
+
+    Yahoo's postseason scoreboard omits teams not scheduled to play, including
+    bracket byes. The XML fetcher verifies the provider's declared matchup
+    count before this tabular pair check. A final week is complete only when
+    every declared pair has a final result.
+    """
+    try:
+        playoff_start = int(playoff_start_week) if playoff_start_week is not None else None
+    except (TypeError, ValueError) as exc:
+        raise IncompleteSourceError("Yahoo playoff start week is invalid") from exc
+    if playoff_start is not None and playoff_start < 1:
+        raise IncompleteSourceError("Yahoo playoff start week is invalid")
+    is_postseason = playoff_start is not None and int(week) >= playoff_start
+    raw_count = validate_yahoo_scoreboard_pair_graph(
+        raw_schedule, season=season, week=week,
+        expected_team_keys=expected_team_keys, require_full_teams=not is_postseason,
+    )
+    if raw_count == 0:
+        raise IncompleteSourceError("Yahoo scoreboard has no declared matchup pairs")
+    final_count = validate_yahoo_scoreboard_pair_graph(
+        final_matchups, season=season, week=week,
+        expected_team_keys=expected_team_keys, require_full_teams=False,
+    )
+    if final_count:
+        source = raw_schedule.set_index(raw_schedule["team_key"].astype(str).str.strip())
+        for _, row in final_matchups.iterrows():
+            team_key = str(row["team_key"]).strip()
+            if team_key not in source.index:
+                raise IncompleteSourceError("Yahoo final matchup is absent from raw scoreboard")
+            raw = source.loc[team_key]
+            if (
+                str(row["opponent_team_key"]).strip() != str(raw["opponent_team_key"]).strip()
+                or abs(float(row["team_points"]) - float(raw["team_points"])) > 1e-6
+                or abs(float(row["opponent_points"]) - float(raw["opponent_points"])) > 1e-6
+            ):
+                raise IncompleteSourceError("Yahoo final matchup changed raw pair or score")
+    return final_count == raw_count
+
+
 def validate_espn_final_matchup_frame(
     *,
     season: int,
@@ -318,7 +751,7 @@ def validate_espn_final_matchup_frame(
     expected = {str(team_id).strip() for team_id in expected_team_ids}
     if not espn_schedule_is_final(raw_schedule, expected_team_ids=expected_team_ids):
         raise IncompleteSourceError("ESPN raw final matchup graph is incomplete")
-    required = {"year", "week", "team_key", "matchup_id", "is_bye_week", "team_points"}
+    required = {"year", "week", "team_key", "matchup_id", "is_bye_week", "team_points", "opponent_points"}
     if not isinstance(matchups, pd.DataFrame) or not required <= set(matchups):
         raise IncompleteSourceError("ESPN fetched final matchup identity/score keys are missing")
     if matchups[["year", "week", "team_key", "matchup_id", "is_bye_week"]].isna().any().any():
@@ -358,6 +791,26 @@ def validate_espn_final_matchup_frame(
             raise IncompleteSourceError("ESPN fetched final matchup pair coverage changed")
         if pd.to_numeric(pd.Series([home["team_points"], visitor["team_points"]]), errors="coerce").isna().any():
             raise IncompleteSourceError("ESPN fetched final matchup score is missing")
+        for current, other in ((home, visitor), (visitor, home)):
+            try:
+                opponent_score = float(current["opponent_points"])
+                other_score = float(other["team_points"])
+            except (TypeError, ValueError) as exc:
+                raise IncompleteSourceError("ESPN fetched final opponent score is missing") from exc
+            if not isfinite(opponent_score) or not isfinite(other_score):
+                raise IncompleteSourceError("ESPN fetched final opponent score is missing")
+            if abs(opponent_score - other_score) > 1e-6:
+                raise IncompleteSourceError("ESPN fetched final opponent score is not reciprocal")
+        for side, fetched in ((raw.get("home") or {}, home), (away, visitor)):
+            try:
+                raw_score = float(side["totalPoints"])
+                fetched_score = float(fetched["team_points"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise IncompleteSourceError("ESPN raw final matchup score witness is missing") from exc
+            if not isfinite(raw_score) or not isfinite(fetched_score):
+                raise IncompleteSourceError("ESPN raw final matchup score witness is missing")
+            if abs(round(raw_score, 2) - fetched_score) > 1e-6:
+                raise IncompleteSourceError("ESPN fetched final matchup changed raw score")
     return len(matchups)
 
 
@@ -405,6 +858,8 @@ def validate_tabular_active_scope(
         if team_ids.eq("").any() or frame["team_key"].isna().any():
             raise IncompleteSourceError(f"{provider} {name} includes a blank team identity")
         observed = set(zip(observed_weeks.tolist(), team_ids.tolist(), strict=True))
+        if len(observed) != len(frame):
+            raise IncompleteSourceError(f"{provider} {name} has duplicate team-week rows")
         expected = {(week, team_id) for week in weeks for team_id in expected_ids}
         if observed != expected:
             raise IncompleteSourceError(
@@ -422,6 +877,27 @@ def validate_tabular_active_scope(
         rosters=rosters,
     )
     matchup_keys = coverage(matchups, name="matchup", weeks=finalized)
+    if finalized:
+        score_columns = {"matchup_id", "team_points", "opponent_points"}
+        if not score_columns <= set(matchups.columns):
+            raise IncompleteSourceError(f"{provider} matchup final score inputs are missing")
+        paired = matchups.loc[matchups["matchup_id"].notna()]
+        for _, pair in paired.groupby(["week", "matchup_id"]):
+            if len(pair) > 2:
+                raise IncompleteSourceError(f"{provider} matchup pair has more than two teams")
+            if len(pair) == 1:
+                continue  # Singleton pairing/bye evidence must be checked separately.
+            try:
+                points = [float(value) for value in (
+                    pair.iloc[0]["team_points"], pair.iloc[0]["opponent_points"],
+                    pair.iloc[1]["team_points"], pair.iloc[1]["opponent_points"],
+                )]
+            except (TypeError, ValueError) as exc:
+                raise IncompleteSourceError(f"{provider} matchup final score is invalid") from exc
+            if not all(isfinite(value) for value in points):
+                raise IncompleteSourceError(f"{provider} matchup final score is missing")
+            if abs(points[0] - points[3]) > 0.01 or abs(points[1] - points[2]) > 0.01:
+                raise IncompleteSourceError(f"{provider} matchup reciprocal score differs")
     schedule_for_validation = schedule
     if isinstance(schedule, pd.DataFrame) and not schedule.empty and "team_key" not in schedule:
         # Sleeper's schedule fetcher emits manager/team display fields but not
@@ -439,6 +915,30 @@ def validate_tabular_active_scope(
         if schedule_for_validation["team_key"].isna().any():
             raise IncompleteSourceError(f"{provider} schedule team identity is missing")
     schedule_keys = coverage(schedule_for_validation, name="schedule", weeks=finalized)
+    if finalized and not paired.empty:
+        score_columns = {"team_points", "opponent_points"}
+        if not score_columns <= set(schedule_for_validation.columns):
+            raise IncompleteSourceError(f"{provider} schedule final score inputs are missing")
+        key_columns = ["year", "week", "team_key"]
+        match_scores = paired[[*key_columns, *sorted(score_columns)]].copy()
+        schedule_scores = schedule_for_validation[[*key_columns, *sorted(score_columns)]].copy()
+        for frame in (match_scores, schedule_scores):
+            frame["year"] = frame["year"].astype(int)
+            frame["week"] = frame["week"].astype(int)
+            frame["team_key"] = frame["team_key"].astype(str).str.strip()
+        compared = match_scores.merge(
+            schedule_scores, on=key_columns, how="left", validate="one_to_one",
+            suffixes=("_matchup", "_schedule"), indicator=True,
+        )
+        if len(compared) != len(paired) or compared["_merge"].ne("both").any():
+            raise IncompleteSourceError(f"{provider} schedule score team identity differs from matchup")
+        for column in score_columns:
+            matchup_values = pd.to_numeric(compared[f"{column}_matchup"], errors="coerce")
+            schedule_values = pd.to_numeric(compared[f"{column}_schedule"], errors="coerce")
+            if not matchup_values.map(isfinite).all() or not schedule_values.map(isfinite).all():
+                raise IncompleteSourceError(f"{provider} schedule final score is missing")
+            if (matchup_values - schedule_values).abs().gt(0.01).any():
+                raise IncompleteSourceError(f"{provider} schedule score differs from matchup")
 
     if not isinstance(draft, pd.DataFrame):
         raise IncompleteSourceError(f"{provider} draft payload is malformed")

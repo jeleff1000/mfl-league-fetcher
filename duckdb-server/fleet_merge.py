@@ -209,6 +209,15 @@ def validate_fleet_manifest_shape(
             raise FleetValidationError(f"Invalid declared columns for {table}")
         if "db_name" not in declared_names:
             raise FleetValidationError(f"{table} is missing required db_name partition column")
+        server_generated_columns = entry.get("server_generated_columns") or []
+        if not isinstance(server_generated_columns, list) or len(set(server_generated_columns)) != len(server_generated_columns):
+            raise FleetValidationError(f"Invalid server_generated_columns for {table}")
+        declared_types = {str(col["name"]): str(col["type"]).upper() for col in declared_columns}
+        for column in server_generated_columns:
+            if column != "last_updated" or declared_types.get(column) != "TIMESTAMP":
+                raise FleetValidationError(
+                    f"Unsupported server-generated column {table}.{column}; only TIMESTAMP last_updated is allowed"
+                )
         if cadence == CADENCE_ACTIVE_SEASON and "year" not in declared_names:
             raise FleetValidationError(f"{table} is active_season but declares no year column")
 
@@ -432,6 +441,13 @@ def apply_fleet_merge(
             for col in common_cols:
                 incoming_type = str(incoming_col_types.get(col) or "").upper()
                 target_type = str(target_col_types[col]).upper()
+                if col in (entry.get("server_generated_columns") or []):
+                    if not incoming_type.startswith("TIMESTAMP") or not target_type.startswith("TIMESTAMP"):
+                        raise FleetValidationError(
+                            f"Server-generated {table}.{col} requires TIMESTAMP source and target"
+                        )
+                    select_exprs.append(f"CAST(current_timestamp AS TIMESTAMP) AS {_qident(col)}")
+                    continue
                 if incoming_type == target_type:
                     select_exprs.append(_qident(col))
                 else:

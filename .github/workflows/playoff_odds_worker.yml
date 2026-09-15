@@ -19,6 +19,10 @@ on:
         description: 'User ID (for artifact naming)'
         required: false
         type: string
+concurrency:
+  group: league-update-${{ inputs.database_name }}
+  cancel-in-progress: false
+  queue: max
 jobs:
   calculate-playoff-odds:
     runs-on: ubuntu-latest
@@ -36,6 +40,7 @@ jobs:
       FLY_UPLOAD_RETRY_MAX_DELAY: 30
       FLY_UPLOAD_RETRY_JITTER_SECONDS: 2
       FLY_PUBLISH_FORMAT: delta
+      REQUIRE_IMPORT_BASE_GENERATION: '1'
       FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: '0'
       DATABASE_NAME: ${{ github.event.inputs.database_name }}
@@ -43,6 +48,15 @@ jobs:
       DATA_DIR: ${{ github.workspace }}/playoff_odds_data
 
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v5
 
@@ -50,6 +64,9 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+
+      - name: Capture playoff recalculation generation
+        run: python scripts/capture_import_generation.py --db-name "${DATABASE_NAME}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

@@ -17,7 +17,7 @@ on:
         type: string
       import_lock_key:
         description: 'Stable import concurrency key, usually the resolved db_name'
-        required: false
+        required: true
         type: string
       verify_only:
         description: 'Run all segment imports, merge, enrichments, simulations, and aggregates without publishing'
@@ -33,8 +33,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key || github.event.inputs.user_id || github.event.client_payload.user_id || github.run_id }}
+  group: league-update-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   import-multi-platform:
@@ -53,6 +54,7 @@ jobs:
       FLY_UPLOAD_RETRY_MAX_DELAY: 30
       FLY_UPLOAD_RETRY_JITTER_SECONDS: 2
       FLY_PUBLISH_FORMAT: delta
+      REQUIRE_IMPORT_BASE_GENERATION: '1'
       FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: '1'
       OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
@@ -63,6 +65,24 @@ jobs:
       VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only || false }}
 
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
+      - name: Validate import lock key
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+        run: |
+          if [ -z "${IMPORT_LOCK_KEY}" ]; then
+            echo 'A resolved import_lock_key is required before any league write.' >&2
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -80,6 +100,12 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+
+      - name: Capture import publication generation
+        id: snapshot
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+        run: python scripts/capture_import_generation.py --db-name "$IMPORT_LOCK_KEY"
 
       - name: Restore canonical research public lake
         id: research-lake
@@ -123,10 +149,18 @@ jobs:
         run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
       - name: Parse import plan
+        id: plan
         env:
           IMPORT_DATA_B64: ${{ github.event.inputs.import_data_b64 || github.event.client_payload.import_data_b64 || github.event.client_payload.league_data_b64 }}
         run: |
           python .github/scripts/run_multi_platform_import.py --plan-only
+          python -c "import json; print('target_db=' + json.load(open('multi_platform_summary.json', encoding='utf-8'))['target_db'])" >> "$GITHUB_OUTPUT"
+
+      - name: Verify resolved import lock
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+          RESOLVED_TARGET_DB: ${{ steps.plan.outputs.target_db }}
+        run: python .github/scripts/verify_import_lock.py --lock "$IMPORT_LOCK_KEY" --target "$RESOLVED_TARGET_DB"
 
       - name: Run multi-platform import
         env:

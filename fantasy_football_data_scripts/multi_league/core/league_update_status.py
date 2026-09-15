@@ -26,6 +26,7 @@ VALID_STATUSES = {
     "stale",
     "credential_required",
     "incomplete_source",
+    "no_change",
     "validation_failed",
     "committed_cache_pending",
 }
@@ -36,6 +37,7 @@ TERMINAL_STATUSES = {
     "stale",
     "credential_required",
     "incomplete_source",
+    "no_change",
     "validation_failed",
 }
 PUBLICATION_STATUSES = {
@@ -71,6 +73,7 @@ ALLOWED_PRIOR_STATUSES = {
     "stale": {"dispatching", "dispatched", "running", "stale"},
     "credential_required": {"running", "credential_required"},
     "incomplete_source": {"running", "incomplete_source"},
+    "no_change": {"running", "no_change"},
     "validation_failed": {"running", "validation_failed"},
 }
 DEFAULT_GRANDFATHERED_LEAGUES = {"kmffl", "tfl_of_extraordinary_gentleman"}

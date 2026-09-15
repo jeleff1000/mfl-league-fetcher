@@ -339,6 +339,7 @@ def run_transformation_pipeline(
     db_name: str | None = None,
     data_dir: str | Path | None = None,
     quick: bool = False,
+    preserve_frontend_settings: bool = False,
 ) -> list[tuple[str, bool]]:
     """Run the full transformation pipeline (Pass 1 -> 2A -> pre-upload -> 2B -> 3).
 
@@ -361,6 +362,9 @@ def run_transformation_pipeline(
                  child scripts receive --db/--data-dir instead of --context.
         data_dir: Local data directory path. Used with db_name.
         quick: If True and using --db/--data-dir mode, also passes --quick.
+        preserve_frontend_settings: Weekly refreshes keep the already-hydrated
+            user context/configuration instead of treating their active-only
+            worker context as a new initial-import settings payload.
 
     Returns:
         List of (description, success) tuples for all transformations
@@ -373,7 +377,7 @@ def run_transformation_pipeline(
     if context_file_path is None:
         context_file_path = _detect_context_file(ctx)
 
-    if not dry_run and db_name and data_dir:
+    if not dry_run and db_name and data_dir and not preserve_frontend_settings:
         try:
             from multi_league.core.local_db import LocalLeagueDB
 

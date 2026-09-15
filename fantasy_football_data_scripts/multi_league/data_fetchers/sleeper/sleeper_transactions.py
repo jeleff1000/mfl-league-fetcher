@@ -552,6 +552,7 @@ class SleeperTransactionFetcher:
         # Fetch up to 22 weeks to cover regular season (18) + playoffs (4).
         # Transactions are event-based, so an active refresh only needs the
         # season through its latest completed week.
+        strict_active_scope = max_week is not None
         if max_week is None:
             max_week = 22
         else:
@@ -568,11 +569,16 @@ class SleeperTransactionFetcher:
 
         for week in range(1, max_week + 1):
             try:
-                txns = self.client.get_league_transactions(league_id, week)
+                if strict_active_scope and hasattr(self.client, "get_league_transactions_strict"):
+                    txns = self.client.get_league_transactions_strict(league_id, week)
+                else:
+                    txns = self.client.get_league_transactions(league_id, week)
+                if strict_active_scope and not isinstance(txns, list):
+                    raise RuntimeError("provider transaction response is not a list")
 
                 if not txns:
                     consecutive_empty_weeks += 1
-                    if consecutive_empty_weeks >= 5:
+                    if not strict_active_scope and consecutive_empty_weeks >= 5:
                         log("  5+ consecutive weeks with no transactions - stopping")
                         break
                     continue
@@ -586,6 +592,10 @@ class SleeperTransactionFetcher:
                     log(f"  Week {week}: {len(txns)} transactions")
 
             except Exception as e:
+                if strict_active_scope:
+                    raise RuntimeError(
+                        f"Sleeper transaction week {week} could not be verified"
+                    ) from e
                 log(f"  Error fetching week {week}: {e}")
                 continue
 

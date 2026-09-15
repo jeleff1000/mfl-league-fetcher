@@ -552,6 +552,68 @@ def replace_completed_game_rows(
     return inserted
 
 
+def rebuild_wide_rank_surface(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    year: int,
+    week: int,
+    target_schema: str = "nfl_historical",
+) -> None:
+    """Rebuild the wide table's derived rank families from its full history.
+
+    The live fetch plane has only the current NFL week in memory.  Its
+    all-time fields are therefore not publishable directly: a one-week frame
+    makes the week's leader rank first in history.  Reuse the canonical
+    sidecar rules against the complete local artifact, then materialize their
+    compatibility view back into the wide table before the artifact can be
+    promoted.  This runs once per NFL ops refresh, never per league update.
+    """
+    from multi_league.data_fetchers.build_full_ops import (
+        COMPAT_VIEW,
+        SIDECAR_TABLES,
+        create_compatibility_view,
+        rebuild_career_sidecar,
+        rebuild_season_partitions,
+        rebuild_weekly_rank_partition,
+        split_wide_to_sidecars,
+    )
+
+    wide = f"{target_schema}.nfl_player_stats_all"
+    # Vertical sidecars deliberately preserve every source row, including
+    # historic duplicate player_week records that cannot safely be collapsed
+    # while an active weekly correction is being prepared.
+    split_wide_to_sidecars(con, source_ref=wide, target_schema=target_schema, grain="vertical")
+    rebuild_weekly_rank_partition(con, int(year), int(week), target_schema=target_schema)
+    # Season scoped fields include the prior season's next-year values.  Match
+    # the canonical weekly repair scope so a live 2026 update cannot leave
+    # 2025's ``avg_pts_next_year_*`` family stale.
+    base = f'{target_schema}.{SIDECAR_TABLES["base"]}'
+    available_years = {
+        int(row[0])
+        for row in con.execute(f"SELECT DISTINCT CAST(year AS INTEGER) FROM {base}").fetchall()
+        if row[0] is not None
+    }
+    season_years = [candidate for candidate in (int(year) - 1, int(year)) if candidate in available_years]
+    if not season_years:
+        raise RefreshGateError(f"rank rebuild found no base rows for {year}")
+    rebuild_season_partitions(con, season_years, target_schema=target_schema)
+    rebuild_career_sidecar(con, target_schema=target_schema)
+    create_compatibility_view(
+        con,
+        source_ref=wide,
+        target_schema=target_schema,
+        view_name=COMPAT_VIEW,
+        grain="vertical",
+    )
+    compat = f"{target_schema}.{COMPAT_VIEW}"
+    try:
+        con.execute(f"CREATE OR REPLACE TABLE {wide} AS SELECT * FROM {compat}")
+    finally:
+        con.execute(f"DROP VIEW IF EXISTS {compat}")
+        for table in SIDECAR_TABLES.values():
+            con.execute(f"DROP TABLE IF EXISTS {target_schema}.{table}")
+
+
 def assert_complete_ops_artifact(path: Path | str, *, schema: str = "nfl_historical") -> dict[str, int]:
     """Prove a replacement file contains every live public NFL operations table."""
     artifact = Path(path)
@@ -974,6 +1036,7 @@ def refresh_local_ops_artifact(
             year=year,
             week=week,
         )
+        rebuild_wide_rank_surface(con, year=year, week=week)
         # Recompute every supported live-week LAMAR rule over the final local
         # weekly facts.  The regular rank/PPG fetch-plane enrichments are
         # already on ``facts``; LAMAR must use the merged artifact's schema.

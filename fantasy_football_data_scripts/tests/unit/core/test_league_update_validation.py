@@ -13,7 +13,296 @@ from multi_league.core.league_update_validation import (
     validate_provider_team_inventory,
     validate_tabular_active_scope,
     validate_provider_snapshot,
+    validate_yahoo_scoreboard_pair_graph,
+    validate_yahoo_week_matchup_scope,
 )
+
+
+def test_post_transform_player_scope_rejects_lost_provider_ids_and_unmapped_scored_rows():
+    import duckdb
+
+    from multi_league.core.league_update_validation import (
+        assert_transformed_active_player_scope,
+        capture_active_provider_player_scope,
+    )
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.player_fantasy ("
+        "db_name VARCHAR, year INTEGER, week INTEGER, espn_player_id VARCHAR, "
+        "fantasy_points DOUBLE, NFL_player_id VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO public.player_fantasy VALUES "
+        "('afi_data', 2026, 1, '101', 14.0, NULL), "
+        "('afi_data', 2026, 1, '102', 0.0, NULL), "
+        "('other', 2026, 1, '999', 50.0, NULL)"
+    )
+    expected = capture_active_provider_player_scope(
+        conn, db_name="afi_data", year=2026, weeks=(1,), provider_id_column="espn_player_id"
+    )
+    assert expected == {(1, "101"), (1, "102")}
+    conn.execute("UPDATE public.player_fantasy SET NFL_player_id='00-101' WHERE espn_player_id='101'")
+    assert assert_transformed_active_player_scope(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column="espn_player_id", expected_keys=expected,
+    )["mapped_scored_players"] == 1
+    conn.execute("DELETE FROM public.player_fantasy WHERE espn_player_id='102'")
+    with pytest.raises(IncompleteSourceError, match="provider player IDs disappeared"):
+        assert_transformed_active_player_scope(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", expected_keys=expected,
+        )
+    conn.execute("INSERT INTO public.player_fantasy VALUES ('afi_data', 2026, 1, '102', 0.0, NULL)")
+    conn.execute("INSERT INTO public.player_fantasy VALUES ('afi_data', 2026, 1, 'phantom', 0.0, NULL)")
+    with pytest.raises(IncompleteSourceError, match="provider player inventory changed"):
+        assert_transformed_active_player_scope(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", expected_keys=expected,
+        )
+    conn.execute("DELETE FROM public.player_fantasy WHERE espn_player_id='phantom'")
+    conn.execute("UPDATE public.player_fantasy SET NFL_player_id='ESPN-101' WHERE espn_player_id='101'")
+    with pytest.raises(IncompleteSourceError, match="scored provider players lack NFL mappings"):
+        assert_transformed_active_player_scope(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", expected_keys=expected,
+        )
+    conn.execute("UPDATE public.player_fantasy SET NFL_player_id='00-101', fantasy_points='inf' WHERE espn_player_id='101'")
+    with pytest.raises(IncompleteSourceError, match="score is malformed"):
+        assert_transformed_active_player_scope(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", expected_keys=expected,
+        )
+
+
+def test_post_transform_player_scope_rejects_missing_required_columns():
+    import duckdb
+
+    from multi_league.core.league_update_validation import capture_active_provider_player_scope
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER)")
+    with pytest.raises(IncompleteSourceError, match="provider player identity column"):
+        capture_active_provider_player_scope(
+            conn, db_name="test", year=2026, weeks=(1,), provider_id_column="yahoo_player_id"
+        )
+
+
+def test_post_transform_matchup_scope_pins_late_provider_score_to_published_input():
+    import duckdb
+
+    from multi_league.core.league_update_validation import (
+        assert_transformed_active_matchup_scope,
+        capture_active_final_matchup_scope,
+    )
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "team_key VARCHAR, team_points DOUBLE, opponent_points DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup VALUES "
+        "('afi_data', 2026, 1, 'gray', 152.66, 129.66), "
+        "('afi_data', 2026, 1, 'opponent', 129.66, 152.66), "
+        "('other', 2026, 1, 'gray', 151.66, 129.66)"
+    )
+    expected = capture_active_final_matchup_scope(
+        conn, db_name="afi_data", year=2026, weeks=(1,)
+    )
+    assert assert_transformed_active_matchup_scope(
+        conn, db_name="afi_data", year=2026, weeks=(1,), expected_scores=expected
+    )["scored_team_weeks"] == 2
+    conn.execute("UPDATE public.matchup SET team_points=151.66 WHERE db_name='afi_data' AND team_key='gray'")
+    with pytest.raises(IncompleteSourceError, match="provider score changed"):
+        assert_transformed_active_matchup_scope(
+            conn, db_name="afi_data", year=2026, weeks=(1,), expected_scores=expected
+        )
+    conn.execute("DELETE FROM public.matchup WHERE db_name='afi_data' AND team_key='opponent'")
+    with pytest.raises(IncompleteSourceError, match="scored team-weeks disappeared"):
+        assert_transformed_active_matchup_scope(
+            conn, db_name="afi_data", year=2026, weeks=(1,), expected_scores=expected
+        )
+    conn.execute("UPDATE public.matchup SET team_points='inf' WHERE db_name='afi_data' AND team_key='gray'")
+    with pytest.raises(IncompleteSourceError, match="nonfinite points"):
+        capture_active_final_matchup_scope(conn, db_name="afi_data", year=2026, weeks=(1,))
+
+
+def test_new_scored_provider_players_require_published_career_aggregates():
+    import duckdb
+
+    from multi_league.core.league_update_validation import assert_refresh_derived_output_health
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "espn_player_id VARCHAR, NFL_player_id VARCHAR, fantasy_points DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.player_fantasy VALUES "
+        "('afi_data',2026,1,'rookie','00-rookie',14.0), "
+        "('other',2026,1,'rookie','00-rookie',14.0)"
+    )
+    for table in ("player_fantasy_career", "player_fantasy_career_all"):
+        conn.execute(f"CREATE TABLE public.{table} (db_name VARCHAR, NFL_player_id VARCHAR, games_rostered INTEGER, fantasy_points DOUBLE)")
+    conn.execute("CREATE TABLE public.homepage_league_summary (db_name VARCHAR)")
+    conn.execute("INSERT INTO public.homepage_league_summary VALUES ('afi_data')")
+    publish = ("player_fantasy_career", "player_fantasy_career_all", "homepage_league_summary")
+    with pytest.raises(IncompleteSourceError, match="player_fantasy_career lacks"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=publish,
+        )
+    for table in ("player_fantasy_career", "player_fantasy_career_all"):
+        conn.execute(f"INSERT INTO public.{table} VALUES ('afi_data','00-rookie',1,14.0)")
+    assert assert_refresh_derived_output_health(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column="espn_player_id", published_tables=publish,
+    )["active_scored_career_players"] == 1
+    conn.execute("UPDATE public.player_fantasy_career SET games_rostered=0 WHERE NFL_player_id='00-rookie'")
+    with pytest.raises(IncompleteSourceError, match="invalid career values"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=publish,
+        )
+    conn.execute("UPDATE public.player_fantasy_career SET games_rostered=1 WHERE NFL_player_id='00-rookie'")
+    with pytest.raises(IncompleteSourceError, match="not in the publication bundle"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=("homepage_league_summary",),
+        )
+
+
+def test_scored_matchup_franchises_require_career_and_homepage_coverage():
+    import duckdb
+
+    from multi_league.core.league_update_validation import assert_refresh_derived_output_health
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "espn_player_id VARCHAR, NFL_player_id VARCHAR, fantasy_points DOUBLE)"
+    )
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup VALUES ('afi_data',2026,1,'gray-franchise',152.66,129.66)"
+    )
+    conn.execute("CREATE TABLE public.homepage_league_summary (db_name VARCHAR)")
+    conn.execute("INSERT INTO public.homepage_league_summary VALUES ('afi_data')")
+    for table, metric in (
+        ("matchup_career", "games"),
+        ("homepage_manager_rankings", "seasons"),
+        ("homepage_current_standings", "wins"),
+    ):
+        conn.execute(f"CREATE TABLE public.{table} (db_name VARCHAR, franchise_id VARCHAR, {metric} INTEGER)")
+    publish = (
+        "homepage_league_summary", "matchup_career",
+        "homepage_manager_rankings", "homepage_current_standings",
+    )
+    with pytest.raises(IncompleteSourceError, match="matchup_career lacks"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=publish,
+        )
+    conn.execute("INSERT INTO public.matchup_career VALUES ('afi_data','gray-franchise',1)")
+    conn.execute("INSERT INTO public.homepage_manager_rankings VALUES ('afi_data','gray-franchise',1)")
+    conn.execute("INSERT INTO public.homepage_current_standings VALUES ('afi_data','gray-franchise',0)")
+    assert assert_refresh_derived_output_health(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column="espn_player_id", published_tables=publish,
+    )["active_scored_career_franchises"] == 1
+    conn.execute("DELETE FROM public.homepage_current_standings WHERE db_name='afi_data'")
+    with pytest.raises(IncompleteSourceError, match="homepage_current_standings lacks"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=publish,
+        )
+
+
+def test_yahoo_scoreboard_pair_graph_requires_complete_reciprocal_coverage():
+    rows = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "t1", "opponent_team_key": "t2", "team_points": 152.66, "opponent_points": 129.66},
+        {"year": 2026, "week": 1, "team_key": "t2", "opponent_team_key": "t1", "team_points": 129.66, "opponent_points": 152.66},
+    ])
+    assert validate_yahoo_scoreboard_pair_graph(
+        rows, season=2026, week=1, expected_team_keys=("t1", "t2"), require_full_teams=True,
+    ) == 2
+    with pytest.raises(IncompleteSourceError, match="coverage"):
+        validate_yahoo_scoreboard_pair_graph(
+            rows.iloc[:1], season=2026, week=1,
+            expected_team_keys=("t1", "t2"), require_full_teams=True,
+        )
+    with pytest.raises(IncompleteSourceError, match="reciprocal"):
+        validate_yahoo_scoreboard_pair_graph(
+            rows.assign(opponent_points=[128.66, 152.66]), season=2026, week=1,
+            expected_team_keys=("t1", "t2"), require_full_teams=True,
+        )
+
+
+def test_yahoo_partial_final_pair_requires_both_sides_without_requiring_other_games():
+    rows = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "t1", "opponent_team_key": "t2", "team_points": 12, "opponent_points": 9},
+        {"year": 2026, "week": 1, "team_key": "t2", "opponent_team_key": "t1", "team_points": 9, "opponent_points": 12},
+    ])
+    assert validate_yahoo_scoreboard_pair_graph(
+        rows, season=2026, week=1,
+        expected_team_keys=("t1", "t2", "t3", "t4"), require_full_teams=False,
+    ) == 2
+    with pytest.raises(IncompleteSourceError, match="reciprocal"):
+        validate_yahoo_scoreboard_pair_graph(
+            rows.iloc[:1], season=2026, week=1,
+            expected_team_keys=("t1", "t2", "t3", "t4"), require_full_teams=False,
+        )
+
+
+def test_yahoo_playoff_week_accepts_declared_pairs_not_bye_teams():
+    expected = tuple(f"t{index}" for index in range(1, 11))
+    rows = pd.DataFrame([
+        {"year": 2025, "week": 15, "team_key": "t1", "opponent_team_key": "t2", "team_points": 101, "opponent_points": 95},
+        {"year": 2025, "week": 15, "team_key": "t2", "opponent_team_key": "t1", "team_points": 95, "opponent_points": 101},
+        {"year": 2025, "week": 15, "team_key": "t3", "opponent_team_key": "t4", "team_points": 98, "opponent_points": 96},
+        {"year": 2025, "week": 15, "team_key": "t4", "opponent_team_key": "t3", "team_points": 96, "opponent_points": 98},
+    ])
+    assert validate_yahoo_week_matchup_scope(
+        raw_schedule=rows, final_matchups=rows, season=2025, week=15,
+        expected_team_keys=expected, playoff_start_week=15,
+    ) is True
+    with pytest.raises(IncompleteSourceError, match="coverage"):
+        validate_yahoo_week_matchup_scope(
+            raw_schedule=rows.assign(week=14), final_matchups=rows.assign(week=14),
+            season=2025, week=14,
+            expected_team_keys=expected, playoff_start_week=15,
+        )
+
+
+def test_yahoo_playoff_week_rejects_missing_pair_and_incomplete_final_pair():
+    expected = tuple(f"t{index}" for index in range(1, 11))
+    rows = pd.DataFrame([
+        {"year": 2025, "week": 15, "team_key": "t1", "opponent_team_key": "t2", "team_points": 101, "opponent_points": 95},
+        {"year": 2025, "week": 15, "team_key": "t2", "opponent_team_key": "t1", "team_points": 95, "opponent_points": 101},
+    ])
+    with pytest.raises(IncompleteSourceError, match="reciprocal"):
+        validate_yahoo_week_matchup_scope(
+            raw_schedule=rows.iloc[:1], final_matchups=rows.iloc[:1], season=2025, week=15,
+            expected_team_keys=expected, playoff_start_week=15,
+        )
+    with pytest.raises(IncompleteSourceError, match="reciprocal"):
+        validate_yahoo_week_matchup_scope(
+            raw_schedule=rows, final_matchups=rows.iloc[:1], season=2025, week=15,
+            expected_team_keys=expected, playoff_start_week=15,
+        )
+    assert validate_yahoo_week_matchup_scope(
+        raw_schedule=rows, final_matchups=rows.iloc[:0], season=2025, week=15,
+        expected_team_keys=expected, playoff_start_week=15,
+    ) is False
 
 
 def test_provider_team_inventory_requires_settings_count_and_exact_unique_ids():
@@ -32,16 +321,16 @@ def test_provider_team_inventory_requires_settings_count_and_exact_unique_ids():
 
 def _espn_final_graph_fixture():
     raw = [
-        {"home": {"teamId": 1}, "away": {"teamId": 2}, "winner": "HOME", "playoffTierType": "NONE"},
-        {"home": {"teamId": 3}, "away": {"teamId": 4}, "winner": "AWAY", "playoffTierType": "NONE"},
+        {"home": {"teamId": 1, "totalPoints": 10.0}, "away": {"teamId": 2, "totalPoints": 9.0}, "winner": "HOME", "playoffTierType": "NONE"},
+        {"home": {"teamId": 3, "totalPoints": 8.0}, "away": {"teamId": 4, "totalPoints": 11.0}, "winner": "AWAY", "playoffTierType": "NONE"},
         {"home": {"teamId": 5}, "away": None, "winner": "UNDECIDED", "playoffTierType": "WINNERS_BRACKET"},
     ]
     frame = pd.DataFrame([
-        {"year": 2026, "week": 15, "team_key": "1", "matchup_id": 0, "is_bye_week": False, "team_points": 10.0},
-        {"year": 2026, "week": 15, "team_key": "2", "matchup_id": 0, "is_bye_week": False, "team_points": 9.0},
-        {"year": 2026, "week": 15, "team_key": "3", "matchup_id": 1, "is_bye_week": False, "team_points": 8.0},
-        {"year": 2026, "week": 15, "team_key": "4", "matchup_id": 1, "is_bye_week": False, "team_points": 11.0},
-        {"year": 2026, "week": 15, "team_key": "5", "matchup_id": 2, "is_bye_week": True, "team_points": None},
+        {"year": 2026, "week": 15, "team_key": "1", "matchup_id": 0, "is_bye_week": False, "team_points": 10.0, "opponent_points": 9.0},
+        {"year": 2026, "week": 15, "team_key": "2", "matchup_id": 0, "is_bye_week": False, "team_points": 9.0, "opponent_points": 10.0},
+        {"year": 2026, "week": 15, "team_key": "3", "matchup_id": 1, "is_bye_week": False, "team_points": 8.0, "opponent_points": 11.0},
+        {"year": 2026, "week": 15, "team_key": "4", "matchup_id": 1, "is_bye_week": False, "team_points": 11.0, "opponent_points": 8.0},
+        {"year": 2026, "week": 15, "team_key": "5", "matchup_id": 2, "is_bye_week": True, "team_points": None, "opponent_points": None},
     ])
     return raw, frame
 
@@ -77,6 +366,54 @@ def test_espn_final_matchup_frame_rejects_broken_pair_or_blank_score():
         validate_espn_final_matchup_frame(
             season=2026, week=15, expected_team_ids=("1", "2", "3", "4", "5"),
             raw_schedule=raw, matchups=blank_score,
+        )
+
+
+def test_espn_final_matchup_frame_rejects_late_gray_score_mismatch():
+    raw = [{
+        "home": {"teamId": 10, "totalPoints": 152.66},
+        "away": {"teamId": 3, "totalPoints": 129.66},
+        "winner": "HOME", "playoffTierType": "NONE",
+    }]
+    frame = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "10", "matchup_id": 1,
+         "is_bye_week": False, "team_points": 151.66, "opponent_points": 129.66},
+        {"year": 2026, "week": 1, "team_key": "3", "matchup_id": 1,
+         "is_bye_week": False, "team_points": 129.66, "opponent_points": 151.66},
+    ])
+    with pytest.raises(IncompleteSourceError, match="raw.*score"):
+        validate_espn_final_matchup_frame(
+            season=2026, week=1, expected_team_ids=("10", "3"),
+            raw_schedule=raw, matchups=frame,
+        )
+
+
+def test_espn_final_matchup_frame_rejects_missing_raw_score_witness():
+    raw, frame = _espn_final_graph_fixture()
+    del raw[0]["home"]["totalPoints"]
+    with pytest.raises(IncompleteSourceError, match="raw.*score"):
+        validate_espn_final_matchup_frame(
+            season=2026, week=15, expected_team_ids=("1", "2", "3", "4", "5"),
+            raw_schedule=raw, matchups=frame,
+        )
+
+
+def test_espn_final_matchup_frame_rejects_stale_opponent_score_after_correction():
+    raw = [{
+        "home": {"teamId": 10, "totalPoints": 152.66},
+        "away": {"teamId": 3, "totalPoints": 129.66},
+        "winner": "HOME", "playoffTierType": "NONE",
+    }]
+    frame = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "10", "matchup_id": 1,
+         "is_bye_week": False, "team_points": 152.66, "opponent_points": 129.66},
+        {"year": 2026, "week": 1, "team_key": "3", "matchup_id": 1,
+         "is_bye_week": False, "team_points": 129.66, "opponent_points": 151.66},
+    ])
+    with pytest.raises(IncompleteSourceError, match="opponent.*score"):
+        validate_espn_final_matchup_frame(
+            season=2026, week=1, expected_team_ids=("10", "3"),
+            raw_schedule=raw, matchups=frame,
         )
 
 
@@ -229,12 +566,12 @@ def _tabular_scope():
             {"year": 2026, "week": 1, "team_key": "2", "sleeper_player_id": "p2"},
         ]),
         "matchups": pd.DataFrame([
-            {"year": 2026, "week": 1, "team_key": "1", "matchup_id": "m1"},
-            {"year": 2026, "week": 1, "team_key": "2", "matchup_id": "m1"},
+            {"year": 2026, "week": 1, "team_key": "1", "matchup_id": "m1", "team_points": 100.0, "opponent_points": 90.0},
+            {"year": 2026, "week": 1, "team_key": "2", "matchup_id": "m1", "team_points": 90.0, "opponent_points": 100.0},
         ]),
         "schedule": pd.DataFrame([
-            {"year": 2026, "week": 1, "team_key": "1"},
-            {"year": 2026, "week": 1, "team_key": "2"},
+            {"year": 2026, "week": 1, "team_key": "1", "team_points": 100.0, "opponent_points": 90.0},
+            {"year": 2026, "week": 1, "team_key": "2", "team_points": 90.0, "opponent_points": 100.0},
         ]),
         "draft": pd.DataFrame([
             {"year": 2026, "draft_id": "d1", "round": 1, "pick": 1},
@@ -262,6 +599,95 @@ def test_actual_weekly_tabular_payload_requires_every_team_week_and_draft_key():
     duplicate = pd.concat([_tabular_scope()["draft"], _tabular_scope()["draft"].iloc[:1]])
     with pytest.raises(IncompleteSourceError, match="draft.*duplicate"):
         _validate_tabular(draft=duplicate)
+
+
+def test_actual_weekly_tabular_payload_rejects_duplicate_matchup_team_week():
+    matchups = _tabular_scope()["matchups"]
+    duplicate = pd.concat([matchups, matchups.iloc[:1]], ignore_index=True)
+    with pytest.raises(IncompleteSourceError, match="matchup.*duplicate team-week"):
+        _validate_tabular(matchups=duplicate)
+
+
+def test_actual_weekly_tabular_payload_rejects_duplicate_schedule_team_week():
+    schedule = _tabular_scope()["schedule"]
+    duplicate = pd.concat([schedule, schedule.iloc[:1]], ignore_index=True)
+    with pytest.raises(IncompleteSourceError, match="schedule.*duplicate team-week"):
+        _validate_tabular(schedule=duplicate)
+
+
+def test_actual_weekly_tabular_payload_rejects_nonreciprocal_played_scores():
+    matchups = _tabular_scope()["matchups"].copy()
+    matchups.loc[1, "opponent_points"] = 99.0
+    with pytest.raises(IncompleteSourceError, match="matchup.*reciprocal score"):
+        _validate_tabular(matchups=matchups)
+
+
+def test_actual_weekly_tabular_payload_rejects_missing_played_score():
+    matchups = _tabular_scope()["matchups"].copy()
+    matchups.loc[1, "team_points"] = float("nan")
+    with pytest.raises(IncompleteSourceError, match="matchup.*final score"):
+        _validate_tabular(matchups=matchups)
+
+
+def test_actual_weekly_tabular_payload_rejects_stale_schedule_score():
+    schedule = _tabular_scope()["schedule"].copy()
+    schedule.loc[0, "team_points"] = 99.0
+    with pytest.raises(IncompleteSourceError, match="schedule.*score.*matchup"):
+        _validate_tabular(schedule=schedule)
+
+
+def test_actual_weekly_tabular_payload_rejects_missing_schedule_final_score():
+    schedule = _tabular_scope()["schedule"].copy()
+    schedule.loc[1, "opponent_points"] = float("nan")
+    with pytest.raises(IncompleteSourceError, match="schedule.*final score"):
+        _validate_tabular(schedule=schedule)
+
+
+def test_tabular_scope_accepts_explicit_null_id_bye_rows_when_present():
+    values = _tabular_scope()
+    values["rosters"] = pd.concat([values["rosters"], pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "3", "sleeper_player_id": "p3"},
+        {"year": 2026, "week": 1, "team_key": "4", "sleeper_player_id": "p4"},
+    ])], ignore_index=True)
+    values["matchups"] = pd.concat([values["matchups"], pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "3", "matchup_id": None, "team_points": 110.0, "opponent_points": 0.0, "opponent": "BYE"},
+        {"year": 2026, "week": 1, "team_key": "4", "matchup_id": None, "team_points": 105.0, "opponent_points": 0.0, "opponent": "BYE"},
+    ])], ignore_index=True)
+    values["schedule"] = pd.concat([values["schedule"], pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "3", "team_points": 110.0, "opponent_points": 0.0},
+        {"year": 2026, "week": 1, "team_key": "4", "team_points": 105.0, "opponent_points": 0.0},
+    ])], ignore_index=True)
+    for name in ("rosters", "matchups", "schedule"):
+        values[name]["year"] = 2025
+        values[name]["week"] = 15
+    values["draft"]["year"] = 2025
+    receipt = validate_tabular_active_scope(
+        provider="sleeper", league_id="s25", season=2025,
+        expected_team_ids=("1", "2", "3", "4"), requested_weeks=(15,),
+        finalized_weeks=(15,), player_id_column="sleeper_player_id",
+        **values,
+    )
+    assert receipt["matchup_team_weeks"] == 4
+
+
+def test_actual_weekly_tabular_payload_rejects_three_teams_in_one_played_pair():
+    values = _tabular_scope()
+    values["rosters"] = pd.concat([values["rosters"], pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "3", "sleeper_player_id": "p3"},
+    ])], ignore_index=True)
+    values["matchups"] = pd.concat([values["matchups"], pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "3", "matchup_id": "m1", "team_points": 80.0, "opponent_points": 100.0},
+    ])], ignore_index=True)
+    values["schedule"] = pd.concat([values["schedule"], pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "3"},
+    ])], ignore_index=True)
+    with pytest.raises(IncompleteSourceError, match="matchup.*pair.*more than two"):
+        validate_tabular_active_scope(
+            provider="sleeper", league_id="s26", season=2026,
+            expected_team_ids=("1", "2", "3"), requested_weeks=(1,),
+            finalized_weeks=(1,), player_id_column="sleeper_player_id",
+            **values,
+        )
 
 
 def test_actual_tabular_payload_allows_a_legitimately_live_unfinalized_week():

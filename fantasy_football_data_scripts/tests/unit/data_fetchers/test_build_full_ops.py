@@ -24,6 +24,7 @@ from multi_league.data_fetchers.build_full_ops import (
     weekly_rank_specs,
 )
 from multi_league.data_fetchers.build_full_ops import WINDOW_BASE_COLUMNS
+from multi_league.data_fetchers.live_nfl_ops_refresh import rebuild_wide_rank_surface
 
 WIDE_COLUMNS = [
     "player_week",
@@ -320,6 +321,32 @@ def test_apply_weekly_update_equals_full_rebuild():
     finally:
         a.close()
         b.close()
+
+
+def test_live_ops_rank_surface_rebuilds_current_rows_against_full_history():
+    """A week-one refresh cannot rank its only current-week QB first all-time."""
+    conn = duckdb.connect(":memory:")
+    try:
+        _make_facts_wide(conn, weeks_by_year={2024: [1, 2, 3], 2026: [1]})
+        wide = "nfl_historical.nfl_player_stats_all"
+        # Mirror the live fetch plane's defect: it supplies a rank only over
+        # the just-fetched week.  The production local-artifact helper must
+        # recompute the historical rank family from every retained fact.
+        conn.execute(
+            f"UPDATE {wide} SET rank_alltime_qb_4pt = 1 "
+            "WHERE year = 2026 AND nfl_position = 'QB'"
+        )
+
+        rebuild_wide_rank_surface(conn, year=2026, week=1)
+
+        rows = conn.execute(
+            f"SELECT DISTINCT rank_alltime_qb_4pt FROM {wide} "
+            "WHERE NFL_player_id = 'nfl_0' ORDER BY 1"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] != 1
+    finally:
+        conn.close()
 
 
 def test_apply_weekly_update_leaves_prior_weeks_byte_identical():

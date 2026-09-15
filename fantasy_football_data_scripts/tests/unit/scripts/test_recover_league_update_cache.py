@@ -71,3 +71,32 @@ def test_cache_recovery_never_refetches_or_republishes_and_rechecks_generation(
     assert any("warm_vercel_cache.py" in str(value) for value in warmed[0])
     assert "--strict" in warmed[0]
     assert "--verify-hot" in warmed[0]
+
+
+def test_blank_token_recovers_only_an_exact_committed_manual_attempt(monkeypatch):
+    manual = {**ROW, "dispatch_token": "manual-42-1", "attempt_id": "manual-42-1"}
+
+    class Reader:
+        def query(self, sql, *, database):
+            assert database == "___ops"
+            assert "manual-%" in sql
+            return [manual]
+
+        def query_scalar(self, sql, *, database):
+            return 4
+
+    settled = []
+    monkeypatch.setattr(recovery, "FlyReader", Reader)
+    monkeypatch.setattr(recovery, "FlyWriter", lambda: object())
+    monkeypatch.setattr(recovery, "assert_league_update_entitled", lambda reader, database_name: None)
+    monkeypatch.setattr(recovery.subprocess, "run", lambda command, check: None)
+    monkeypatch.setattr(recovery, "record_league_update_status", lambda writer, **kwargs: settled.append(kwargs) or True)
+    monkeypatch.setenv("REVALIDATION_SECRET", "test-secret")
+
+    assert recovery.main(["--db", "the_league", "--platform", "yahoo"]) == 0
+    assert settled[0]["dispatch_token"] == "manual-42-1"
+    assert settled[0]["claim_version"] == 4
+    assert settled[0]["receipt"]["bundle_id"] == "bundle"
+    manual["dispatch_token"] = "ui-claim"
+    with pytest.raises(RuntimeError, match="unavailable"):
+        recovery.main(["--db", "the_league", "--platform", "yahoo"])

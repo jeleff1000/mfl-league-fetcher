@@ -282,6 +282,17 @@ def test_espn_schedule_gate_rejects_a_missing_final_pair_despite_other_winners()
     assert not espn_schedule_is_final(raw, expected_team_ids=tuple(str(i) for i in range(1, 13)))
 
 
+def test_espn_schedule_gate_rejects_duplicated_final_pair():
+    from multi_league.core.league_refresh import espn_schedule_is_final
+
+    pair = {
+        "home": {"teamId": 10, "totalPoints": 152.66},
+        "away": {"teamId": 3, "totalPoints": 129.66},
+        "winner": "HOME", "playoffTierType": "NONE",
+    }
+    assert not espn_schedule_is_final([pair, pair], expected_team_ids=("10", "3"))
+
+
 def test_espn_declared_playoff_byes_do_not_hold_a_complete_final_week_forever():
     from multi_league.core.league_refresh import espn_schedule_is_final
 
@@ -653,9 +664,9 @@ def test_local_refresh_hydration_rejects_a_cross_league_frame(tmp_path):
         local.close()
 
 
-def test_local_refresh_hydration_drops_other_platform_rows_from_active_year(tmp_path):
-    """A provider refresh must not republish stale active-year rows from another platform."""
-    from multi_league.core.league_refresh import hydrate_local_refresh_sources
+def test_local_refresh_hydration_rejects_overlapping_active_platform_rows(tmp_path):
+    """An active segment conflict is ambiguous, not permission to erase history."""
+    from multi_league.core.league_refresh import RefreshScopeError, hydrate_local_refresh_sources
     from multi_league.core.local_db import LocalLeagueDB
 
     source_frames = {
@@ -670,19 +681,35 @@ def test_local_refresh_hydration_drops_other_platform_rows_from_active_year(tmp_
     }
     local = LocalLeagueDB(tmp_path, "the_league")
     try:
-        hydrated = hydrate_local_refresh_sources(
-            local,
-            source_frames,
-            db_name="the_league",
-            active_year=2026,
-            expected_platform="yahoo",
-        )
-        assert hydrated == {"transactions": 3}
+        with pytest.raises(RefreshScopeError, match="overlapping active platform"):
+            hydrate_local_refresh_sources(
+                local, source_frames, db_name="the_league",
+                active_year=2026, expected_platform="yahoo",
+            )
+    finally:
+        local.close()
+
+
+def test_local_refresh_hydration_preserves_disjoint_platform_chain_years(tmp_path):
+    from multi_league.core.league_refresh import hydrate_local_refresh_sources
+    from multi_league.core.local_db import LocalLeagueDB
+
+    source_frames = {"transactions": pd.DataFrame([
+        {"db_name": "mixed_league", "year": 2025, "platform": "yahoo", "manager": "Old"},
+        {"db_name": "mixed_league", "year": 2026, "platform": "sleeper", "manager": "Current"},
+        {"db_name": "mixed_league", "year": 2026, "platform": None, "manager": "Derived"},
+    ])}
+    local = LocalLeagueDB(tmp_path, "mixed_league")
+    try:
+        assert hydrate_local_refresh_sources(
+            local, source_frames, db_name="mixed_league",
+            active_year=2026, expected_platform="sleeper",
+        ) == {"transactions": 3}
         assert local.connect().execute(
             "SELECT year, platform, manager FROM public.transactions ORDER BY year, manager"
         ).fetchall() == [
-            (2025, "sleeper", "Old"),
-            (2026, "yahoo", "Current"),
+            (2025, "yahoo", "Old"),
+            (2026, "sleeper", "Current"),
             (2026, None, "Derived"),
         ]
     finally:
@@ -962,6 +989,55 @@ def test_draft_manifest_requires_an_exact_local_key_set():
     assert provider_draft_manifest_matches(exact, provider, key_columns=("round", "pick"))
     assert not provider_draft_manifest_matches(duplicate, provider, key_columns=("round", "pick"))
     assert not provider_draft_manifest_matches(unexpected, provider, key_columns=("round", "pick"))
+
+
+def test_active_draft_manifest_reuses_complete_current_board_despite_historical_picks():
+    from multi_league.core.league_refresh import refresh_authoritative_draft_partition
+
+    current = pd.DataFrame([
+        {"year": 2026, "draft_id": "primary", "pick": 1, "round": 1},
+        {"year": 2026, "draft_id": "primary", "pick": 2, "round": 1},
+    ])
+    history = pd.DataFrame([{"year": 2025, "draft_id": "old", "pick": 1, "round": 1}])
+
+    class Local:
+        def table_exists(self, table):
+            return table == "draft"
+
+        def row_count(self, table):
+            return 3
+
+        def read_table(self, table, year=None):
+            assert table == "draft"
+            return current if year == 2026 else pd.concat([history, current], ignore_index=True)
+
+    manifest = current[["draft_id", "pick"]]
+    assert refresh_authoritative_draft_partition(
+        Local(), provider_manifest=manifest, key_columns=("draft_id", "pick"),
+        fetch_full=lambda: (_ for _ in ()).throw(AssertionError("complete board must not refetch")),
+        year=2026, platform="sleeper", league_id="renewed-2026",
+    ) == 0
+
+
+def test_provider_confirmed_no_active_draft_keeps_historical_picks_without_refetch():
+    from multi_league.core.league_refresh import refresh_authoritative_draft_partition
+
+    class Local:
+        def table_exists(self, table):
+            return True
+
+        def row_count(self, table):
+            return 100
+
+        def read_table(self, table, year=None):
+            return pd.DataFrame() if year == 2026 else pd.DataFrame([{"year": 2025, "pick": 1}])
+
+    assert refresh_authoritative_draft_partition(
+        Local(), provider_manifest=pd.DataFrame(columns=["draft_id", "pick"]),
+        key_columns=("draft_id", "pick"),
+        fetch_full=lambda: (_ for _ in ()).throw(AssertionError("confirmed no draft must not fetch")),
+        year=2026, platform="sleeper", league_id="renewed-2026", confirmed_no_draft=True,
+    ) == 0
 
 
 def test_authoritative_draft_refetch_rejects_a_missing_provider_pick():
@@ -1580,6 +1656,12 @@ def test_yahoo_refresh_rebuilds_only_published_season_aggregates_without_subproc
     from multi_league.transformations.aggregation import aggregate_fantasy_context
     from multi_league.transformations.aggregation import aggregate_transaction_context
     from multi_league.transformations.aggregation import aggregation_utils
+    from multi_league.core import db_utils
+
+    ops_cache = tmp_path / "ops.duckdb"
+    ops_cache.touch()
+    monkeypatch.setenv("OPS_CACHE_PATH", str(ops_cache))
+    monkeypatch.setattr(db_utils, "attach_ops_cache", lambda _conn, _path: None)
 
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
     connection = object()
@@ -1976,6 +2058,12 @@ def test_refresh_aggregate_subprocess_releases_the_local_duckdb_lock(monkeypatch
     from multi_league.transformations.aggregation import aggregate_fantasy_context
     from multi_league.transformations.aggregation import aggregate_transaction_context
     from multi_league.transformations.aggregation import aggregation_utils
+    from multi_league.core import db_utils
+
+    ops_cache = tmp_path / "ops.duckdb"
+    ops_cache.touch()
+    monkeypatch.setenv("OPS_CACHE_PATH", str(ops_cache))
+    monkeypatch.setattr(db_utils, "attach_ops_cache", lambda _conn, _path: None)
 
     events: list[str] = []
     commands: list[list[str]] = []
@@ -2138,6 +2226,20 @@ def test_sleeper_first_season_active_id_needs_no_predecessor():
     ) is None
 
 
+def test_sleeper_worker_rejects_caller_id_conflicting_with_saved_active_chain(monkeypatch, tmp_path):
+    from scripts import refresh_sleeper_active_season as worker
+
+    monkeypatch.setattr(
+        worker, "_load_persisted_sleeper_chain",
+        lambda reader, db_name: ({"league_name": "Saved"}, {"2026": "saved-active"}),
+    )
+    with pytest.raises(RuntimeError, match="conflicting active Sleeper league IDs"):
+        worker._build_context(
+            reader=object(), db_name="saved", active_year=2026,
+            work_dir=tmp_path, active_league_id="caller-fork",
+        )
+
+
 def test_sleeper_missing_successor_is_discovered_from_saved_members_not_one_manager():
     from scripts.refresh_sleeper_active_season import _resolve_active_renewal
 
@@ -2205,16 +2307,65 @@ def test_sleeper_weekly_chain_uses_every_saved_segment_year_of_a_multiplatform_l
                     "league_ids_json": None, "manager_name_overrides_json": '{"shared":"Preferred"}',
                 }]
             if "public.league_settings" in sql:
-                assert "LOWER(COALESCE(platform, '')) = 'sleeper'" in sql
+                assert "SELECT year, platform, league_key" in sql
                 return [
-                    {"year": 2019, "league_key": "saved-2019"},
-                    {"year": 2025, "league_key": "saved-2025"},
+                    {"year": 2014, "platform": "yahoo", "league_key": "331.l.1"},
+                    {"year": 2019, "platform": "sleeper", "league_key": "saved-2019"},
+                    {"year": 2025, "platform": "sleeper", "league_key": "saved-2025"},
                 ]
             raise AssertionError(sql)
 
     context, chain = _load_persisted_sleeper_chain(Reader(), db_name="mixed_league")
     assert context["manager_name_overrides_json"] == '{"shared":"Preferred"}'
     assert chain == {"2019": "saved-2019", "2025": "saved-2025"}
+
+
+def test_sleeper_weekly_chain_rejects_two_imported_ids_for_one_season():
+    from scripts.refresh_sleeper_active_season import _load_persisted_sleeper_chain
+
+    class Reader:
+        def query(self, sql, *, database):
+            assert database == "___leagues"
+            if "information_schema.columns" in sql:
+                return [{"column_name": "league_ids_json"}]
+            if "public.league_context" in sql:
+                return [{"league_id": "saved-2025", "league_name": "Mixed League",
+                         "league_ids_json": '{"2025":"saved-2025"}'}]
+            if "public.league_settings" in sql:
+                return [
+                    {"year": 2025, "platform": "sleeper", "league_key": "saved-2025"},
+                    {"year": 2025, "platform": "sleeper", "league_key": "wrong-2025"},
+                ]
+            raise AssertionError(sql)
+
+    with pytest.raises(RuntimeError, match="conflicting Sleeper league IDs"):
+        _load_persisted_sleeper_chain(Reader(), db_name="mixed_league")
+
+
+def test_shared_refresh_watermark_tracks_played_fantasy_matchups_not_nfl_player_weeks():
+    from scripts.refresh_yahoo_active_season import _last_materialized_week
+
+    class Reader:
+        def query_scalar(self, sql, *, database):
+            assert database == "___leagues"
+            assert "FROM public.matchup" in sql
+            assert "db_name = 'kmffl'" in sql
+            assert "year = 2025" in sql
+            return 17
+
+    assert _last_materialized_week(Reader(), db_name="kmffl", year=2025) == 17
+
+
+def test_manual_week_ceiling_can_revisit_an_older_played_week(monkeypatch):
+    import scripts.refresh_yahoo_active_season as worker
+
+    monkeypatch.setattr(worker, "_finalized_ops", lambda reader, **kwargs: pd.DataFrame({"week": [15]}))
+    monkeypatch.setattr(worker, "_last_materialized_week", lambda reader, **kwargs: 17)
+    frames, watermark = worker._load_active_refresh_inputs(
+        object(), db_name="kmffl", year=2025, through_week=15,
+    )
+    assert frames["week"].tolist() == [15]
+    assert watermark == 15
 
 
 def test_update_source_snapshot_captures_generation_with_fly_frames(monkeypatch):

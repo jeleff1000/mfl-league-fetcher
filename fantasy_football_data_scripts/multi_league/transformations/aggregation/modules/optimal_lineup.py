@@ -983,6 +983,7 @@ def position_rank(
         years_csv = ", ".join(str(y) for y in year_group)
 
         position_rank_parts = []
+        position_alltime_rank_parts = []
         # Use player_bio.nfl_position as canonical position, fall back to
         # s.position then p.position for rank lookup.
         for position in ("QB", "RB", "WR", "TE", "K", "DEF", "LB", "DL", "DB"):
@@ -991,8 +992,21 @@ def position_rank(
                 position_rank_parts.append(
                     f"CASE WHEN {helpers.position_eligibility_sql('COALESCE(pb.nfl_position, s.position, p.position)', position)} THEN s.{rank_col} END"
                 )
+                # This is an NFL-wide historical rank from the OPS source.
+                # A quick update intentionally hydrates only the active
+                # season, so a local all-time window would make its lone
+                # week-1 row rank first by construction.
+                alltime_rank_col = "rank_alltime_" + rank_col.removeprefix("rank_")
+                position_alltime_rank_parts.append(
+                    f"CASE WHEN {helpers.position_eligibility_sql('COALESCE(pb.nfl_position, s.position, p.position)', position)} THEN s.{alltime_rank_col} END"
+                )
 
         position_rank_expr = f"COALESCE({', '.join(position_rank_parts)})" if position_rank_parts else "NULL"
+        position_alltime_rank_expr = (
+            f"COALESCE({', '.join(position_alltime_rank_parts)})"
+            if position_alltime_rank_parts
+            else "NULL"
+        )
         _pos_col = "COALESCE(pb.nfl_position, s.position, p.position)"
         flex_week_expr = (
             f"CASE WHEN {helpers.flex_eligibility_sql(_pos_col, ['RB', 'WR', 'TE'])}"
@@ -1038,6 +1052,7 @@ def position_rank(
                     p.player_week,
                     {position_rank_expr} AS position_rank,
                     {position_rank_expr} AS position_week_rank,
+                    {position_alltime_rank_expr} AS position_alltime_rank,
                     {flex_week_expr} AS flex_week_rank,
                     {flex_season_expr} AS flex_season_rank,
                     {flex_alltime_expr} AS flex_alltime_rank,
@@ -1057,6 +1072,7 @@ def position_rank(
                 UPDATE {player_table} p
                 SET position_rank = st.position_rank,
                     position_week_rank = st.position_week_rank,
+                    position_alltime_rank = st.position_alltime_rank,
                     flex_week_rank = st.flex_week_rank,
                     flex_season_rank = st.flex_season_rank,
                     flex_alltime_rank = st.flex_alltime_rank,
@@ -1093,16 +1109,14 @@ def position_rank(
                     PARTITION BY {deduped_primary_pos_sql}, d.year
                     ORDER BY d.fantasy_points DESC NULLS LAST, d.player_week
                 ) AS position_season_rank,
-                RANK() OVER (
-                    PARTITION BY {deduped_primary_pos_sql}
-                    ORDER BY d.fantasy_points DESC NULLS LAST, d.year, d.week, d.player_week
-                ) AS position_alltime_rank
+                -- The OPS source above owns the NFL-wide historical rank.
+                -- The local refresh holds only active-year facts.
+                NULL::INTEGER AS unused_local_alltime_rank
             FROM deduped d
         """)
         conn.execute(f"""
             UPDATE {player_table} p
-            SET position_season_rank = m.position_season_rank,
-                position_alltime_rank = m.position_alltime_rank
+            SET position_season_rank = m.position_season_rank
             FROM _position_rank_metrics m
             WHERE p.player_week = m.player_week
               AND {_db_filter(db_name, 'p')}

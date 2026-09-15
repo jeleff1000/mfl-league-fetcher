@@ -5,6 +5,12 @@ import pytest
 from scripts.league_update_workflow_receipt import classify_publication, failure_status
 
 
+def test_manual_no_change_is_not_a_commit_and_ui_no_change_is_rejected():
+    assert classify_publication({"status": "NO_FINALIZED_WEEKS"}, require_publication=False) is False
+    with pytest.raises(ValueError, match="did not publish"):
+        classify_publication({"status": "NO_FINALIZED_WEEKS"}, require_publication=True)
+
+
 def test_manual_publication_runs_cache_only_for_a_committed_receipt():
     assert classify_publication({"status": "COMMITTED", "executed": True}, require_publication=False) is True
     assert classify_publication({"status": "NO_FINALIZED_WEEKS", "executed": True}, require_publication=False) is False
@@ -22,3 +28,11 @@ def test_post_commit_cache_failure_is_recoverable_without_republishing():
     assert failure_status({"status": "COMMITTED", "executed": False, "source_fingerprint": "2026:1:changed"}) == "failed"
     assert failure_status({"status": "NO_ACTIVE_RENEWAL"}) == "incomplete_source"
     assert failure_status(None) == "failed"
+
+
+def test_cancelled_uncommitted_claim_is_terminal_but_committed_data_stays_recoverable():
+    assert failure_status(None, cancelled=True) == "cancelled"
+    assert failure_status(
+        {"status": "COMMITTED", "executed": True, "source_fingerprint": "2026:1:changed"},
+        cancelled=True,
+    ) == "committed_cache_pending"

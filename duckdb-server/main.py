@@ -1750,6 +1750,12 @@ def _validate_delta_manifest_shape(
         raise DeltaValidationError("Manifest tables must be a list")
     if not isinstance(manifest["omitted_tables"], list):
         raise DeltaValidationError("Manifest omitted_tables must be a list")
+    if "base_generation" in manifest and (
+        isinstance(manifest["base_generation"], bool)
+        or not isinstance(manifest["base_generation"], int)
+        or manifest["base_generation"] < 0
+    ):
+        raise DeltaValidationError("base_generation must be a nonnegative integer")
 
     logical_payload = {
         "manifest_version": manifest["manifest_version"],
@@ -1775,6 +1781,8 @@ def _validate_delta_manifest_shape(
         ],
         "omitted_tables": manifest["omitted_tables"],
     }
+    if "base_generation" in manifest:
+        logical_payload["base_generation"] = manifest["base_generation"]
     recalculated_bundle_hash = _sha256_json(logical_payload)
     if recalculated_bundle_hash != manifest["bundle_hash"]:
         raise DeltaValidationError("Logical bundle_hash does not match manifest content")
@@ -2096,6 +2104,12 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
                 result["idempotent_replay"] = True
                 return result
 
+        # Enable after the public import workflows have been rolled out and
+        # older in-flight imports have drained. Prior committed bundles may
+        # still replay idempotently, but a new unfenced writer cannot publish.
+        if _env_bool("REQUIRE_DELTA_BASE_GENERATION", False) and "base_generation" not in manifest:
+            raise DeltaConflictError("Delta import missing required pre-source base_generation")
+
         latest_order = _delta_latest_committed_order(conn, db_name)
         current_order = None
         try:
@@ -2131,6 +2145,14 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
         try:
             _interrupting_execute(conn, "BEGIN TRANSACTION", step=f"begin delta {db_name}")
             in_transaction = True
+            if "base_generation" in manifest:
+                fleet_merge.ensure_generation_tables(conn)
+                current_generation = fleet_merge.current_generations(conn, [db_name])[db_name]
+                if current_generation != manifest["base_generation"]:
+                    raise DeltaConflictError(
+                        f"Snapshot generation {manifest['base_generation']} for {db_name} "
+                        f"is stale; current generation is {current_generation}"
+                    )
             _delta_upsert_state(conn, manifest, "STAGED")
 
             for entry in manifest["tables"]:
@@ -2255,7 +2277,7 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             _delta_upsert_state(
                 conn,
                 manifest,
-                "FAILED_MERGE",
+                "CONFLICT" if isinstance(exc, DeltaConflictError) else "FAILED_MERGE",
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )

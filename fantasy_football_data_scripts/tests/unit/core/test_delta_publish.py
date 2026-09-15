@@ -2,6 +2,7 @@ import json
 import tarfile
 
 import duckdb
+import pytest
 
 import multi_league.core.targets.fly_target as fly_target
 from multi_league.core.delta_publish import build_delta_bundle
@@ -231,6 +232,31 @@ def test_delta_bundle_filters_canonical_tables_and_keeps_logical_hash_stable(tmp
     with tarfile.open(bundle_a.path, "r:gz") as archive:
         names = sorted(member.name for member in archive.getmembers() if member.isfile())
     assert names == ["manifest.json", "tables/matchup.parquet"]
+
+
+def test_delta_bundle_binds_optional_snapshot_generation_into_digest(tmp_path, monkeypatch):
+    monkeypatch.setenv("IMPORT_RUN_ID", "snapshot-test-run")
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        _seed_minimal_league(conn)
+        old = build_delta_bundle(conn, db_name="speed_test", output_dir=tmp_path / "old")
+        base_0 = build_delta_bundle(
+            conn, db_name="speed_test", base_generation=0, output_dir=tmp_path / "base-0"
+        )
+        base_1 = build_delta_bundle(
+            conn, db_name="speed_test", base_generation=1, output_dir=tmp_path / "base-1"
+        )
+        assert "base_generation" not in old.manifest
+        assert base_0.manifest["base_generation"] == 0
+        assert base_1.manifest["base_generation"] == 1
+        assert len({old.bundle_hash, base_0.bundle_hash, base_1.bundle_hash}) == 3
+        with pytest.raises(ValueError, match="base_generation"):
+            build_delta_bundle(
+                conn, db_name="speed_test", base_generation=-1, output_dir=tmp_path / "negative"
+            )
+    finally:
+        conn.close()
 
 
 def test_player_fantasy_delta_identity_allows_unrostered_null_franchise(tmp_path):

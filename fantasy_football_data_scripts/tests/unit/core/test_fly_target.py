@@ -364,3 +364,17 @@ def test_merge_league_delta_skips_stale_bundle_conflict(fly_env, tmp_path):
     assert result["db_name"] == "td_s_beer"
     assert result["bundle_id"] == "bundle-1"
     assert result["http_status"] == 409
+
+
+def test_merge_league_delta_fails_closed_on_stale_source_generation(fly_env, tmp_path):
+    bundle = tmp_path / "bundle.tar.gz"
+    bundle.write_bytes(b"delta")
+    target = FlyTarget()
+    detail = "Snapshot generation 2 for td_s_beer is stale; current generation is 3"
+
+    with patch(
+        "multi_league.core.targets.fly_target.requests.post",
+        return_value=_resp(409, {"detail": detail}, text=detail),
+    ), patch.object(target, "get_delta_merge_status", return_value={"status": "CONFLICT"}):
+        with pytest.raises(RuntimeError, match="Snapshot generation 2"):
+            target.merge_league_delta("td_s_beer", bundle, bundle_id="bundle-1", bundle_hash="hash-1")

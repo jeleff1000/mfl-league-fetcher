@@ -176,6 +176,46 @@ def test_identical_fleet_content_and_base_generation_reuse_one_bundle_identity(t
     assert first.bundle_id != correction.bundle_id
 
 
+def test_recomputed_aggregate_timestamps_do_not_change_replay_identity(tmp_path):
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute(
+            "CREATE TABLE public.homepage_league_summary "
+            "(db_name VARCHAR, last_updated TIMESTAMP, data_year INTEGER, "
+            "data_week INTEGER, highest_score_points DOUBLE)"
+        )
+        conn.execute(
+            "INSERT INTO public.homepage_league_summary VALUES "
+            "('league_a', '2026-09-15 12:00:00', 2026, 1, 152.66)"
+        )
+
+        def bundle(label):
+            return build_fleet_partition_bundle(
+                conn, active_year=ACTIVE_YEAR,
+                league_generations={"league_a": 2},
+                tables=["homepage_league_summary"],
+                output_dir=tmp_path / label,
+            )
+
+        first = bundle("first")
+        conn.execute(
+            "UPDATE public.homepage_league_summary "
+            "SET last_updated = '2026-09-15 13:00:00'"
+        )
+        replay = bundle("replay")
+        assert first.bundle_id == replay.bundle_id
+        assert first.bundle_hash == replay.bundle_hash
+
+        conn.execute(
+            "UPDATE public.homepage_league_summary SET highest_score_points = 153.66"
+        )
+        correction = bundle("correction")
+        assert correction.bundle_id != first.bundle_id
+    finally:
+        conn.close()
+
+
 def test_build_bundle_rejects_out_of_scope_year(tmp_path):
     conn = _staged_conn(extra_year=2025)
     try:

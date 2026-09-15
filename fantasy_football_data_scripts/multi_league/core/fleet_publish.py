@@ -290,6 +290,12 @@ def build_fleet_partition_bundle(
         actual_cols = set(_actual_columns(conn, table))
         allowed_cols = list(spec["columns"].keys())
         upload_cols = [c for c in allowed_cols if c in actual_cols]
+        server_generated_columns = [
+            "last_updated"
+            for column in upload_cols
+            if column == "last_updated"
+            and str(spec["columns"][column]).upper() == "TIMESTAMP"
+        ]
         if "db_name" not in upload_cols:
             omitted_tables.append({"table": table, "reason": "missing_db_name_partition"})
             continue
@@ -342,7 +348,9 @@ def build_fleet_partition_bundle(
 
         fingerprints = {
             "row_count": row_count,
-            "content_hash": _content_hash(conn, table, upload_cols),
+            "content_hash": _content_hash(
+                conn, table, [col for col in upload_cols if col not in server_generated_columns]
+            ),
             "primary_key_hash": _primary_key_hash(conn, table, primary_keys),
             "duplicate_primary_keys": 0,
             "key_null_counts": {key: 0 for key in primary_keys},
@@ -359,6 +367,7 @@ def build_fleet_partition_bundle(
                 "sha256": file_hash,
                 "row_count": row_count,
                 "columns": [{"name": c, "type": spec["columns"][c]} for c in upload_cols],
+                "server_generated_columns": server_generated_columns,
                 "partition_keys": [c for c in spec["partition_keys"] if c in upload_cols],
                 "identity_keys": primary_keys,
                 "primary_keys": primary_keys,
@@ -391,6 +400,7 @@ def build_fleet_partition_bundle(
                 "table": t["table"],
                 "row_count": t["row_count"],
                 "columns": t["columns"],
+                "server_generated_columns": t["server_generated_columns"],
                 "primary_keys": t["primary_keys"],
                 "merge_mode": t["merge_mode"],
                 "cadence_class": t["cadence_class"],

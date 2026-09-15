@@ -4,6 +4,46 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_weekly_quick_graph_does_not_rewrite_saved_frontend_context(monkeypatch, tmp_path):
+    from multi_league.core import import_pipeline, local_db
+
+    persisted: list[str] = []
+
+    class Local:
+        def __init__(self, *_args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(local_db, "LocalLeagueDB", Local)
+    monkeypatch.setattr(
+        import_pipeline,
+        "persist_frontend_settings_tables",
+        lambda *_args: persisted.append("rewritten"),
+    )
+    monkeypatch.setattr(import_pipeline, "run_transformations", lambda *_args, **_kwargs: [])
+    ctx = SimpleNamespace(data_directory=tmp_path, league_name="AFI Data")
+
+    assert import_pipeline.run_transformation_pipeline(
+        ctx, platform="espn", db_name="afi_data", data_dir=tmp_path,
+        import_mode="quick", quick=True, skip_track_2_upload=True,
+        context_file_path=tmp_path / "espn_context.json",
+        preserve_frontend_settings=True,
+    ) == []
+    assert persisted == []
+
+    import_pipeline.run_transformation_pipeline(
+        ctx, platform="espn", db_name="afi_data", data_dir=tmp_path,
+        import_mode="quick", quick=True, skip_track_2_upload=True,
+        context_file_path=tmp_path / "espn_context.json",
+    )
+    assert persisted == ["rewritten"]
+
+
 def test_require_sql_enrichment_success_blocks_partial_uploads():
     from multi_league.core.import_pipeline import require_sql_enrichment_success
 

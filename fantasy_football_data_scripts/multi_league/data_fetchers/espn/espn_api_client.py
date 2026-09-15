@@ -314,7 +314,9 @@ class ESPNAPIClient:
                 raise ESPNAPIError(f"League {self.league_id} unauthorized for year {year}", status_code=401)
             raise ESPNAPIError(f"Failed to load ESPN league {self.league_id} for {year}: {e}")
 
-    def get_raw_transactions(self, year: int, scoring_period: int) -> list:
+    def get_raw_transactions(
+        self, year: int, scoring_period: int, *, strict: bool = False,
+    ) -> list:
         """
         Fetch raw transaction data from ESPN API for a specific scoring period.
 
@@ -336,15 +338,29 @@ class ESPNAPIClient:
             resp = self._session.get(url, params=params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
+            if strict and (
+                not isinstance(data, dict)
+                or not isinstance(data.get("transactions"), list)
+                or any(not isinstance(row, dict) for row in data["transactions"])
+            ):
+                raise ESPNAPIError(
+                    f"ESPN raw transactions for {year} week {scoring_period} are malformed"
+                )
             return data.get("transactions", [])
         except requests.exceptions.HTTPError as e:
-            if e.response and e.response.status_code == 404:
+            if not strict and e.response and e.response.status_code == 404:
                 return []
             raise ESPNAPIError(
                 f"Failed to fetch raw transactions for {year} week {scoring_period}: {e}",
                 status_code=getattr(e.response, "status_code", None),
             )
         except Exception as e:
+            if strict:
+                if isinstance(e, ESPNAPIError):
+                    raise
+                raise ESPNAPIError(
+                    f"Failed to fetch ESPN raw transactions for {year} week {scoring_period}"
+                ) from e
             logger.warning(f"Error fetching raw transactions for {year} week {scoring_period}: {e}")
             return []
 
@@ -382,7 +398,9 @@ class ESPNAPIClient:
             logger.warning(f"Error fetching raw ESPN schedule for {year} week {scoring_period}: {e}")
             return []
 
-    def get_raw_trades(self, year: int, max_weeks: int = 18) -> list[dict]:
+    def get_raw_trades(
+        self, year: int, max_weeks: int = 18, *, strict: bool = False,
+    ) -> list[dict]:
         """
         Fetch all trade transactions for a year via raw ESPN API.
 
@@ -405,7 +423,7 @@ class ESPNAPIClient:
         seen_accept_ids = set()
 
         for period in range(1, max_weeks + 1):
-            txns = self.get_raw_transactions(year, period)
+            txns = self.get_raw_transactions(year, period, strict=strict)
 
             for txn in txns:
                 txn_type = txn.get("type")
@@ -458,7 +476,12 @@ class ESPNAPIClient:
 
         return all_transactions
 
-    def get_raw_waivers(self, year: int, max_weeks: int = 18) -> list:
+    def get_raw_trades_strict(self, year: int, *, max_weeks: int) -> list[dict]:
+        return self.get_raw_trades(year, max_weeks=max_weeks, strict=True)
+
+    def get_raw_waivers(
+        self, year: int, max_weeks: int = 18, *, strict: bool = False,
+    ) -> list:
         """
         Fetch waiver/FA transactions via raw ESPN API (bypasses broken library).
 
@@ -478,7 +501,7 @@ class ESPNAPIClient:
 
         for period in range(1, max_weeks + 1):
             try:
-                raw = self.get_raw_transactions(year, period)
+                raw = self.get_raw_transactions(year, period, strict=strict)
                 for txn in raw:
                     txn_type = txn.get("type")
                     txn_id = txn.get("id")
@@ -486,10 +509,15 @@ class ESPNAPIClient:
                         seen_ids.add(txn_id)
                         all_waivers.append(txn)
             except Exception:  # noqa: broad-except
+                if strict:
+                    raise
                 continue
             time.sleep(0.05)  # Rate limit
 
         return all_waivers
+
+    def get_raw_waivers_strict(self, year: int, *, max_weeks: int) -> list:
+        return self.get_raw_waivers(year, max_weeks=max_weeks, strict=True)
 
     def discover_available_years(
         self,

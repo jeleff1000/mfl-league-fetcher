@@ -9,6 +9,8 @@ movements are classified as drop + add.
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def _make_mock_player(player_id, name):
     p = MagicMock()
@@ -136,7 +138,6 @@ def test_modern_transactions_reuse_the_active_season_client(monkeypatch):
         "ESPNAPIClient",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must reuse the supplied client")),
     )
-
     assert (
         fetch_espn_transactions_modern(
             ctx,
@@ -148,6 +149,57 @@ def test_modern_transactions_reuse_the_active_season_client(monkeypatch):
         is None
     )
 
+
+def test_active_espn_transaction_fetch_rejects_failed_waiver_surface():
+    from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
+
+    class Client:
+        def get_raw_waivers_strict(self, _year, *, max_weeks):
+            assert max_weeks == 1
+            raise TimeoutError("provider timeout")
+
+        def get_raw_trades_strict(self, _year, *, max_weeks):
+            return []
+
+    ctx = MagicMock()
+    ctx.get_league_id_for_year.return_value = 12345
+    with pytest.raises(RuntimeError, match="waivers"):
+        fetch_espn_transactions_modern(
+            ctx, 2026, max_week=1, client=Client(), league=SimpleNamespace(teams=[]),
+        )
+
+
+def test_strict_espn_transaction_endpoint_rejects_timeout_and_malformed_empty(monkeypatch):
+    from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient, ESPNAPIError
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def get(self, *_args, **_kwargs):
+            if self.payload == "timeout":
+                raise TimeoutError("provider timeout")
+            return Response(self.payload)
+
+    client = ESPNAPIClient(12345)
+    monkeypatch.setattr(client, "_session", Session({"transactions": []}))
+    assert client.get_raw_transactions(2026, 1, strict=True) == []
+    monkeypatch.setattr(client, "_session", Session({}))
+    with pytest.raises(ESPNAPIError, match="malformed"):
+        client.get_raw_transactions(2026, 1, strict=True)
+    monkeypatch.setattr(client, "_session", Session("timeout"))
+    with pytest.raises(ESPNAPIError, match="raw transactions"):
+        client.get_raw_transactions(2026, 1, strict=True)
 
 class TestPreTwoThousandNineteenNoTrades:
     """Pre-2019 ESPN should never produce trade rows — only drops and adds."""

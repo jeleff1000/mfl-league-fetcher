@@ -419,8 +419,15 @@ def build_delta_bundle(
     import_mode: str | None = None,
     platform: str | None = None,
     league_id: str | None = None,
+    base_generation: int | None = None,
     output_dir: str | Path | None = None,
 ) -> DeltaBundle:
+    if base_generation is not None and (
+        isinstance(base_generation, bool)
+        or not isinstance(base_generation, int)
+        or base_generation < 0
+    ):
+        raise ValueError("base_generation must be a nonnegative integer")
     _repair_player_fantasy_publish_identity(conn)
     _dedupe_matchup_publish_identity(conn)
 
@@ -536,6 +543,8 @@ def build_delta_bundle(
         ],
         "omitted_tables": omitted_tables,
     }
+    if base_generation is not None:
+        logical_payload["base_generation"] = base_generation
     bundle_hash = _sha256_json(logical_payload)
     bundle_id = f"{db_name}-{import_run_id}-{publish_sequence}-{bundle_hash[:12]}-{uuid.uuid4().hex[:8]}"
 

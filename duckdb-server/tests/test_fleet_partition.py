@@ -157,6 +157,126 @@ def test_fleet_partition_requires_admin(client):  # noqa: F811
     assert resp.status_code == 401
 
 
+def test_fleet_commit_owns_aggregate_timestamp_and_replay_is_idempotent(
+    data_dir, client, tmp_path
+):  # noqa: F811
+    from multi_league.core.fleet_publish import build_fleet_partition_bundle
+
+    stage = duckdb.connect(":memory:")
+    try:
+        stage.execute("CREATE SCHEMA public")
+        stage.execute(
+            "CREATE TABLE public.homepage_league_summary "
+            "(db_name VARCHAR, last_updated TIMESTAMP, data_year INTEGER, "
+            "data_week INTEGER, highest_score_points DOUBLE)"
+        )
+        stage.execute(
+            "INSERT INTO public.homepage_league_summary VALUES "
+            "('league_alpha', '2000-01-01 00:00:00', 2026, 1, 152.66)"
+        )
+        first = build_fleet_partition_bundle(
+            stage, active_year=ACTIVE_YEAR,
+            league_generations={"league_alpha": 0},
+            tables=["homepage_league_summary"],
+            output_dir=tmp_path / "first-timestamp",
+        )
+        stage.execute(
+            "UPDATE public.homepage_league_summary "
+            "SET last_updated = '2001-01-01 00:00:00'"
+        )
+        replay = build_fleet_partition_bundle(
+            stage, active_year=ACTIVE_YEAR,
+            league_generations={"league_alpha": 0},
+            tables=["homepage_league_summary"],
+            output_dir=tmp_path / "replay-timestamp",
+        )
+    finally:
+        stage.close()
+
+    assert first.bundle_id == replay.bundle_id
+    first_response = _post_bundle(client, first)
+    assert first_response.status_code == 200, first_response.text
+    before = _query(
+        client,
+        "SELECT CAST(last_updated AS VARCHAR) AS ts FROM public.homepage_league_summary "
+        "WHERE db_name = 'league_alpha'",
+    )[0]["ts"]
+    assert before not in {"2000-01-01 00:00:00", "2001-01-01 00:00:00"}
+
+    replay_response = _post_bundle(client, replay)
+    assert replay_response.status_code == 200, replay_response.text
+    after = _query(
+        client,
+        "SELECT CAST(last_updated AS VARCHAR) AS ts FROM public.homepage_league_summary "
+        "WHERE db_name = 'league_alpha'",
+    )[0]["ts"]
+    assert after == before
+
+
+def test_stale_delta_import_cannot_rewind_a_newer_weekly_fleet_commit(
+    data_dir, client, tmp_path
+):  # noqa: F811
+    from multi_league.core.delta_publish import build_delta_bundle
+
+    stale_source = duckdb.connect(":memory:")
+    try:
+        stale_source.execute("CREATE SCHEMA public")
+        stale_source.execute(
+            "CREATE TABLE public.matchup "
+            "(db_name VARCHAR, year INTEGER, week INTEGER, manager_week VARCHAR, "
+            "manager VARCHAR, team_points DOUBLE)"
+        )
+        stale_source.execute(
+            "INSERT INTO public.matchup VALUES "
+            "('league_alpha', 2025, 1, 'alice_2025_1', 'alice', 50), "
+            "('league_alpha', 2026, 1, 'alice_2026_1', 'alice', 50)"
+        )
+        stale_source.execute(
+            "CREATE TABLE public.league_settings "
+            "(db_name VARCHAR, year INTEGER, league_name VARCHAR)"
+        )
+        stale_source.execute(
+            "INSERT INTO public.league_settings VALUES "
+            "('league_alpha', 2025, 'Alpha'), ('league_alpha', 2026, 'Alpha')"
+        )
+        stale_source.execute(
+            "CREATE TABLE public.player_fantasy "
+            "(db_name VARCHAR, year INTEGER, week INTEGER, player_week VARCHAR, "
+            "NFL_player_id VARCHAR, manager VARCHAR, fantasy_points DOUBLE)"
+        )
+        stale_source.execute(
+            "INSERT INTO public.player_fantasy VALUES "
+            "('league_alpha', 2026, 1, 'nfl_a_2026_1', 'nfl_a', 'alice', 10)"
+        )
+        stale = build_delta_bundle(
+            stale_source, db_name="league_alpha", import_mode="quick",
+            platform="sleeper", base_generation=0,
+            output_dir=tmp_path / "stale-delta",
+        )
+    finally:
+        stale_source.close()
+
+    newer = _build_bundle(tmp_path, import_run_id="2000")
+    assert _post_bundle(client, newer).status_code == 200
+    before_active = _fingerprint(client, "matchup", "db_name = 'league_alpha' AND year = 2026")
+    before_history = _fingerprint(client, "matchup", "db_name = 'league_alpha' AND year = 2025")
+    with open(stale.path, "rb") as fh:
+        response = client.post(
+            "/merge-league-delta",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "league_alpha",
+                "x-bundle-id": stale.bundle_id,
+                "x-bundle-hash": stale.bundle_hash,
+            },
+            files={"file": (stale.path.name, fh, "application/gzip")},
+        )
+    assert response.status_code == 409, response.text
+    assert "generation" in response.text.lower()
+    assert _fingerprint(client, "matchup", "db_name = 'league_alpha' AND year = 2026") == before_active
+    assert _fingerprint(client, "matchup", "db_name = 'league_alpha' AND year = 2025") == before_history
+
+
 def test_fleet_partition_scoped_merge_commits(data_dir, client, tmp_path):  # noqa: F811
     gamma_before = _fingerprint(client, "matchup", "db_name = 'league_gamma'")
     prior_before = _fingerprint(client, "matchup", f"year = {PRIOR_YEAR}")

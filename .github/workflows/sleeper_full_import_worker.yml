@@ -17,7 +17,7 @@ on:
         type: string
       import_lock_key:
         description: 'Stable import concurrency key, usually the resolved db_name'
-        required: false
+        required: true
         type: string
       verify_only:
         description: 'Run the complete local pipeline without publishing or registering the league'
@@ -33,15 +33,35 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key || github.event.inputs.user_id || github.event.client_payload.user_id || github.run_id }}
+  group: league-update-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   resolve-db-lock:
     runs-on: ubuntu-latest
     outputs:
       database_name: ${{ steps.resolve.outputs.database_name }}
+      base_generation: ${{ steps.snapshot.outputs.base_generation }}
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
+      - name: Validate import lock key
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+        run: |
+          if [ -z "${IMPORT_LOCK_KEY}" ]; then
+            echo 'A resolved import_lock_key is required before any league write.' >&2
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -59,6 +79,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Capture import publication generation
+        id: snapshot
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+        run: python scripts/capture_import_generation.py --db-name "$IMPORT_LOCK_KEY"
+
       - name: Resolve lock key
         id: resolve
         run: |
@@ -69,6 +97,12 @@ jobs:
           DATABASE_BACKEND: fly
           DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+
+      - name: Verify resolved import lock
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+          RESOLVED_TARGET_DB: ${{ steps.resolve.outputs.database_name }}
+        run: python .github/scripts/verify_import_lock.py --lock "$IMPORT_LOCK_KEY" --target "$RESOLVED_TARGET_DB"
 
   import-sleeper-history:
     needs: resolve-db-lock
@@ -88,6 +122,8 @@ jobs:
       FLY_UPLOAD_RETRY_MAX_DELAY: 30
       FLY_UPLOAD_RETRY_JITTER_SECONDS: 2
       FLY_PUBLISH_FORMAT: delta
+      REQUIRE_IMPORT_BASE_GENERATION: '1'
+      LEAGUE_IMPORT_BASE_GENERATION: ${{ needs.resolve-db-lock.outputs.base_generation }}
       FLY_DELTA_FALLBACK_TO_DUCKDB: '0'
       FLY_FINALIZE_INVENTORY: '1'
       OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
@@ -96,6 +132,15 @@ jobs:
       DATA_DIR: ""  # set after parse step
 
     steps:
+      - name: Require canonical public main for publication
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League publication must run from the canonical public main branch."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:

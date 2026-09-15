@@ -331,6 +331,21 @@ class SleeperAPIClient:
         result = self._get(f"/league/{league_id}/transactions/{round_num}")
         return result if result else []
 
+    def get_league_transactions_strict(
+        self, league_id: str, round_num: int,
+    ) -> list[dict[str, Any]]:
+        """Active refresh: only an array-shaped 200 response proves valid empty."""
+        result = self._get(f"/league/{league_id}/transactions/{round_num}")
+        if not isinstance(result, list):
+            raise SleeperAPIError(
+                f"Sleeper transactions week {round_num} was not verified"
+            )
+        if any(not isinstance(row, dict) for row in result):
+            raise SleeperAPIError(
+                f"Sleeper transactions week {round_num} was not verified"
+            )
+        return result
+
     def get_league_traded_picks(self, league_id: str) -> list[dict[str, Any]]:
         """
         Get all traded draft picks in a league.
@@ -359,7 +374,9 @@ class SleeperAPIClient:
             List of draft dicts
         """
         result = self._get(f"/league/{league_id}/drafts")
-        return result if result else []
+        if not isinstance(result, list):
+            raise ValueError(f"Sleeper drafts endpoint for {league_id} did not return an array")
+        return result
 
     def get_winners_bracket(self, league_id: str) -> list[dict[str, Any]]:
         """

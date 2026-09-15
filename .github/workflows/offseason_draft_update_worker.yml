@@ -92,8 +92,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: offseason-draft-${{ inputs.db_names || github.run_id }}-${{ inputs.draft_year || github.run_id }}
+  group: league-update-${{ inputs.db_names || github.run_id }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   offseason-draft-update:

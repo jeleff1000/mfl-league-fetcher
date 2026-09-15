@@ -81,6 +81,7 @@ def fetch_espn_transactions_modern(
     """
     from .espn_api_client import ESPNAPIClient
 
+    strict_active_scope = max_week is not None
     if client is None:
         client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
 
@@ -88,6 +89,8 @@ def fetch_espn_transactions_modern(
         if league is None:
             league = client.get_league(year)
     except Exception as e:
+        if strict_active_scope:
+            raise RuntimeError(f"ESPN transactions league for {year} could not be verified") from e
         log(f"  [TRANSACTIONS] Failed to load league for {year}: {e}")
         return None
 
@@ -111,7 +114,10 @@ def fetch_espn_transactions_modern(
     if _verbose:
         log(f"  [TRANSACTIONS] Fetching waivers/FA via raw API for {year}...")
     try:
-        raw_waivers = client.get_raw_waivers(year, max_weeks=max_weeks)
+        if strict_active_scope and hasattr(client, "get_raw_waivers_strict"):
+            raw_waivers = client.get_raw_waivers_strict(year, max_weeks=max_weeks)
+        else:
+            raw_waivers = client.get_raw_waivers(year, max_weeks=max_weeks)
         for txn in raw_waivers:
             txn_id = txn.get("id")
             txn_type_raw = txn.get("type", "unknown")
@@ -184,13 +190,18 @@ def fetch_espn_transactions_modern(
         if _verbose:
             log(f"  [TRANSACTIONS] Found {len(raw_waivers)} waiver/FA transactions for {year} ({len(rows)} rows)")
     except Exception as e:
+        if strict_active_scope:
+            raise RuntimeError(f"ESPN waivers for {year} could not be verified") from e
         log(f"  [TRANSACTIONS] Error fetching waivers for {year}: {e}")
 
     # === Part 2: Trades via raw API ===
     if _verbose:
         log(f"  [TRANSACTIONS] Fetching trades via raw API for {year}...")
     try:
-        trades = client.get_raw_trades(year, max_weeks=max_weeks)
+        if strict_active_scope and hasattr(client, "get_raw_trades_strict"):
+            trades = client.get_raw_trades_strict(year, max_weeks=max_weeks)
+        else:
+            trades = client.get_raw_trades(year, max_weeks=max_weeks)
         for trade in trades:
             trade_id = trade.get("id")
             scoring_period = trade.get("scoringPeriodId", 0)
@@ -258,6 +269,8 @@ def fetch_espn_transactions_modern(
         if _verbose:
             log(f"  [TRANSACTIONS] Found {len(trades)} trades for {year}")
     except Exception as e:
+        if strict_active_scope:
+            raise RuntimeError(f"ESPN trades for {year} could not be verified") from e
         log(f"  [TRANSACTIONS] Error fetching trades for {year}: {e}")
 
     if not rows:

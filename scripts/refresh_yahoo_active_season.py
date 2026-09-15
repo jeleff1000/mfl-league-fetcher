@@ -48,8 +48,6 @@ SOURCE_TABLES = (
     "league_rules",
     "manager_overrides",
     "standings_config",
-    "franchise_identity_audit",
-    "franchise_identity_registry",
     "draft_manager_career",
     "draft_player_career",
     "matchup_career",
@@ -208,11 +206,19 @@ def _active_yahoo_history(
         for year, league_key in saved.items()
         if str(year).strip() and str(league_key).strip()
     }
-    if str(active_year) in history:
+    active_key = str(source_active_key or "").strip()
+    if not YAHOO_LEAGUE_KEY_RE.fullmatch(active_key):
+        active_key = ""
+    saved_active_key = history.get(str(active_year))
+    if saved_active_key and active_key and saved_active_key != active_key:
+        raise RuntimeError("Fly context and settings have conflicting active Yahoo league keys")
+    if saved_active_key and YAHOO_LEAGUE_KEY_RE.fullmatch(saved_active_key):
         return history
 
-    if source_active_key and YAHOO_LEAGUE_KEY_RE.fullmatch(str(source_active_key).strip()):
-        return {str(active_year): str(source_active_key).strip()}
+    if active_key:
+        # Retained active settings avoid discovery, but the worker context must
+        # still carry the entire saved cross-platform lineage and user history.
+        return {**history, str(active_year): active_key}
 
     # OAuth credentials authorize a Yahoo account, not a particular renewal
     # chain.  The credential registry's league_id can therefore point at a
@@ -246,6 +252,8 @@ def _active_yahoo_history(
         )
         raise RuntimeError(f"Yahoo renewal discovery conflicted with the saved chain: {details}")
     history.update(discovered)
+    if not YAHOO_LEAGUE_KEY_RE.fullmatch(str(history.get(str(active_year)) or "")):
+        raise RuntimeError("Yahoo renewal chain has no valid active Yahoo league key")
     return history
 
 
@@ -610,7 +618,7 @@ def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.Da
 
 def _last_materialized_week(reader: Any, *, db_name: str, year: int) -> int | None:
     value = reader.query_scalar(
-        "SELECT MAX(week) FROM public.player_fantasy "
+        "SELECT MAX(TRY_CAST(week AS INTEGER)) FROM public.matchup "
         f"WHERE db_name = {_sql_literal(db_name)} AND year = {int(year)}",
         database=LEAGUES_DATABASE,
     )
@@ -631,7 +639,13 @@ def _load_active_refresh_inputs(
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="active-refresh-gate") as executor:
         finalized_future = executor.submit(_finalized_ops, reader, year=year, through_week=through_week)
         materialized_future = executor.submit(_last_materialized_week, reader, db_name=db_name, year=year)
-        return finalized_future.result(), materialized_future.result()
+        finalized_ops = finalized_future.result()
+        played_watermark = materialized_future.result()
+    # An explicit manual ceiling may deliberately revisit an older played
+    # week; never let a later materialized week turn that scope into a no-op.
+    if through_week is not None and played_watermark is not None:
+        played_watermark = min(played_watermark, int(through_week))
+    return finalized_ops, played_watermark
 
 
 def _patch_research_ops_cache_from_fly(
@@ -806,6 +820,7 @@ def _merge_refresh_payloads(
     from multi_league.core.league_update_validation import (
         validate_active_roster_frame,
         validate_provider_team_inventory,
+        validate_yahoo_week_matchup_scope,
     )
     from multi_league.core.league_refresh import (
         assert_provider_roster_merge,
@@ -882,12 +897,24 @@ def _merge_refresh_payloads(
     final_matchup_weeks = 0
     schedule_rows = 0
     current_schedule_frames: list[pd.DataFrame] = []
+    playoff_start_week = settings_row.iloc[0].get("playoff_start_week")
+    if pd.isna(playoff_start_week):
+        playoff_start_week = None
     for week in refresh_weeks:
         scoreboards, failures = weekly_matchup_data(ctx=ctx, year=year, week=week)
         if failures:
             raise RuntimeError(f"Yahoo matchup fetch failed for {year} week {week}: {failures}")
+        raw_schedule = scoreboards.attrs.get("schedule_df")
         final_matchups = filter_matchups_to_final_results(scoreboards)
-        if "team_key" in final_matchups and set(final_matchups["team_key"].astype(str)) == set(expected_team_keys):
+        week_final = validate_yahoo_week_matchup_scope(
+            raw_schedule=raw_schedule,
+            final_matchups=final_matchups,
+            season=year,
+            week=week,
+            expected_team_keys=expected_team_keys,
+            playoff_start_week=playoff_start_week,
+        )
+        if week_final:
             final_matchup_weeks += 1
         if not final_matchups.empty:
             merge_provider_refresh_table(
@@ -899,9 +926,6 @@ def _merge_refresh_payloads(
             )
             matchup_rows += len(final_matchups)
 
-        raw_schedule = scoreboards.attrs.get("schedule_df")
-        if raw_schedule is None or raw_schedule.empty:
-            raise RuntimeError(f"Yahoo returned no schedule graph for {year} week {week}")
         current_schedule_frames.append(raw_schedule)
         schedule = _derive_schedule_df_from_matchup_df(
             raw_schedule,
@@ -1140,8 +1164,13 @@ def _run_refresh_aggregates(
         create_transaction_report_card_table,
     )
     from multi_league.transformations.aggregation.aggregation_utils import configure_table_catalog
+    from multi_league.core.db_utils import attach_ops_cache
 
     conn = local_db.connect()
+    ops_cache = Path(os.environ.get("OPS_CACHE_PATH", ""))
+    if not ops_cache.is_file():
+        raise RuntimeError("weekly aggregate graph requires the local OPS cache")
+    attach_ops_cache(conn, str(ops_cache))
     configure_table_catalog(conn)
     create_fantasy_season_table(conn, db_name)
     aggregate_fantasy_season(conn, db_name, year=active_year)
@@ -1221,6 +1250,7 @@ def _run_local_pipeline(
         db_name=db_name,
         data_dir=work_dir,
         quick=True,
+        preserve_frontend_settings=True,
     )
     failed = [name for name, ok in transforms if not ok]
     if failed:
@@ -1349,10 +1379,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.league_update_plan import load_persisted_refresh_plan
+    from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
     from multi_league.core.yahoo_league_settings import discover_league_history
 
+    timer = PhaseTimer()
     reader = FlyReader()
     if args.execute:
         from multi_league.core.league_update_status import assert_league_update_entitled
@@ -1388,6 +1420,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     receipt: dict[str, Any] = {"db_name": args.db, "year": active_year, "refresh_weeks": refresh_weeks, "executed": bool(args.execute)}
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))
+    timer.mark("source_plan")
     if persisted_plan is not None:
         receipt["source_manifest_digest"] = persisted_plan.observed_manifest_digest
         receipt["source_manifest_json"] = persisted_plan.observed_manifest_json
@@ -1395,6 +1428,7 @@ def main(argv: list[str] | None = None) -> int:
         receipt["refresh_reasons"] = list(persisted_plan.reasons)
     if not refresh_weeks:
         receipt["status"] = "NO_FINALIZED_WEEKS"
+        receipt["phase_seconds"] = timer.finish()
         print(json.dumps(receipt, sort_keys=True))
         if args.json_out:
             args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
@@ -1407,6 +1441,7 @@ def main(argv: list[str] | None = None) -> int:
             db_name=args.db,
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
+        timer.mark("source_snapshot")
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
@@ -1445,6 +1480,7 @@ def main(argv: list[str] | None = None) -> int:
         ctx.import_mode = "quick"
         ctx.save(context_path)
         receipt["league_key"] = history[str(active_year)]
+        timer.mark("renewal_resolution")
         local_db = LocalLeagueDB(work_dir, args.db)
         try:
             receipt["hydrated_rows"] = hydrate_local_refresh_sources(
@@ -1457,6 +1493,7 @@ def main(argv: list[str] | None = None) -> int:
             from multi_league.core.league_update_ownership import local_preservation_snapshot
 
             preservation_before = local_preservation_snapshot(local_db, preservation_witnesses)
+            timer.mark("local_hydration")
             receipt["fetch_rows"] = _merge_refresh_payloads(
                 ctx=ctx,
                 local_db=local_db,
@@ -1468,12 +1505,28 @@ def main(argv: list[str] | None = None) -> int:
             receipt["source_manifest_complete"] = yahoo_source_manifest_complete(
                 refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"]
             )
+            timer.mark("provider_fetch")
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"
+                receipt["phase_seconds"] = timer.finish()
                 print(json.dumps(receipt, sort_keys=True))
                 if args.json_out:
                     args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
                 return 0
+
+            from multi_league.core.league_update_validation import (
+                assert_transformed_active_matchup_scope,
+                assert_transformed_active_player_scope,
+                capture_active_final_matchup_scope,
+                capture_active_provider_player_scope,
+            )
+            expected_player_keys = capture_active_provider_player_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="yahoo_player_id",
+            )
+            expected_matchup_scores = capture_active_final_matchup_scope(
+                local_db.connect(), db_name=args.db, year=active_year, weeks=refresh_weeks,
+            )
 
             from multi_league.core.league_refresh import (
                 active_platform_player_ids,
@@ -1500,6 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
                     work_dir=work_dir,
                 )
             )
+            timer.mark("player_ops_cache")
             _run_local_pipeline(
                 ctx=ctx,
                 context_path=context_path,
@@ -1508,6 +1562,16 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 work_dir=work_dir,
                 keeper_config_hydrated="keeper_config" in source_frames,
+            )
+            timer.mark("shared_transformations")
+            receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="yahoo_player_id",
+                expected_keys=expected_player_keys,
+            )
+            receipt["transformed_matchup_scope"] = assert_transformed_active_matchup_scope(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
             # A retained active key is deliberately only a one-year fast path.
             # Persist context only after a real full chain discovery, never as
@@ -1544,6 +1608,13 @@ def main(argv: list[str] | None = None) -> int:
             if receipt["renewal_chain_backfilled"]:
                 publish_tables.append("league_context")
             publish_tables = sorted(set(publish_tables))
+            from multi_league.core.league_update_validation import assert_refresh_derived_output_health
+
+            receipt["derived_health"] = assert_refresh_derived_output_health(
+                local_db.connect(), db_name=args.db, year=active_year,
+                weeks=refresh_weeks, provider_id_column="yahoo_player_id",
+                published_tables=publish_tables,
+            )
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 
             receipt["ownership"] = assert_publish_table_ownership(publish_tables)
@@ -1565,6 +1636,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
             finally:
                 stage.close()
+            timer.mark("homepage_preservation_stage")
+            from multi_league.core.league_update_publish_claim import renew_claim_for_publication
+
+            renew_claim_for_publication(reader, database_name=args.db, platform="yahoo")
+            timer.mark("prepublish_claim")
             result = FlyTarget().merge_fleet_partition(
                 bundle.path,
                 bundle_id=bundle.bundle_id,
@@ -1578,15 +1654,18 @@ def main(argv: list[str] | None = None) -> int:
             receipt["homepage_bundle_id"] = bundle.bundle_id
             receipt["homepage_rows"] = homepage["rows"]
             receipt["published_tables"] = publish_tables
+            timer.mark("fly_publication")
             receipt["post_publish_counts"] = _scope_counts(
                 reader,
                 db_name=args.db,
                 active_year=active_year,
                 tables=receipt["published_tables"],
             )
+            timer.mark("post_publish_verification")
         finally:
             local_db.close()
 
+    receipt["phase_seconds"] = timer.finish()
     print(json.dumps(receipt, sort_keys=True))
     if args.json_out:
         args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")

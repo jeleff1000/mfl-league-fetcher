@@ -5,9 +5,51 @@ import pytest
 
 from multi_league.core.league_update_ownership import (
     OwnershipContractError,
+    PreservationError,
+    assert_refresh_preservation,
     overlay_provider_columns,
     table_ownership,
 )
+
+
+def _optimal_week_frames():
+    old = pd.DataFrame([
+        {"db_name": "afi_data", "year": 2026, "week": 1, "player_week": "p1_2026_1",
+         "league_wide_optimal_player": 1, "league_wide_optimal_position": "FLX", "clutch_equity": 2.0},
+        {"db_name": "afi_data", "year": 2026, "week": 1, "player_week": "p2_2026_1",
+         "league_wide_optimal_player": 0, "league_wide_optimal_position": None, "clutch_equity": 1.0},
+    ])
+    new = old.copy()
+    new.loc[0, "league_wide_optimal_player"] = 0
+    new.loc[0, "league_wide_optimal_position"] = None
+    new.loc[1, "league_wide_optimal_player"] = 1
+    new.loc[1, "league_wide_optimal_position"] = "FLX"
+    return old, new
+
+
+def test_recomputed_optimal_label_may_clear_only_after_verified_deselection():
+    old, new = _optimal_week_frames()
+    receipt = assert_refresh_preservation(
+        {"player_fantasy": old}, {"player_fantasy": new}, active_year=2026,
+    )
+    assert receipt["historical_rows_preserved"] is True
+    assert receipt["semantic_optimal_deselections"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["still_selected", "all_deselected", "lost_clutch"])
+def test_optimal_deselection_exception_cannot_hide_incomplete_enrichment(mutation):
+    old, new = _optimal_week_frames()
+    if mutation == "still_selected":
+        new.loc[0, "league_wide_optimal_player"] = 1
+    elif mutation == "all_deselected":
+        new.loc[1, "league_wide_optimal_player"] = 0
+        new.loc[1, "league_wide_optimal_position"] = None
+    else:
+        new.loc[0, "clutch_equity"] = None
+    with pytest.raises(PreservationError):
+        assert_refresh_preservation(
+            {"player_fantasy": old}, {"player_fantasy": new}, active_year=2026,
+        )
 
 
 def test_provider_refresh_preserves_existing_derived_player_values():

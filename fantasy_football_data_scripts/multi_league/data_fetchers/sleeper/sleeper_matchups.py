@@ -1200,6 +1200,7 @@ class SleeperMatchupFetcher:
         log(f"Found {len(roster_map)} teams")
 
         # Determine weeks to fetch
+        explicit_week_scope = weeks is not None
         if weeks is None:
             # Use league settings to determine week bounds (avoids iterating through empty weeks)
             start_week, end_week = self._get_season_week_bounds(league_id, year)
@@ -1224,7 +1225,7 @@ class SleeperMatchupFetcher:
                 if not week_data:
                     consecutive_empty_weeks += 1
                     skipped_weeks.append(week)
-                    if consecutive_empty_weeks >= 3:
+                    if not explicit_week_scope and consecutive_empty_weeks >= 3:
                         logger.debug(f"3+ consecutive empty weeks at week {week} - stopping")
                         break
                     continue
@@ -1233,7 +1234,7 @@ class SleeperMatchupFetcher:
                 if total_points == 0:
                     consecutive_empty_weeks += 1
                     skipped_weeks.append(week)
-                    if consecutive_empty_weeks >= 3:
+                    if not explicit_week_scope and consecutive_empty_weeks >= 3:
                         logger.debug(f"3+ consecutive phantom weeks at week {week} - stopping")
                         break
                     continue
@@ -1244,6 +1245,8 @@ class SleeperMatchupFetcher:
                 logger.debug(f"Week {week}: {len(week_data)} entries, {total_points:.1f} pts")
 
             except Exception as e:
+                if explicit_week_scope:
+                    raise
                 logger.warning(f"Error fetching week {week}: {e}")
                 skipped_weeks.append(week)
                 continue

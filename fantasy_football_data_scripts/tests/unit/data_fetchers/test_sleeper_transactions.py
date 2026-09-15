@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[3]
 if str(SCRIPT_ROOT) not in sys.path:
@@ -9,6 +11,7 @@ if str(SCRIPT_ROOT) not in sys.path:
 from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext
 from multi_league.data_fetchers.sleeper.sleeper_roster_identity import build_year_roster_map
 from multi_league.data_fetchers.sleeper.sleeper_transactions import SleeperTransactionFetcher
+from multi_league.data_fetchers.sleeper.sleeper_api_client import SleeperAPIClient, SleeperAPIError
 
 
 class _FakeClient:
@@ -170,3 +173,43 @@ def test_fetch_transactions_for_year_can_stop_at_active_refresh_week(tmp_path):
 
     assert not df.empty
     assert client.transaction_calls == [("2022-league", 1)]
+
+
+def test_active_refresh_transactions_do_not_stop_after_five_empty_weeks(tmp_path):
+    ctx = _make_ctx(tmp_path)
+    client = _FakeClient()
+    client.transactions[("2022-league", 6)] = client.transactions.pop(("2022-league", 1))
+    fetcher = SleeperTransactionFetcher(ctx, client=client, player_cache=_FakePlayerCache())
+
+    result = fetcher.fetch_transactions_for_year(2022, max_week=6)
+
+    assert not result.empty
+    assert client.transaction_calls == [("2022-league", week) for week in range(1, 7)]
+
+
+def test_active_refresh_transaction_week_failure_is_not_valid_empty(tmp_path):
+    ctx = _make_ctx(tmp_path)
+
+    class FailingClient(_FakeClient):
+        def get_league_transactions(self, league_id, week):
+            if week == 2:
+                raise TimeoutError("provider timeout")
+            return super().get_league_transactions(league_id, week)
+
+    fetcher = SleeperTransactionFetcher(
+        ctx, client=FailingClient(), player_cache=_FakePlayerCache(),
+    )
+    with pytest.raises(RuntimeError, match="week 2"):
+        fetcher.fetch_transactions_for_year(2022, max_week=3)
+
+
+def test_sleeper_strict_transaction_endpoint_distinguishes_empty_from_failed(monkeypatch):
+    client = SleeperAPIClient()
+    monkeypatch.setattr(client, "_get", lambda _endpoint: [])
+    assert client.get_league_transactions_strict("league", 1) == []
+    monkeypatch.setattr(client, "_get", lambda _endpoint: None)
+    with pytest.raises(SleeperAPIError, match="not verified"):
+        client.get_league_transactions_strict("league", 1)
+    monkeypatch.setattr(client, "_get", lambda _endpoint: {"transactions": []})
+    with pytest.raises(SleeperAPIError, match="not verified"):
+        client.get_league_transactions_strict("league", 1)

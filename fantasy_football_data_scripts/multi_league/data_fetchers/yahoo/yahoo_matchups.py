@@ -537,6 +537,27 @@ def parse_matchups_from_xml(
     tested against saved XML. Zero-score (unplayed) weeks are NOT skipped — they
     carry schedule data; the caller separates played games from all games.
     """
+    # Yahoo reports the exact matchup cardinality on the scoreboard. A 200
+    # response with fewer nodes than its own declaration, or a matchup whose
+    # team card cannot be parsed, must not become a partial published week.
+    for container in root.findall(".//matchups"):
+        matchups = container.findall("./matchup")
+        declared = container.get("count")
+        if declared is not None:
+            try:
+                expected_count = int(declared)
+            except ValueError as exc:
+                raise RuntimeError("Yahoo declared matchup count is invalid") from exc
+            if expected_count < 0 or expected_count != len(matchups):
+                raise RuntimeError(
+                    f"Yahoo declared matchup count {expected_count} disagrees with {len(matchups)} nodes"
+                )
+        for matchup in matchups:
+            teams = matchup.findall(".//teams/team")
+            if len(teams) != 2:
+                teams = matchup.findall(".//team")
+            if len(teams) != 2:
+                raise RuntimeError("Yahoo matchup team cardinality is not a reciprocal pair")
     rows: list[dict[str, Any]] = []
     for matchup in root.findall(".//matchup"):
         wk_node = matchup.find("week")

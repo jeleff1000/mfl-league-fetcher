@@ -1,4 +1,8 @@
 from pathlib import Path
+import json
+import pytest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import duckdb
 import pandas as pd
@@ -63,3 +67,94 @@ def test_upload_to_fly_stages_only_canonical_tables(monkeypatch, tmp_path):
     assert captured["rows"] == 2
     assert captured["managers"] == [("Alice",), ("Bob",)]
     assert captured["marked"][1] == {"import_mode": "quick", "platform": "sleeper"}
+
+
+def test_delta_upload_uses_generation_captured_before_import(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeFlyTarget:
+        def merge_league_delta(self, db_name, path, *, bundle_id, bundle_hash):
+            captured["db_name"] = db_name
+            captured["bundle_id"] = bundle_id
+            captured["bundle_hash"] = bundle_hash
+            return {"status": "COMMITTED"}
+
+    monkeypatch.setattr(fly_target, "FlyTarget", FakeFlyTarget)
+    monkeypatch.setenv("FLY_PUBLISH_FORMAT", "delta")
+    monkeypatch.setenv("LEAGUE_IMPORT_BASE_GENERATION", "2")
+    monkeypatch.setenv("FLY_FINALIZE_INVENTORY", "0")
+    db = LocalLeagueDB(tmp_path, "speed_test")
+    try:
+        conn = db.connect()
+        conn.execute(
+            "CREATE TABLE public.matchup "
+            "(db_name VARCHAR, year INTEGER, week INTEGER, manager_week VARCHAR, manager VARCHAR)"
+        )
+        conn.execute(
+            "INSERT INTO public.matchup VALUES "
+            "('speed_test', 2026, 1, 'alice_2026_1', 'Alice')"
+        )
+        db.upload_to_fly(
+            "speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False
+        )
+        manifest = json.loads((tmp_path / "delta_publish_manifest.json").read_text())
+        assert manifest["base_generation"] == 2
+        assert captured["db_name"] == "speed_test"
+        assert captured["bundle_hash"] == manifest["bundle_hash"]
+    finally:
+        db.close()
+
+
+def test_delta_upload_refuses_missing_required_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLY_PUBLISH_FORMAT", "delta")
+    monkeypatch.setenv("REQUIRE_IMPORT_BASE_GENERATION", "1")
+    monkeypatch.delenv("LEAGUE_IMPORT_BASE_GENERATION", raising=False)
+    db = LocalLeagueDB(tmp_path, "speed_test")
+    try:
+        db.connect().execute(
+            "CREATE TABLE public.matchup "
+            "(db_name VARCHAR, year INTEGER, week INTEGER, manager_week VARCHAR)"
+        )
+        with pytest.raises(RuntimeError, match="unfenced league write"):
+            db.upload_to_fly("speed_test", import_mode="quick", platform="sleeper")
+    finally:
+        db.close()
+
+
+def test_same_name_legacy_uploads_own_distinct_staging_files(monkeypatch, tmp_path):
+    staged = []
+    arrived = Barrier(2, timeout=5)
+
+    class FakeFlyTarget:
+        def merge_league(self, db_name, local_path):
+            path = Path(local_path)
+            assert path.exists()
+            staged.append(path)
+            arrived.wait()
+            assert path.exists()
+            return {"status": "merged", "tables": {"matchup": 1}}
+
+    monkeypatch.setattr(fly_target, "FlyTarget", FakeFlyTarget)
+    monkeypatch.setenv("FLY_PUBLISH_FORMAT", "duckdb")
+    monkeypatch.setenv("FLY_FINALIZE_INVENTORY", "0")
+
+    def upload(label):
+        directory = tmp_path / label
+        directory.mkdir()
+        db = LocalLeagueDB(directory, "speed_test")
+        try:
+            conn = db.connect()
+            conn.execute("CREATE TABLE public.matchup (year INTEGER, week INTEGER, manager VARCHAR)")
+            conn.execute("INSERT INTO public.matchup VALUES (2026, 1, 'Alice')")
+            db.upload_to_fly(
+                "speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False
+            )
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(upload, label) for label in ("first", "second")]
+        for future in futures:
+            future.result(timeout=15)
+    assert len(staged) == 2
+    assert staged[0] != staged[1]

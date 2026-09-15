@@ -162,6 +162,34 @@ def test_table_not_found_raises_typed(monkeypatch):
         FlyReader()._post("SELECT 1", "x")
 
 
+def test_catalog_missing_table_500_is_not_retried_for_thirty_seconds(fly_env):
+    reader = FlyReader()
+    response = _resp(
+        500,
+        text="Catalog Error: Table with name league_update_manifests does not exist",
+    )
+    with (
+        patch("multi_league.core.readers.fly_reader.requests.post", return_value=response) as mock_post,
+        patch("multi_league.core.readers.fly_reader.time.sleep") as mock_sleep,
+    ):
+        with pytest.raises(FlyReaderTableNotFound):
+            reader.query("SELECT * FROM accounts.league_update_manifests", database="___ops")
+    assert mock_post.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_transient_500_still_retries_after_catalog_fast_fail(fly_env):
+    reader = FlyReader()
+    sequence = [_resp(500, text="temporary DuckDB ATTACH race"), _resp(200, [{"ok": True}])]
+    with (
+        patch("multi_league.core.readers.fly_reader.requests.post", side_effect=sequence) as mock_post,
+        patch("multi_league.core.readers.fly_reader.time.sleep") as mock_sleep,
+    ):
+        assert reader.query("SELECT 1", database="___ops") == [{"ok": True}]
+    assert mock_post.call_count == 2
+    assert mock_sleep.call_count == 1
+
+
 def test_network_error_raises_typed(monkeypatch):
     """ConnectionError from requests raises FlyReaderNetworkError."""
     calls = []

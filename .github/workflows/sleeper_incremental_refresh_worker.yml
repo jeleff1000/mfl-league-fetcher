@@ -325,7 +325,7 @@ jobs:
           UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
           UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
           UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
-          WORKFLOW_WAS_CANCELLED: ${{ cancelled() && '1' || '0' }}
+          WORKFLOW_WAS_CANCELLED: ${{ job.status == 'cancelled' && '1' || '0' }}
         run: |
           set -euo pipefail
           classifier_args=(--receipt sleeper_active_season_refresh.json --failure-status)

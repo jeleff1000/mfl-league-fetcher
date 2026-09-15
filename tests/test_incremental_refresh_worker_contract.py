@@ -129,6 +129,11 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert "--status committed" in text
     assert "--failure-status" in text
     assert "--cancelled" in text
+    # Status functions are legal in an ``if:`` expression but GitHub rejects
+    # them in a step ``env:`` expression.  Keep cancellation classification
+    # based on the supported job-status context so dispatch itself is valid.
+    assert "WORKFLOW_WAS_CANCELLED: ${{ job.status == 'cancelled' && '1' || '0' }}" in text
+    assert "WORKFLOW_WAS_CANCELLED: ${{ cancelled()" not in text
     assert "committed_cache_pending" in text
     assert "--strict" in text
     assert "--verify-hot" in text

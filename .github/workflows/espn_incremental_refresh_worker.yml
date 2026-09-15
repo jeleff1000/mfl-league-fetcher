@@ -24,6 +24,15 @@ on:
         description: 'Opaque UI claim token; blank for manual/QA runs'
         required: false
         type: string
+      attempt_id:
+        description: 'Attempt identity paired with the UI claim token'
+        required: false
+        type: string
+      claim_version:
+        description: 'Compare-and-swap version for the claimed attempt'
+        required: false
+        default: '1'
+        type: string
 permissions:
   contents: read
 
@@ -102,6 +111,8 @@ jobs:
           --platform espn
           --status running
           --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
           --require-entitled
 
       - name: Refresh ESPN active season
@@ -146,6 +157,8 @@ jobs:
           --platform espn
           --status succeeded
           --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
           --receipt espn_active_season_refresh.json
           --cache-verified
 
@@ -157,6 +170,8 @@ jobs:
           --platform espn
           --status failed
           --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
           --error "ESPN active-season refresh or cache verification failed"
 
       - name: Upload refresh receipt

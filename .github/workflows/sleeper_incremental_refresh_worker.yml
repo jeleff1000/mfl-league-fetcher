@@ -28,6 +28,15 @@ on:
         description: 'Opaque UI claim token; blank for manual/QA runs'
         required: false
         type: string
+      attempt_id:
+        description: 'Attempt identity paired with the UI claim token'
+        required: false
+        type: string
+      claim_version:
+        description: 'Compare-and-swap version for the claimed attempt'
+        required: false
+        default: '1'
+        type: string
 permissions:
   contents: read
 
@@ -105,6 +114,8 @@ jobs:
           --platform sleeper
           --status running
           --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
           --require-entitled
 
       - name: Refresh Sleeper active season
@@ -153,6 +164,8 @@ jobs:
           --platform sleeper
           --status succeeded
           --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
           --receipt sleeper_active_season_refresh.json
           --cache-verified
 
@@ -164,6 +177,8 @@ jobs:
           --platform sleeper
           --status failed
           --dispatch-token "${{ inputs.dispatch_token }}"
+          --attempt-id "${{ inputs.attempt_id }}"
+          --claim-version "${{ inputs.claim_version }}"
           --error "Sleeper active-season refresh or cache verification failed"
 
       - name: Upload refresh receipt

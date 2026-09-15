@@ -27,8 +27,28 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", required=True)
     parser.add_argument("--platform", required=True, choices=("yahoo", "espn", "sleeper"))
-    parser.add_argument("--status", required=True, choices=("running", "succeeded", "failed"))
+    parser.add_argument(
+        "--status",
+        required=True,
+        choices=(
+            "dispatching",
+            "dispatched",
+            "running",
+            "committed",
+            "cache_verified",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "stale",
+            "credential_required",
+            "incomplete_source",
+            "validation_failed",
+            "committed_cache_pending",
+        ),
+    )
     parser.add_argument("--dispatch-token", required=True)
+    parser.add_argument("--attempt-id")
+    parser.add_argument("--claim-version", type=int, default=1)
     parser.add_argument("--workflow-run-id", default=os.environ.get("GITHUB_RUN_ID"))
     parser.add_argument("--receipt", type=Path)
     parser.add_argument("--cache-verified", action="store_true")
@@ -47,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         platform=args.platform,
         status=args.status,
         dispatch_token=args.dispatch_token,
+        attempt_id=args.attempt_id,
+        claim_version=args.claim_version,
         workflow_run_id=args.workflow_run_id,
         receipt=receipt,
         cache_verified=args.cache_verified,

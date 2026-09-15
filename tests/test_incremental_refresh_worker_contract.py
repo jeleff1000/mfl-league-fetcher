@@ -16,9 +16,13 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "workflow_dispatch:" in text
     assert "dispatch_token:" in text
+    assert "attempt_id:" in text
+    assert "claim_version:" in text
     assert "push:" not in text
     assert "scripts/record_league_update_status.py" in text
     assert "--status running" in text
+    assert text.count('--attempt-id "${{ inputs.attempt_id }}"') == 3
+    assert text.count('--claim-version "${{ inputs.claim_version }}"') == 3
     assert "--require-entitled" in text
     assert f"scripts/refresh_{platform}_active_season.py" in text
     assert "scripts/warm_vercel_cache.py" in text

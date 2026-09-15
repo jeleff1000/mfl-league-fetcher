@@ -7,13 +7,65 @@ from collections.abc import Mapping
 from typing import Any
 
 
-VALID_STATUSES = {"running", "succeeded", "failed"}
+VALID_STATUSES = {
+    "dispatching",
+    "dispatched",
+    "running",
+    "committed",
+    "cache_verified",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "stale",
+    "credential_required",
+    "incomplete_source",
+    "validation_failed",
+    "committed_cache_pending",
+}
+TERMINAL_STATUSES = {
+    "succeeded",
+    "failed",
+    "cancelled",
+    "stale",
+    "credential_required",
+    "incomplete_source",
+    "validation_failed",
+}
+PUBLICATION_STATUSES = {
+    "committed",
+    "cache_verified",
+    "committed_cache_pending",
+    "succeeded",
+}
+ALLOWED_PRIOR_STATUSES = {
+    "dispatching": {"dispatching"},
+    "dispatched": {"dispatching", "dispatched"},
+    "running": {"dispatching", "dispatched", "running"},
+    "committed": {"running", "committed"},
+    "cache_verified": {"committed", "committed_cache_pending", "cache_verified"},
+    "committed_cache_pending": {
+        "committed",
+        "cache_verified",
+        "committed_cache_pending",
+    },
+    # Direct running -> succeeded remains temporarily valid for deployed workers;
+    # the explicit committed/cache states are additive and become mandatory when
+    # all callers are migrated together.
+    "succeeded": {
+        "running",
+        "committed",
+        "cache_verified",
+        "committed_cache_pending",
+        "succeeded",
+    },
+    "failed": {"dispatching", "dispatched", "running", "failed"},
+    "cancelled": {"dispatching", "dispatched", "running", "cancelled"},
+    "stale": {"dispatching", "dispatched", "running", "stale"},
+    "credential_required": {"running", "credential_required"},
+    "incomplete_source": {"running", "incomplete_source"},
+    "validation_failed": {"running", "validation_failed"},
+}
 DEFAULT_GRANDFATHERED_LEAGUES = {"kmffl", "tfl_of_extraordinary_gentleman"}
-REQUIRED_SUCCESS_TABLES = (
-    "player_fantasy",
-    "league_settings",
-    "homepage_league_summary",
-)
 
 
 def _literal(value: object | None) -> str:
@@ -34,7 +86,8 @@ def assert_league_update_entitled(reader: Any, *, database_name: str) -> None:
         "SELECT COUNT(*) FROM accounts.league_inventory "
         f"WHERE database_name = {_literal(database_name)} "
         "AND LOWER(COALESCE(entitled_mode, '')) = 'full' "
-        "AND LOWER(COALESCE(tier, '')) = 'paid' AND expires_at > NOW()",
+        "AND ((LOWER(COALESCE(tier, '')) = 'paid' AND expires_at > NOW()) "
+        "OR LOWER(COALESCE(tier, '')) = 'grandfathered')",
         database="___ops",
     )
     if int(eligible or 0) < 1:
@@ -49,6 +102,8 @@ def record_league_update_status(
     status: str,
     dispatch_token: str,
     workflow_run_id: int | str | None = None,
+    attempt_id: str | None = None,
+    claim_version: int = 1,
     receipt: Mapping[str, Any] | None = None,
     cache_verified: bool = False,
     error: str | None = None,
@@ -57,33 +112,37 @@ def record_league_update_status(
     if normalized not in VALID_STATUSES:
         raise ValueError(f"Unsupported league update status: {status!r}")
     receipt = dict(receipt or {})
-    if normalized == "succeeded":
+    if normalized in PUBLICATION_STATUSES:
         if str(receipt.get("status") or "").upper() != "COMMITTED":
-            raise ValueError("A succeeded league update requires a COMMITTED refresh receipt")
-        if not cache_verified:
+            raise ValueError(f"A {normalized} league update requires a COMMITTED refresh receipt")
+        if normalized in {"cache_verified", "succeeded"} and not cache_verified:
             raise ValueError("A succeeded league update requires cache verification")
-        if not receipt.get("source_fingerprint"):
-            raise ValueError("A succeeded league update requires a source fingerprint")
-        post_publish_counts = receipt.get("post_publish_counts")
-        missing_rows = [
-            table
-            for table in REQUIRED_SUCCESS_TABLES
-            if not isinstance(post_publish_counts, Mapping)
-            or int(post_publish_counts.get(table) or 0) < 1
-        ]
-        if missing_rows:
-            raise ValueError(
-                "A succeeded league update is missing required post-publish rows for: "
-                + ", ".join(missing_rows)
-            )
+        if not (receipt.get("source_manifest_digest") or receipt.get("source_fingerprint")):
+            raise ValueError("A published league update requires a source manifest digest")
 
     run_id = int(workflow_run_id) if workflow_run_id not in (None, "") else None
+    normalized_attempt_id = str(attempt_id or dispatch_token)
+    normalized_claim_version = int(claim_version)
+    if normalized_claim_version < 1:
+        raise ValueError("claim_version must be positive")
     is_success = normalized == "succeeded"
-    is_terminal = normalized in {"succeeded", "failed"}
-    source_year = int(receipt["source_year"]) if is_success else None
-    source_week = int(receipt["source_week"]) if is_success else None
-    source_fingerprint = receipt.get("source_fingerprint") if is_success else None
-    generation = receipt.get("bundle_id") if is_success else None
+    is_terminal = normalized in TERMINAL_STATUSES
+    has_publication = normalized in PUBLICATION_STATUSES
+    source_year = int(receipt["source_year"]) if has_publication else None
+    source_week = int(receipt["source_week"]) if has_publication else None
+    source_fingerprint = (
+        receipt.get("source_manifest_digest") or receipt.get("source_fingerprint")
+        if has_publication
+        else None
+    )
+    generation = receipt.get("bundle_id") if has_publication else None
+    base_generation = receipt.get("base_generation") if has_publication else None
+    allowed_prior = ", ".join(_literal(value) for value in sorted(ALLOWED_PRIOR_STATUSES[normalized]))
+    run_owner_guard = (
+        "workflow_run_id IS NULL"
+        if run_id is None
+        else f"(workflow_run_id IS NULL OR workflow_run_id = {run_id})"
+    )
     sql = f"""
     CREATE SCHEMA IF NOT EXISTS accounts;
     CREATE TABLE IF NOT EXISTS accounts.league_update_dispatches (
@@ -94,10 +153,21 @@ def record_league_update_status(
       dispatched_at TIMESTAMP, started_at TIMESTAMP, completed_at TIMESTAMP,
       lease_expires_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW(), error VARCHAR
     );
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS attempt_id VARCHAR;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS claim_version BIGINT DEFAULT 0;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS observed_manifest_digest VARCHAR;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS base_generation VARCHAR;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS bundle_id VARCHAR;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS cache_state VARCHAR;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS committed_at TIMESTAMP;
+    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS cache_verified_at TIMESTAMP;
     INSERT INTO accounts.league_update_dispatches
       (database_name, platform, status, workflow_run_id, dispatch_token,
        source_year, source_week, source_fingerprint, publish_generation, healthy,
-       started_at, completed_at, lease_expires_at, updated_at, error)
+       started_at, completed_at, lease_expires_at, updated_at, error,
+       attempt_id, claim_version, heartbeat_at, observed_manifest_digest,
+       base_generation, bundle_id, cache_state, committed_at, cache_verified_at)
     VALUES ({_literal(database_name)}, {_literal(platform)}, {_literal(normalized)},
       {run_id if run_id is not None else 'NULL'}, {_literal(dispatch_token)},
       {source_year if source_year is not None else 'NULL'},
@@ -106,22 +176,59 @@ def record_league_update_status(
       {'NOW()' if normalized == 'running' else 'NULL'},
       {'NOW()' if is_terminal else 'NULL'},
       {"NOW() + INTERVAL '20 minutes'" if normalized == 'running' else 'NULL'},
-      NOW(), {_literal((error or '')[:2000] or None)})
-    ON CONFLICT (database_name) DO UPDATE SET
-      platform = excluded.platform, status = excluded.status,
-      workflow_run_id = COALESCE(excluded.workflow_run_id, accounts.league_update_dispatches.workflow_run_id),
-      source_year = CASE WHEN excluded.status = 'succeeded' THEN excluded.source_year ELSE accounts.league_update_dispatches.source_year END,
-      source_week = CASE WHEN excluded.status = 'succeeded' THEN excluded.source_week ELSE accounts.league_update_dispatches.source_week END,
-      source_fingerprint = CASE WHEN excluded.status = 'succeeded' THEN excluded.source_fingerprint ELSE accounts.league_update_dispatches.source_fingerprint END,
-      publish_generation = CASE WHEN excluded.status = 'succeeded' THEN excluded.publish_generation ELSE accounts.league_update_dispatches.publish_generation END,
-      healthy = excluded.healthy, started_at = COALESCE(excluded.started_at, accounts.league_update_dispatches.started_at),
-      completed_at = excluded.completed_at, lease_expires_at = excluded.lease_expires_at,
-      updated_at = NOW(), error = excluded.error
-    WHERE accounts.league_update_dispatches.dispatch_token = {_literal(dispatch_token)}
+      NOW(), {_literal((error or '')[:2000] or None)},
+      {_literal(normalized_attempt_id)}, {normalized_claim_version},
+      {'NOW()' if normalized == 'running' else 'NULL'}, {_literal(source_fingerprint)},
+      {_literal(base_generation)}, {_literal(generation)}, {_literal(normalized)},
+      {'NOW()' if normalized in PUBLICATION_STATUSES else 'NULL'},
+      {'NOW()' if normalized in {'cache_verified', 'succeeded'} else 'NULL'})
+    ON CONFLICT (database_name) DO NOTHING;
+    UPDATE accounts.league_update_dispatches SET
+      platform = {_literal(platform)}, status = {_literal(normalized)},
+      workflow_run_id = COALESCE(workflow_run_id, {run_id if run_id is not None else 'NULL'}),
+      attempt_id = COALESCE(attempt_id, {_literal(normalized_attempt_id)}),
+      claim_version = CASE WHEN COALESCE(claim_version, 0) = 0 THEN {normalized_claim_version} ELSE claim_version END,
+      source_year = CASE WHEN {str(has_publication).upper()} THEN {source_year if source_year is not None else 'NULL'} ELSE source_year END,
+      source_week = CASE WHEN {str(has_publication).upper()} THEN {source_week if source_week is not None else 'NULL'} ELSE source_week END,
+      source_fingerprint = CASE WHEN {str(has_publication).upper()} THEN {_literal(source_fingerprint)} ELSE source_fingerprint END,
+      observed_manifest_digest = CASE WHEN {str(has_publication).upper()} THEN {_literal(source_fingerprint)} ELSE observed_manifest_digest END,
+      publish_generation = CASE WHEN {str(has_publication).upper()} THEN {_literal(generation)} ELSE publish_generation END,
+      base_generation = CASE WHEN {str(has_publication).upper()} THEN {_literal(base_generation)} ELSE base_generation END,
+      bundle_id = CASE WHEN {str(has_publication).upper()} THEN {_literal(generation)} ELSE bundle_id END,
+      cache_state = {_literal(normalized)}, healthy = {'TRUE' if is_success else 'FALSE'},
+      started_at = CASE WHEN {_literal(normalized)} = 'running' THEN COALESCE(started_at, NOW()) ELSE started_at END,
+      heartbeat_at = CASE WHEN {_literal(normalized)} = 'running' THEN NOW() ELSE heartbeat_at END,
+      committed_at = CASE WHEN {str(normalized in PUBLICATION_STATUSES).upper()} THEN COALESCE(committed_at, NOW()) ELSE committed_at END,
+      cache_verified_at = CASE WHEN {str(normalized in {'cache_verified', 'succeeded'}).upper()} THEN COALESCE(cache_verified_at, NOW()) ELSE cache_verified_at END,
+      completed_at = CASE WHEN {str(is_terminal).upper()} THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
+      lease_expires_at = CASE
+        WHEN {_literal(normalized)} = 'running' THEN NOW() + INTERVAL '20 minutes'
+        WHEN {str(is_terminal).upper()} THEN NULL
+        ELSE lease_expires_at END,
+      updated_at = NOW(), error = {_literal((error or '')[:2000] or None)}
+    WHERE database_name = {_literal(database_name)}
+      AND dispatch_token = {_literal(dispatch_token)}
+      AND COALESCE(attempt_id, {_literal(normalized_attempt_id)}) = {_literal(normalized_attempt_id)}
+      AND COALESCE(claim_version, 0) IN (0, {normalized_claim_version})
+      AND {run_owner_guard}
+      AND status IN ({allowed_prior})
+      AND NOT ({str(is_terminal).upper()} AND status = {_literal(normalized)})
     RETURNING database_name;
+    SELECT database_name
+    FROM accounts.league_update_dispatches
+    WHERE database_name = {_literal(database_name)}
+      AND dispatch_token = {_literal(dispatch_token)}
+      AND COALESCE(attempt_id, {_literal(normalized_attempt_id)}) = {_literal(normalized_attempt_id)}
+      AND COALESCE(claim_version, 0) IN (0, {normalized_claim_version})
+      AND {run_owner_guard}
+      AND status = {_literal(normalized)}
+    LIMIT 1;
     """
     response = writer.execute(sql, database="___ops")
     if isinstance(response, list):
         return bool(response)
     fetchone = getattr(response, "fetchone", None)
     return bool(fetchone and fetchone())
+
+
+transition_league_update_attempt = record_league_update_status

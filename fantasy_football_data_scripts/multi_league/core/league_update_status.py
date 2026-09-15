@@ -138,6 +138,9 @@ def record_league_update_status(
     manifest_aware_publication = bool(
         has_publication and receipt.get("source_manifest_digest")
     )
+    can_promote_manifest = (
+        manifest_aware_publication and receipt.get("source_manifest_complete") is not False
+    )
     source_year = int(receipt["source_year"]) if has_publication else None
     source_week = int(receipt["source_week"]) if has_publication else None
     source_fingerprint = (
@@ -179,7 +182,7 @@ def record_league_update_status(
         "AND EXISTS (SELECT 1 FROM accounts.league_update_manifests m "
         "WHERE m.database_name = accounts.league_update_dispatches.database_name "
         f"AND m.published_manifest_digest = {_literal(source_fingerprint)})"
-        if manifest_aware_publication
+        if can_promote_manifest
         else ""
     )
     sql = f"""
@@ -272,7 +275,7 @@ def record_league_update_status(
       published_manifest_json = {(_literal(captured_manifest_json) if captured_manifest_json is not None else 'observed_manifest_json')},
       published_manifest_digest = {_literal(source_fingerprint)},
       published_at = NOW(), updated_at = NOW()
-    WHERE {str(manifest_aware_publication).upper()}
+    WHERE {str(can_promote_manifest).upper()}
       AND database_name = {_literal(database_name)}
       AND ({str(captured_manifest_json is not None).upper()}
            OR observed_manifest_digest = {_literal(source_fingerprint)})

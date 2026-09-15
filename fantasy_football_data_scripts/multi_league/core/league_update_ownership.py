@@ -179,6 +179,12 @@ def table_ownership(table_name: str) -> TableOwnership:
         provider, derived = _source_schema_owners(table_name)
         provider &= columns
         derived &= columns
+        if table_name == "player_fantasy":
+            # Provider roster rows do not carry the canonical NFL join key.
+            # It is mapped/rebuilt by enrichment and must survive an omitted
+            # field on a narrow refresh, not be treated as provider-owned.
+            provider -= {"player_week", "NFL_player_id"}
+            derived |= {"player_week", "NFL_player_id"}
         user = frozenset()
     else:
         provider = frozenset()
@@ -199,6 +205,8 @@ def assert_publish_table_ownership(table_names: list[str]) -> dict[str, int]:
         "tables": len(contracts),
         "columns": sum(len(contract.classified_columns) for contract in contracts),
     }
+
+
 def overlay_provider_columns(
     existing: pd.DataFrame,
     incoming: pd.DataFrame,
@@ -218,7 +226,9 @@ def overlay_provider_columns(
     if incoming.duplicated(list(contract.key_columns), keep=False).any():
         raise OwnershipContractError(f"{contract.table_name} provider payload has duplicate ownership keys")
 
-    protected = sorted(contract.derived_columns | contract.user_owned_columns)
+    protected = sorted(
+        (contract.derived_columns | contract.user_owned_columns) - set(contract.key_columns)
+    )
     available = [column for column in protected if column in existing.columns]
     old = existing.loc[:, [*contract.key_columns, *available]].copy()
     if old.duplicated(list(contract.key_columns), keep=False).any():
@@ -361,6 +371,8 @@ def assert_refresh_preservation(
         if table_name not in after or _frame_fingerprint(before[table_name]) != _frame_fingerprint(after[table_name]):
             raise PreservationError(f"user configuration changed in {table_name}")
 
+    _assert_active_aliases_preserved(before, after, active_year=active_year)
+
     for table_name in sorted(_SOURCE_FACT_TABLES & before.keys()):
         if table_name not in after:
             raise PreservationError(f"historical source table disappeared: {table_name}")
@@ -410,6 +422,69 @@ def assert_refresh_preservation(
     }
 
 
+def _assert_active_aliases_preserved(
+    before: dict[str, pd.DataFrame],
+    after: dict[str, pd.DataFrame],
+    *,
+    active_year: int,
+) -> None:
+    """Keep configured display names attached to their stable franchise IDs.
+
+    A provider can legitimately change team or owner metadata, but a refresh
+    cannot undo a user's explicit shared-team manager alias. Check the new
+    active rows as well as previously published weeks so an added week cannot
+    quietly revert to the provider's single-owner display name.
+    """
+    contexts = before.get("league_context")
+    if contexts is None or contexts.empty or "manager_name_overrides_json" not in contexts:
+        return
+    configured: dict[str, set[str]] = {}
+    for row in contexts.itertuples(index=False):
+        db_name = str(getattr(row, "db_name", "") or "")
+        raw = getattr(row, "manager_name_overrides_json", None)
+        if not raw:
+            continue
+        try:
+            overrides = json.loads(raw)
+        except (TypeError, ValueError) as error:
+            raise PreservationError(f"invalid manager aliases in league_context for {db_name}") from error
+        if not isinstance(overrides, dict):
+            raise PreservationError(f"invalid manager aliases in league_context for {db_name}")
+        aliases = {str(value).strip() for value in overrides.values() if str(value).strip()}
+        if aliases:
+            configured[db_name] = aliases
+    if not configured:
+        return
+
+    fid_to_alias: dict[tuple[str, str], str] = {}
+    for table_name in ("matchup", "schedule", "player_fantasy"):
+        frame = before.get(table_name)
+        if frame is None or frame.empty or not {"db_name", "year", "manager", "franchise_id"}.issubset(frame):
+            continue
+        active = frame.loc[frame["year"].eq(active_year), ["db_name", "manager", "franchise_id"]]
+        for db_name, manager, fid in active.itertuples(index=False, name=None):
+            db_name, manager, fid = str(db_name), str(manager), str(fid)
+            if manager not in configured.get(db_name, set()) or not fid or fid == "nan":
+                continue
+            key = (db_name, fid)
+            if key in fid_to_alias and fid_to_alias[key] != manager:
+                raise PreservationError(f"conflicting active aliases for franchise {fid} in {db_name}")
+            fid_to_alias[key] = manager
+
+    for table_name in ("matchup", "schedule", "player_fantasy", "homepage_current_standings"):
+        frame = after.get(table_name)
+        if frame is None or frame.empty or not {"db_name", "manager", "franchise_id"}.issubset(frame):
+            continue
+        checked = frame.loc[frame["year"].eq(active_year)] if "year" in frame else frame
+        for db_name, manager, fid in checked[["db_name", "manager", "franchise_id"]].itertuples(index=False, name=None):
+            expected = fid_to_alias.get((str(db_name), str(fid)))
+            if expected is not None and str(manager) != expected:
+                raise PreservationError(
+                    f"active alias changed in {table_name} for franchise {fid} in {db_name}: "
+                    f"expected {expected!r}"
+                )
+
+
 def source_preservation_snapshot(
     source_frames: dict[str, pd.DataFrame],
 ) -> dict[str, pd.DataFrame]:
@@ -431,4 +506,3 @@ def local_preservation_snapshot(
         for table_name in before
         if local_db.table_exists(table_name)
     }
-

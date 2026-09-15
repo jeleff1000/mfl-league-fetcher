@@ -795,6 +795,7 @@ class LocalLeagueDB:
         dedup_keys: list[str],
         platform: str | None = None,
         league_id: str | None = None,
+        already_normalized: bool = False,
     ):
         """Merge recovered rows into a local DuckDB table using dedup keys.
 
@@ -808,7 +809,7 @@ class LocalLeagueDB:
         conn = self.connect()
 
         normalizer = _TABLE_NORMALIZERS.get(table_name)
-        if normalizer and df is not None and not df.empty:
+        if normalizer and not already_normalized and df is not None and not df.empty:
             try:
                 effective_platform = platform or _infer_platform_from_df(df)
 

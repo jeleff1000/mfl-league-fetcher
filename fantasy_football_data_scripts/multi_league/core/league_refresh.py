@@ -62,9 +62,9 @@ def finalized_source_boundary(finalized_ops: pd.DataFrame, *, year: int) -> dict
     }
 
 
-# ``___ops`` preserves historical Stathead-style abbreviations, while Yahoo
-# reports current NFLverse-style values in roster payloads.
-_STATHEAD_TO_NFLVERSE_TEAM = {
+# ``___ops`` and fantasy providers use different abbreviations for a few
+# franchises. Compare them through one canonical team-code map.
+_TEAM_CODE_ALIASES = {
     "GNB": "GB",
     "KAN": "KC",
     "LAR": "LA",
@@ -72,6 +72,7 @@ _STATHEAD_TO_NFLVERSE_TEAM = {
     "NWE": "NE",
     "SFO": "SF",
     "TAM": "TB",
+    "WSH": "WAS",
 }
 
 _ACTIVE_PLATFORM_ID_SPECS = {
@@ -439,7 +440,7 @@ def _team_code(value: object) -> str:
     if value is None or pd.isna(value):
         return ""
     raw = str(value).strip().upper()
-    return _STATHEAD_TO_NFLVERSE_TEAM.get(raw, raw)
+    return _TEAM_CODE_ALIASES.get(raw, raw)
 
 
 def completed_weeks_to_refresh(
@@ -526,6 +527,41 @@ def filter_rosters_to_finalized_games(
     finalized_teams = set(ops_pairs["nfl_team"]) | set(ops_pairs["opponent_nfl_team"])
     roster_team_codes = rosters["nfl_team"].map(_team_code)
     return rosters.loc[roster_team_codes.isin(finalized_teams)].copy()
+
+
+def pending_provider_nfl_teams(
+    rosters: pd.DataFrame,
+    finalized_ops: pd.DataFrame,
+) -> tuple[str, ...]:
+    """Identify scored provider rows excluded because the NFL game is not in ops.
+
+    Zero-point bye and not-yet-played players are not evidence of a missing
+    score. Once a player has nonzero points, however, the observed provider
+    manifest cannot be treated as published until that game's NFL inputs have
+    entered the canonical ops snapshot and the roster row can be admitted.
+    """
+    required_roster = {"nfl_team", "fantasy_points"}
+    required_ops = {"nfl_team", "opponent_nfl_team"}
+    if not required_roster.issubset(rosters):
+        raise RefreshScopeError(
+            "roster payload is missing required columns: "
+            + ", ".join(sorted(required_roster - set(rosters)))
+        )
+    if not required_ops.issubset(finalized_ops):
+        raise RefreshScopeError(
+            "finalized ops payload is missing required columns: "
+            + ", ".join(sorted(required_ops - set(finalized_ops)))
+        )
+    if rosters.empty:
+        return ()
+    ops_teams = set(finalized_ops["nfl_team"].map(_team_code)) | set(
+        finalized_ops["opponent_nfl_team"].map(_team_code)
+    )
+    points = pd.to_numeric(rosters["fantasy_points"], errors="coerce")
+    scored = rosters.loc[points.notna() & points.ne(0), "nfl_team"].map(_team_code)
+    if scored.eq("").any():
+        raise RefreshScopeError("scored provider roster row has no NFL team identity")
+    return tuple(sorted(set(scored) - ops_teams))
 
 
 def assert_provider_roster_merge(
@@ -668,7 +704,13 @@ def hydrate_local_refresh_sources(
 
         local_db.ensure_table(table_name)
         if not frame.empty:
-            local_db._insert_into_table(table_name, frame)
+            if local_db.table_exists(table_name):
+                local_db._insert_into_table(table_name, frame)
+            else:
+                # Career/homepage aggregates have no canonical local DDL.
+                # Seed their exact Fly schema from the bounded league frame;
+                # later transformations can then rebuild them normally.
+                local_db.save_table(table_name, frame)
         hydrated[table_name] = int(len(frame))
     return hydrated
 
@@ -688,6 +730,7 @@ def merge_provider_refresh_table(
         overlay_provider_columns,
         table_ownership,
     )
+    from dataclasses import replace
 
     normalized = local_db._normalize_table_frame(
         table_name,
@@ -698,12 +741,44 @@ def merge_provider_refresh_table(
     )
     if normalized is None or normalized.empty:
         raise RefreshScopeError(f"{table_name} provider payload normalized to no rows")
+    if table_name == "league_settings" and "_raw" in normalized.columns:
+        # flatten_settings retains its nested parse witness, but _raw is not
+        # a publishable canonical column. Keep the strict ownership check for
+        # every other unexpected field.
+        normalized = normalized.drop(columns=["_raw"])
+    if "db_name" not in normalized.columns:
+        normalized = normalized.assign(db_name=str(local_db.league_name))
+    elif normalized["db_name"].astype(str).ne(str(local_db.league_name)).any():
+        raise RefreshScopeError(f"{table_name} provider payload belongs to a different league")
     contract = table_ownership(table_name)
+    if table_name == "player_fantasy":
+        # The roster normalizer carries two fetch-only NFL mapping hints that
+        # are not columns in canonical player_fantasy. Every other unknown
+        # field still fails the ownership gate below.
+        normalized = normalized.drop(
+            columns=[column for column in ("eligible_positions", "nfl_team_api") if column in normalized]
+        )
+        provider_id = {
+            "yahoo": "yahoo_player_id",
+            "espn": "espn_player_id",
+            "sleeper": "sleeper_player_id",
+        }.get(str(platform).strip().lower())
+        if provider_id is None:
+            raise RefreshScopeError(f"unsupported roster provider identity: {platform}")
+        provider_keys = ("db_name", "year", "week", "team_key", provider_id)
+        missing = sorted(set(provider_keys) - set(normalized))
+        if missing:
+            raise RefreshScopeError(f"{table_name} provider payload is missing keys: {missing}")
+        if normalized[list(provider_keys)].isna().any().any():
+            raise RefreshScopeError(f"{table_name} provider payload has null ownership keys")
+        contract = replace(contract, key_columns=provider_keys)
     existing = (
         local_db.read_table(table_name)
         if local_db.table_exists(table_name)
         else pd.DataFrame(columns=list(contract.classified_columns))
     )
+    if table_name == "player_fantasy" and not existing.empty:
+        existing = existing.loc[existing[provider_id].notna()].copy()
     protected = overlay_provider_columns(existing, normalized, contract)
     local_db.merge_table(
         table_name,
@@ -711,6 +786,7 @@ def merge_provider_refresh_table(
         list(contract.key_columns),
         platform=platform,
         league_id=league_id,
+        already_normalized=True,
     )
 
 

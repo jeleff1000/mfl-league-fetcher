@@ -46,6 +46,18 @@ def _finalized_espn_matchup_weeks(client: Any, *, year: int, weeks: list[int]) -
     return finalized
 
 
+def espn_source_manifest_complete(
+    *,
+    refresh_weeks: list[int],
+    fetch_rows: dict[str, Any],
+) -> bool:
+    """Do not call a safe partial ESPN publication fully source-current."""
+    return (
+        not fetch_rows.get("pending_nfl_teams")
+        and int(fetch_rows.get("final_matchup_weeks") or 0) == len(refresh_weeks)
+    )
+
+
 def _build_context(
     *,
     reader: Any,
@@ -129,7 +141,7 @@ def _merge_active_payloads(
     active_year: int,
     refresh_weeks: list[int],
     finalized_ops: pd.DataFrame,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Fetch ESPN state without letting a provider adapter replace old weeks."""
     from multi_league.core.canonical_settings import flatten_settings
     from multi_league.core.league_refresh import (
@@ -137,6 +149,7 @@ def _merge_active_payloads(
         filter_rosters_to_finalized_games,
         merge_provider_refresh_table,
         needs_active_season_draft_fetch,
+        pending_provider_nfl_teams,
         replace_active_season_draft,
     )
     from multi_league.data_fetchers.espn.espn_draft import fetch_espn_draft
@@ -168,11 +181,14 @@ def _merge_active_payloads(
         league=league,
     )
     roster_rows = 0
+    pending_nfl_teams: set[str] = set()
     for week in refresh_weeks:
         source = rosters.loc[rosters["week"].astype(int) == int(week)].copy() if rosters is not None else pd.DataFrame()
+        ops_week = finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)]
+        pending_nfl_teams.update(pending_provider_nfl_teams(source, ops_week))
         safe_rows = filter_rosters_to_finalized_games(
             source,
-            finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)],
+            ops_week,
         )
         if safe_rows.empty:
             continue
@@ -245,6 +261,7 @@ def _merge_active_payloads(
         "final_matchup_weeks": len(final_matchup_weeks),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
+        "pending_nfl_teams": sorted(pending_nfl_teams),
     }
 
 
@@ -379,6 +396,10 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 refresh_weeks=refresh_weeks,
                 finalized_ops=finalized_ops,
+            )
+            receipt["source_manifest_complete"] = espn_source_manifest_complete(
+                refresh_weeks=refresh_weeks,
+                fetch_rows=receipt["fetch_rows"],
             )
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"

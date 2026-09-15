@@ -214,6 +214,34 @@ def test_committed_publication_promotes_matching_observed_manifest():
     ).fetchone() == ('{"schema_version":1}', "manifest-digest")
 
 
+def test_partial_espn_score_publication_does_not_mark_observed_manifest_current():
+    """Sunday's safe rows may commit while Monday's Chiefs game remains live."""
+    writer = LocalWriter()
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="espn", status="running",
+        dispatch_token="opaque", workflow_run_id=42,
+    )
+    _seed_observed_manifest(writer)
+    receipt = _committed_receipt() | {
+        "source_manifest_digest": "manifest-digest",
+        "source_manifest_complete": False,
+        "pending_nfl_teams": ["DEN", "KC"],
+    }
+
+    assert record_league_update_status(
+        writer, database_name="the_league", platform="espn", status="committed",
+        dispatch_token="opaque", workflow_run_id=42, receipt=receipt,
+    )
+    assert writer.connection.execute(
+        "SELECT published_manifest_digest FROM accounts.league_update_manifests "
+        "WHERE database_name = 'the_league'"
+    ).fetchone() == (None,)
+    assert writer.connection.execute(
+        "SELECT status, publish_generation FROM accounts.league_update_dispatches "
+        "WHERE database_name = 'the_league'"
+    ).fetchone() == ("committed", "bundle-1")
+
+
 def test_commit_rejects_manifest_that_changed_after_dispatch():
     writer = LocalWriter()
     assert record_league_update_status(

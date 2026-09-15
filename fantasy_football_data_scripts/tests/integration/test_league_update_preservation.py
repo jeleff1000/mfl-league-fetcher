@@ -78,6 +78,51 @@ def test_preservation_gate_rejects_changed_historical_source_identity():
         assert_refresh_preservation(before, after, active_year=2026)
 
 
+def test_preservation_gate_rejects_loss_of_shared_team_alias_during_active_refresh():
+    aliases = {
+        "Elizabeth": "Elizabeth + Joe",
+        "Megan": "Meg + Sammie",
+        "Robert": "RJ + Abdulai",
+    }
+    before = {
+        "league_context": pd.DataFrame([{
+            "db_name": "afi_data",
+            "manager_name_overrides_json": __import__("json").dumps(aliases),
+        }]),
+        "matchup": pd.DataFrame([
+            {"db_name": "afi_data", "year": 2026, "week": 1,
+             "franchise_id": "f-elizabeth", "manager_week": "Elizabeth_2026_1",
+             "manager": "Elizabeth + Joe", "team_points": 141.26},
+            {"db_name": "afi_data", "year": 2026, "week": 1,
+             "franchise_id": "f-megan", "manager_week": "Megan_2026_1",
+             "manager": "Meg + Sammie", "team_points": 125.42},
+            {"db_name": "afi_data", "year": 2026, "week": 1,
+             "franchise_id": "f-robert", "manager_week": "Robert_2026_1",
+             "manager": "RJ + Abdulai", "team_points": 89.10},
+        ]),
+    }
+    after = {
+        "league_context": before["league_context"].copy(),
+        "matchup": before["matchup"].assign(
+            manager=["Elizabeth + Joe", "Megan", "RJ + Abdulai"],
+            team_points=[141.26, 126.42, 89.10],
+        ),
+    }
+
+    accepted = {
+        "league_context": before["league_context"].copy(),
+        "matchup": before["matchup"].assign(
+            team_points=[141.26, 126.42, 89.10],
+        ),
+    }
+    assert assert_refresh_preservation(
+        before, accepted, active_year=2026
+    )["user_configuration_preserved"]
+
+    with pytest.raises(PreservationError, match="active alias changed"):
+        assert_refresh_preservation(before, after, active_year=2026)
+
+
 def test_preservation_gate_rejects_homepage_value_becoming_null():
     before = {
         "homepage_league_summary": pd.DataFrame([{
@@ -166,6 +211,8 @@ def test_refresh_aggregates_rebuild_player_career_from_complete_hydrated_history
         ).fetchone() == (101, 61, 40, pytest.approx(121.2), pytest.approx(50.5))
     finally:
         local.close()
+
+
 def test_target_year_simulation_and_clutch_leave_historical_values_untouched(
     tmp_path,
     monkeypatch,
@@ -303,4 +350,3 @@ def test_target_year_simulation_and_clutch_leave_historical_values_untouched(
         ).fetchone()[0] == 4
     finally:
         local.close()
-

@@ -160,6 +160,18 @@ def test_frontend_settings_from_hydrated_context_preserve_user_configuration():
     }
 
 
+def test_every_active_refresher_compares_final_history_to_the_fly_snapshot():
+    """The active-only local input is not a valid historical witness."""
+    for script_name in (
+        "refresh_yahoo_active_season.py",
+        "refresh_sleeper_active_season.py",
+        "refresh_espn_active_season.py",
+    ):
+        text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+        assert "preservation_before = preservation_witnesses" in text
+        assert "preservation_before = local_preservation_snapshot" not in text
+
+
 def test_active_history_extends_the_saved_chain_instead_of_the_credential_league():
     """A user's OAuth row may name another league; renewal identity comes from the saved chain."""
     from refresh_yahoo_active_season import _active_yahoo_history

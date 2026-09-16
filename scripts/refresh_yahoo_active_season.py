@@ -1576,9 +1576,10 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 expected_platform="yahoo",
             )
-            from multi_league.core.league_update_ownership import local_preservation_snapshot
-
-            preservation_before = local_preservation_snapshot(local_db, preservation_witnesses)
+            # The local transform input intentionally contains only the active
+            # season.  Compare the finished rebuild to the full Fly snapshot,
+            # otherwise correctly restored historical source rows appear new.
+            preservation_before = preservation_witnesses
             timer.mark("local_hydration")
             receipt["fetch_rows"] = _merge_refresh_payloads(
                 ctx=ctx,

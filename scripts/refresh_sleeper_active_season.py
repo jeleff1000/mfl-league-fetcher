@@ -170,7 +170,12 @@ def _json_map(value: object) -> dict[str, str]:
     return {str(year): str(league_id) for year, league_id in raw.items() if league_id}
 
 
-def _load_persisted_sleeper_chain(reader: Any, *, db_name: str) -> tuple[dict[str, Any], dict[str, str]]:
+def _load_persisted_sleeper_chain(
+    reader: Any,
+    *,
+    db_name: str,
+    active_year: int | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Load the onboarding chain plus canonical historical IDs from Fly."""
     quoted_db = _sql_literal(db_name)
     context_columns = {
@@ -239,6 +244,19 @@ def _load_persisted_sleeper_chain(reader: Any, *, db_name: str) -> tuple[dict[st
             if year in known and known[year] != league_id:
                 raise RuntimeError("Fly has conflicting Sleeper league IDs for one imported season")
             known.setdefault(year, league_id)
+    if active_year is not None:
+        from multi_league.core.league_update_lineage import resolve_active_update_segment
+
+        # The full import persists every provider leg in league_settings.
+        # Resolve that timeline before any Sleeper API call so a Yahoo/ESPN
+        # continuation cannot be accidentally fetched by this worker.
+        resolve_active_update_segment(
+            active_year=int(active_year),
+            context_platform=context.get("platform"),
+            context_league_id=context.get("league_id"),
+            settings_rows=setting_rows,
+            expected_platform="sleeper",
+        )
     return context, known
 
 
@@ -255,7 +273,11 @@ def _build_context(
     from multi_league.data_fetchers.sleeper.sleeper_api_client import SleeperAPIClient
     from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext
 
-    frontend, known_league_ids = _load_persisted_sleeper_chain(reader, db_name=db_name)
+    frontend, known_league_ids = _load_persisted_sleeper_chain(
+        reader,
+        db_name=db_name,
+        active_year=active_year,
+    )
     if active_league_id:
         saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
         if saved_active_id and saved_active_id != str(active_league_id).strip():
@@ -510,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
         OPS_DATABASE,
         _ensure_ops_cache_matches_live,
         _load_active_refresh_inputs,
+        _active_update_segment_from_source_frames,
         _capture_update_source_frames,
         _run_local_pipeline,
         _scope_counts,
@@ -591,6 +614,17 @@ def main(argv: list[str] | None = None) -> int:
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
+        active_segment = _active_update_segment_from_source_frames(
+            source_frames,
+            db_name=args.db,
+            active_year=active_year,
+            expected_platform="sleeper",
+        )
+        receipt["active_segment"] = {
+            "platform": active_segment.platform,
+            "current_league_id": active_segment.current_league_id,
+            "historical_platforms": list(active_segment.historical_platforms),
+        }
         from multi_league.core.league_update_ownership import source_preservation_snapshot
 
         preservation_witnesses = source_preservation_snapshot(source_frames)

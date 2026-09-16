@@ -236,6 +236,31 @@ def test_active_yahoo_key_fast_path_retains_saved_multiplatform_lineage():
     assert history == {"2014": "331.l.1", "2024": "sleeper-2024", "2025": "461.l.9", "2026": "470.l.10"}
 
 
+def test_source_frames_select_the_current_multiplatform_leg_before_provider_fetch():
+    """A Yahoo worker must stop before fetch when the 2026 leg belongs to Sleeper."""
+    import pandas as pd
+    import pytest
+    from refresh_yahoo_active_season import _active_update_segment_from_source_frames
+
+    frames = {
+        "league_context": pd.DataFrame([
+            {"db_name": "mixed_league", "platform": "yahoo", "league_id": "461.l.90939"}
+        ]),
+        "league_settings": pd.DataFrame([
+            {"db_name": "mixed_league", "year": 2025, "platform": "yahoo", "league_key": "461.l.90939"},
+            {"db_name": "mixed_league", "year": 2026, "platform": "sleeper", "league_key": "1352102370921705472"},
+        ]),
+    }
+
+    with pytest.raises(RuntimeError, match="belongs to sleeper"):
+        _active_update_segment_from_source_frames(
+            frames,
+            db_name="mixed_league",
+            active_year=2026,
+            expected_platform="yahoo",
+        )
+
+
 def test_active_yahoo_key_fast_path_rejects_saved_fly_conflict():
     from refresh_yahoo_active_season import _active_yahoo_history
     import pytest

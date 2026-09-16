@@ -44,6 +44,27 @@ def test_sleeper_worker_excludes_other_platform_context_chain():
     assert known == {"2025": "sleeper-2025"}
 
 
+def test_sleeper_worker_rejects_a_multiplatform_timeline_owned_by_yahoo_in_the_active_year():
+    """A Sleeper workflow cannot fetch a year assigned to Yahoo's active leg."""
+    import pytest
+    from refresh_sleeper_active_season import _load_persisted_sleeper_chain
+
+    reader = ChainReader(
+        context={
+            "platform": "sleeper", "league_id": "sleeper-2025",
+            "league_name": "Mixed League",
+            "league_ids_json": '{"2025":"sleeper-2025"}',
+        },
+        settings=[
+            {"year": 2025, "platform": "sleeper", "league_key": "sleeper-2025"},
+            {"year": 2026, "platform": "yahoo", "league_key": "470.l.999"},
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="belongs to yahoo"):
+        _load_persisted_sleeper_chain(reader, db_name="mixed_league", active_year=2026)
+
+
 def test_sleeper_worker_retains_matching_context_chain_and_rejects_conflict():
     from refresh_sleeper_active_season import _load_persisted_sleeper_chain
     import pytest

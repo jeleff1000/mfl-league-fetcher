@@ -2231,7 +2231,7 @@ def test_sleeper_worker_rejects_caller_id_conflicting_with_saved_active_chain(mo
 
     monkeypatch.setattr(
         worker, "_load_persisted_sleeper_chain",
-        lambda reader, db_name: ({"league_name": "Saved"}, {"2026": "saved-active"}),
+        lambda reader, db_name, active_year=None: ({"league_name": "Saved"}, {"2026": "saved-active"}),
     )
     with pytest.raises(RuntimeError, match="conflicting active Sleeper league IDs"):
         worker._build_context(

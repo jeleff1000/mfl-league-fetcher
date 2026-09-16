@@ -379,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         OPS_DATABASE,
         _ensure_ops_cache_matches_live,
         _load_active_refresh_inputs,
+        _active_update_segment_from_source_frames,
         _frontend_settings_from_source_context,
         _capture_update_source_frames,
         _run_local_pipeline,
@@ -448,6 +449,17 @@ def main(argv: list[str] | None = None) -> int:
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
+        active_segment = _active_update_segment_from_source_frames(
+            source_frames,
+            db_name=args.db,
+            active_year=active_year,
+            expected_platform="espn",
+        )
+        receipt["active_segment"] = {
+            "platform": active_segment.platform,
+            "current_league_id": active_segment.current_league_id,
+            "historical_platforms": list(active_segment.historical_platforms),
+        }
         from multi_league.core.league_update_ownership import source_preservation_snapshot
 
         preservation_witnesses = source_preservation_snapshot(source_frames)

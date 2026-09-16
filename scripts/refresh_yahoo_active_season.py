@@ -331,6 +331,34 @@ def _frontend_settings_from_source_context(source_context: pd.DataFrame, *, db_n
     }
 
 
+def _active_update_segment_from_source_frames(
+    source_frames: dict[str, pd.DataFrame],
+    *,
+    db_name: str,
+    active_year: int,
+    expected_platform: str,
+) -> Any:
+    """Resolve the single current provider leg from the imported timeline."""
+    context = source_frames.get("league_context")
+    settings = source_frames.get("league_settings")
+    if context is None or len(context) != 1:
+        raise RuntimeError(f"Fly has no unique league context for {db_name}")
+    if settings is None:
+        raise RuntimeError(f"Fly has no league settings timeline for {db_name}")
+    context_row = context.iloc[0]
+    if str(context_row.get("db_name") or "").strip() != db_name:
+        raise RuntimeError(f"league context does not belong to {db_name}")
+    from multi_league.core.league_update_lineage import resolve_active_update_segment
+
+    return resolve_active_update_segment(
+        active_year=int(active_year),
+        context_platform=context_row.get("platform"),
+        context_league_id=context_row.get("league_id"),
+        settings_rows=settings.to_dict("records"),
+        expected_platform=expected_platform,
+    )
+
+
 def _persist_yahoo_renewal_chain(
     local_db: Any,
     *,
@@ -1528,13 +1556,24 @@ def main(argv: list[str] | None = None) -> int:
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
+        active_segment = _active_update_segment_from_source_frames(
+            source_frames,
+            db_name=args.db,
+            active_year=active_year,
+            expected_platform="yahoo",
+        )
+        receipt["active_segment"] = {
+            "platform": active_segment.platform,
+            "current_league_id": active_segment.current_league_id,
+            "historical_platforms": list(active_segment.historical_platforms),
+        }
         from multi_league.core.league_update_ownership import source_preservation_snapshot
 
         preservation_witnesses = source_preservation_snapshot(source_frames)
         transform_source_frames, historical_source_rows = _split_active_transform_source_frames(
             source_frames, active_year=active_year,
         )
-        source_active_key = _active_yahoo_key_from_source_frames(
+        source_active_key = active_segment.current_league_id or _active_yahoo_key_from_source_frames(
             source_frames,
             active_year=active_year,
         )

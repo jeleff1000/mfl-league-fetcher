@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+from numbers import Real
 from time import perf_counter
 from typing import Any
 
@@ -344,6 +345,34 @@ def _frame_fingerprint(frame: pd.DataFrame) -> str:
     return digest.hexdigest()
 
 
+def _configuration_frame_fingerprint(frame: pd.DataFrame) -> str:
+    """Preserve the established exact comparison for small user-owned tables.
+
+    These frames may contain provider-specific mixed objects (notably keeper
+    values). They are tiny, so retaining the prior scalar canonicalization is
+    safer than broadening the fast source-fact normalization contract.
+    """
+    def canonical_value(value: Any) -> str:
+        if value is None or value is pd.NA:
+            return "<NULL>"
+        try:
+            if bool(pd.isna(value)):
+                return "<NULL>"
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, Real) and not isinstance(value, bool):
+            numeric = float(value)
+            if numeric.is_integer():
+                return str(int(numeric))
+            return format(numeric, ".17g")
+        return str(value)
+
+    normalized = frame.map(canonical_value).sort_index(axis=1)
+    records = normalized.to_dict("records")
+    records.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
+    return json.dumps(records, sort_keys=True, separators=(",", ":"))
+
+
 def _identity_columns(
     old: pd.DataFrame,
     new: pd.DataFrame,
@@ -534,7 +563,11 @@ def assert_refresh_preservation(
     started_at = perf_counter()
     timing: dict[str, float] = {}
     for table_name in sorted(_USER_TABLES & before.keys()):
-        if table_name not in after or _frame_fingerprint(before[table_name]) != _frame_fingerprint(after[table_name]):
+        if (
+            table_name not in after
+            or _configuration_frame_fingerprint(before[table_name])
+            != _configuration_frame_fingerprint(after[table_name])
+        ):
             raise PreservationError(f"user configuration changed in {table_name}")
     user_configuration_at = perf_counter()
     timing["user_configuration"] = round(user_configuration_at - started_at, 3)

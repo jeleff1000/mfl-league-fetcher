@@ -11,6 +11,7 @@ from multi_league.core.league_update_ownership import (
     overlay_provider_columns,
     table_ownership,
 )
+import multi_league.core.league_update_ownership as ownership
 
 
 def test_overlay_ignores_legacy_null_ownership_keys_that_cannot_match_provider_rows():
@@ -276,6 +277,20 @@ def test_preservation_fingerprint_normalizes_numeric_values_stored_in_object_col
     local = pd.DataFrame({"keeper_cost": pd.Series([1, None], dtype="Int32")})
 
     assert _frame_fingerprint(source) == _frame_fingerprint(local)
+
+
+def test_user_configuration_preservation_uses_the_legacy_canonical_comparison(monkeypatch):
+    frame = pd.DataFrame({"db_name": ["league_a"], "keeper_cost": [1]})
+
+    def fail_fast_source_fingerprint(*_args, **_kwargs):
+        raise AssertionError("user configuration must retain its legacy comparison")
+
+    monkeypatch.setattr(ownership, "_frame_fingerprint", fail_fast_source_fingerprint)
+    receipt = ownership.assert_refresh_preservation(
+        {"keeper_config": frame}, {"keeper_config": frame.copy()}, active_year=2026,
+    )
+
+    assert receipt["user_configuration_preserved"] is True
 
 
 def test_preservation_fingerprint_uses_columnar_serialization_not_cell_mapping(monkeypatch):

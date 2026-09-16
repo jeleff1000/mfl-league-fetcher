@@ -1853,6 +1853,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             from multi_league.core.league_refresh import (
+                active_nfl_player_ids,
                 active_platform_player_ids,
                 active_platform_player_names,
                 active_platform_player_name_hints,
@@ -1866,6 +1867,7 @@ def main(argv: list[str] | None = None) -> int:
                 platform="yahoo",
                 provider_ids=active_platform_player_ids(active_connection, platform="yahoo"),
                 player_names=active_platform_player_names(active_connection, platform="yahoo"),
+                nfl_player_ids=active_nfl_player_ids(active_connection),
                 provider_name_hints=active_platform_player_name_hints(active_connection, platform="yahoo"),
             )
             receipt["ops_cache"] = str(

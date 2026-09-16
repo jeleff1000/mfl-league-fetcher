@@ -190,6 +190,27 @@ def active_platform_player_names(conn: duckdb.DuckDBPyConnection, *, platform: s
     return names
 
 
+def active_nfl_player_ids(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """Return bounded, already-resolved active NFL identities from local source rows."""
+    ids: set[str] = set()
+    for table_name in ("player_fantasy", "draft", "transactions"):
+        rows = conn.execute(
+            """
+            SELECT table_schema, column_name
+            FROM information_schema.columns
+            WHERE table_name = ? AND column_name = 'NFL_player_id'
+            """,
+            [table_name],
+        ).fetchall()
+        for schema, _column in rows:
+            values = conn.execute(
+                f"SELECT DISTINCT NFL_player_id FROM {_qident(schema)}.{_qident(table_name)} "
+                "WHERE NFL_player_id IS NOT NULL"
+            ).fetchall()
+            ids.update(str(value).strip() for (value,) in values if str(value).strip())
+    return ids
+
+
 def active_platform_player_name_hints(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -239,6 +260,7 @@ def sync_player_bio_cache_from_fly(
     platform: str,
     provider_ids: set[str],
     player_names: set[str] | None = None,
+    nfl_player_ids: set[str] | None = None,
     provider_name_hints: dict[str, set[str]] | None = None,
 ) -> dict[str, int]:
     """Merge just fetched platform identities from Fly into the local ops cache.
@@ -284,7 +306,14 @@ def sync_player_bio_cache_from_fly(
             if str(value).strip() and str(value).strip().lower() not in {"unknown", "n/a"}
         }
     )
-    if not canonical_ids and not canonical_names:
+    canonical_nfl_ids = sorted(
+        {
+            str(value).strip()
+            for value in (nfl_player_ids or set())
+            if str(value).strip()
+        }
+    )
+    if not canonical_ids and not canonical_names and not canonical_nfl_ids:
         return {"provider_ids": 0, "player_bio_rows": 0}
 
     def normalize_hint_id(value: object) -> str:
@@ -329,7 +358,8 @@ def sync_player_bio_cache_from_fly(
     # that case its name is still required for the local SQL rank join.
     missing_ids = canonical_ids
     missing_names = canonical_names
-    if canonical_ids or canonical_names:
+    missing_nfl_ids = canonical_nfl_ids
+    if canonical_ids or canonical_names or canonical_nfl_ids:
         cache = duckdb.connect(str(cache_path), read_only=True)
         try:
             cached_ids: set[str] = set()
@@ -356,11 +386,20 @@ def sync_player_bio_cache_from_fly(
                     f"WHERE LOWER(TRIM(player)) IN ({name_sql})"
                 ).fetchall()
                 cached_names = {str(value).strip().lower() for (value,) in cached_name_rows if value is not None}
+            cached_nfl_ids: set[str] = set()
+            if canonical_nfl_ids:
+                nfl_id_sql = ", ".join(_sql_literal(value) for value in canonical_nfl_ids)
+                cached_nfl_rows = cache.execute(
+                    f"SELECT DISTINCT CAST(NFL_player_id AS VARCHAR) FROM {target} "
+                    f"WHERE CAST(NFL_player_id AS VARCHAR) IN ({nfl_id_sql})"
+                ).fetchall()
+                cached_nfl_ids = {str(value).strip() for (value,) in cached_nfl_rows if value is not None}
         finally:
             cache.close()
         missing_ids = sorted(set(canonical_ids) - cached_ids)
         missing_names = sorted(set(canonical_names) - cached_names)
-        if not missing_ids and not missing_names:
+        missing_nfl_ids = sorted(set(canonical_nfl_ids) - cached_nfl_ids)
+        if not missing_ids and not missing_names and not missing_nfl_ids:
             return {"provider_ids": len(canonical_ids), "player_bio_rows": 0}
 
         # ESPN sometimes publishes a new numeric ID before the central bio
@@ -422,6 +461,8 @@ def sync_player_bio_cache_from_fly(
             predicates.append(f"{bio_column} IN ({', '.join(_sql_literal(value) for value in missing_ids)})")
     if canonical_names:
         predicates.append(f"LOWER(TRIM(player)) IN ({', '.join(_sql_literal(value) for value in canonical_names)})")
+    if missing_nfl_ids:
+        predicates.append(f"NFL_player_id IN ({', '.join(_sql_literal(value) for value in missing_nfl_ids)})")
     predicate = " OR ".join(f"({value})" for value in predicates)
     source = reader.query_df(
         f"SELECT * FROM nfl_historical.player_bio WHERE {predicate}",

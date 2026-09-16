@@ -359,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["DATABASE_BACKEND"] = "fly"
     from multi_league.core.fleet_publish import build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
+        active_nfl_player_ids,
         active_platform_player_ids,
         active_platform_player_names,
         active_platform_player_name_hints,
@@ -531,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
                 platform="espn",
                 provider_ids=active_platform_player_ids(active_connection, platform="espn"),
                 player_names=active_platform_player_names(active_connection, platform="espn"),
+                nfl_player_ids=active_nfl_player_ids(active_connection),
                 provider_name_hints=active_platform_player_name_hints(active_connection, platform="espn"),
             )
             receipt["ops_cache"] = str(

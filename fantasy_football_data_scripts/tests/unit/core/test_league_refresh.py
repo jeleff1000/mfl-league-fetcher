@@ -465,6 +465,46 @@ def test_active_player_bio_cache_sync_fetches_an_active_name_missing_from_cached
         ).fetchone() == ("TE",)
 
 
+def test_active_player_bio_cache_sync_fetches_an_active_nfl_id_without_provider_identity(tmp_path):
+    """An already-resolved active player must not depend on a platform ID or name column."""
+    import duckdb
+
+    from multi_league.core.league_refresh import sync_player_bio_cache_from_fly
+
+    cache_path = tmp_path / "ops_cache.duckdb"
+    cache = duckdb.connect(str(cache_path))
+    cache.execute("CREATE SCHEMA nfl_historical")
+    cache.execute(
+        "CREATE TABLE nfl_historical.player_bio ("
+        "NFL_player_id VARCHAR, player VARCHAR, nfl_position VARCHAR, espn_id VARCHAR)"
+    )
+    cache.close()
+
+    class Reader:
+        def query_df(self, sql, *, database):
+            assert database == "___ops"
+            assert "NFL_player_id IN ('00-0037256')" in sql
+            return pd.DataFrame(
+                [{
+                    "NFL_player_id": "00-0037256",
+                    "player": "Rhamondre Stevenson",
+                    "nfl_position": "RB",
+                    "espn_id": None,
+                }]
+            )
+
+    receipt = sync_player_bio_cache_from_fly(
+        Reader(),
+        ops_cache=cache_path,
+        platform="espn",
+        provider_ids=set(),
+        player_names=set(),
+        nfl_player_ids={"00-0037256"},
+    )
+
+    assert receipt == {"provider_ids": 0, "player_bio_rows": 1}
+
+
 def test_active_player_bio_cache_sync_normalizes_integer_looking_espn_ids_before_cache_lookup(tmp_path):
     """ESPN's float-shaped frame IDs must hit their integer-shaped bio mappings."""
     import duckdb

@@ -6,6 +6,7 @@ import pytest
 from multi_league.core.league_update_ownership import (
     OwnershipContractError,
     PreservationError,
+    _frame_fingerprint,
     assert_refresh_preservation,
     overlay_provider_columns,
     table_ownership,
@@ -115,6 +116,25 @@ def test_preservation_fingerprint_handles_nullable_integer_historical_witnesses(
     )
 
     assert receipt["historical_rows_preserved"] is True
+
+
+def test_preservation_fingerprint_ignores_database_integer_dtype_normalization():
+    source = pd.DataFrame(
+        {
+            "year": pd.Series([2025], dtype="int64"),
+            "games_played": pd.Series([17.0], dtype="float64"),
+            "draft_age": pd.Series([24.0], dtype="float64"),
+        }
+    )
+    local = pd.DataFrame(
+        {
+            "year": pd.Series([2025], dtype="Int32"),
+            "games_played": pd.Series([17], dtype="Int32"),
+            "draft_age": pd.Series([24], dtype="Int32"),
+        }
+    )
+
+    assert _frame_fingerprint(source) == _frame_fingerprint(local)
 
 
 def test_new_provider_row_does_not_copy_another_rows_enrichment():

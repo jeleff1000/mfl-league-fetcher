@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from numbers import Real
 from typing import Any
 
 import pandas as pd
@@ -273,11 +274,26 @@ def overlay_provider_columns(
 
 
 def _frame_fingerprint(frame: pd.DataFrame) -> str:
-    # Convert extension dtypes before applying the string null sentinel.  In
-    # particular, pandas Nullable Int32 refuses ``fillna("<NULL>")`` even
-    # though this representation is used only for deterministic comparison.
-    normalized = frame.astype(object).where(frame.notna(), "<NULL>")
-    records = normalized.astype(str).sort_index(axis=1).to_dict("records")
+    def canonical_value(value: Any) -> str:
+        if value is None or value is pd.NA:
+            return "<NULL>"
+        try:
+            if bool(pd.isna(value)):
+                return "<NULL>"
+        except (TypeError, ValueError):
+            pass
+        # Fly's JSON frames may decode a nullable integral field as float
+        # while DuckDB returns it as Int32.  That is a transport dtype change,
+        # not a historical data mutation.
+        if isinstance(value, Real) and not isinstance(value, bool):
+            numeric = float(value)
+            if numeric.is_integer():
+                return str(int(numeric))
+            return format(numeric, ".17g")
+        return str(value)
+
+    normalized = frame.map(canonical_value).sort_index(axis=1)
+    records = normalized.to_dict("records")
     records.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
     return json.dumps(records, sort_keys=True, separators=(",", ":"))
 

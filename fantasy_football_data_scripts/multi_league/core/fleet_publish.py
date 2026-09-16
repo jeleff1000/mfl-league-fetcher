@@ -49,6 +49,7 @@ from multi_league.core.delta_publish import (
 
 FLEET_SCHEMA_VERSION = "fleet-partition-v1"
 FLEET_CAREER_SCHEMA_VERSION = "fleet-partition-v2"
+FLEET_HOMEPAGE_SCHEMA_VERSION = "fleet-partition-v3"
 FLEET_PRODUCER = "league-history-fleet-builder"
 
 # Sentinel db_name used for publish-state bookkeeping on the server. It shares
@@ -229,6 +230,7 @@ def build_fleet_partition_bundle(
     publish_sequence: int | None = None,
     producer_version: str | None = None,
     rebuild_career_rollups: bool = False,
+    rebuild_homepage_rollups: bool = False,
 ) -> FleetBundle:
     """Build a fleet partition bundle from a staged fleet DuckDB.
 
@@ -246,6 +248,8 @@ def build_fleet_partition_bundle(
     ``rebuild_career_rollups`` requires the v2 server contract: career tables
     are not uploaded from worker scratch data. The server recomputes them
     from the merged full chain before committing. A v1 server rejects v2.
+    ``rebuild_homepage_rollups`` requires v3 and career rebuilding; all five
+    normal homepage outputs are recomputed inside that same transaction.
     """
     registry = canonical_table_registry()
     requested = list(tables) if tables is not None else sorted(registry)
@@ -256,6 +260,12 @@ def build_fleet_partition_bundle(
         from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
 
         requested = [table for table in requested if table not in CAREER_ROLLUP_TABLES]
+    if rebuild_homepage_rollups:
+        if not rebuild_career_rollups:
+            raise ValueError("Homepage publication requires full-chain career rebuilding")
+        from multi_league.transformations.aggregation.aggregation_utils import HOMEPAGE_ROLLUP_TABLES
+
+        requested = [table for table in requested if table not in HOMEPAGE_ROLLUP_TABLES]
 
     run_id = str(
         import_run_id
@@ -396,7 +406,8 @@ def build_fleet_partition_bundle(
 
     logical_payload = {
         "manifest_version": MANIFEST_VERSION,
-        "schema_version": FLEET_CAREER_SCHEMA_VERSION if rebuild_career_rollups else FLEET_SCHEMA_VERSION,
+        "schema_version": (FLEET_HOMEPAGE_SCHEMA_VERSION if rebuild_homepage_rollups else
+                           FLEET_CAREER_SCHEMA_VERSION if rebuild_career_rollups else FLEET_SCHEMA_VERSION),
         "db_name": FLEET_DB_SENTINEL,
         "mode": "weekly",
         "active_year": int(active_year),

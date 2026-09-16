@@ -27,6 +27,7 @@ import duckdb
 
 FLEET_SCHEMA_VERSION = "fleet-partition-v1"
 FLEET_CAREER_SCHEMA_VERSION = "fleet-partition-v2"
+FLEET_HOMEPAGE_SCHEMA_VERSION = "fleet-partition-v3"
 FLEET_MANIFEST_VERSION = 1
 FLEET_DB_SENTINEL = "___fleet"
 
@@ -110,7 +111,7 @@ def validate_fleet_manifest_shape(
         raise FleetValidationError("Manifest must be an object")
     if manifest.get("manifest_version") != FLEET_MANIFEST_VERSION:
         raise FleetValidationError(f"Unsupported manifest_version: {manifest.get('manifest_version')!r}")
-    if manifest.get("schema_version") not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION}:
+    if manifest.get("schema_version") not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
         raise FleetValidationError(f"Unsupported schema_version: {manifest.get('schema_version')!r}")
     if manifest.get("db_name") != FLEET_DB_SENTINEL:
         raise FleetValidationError(f"Fleet manifest db_name must be {FLEET_DB_SENTINEL!r}")
@@ -160,10 +161,15 @@ def validate_fleet_manifest_shape(
         if table in seen_tables:
             raise FleetValidationError(f"Duplicate table entry: {table}")
         seen_tables.add(table)
-        if manifest.get("schema_version") == FLEET_CAREER_SCHEMA_VERSION:
+        if manifest.get("schema_version") in {FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
             from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
 
             if table in CAREER_ROLLUP_TABLES:
+                raise FleetValidationError(f"{table} must be recomputed on the full persisted chain, not uploaded")
+        if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
+            from multi_league.transformations.aggregation.aggregation_utils import HOMEPAGE_ROLLUP_TABLES
+
+            if table in HOMEPAGE_ROLLUP_TABLES:
                 raise FleetValidationError(f"{table} must be recomputed on the full persisted chain, not uploaded")
 
         expected_path = f"tables/{table}.parquet"
@@ -405,6 +411,8 @@ def apply_fleet_merge(
     merged: dict[str, int] = {}
     career_rollups: dict[str, dict[str, int]] = {}
     career_seconds: dict[str, float] = {}
+    homepage_rollups: dict[str, dict[str, int]] = {}
+    homepage_seconds: dict[str, float] = {}
     merged_db_names: set[str] = set()
     timings: dict[str, dict[str, float]] = {}
     total_start = time.perf_counter()
@@ -551,7 +559,7 @@ def apply_fleet_merge(
         if merged_db_names != set(manifest.get("db_names") or []):
             raise FleetValidationError("Published row scope does not match the generation-protected league scope")
 
-        if manifest.get("schema_version") == FLEET_CAREER_SCHEMA_VERSION:
+        if manifest.get("schema_version") in {FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
             from multi_league.transformations.aggregation.aggregation_utils import aggregate_career_rollups
 
             # The source and season partitions are now merged, but still
@@ -562,6 +570,12 @@ def apply_fleet_merge(
                 career_start = time.perf_counter()
                 career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)
                 career_seconds[db_name] = round(time.perf_counter() - career_start, 4)
+                if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
+                    from multi_league.transformations.aggregation.aggregation_utils import aggregate_homepage_rollups
+
+                    homepage_start = time.perf_counter()
+                    homepage_rollups[db_name] = aggregate_homepage_rollups(aggregation_conn, db_name)
+                    homepage_seconds[db_name] = round(time.perf_counter() - homepage_start, 4)
 
         bump_generations(
             conn,
@@ -590,6 +604,8 @@ def apply_fleet_merge(
         "tables": merged,
         "career_rollups": career_rollups,
         "career_seconds": career_seconds,
+        "homepage_rollups": homepage_rollups,
+        "homepage_seconds": homepage_seconds,
         "table_count": len(merged),
         "row_count": sum(merged.values()),
         "timings": timings,

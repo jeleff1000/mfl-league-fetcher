@@ -2346,7 +2346,9 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             )
 
         try:
-            if manifest.get("schema_version") == fleet_merge.FLEET_CAREER_SCHEMA_VERSION:
+            if manifest.get("schema_version") in {
+                fleet_merge.FLEET_CAREER_SCHEMA_VERSION, fleet_merge.FLEET_HOMEPAGE_SCHEMA_VERSION,
+            }:
                 _acquire_ops_attachment(conn)
                 ops_attached = True
             _interrupting_execute(conn, "BEGIN TRANSACTION", step="begin fleet partition")

@@ -19,7 +19,7 @@ def _fleet_server():
     return module
 
 
-def _weekly_bundle(tmp_path, *, generation=0):
+def _weekly_bundle(tmp_path, *, generation=0, homepage=False):
     from multi_league.core.fleet_publish import build_fleet_partition_bundle
 
     with duckdb.connect(":memory:") as staged:
@@ -33,10 +33,16 @@ def _weekly_bundle(tmp_path, *, generation=0):
             CREATE TABLE public.matchup_career AS
             SELECT 'test_league' AS db_name, 'Shared Alias' AS manager, 'f1' AS franchise_id, 2 AS games
         """)
+        extra = {'rebuild_homepage_rollups': True} if homepage else {}
+        tables = ['matchup_season', 'matchup_career']
+        if homepage:
+            staged.execute("CREATE TABLE public.homepage_league_summary AS SELECT 'test_league' AS db_name, 110 AS highest_score_points")
+            tables.append('homepage_league_summary')
         bundle = build_fleet_partition_bundle(
             staged, active_year=2026, league_generations={'test_league': generation},
-            tables=['matchup_season', 'matchup_career'], output_dir=tmp_path,
+            tables=tables, output_dir=tmp_path,
             import_run_id='9001', publish_sequence=1, rebuild_career_rollups=True,
+            **extra,
         )
     with tarfile.open(bundle.path) as archive:
         archive.extractall(tmp_path / 'extracted', filter='data')
@@ -122,12 +128,13 @@ def merged_chain():
         conn.execute("""
             CREATE TABLE ___ops.nfl_historical.nfl_player_stats_all (
                 player_week VARCHAR, NFL_player_id VARCHAR, player VARCHAR,
-                nfl_team VARCHAR, year INTEGER, week INTEGER
+                nfl_team VARCHAR, year INTEGER, week INTEGER, headshot_url VARCHAR
             )
         """)
         conn.execute("""
             CREATE TABLE ___ops.nfl_historical.player_bio (
-                NFL_player_id VARCHAR, player VARCHAR
+                NFL_player_id VARCHAR, player VARCHAR, headshot_url VARCHAR,
+                yahoo_player_id VARCHAR, sleeper_player_id VARCHAR, espn_id VARCHAR
             )
         """)
         conn.execute("""
@@ -201,3 +208,110 @@ def test_shared_career_rebuild_rejects_missing_sources_before_deleting_outputs(m
     with pytest.raises(RuntimeError, match="player_fantasy"):
         aggregation_utils.aggregate_career_rollups(conn, 'test_league')
     assert conn.execute("SELECT games FROM public.matchup_career WHERE db_name='test_league'").fetchone() == (15,)
+
+
+@pytest.fixture
+def homepage_chain(merged_chain):
+    conn = merged_chain
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name,year,week,manager,franchise_id,team_name,platform,team_points,
+             opponent_points,win,loss,tie,is_playoffs,is_consolation,is_bye_week)
+        VALUES ('test_league',2025,1,'Shared Alias','f1','Team','yahoo',140,100,1,0,0,0,0,0),
+               ('test_league',2026,1,'Shared Alias','f1','Team','sleeper',110,120,0,1,0,0,0,0),
+               ('another_league',2026,1,'Other','f9','Other','espn',999,0,1,0,0,0,0,0)
+    """)
+    conn.execute("""
+        INSERT INTO public.homepage_league_summary (db_name,highest_score_points)
+        VALUES ('test_league',1),('another_league',999)
+    """)
+    yield conn
+
+
+def test_shared_homepage_rebuild_reads_full_chain_and_joins_callers_transaction(homepage_chain):
+    conn = homepage_chain
+    conn.execute('BEGIN TRANSACTION')
+    aggregation_utils.aggregate_career_rollups(conn, 'test_league')
+    counts = aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert counts['homepage_league_summary'] == 1
+    assert counts['homepage_manager_profiles'] == 1
+    assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (140.0,)
+    assert conn.execute("SELECT manager,seasons,wins,losses FROM public.homepage_manager_rankings WHERE db_name='test_league'").fetchone() == ('Shared Alias',2,1,1)
+    assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='another_league'").fetchone() == (999.0,)
+    conn.execute('ROLLBACK')
+    assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
+
+
+@pytest.mark.parametrize('table', ['homepage_manager_rankings', 'homepage_manager_profiles', 'homepage_current_standings'])
+def test_homepage_rejects_missing_franchise_before_replacing_outputs(homepage_chain, monkeypatch, table):
+    from multi_league.transformations.aggregation import homepage_summary
+
+    original = homepage_summary.compute_homepage_frames
+
+    def incomplete(conn, db_name):
+        frames = original(conn, db_name)
+        frames[table] = frames[table].iloc[0:0]
+        return frames
+
+    monkeypatch.setattr(homepage_summary, 'compute_homepage_frames', incomplete)
+    with pytest.raises(RuntimeError, match='franchise'):
+        aggregation_utils.aggregate_homepage_rollups(homepage_chain, 'test_league')
+    assert homepage_chain.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
+
+
+def test_homepage_rejects_lost_summary_value_without_silently_restoring_it(homepage_chain, monkeypatch):
+    from multi_league.transformations.aggregation import homepage_summary
+
+    original = homepage_summary.compute_homepage_frames
+
+    def incomplete(conn, db_name):
+        frames = original(conn, db_name)
+        frames['homepage_league_summary']['highest_score_points'] = None
+        return frames
+
+    monkeypatch.setattr(homepage_summary, 'compute_homepage_frames', incomplete)
+    with pytest.raises(RuntimeError, match='highest_score_points'):
+        aggregation_utils.aggregate_homepage_rollups(homepage_chain, 'test_league')
+    assert homepage_chain.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
+
+
+def test_shared_homepage_rebuild_rejects_worker_scratch_connection():
+    with duckdb.connect(':memory:') as conn:
+        with pytest.raises(RuntimeError, match='___leagues'):
+            aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+
+
+def test_weekly_publication_rebuilds_homepage_on_same_full_chain(merged_chain, tmp_path):
+    conn = merged_chain
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name,year,week,manager,franchise_id,team_name,team_points,
+             opponent_points,win,loss,tie,is_playoffs,is_consolation,is_bye_week)
+        VALUES ('test_league',2025,1,'Shared Alias','f1','Team',140,100,1,0,0,0,0,0),
+               ('test_league',2026,1,'Shared Alias','f1','Team',110,120,0,1,0,0,0,0)
+    """)
+    bundle, extracted = _weekly_bundle(tmp_path, homepage=True)
+    assert [entry['table'] for entry in bundle.manifest['tables']] == ['matchup_season']
+    server = _fleet_server()
+    registry = canonical_table_registry()
+    server.validate_fleet_manifest_shape(
+        bundle.manifest, allowed_tables=set(registry),
+        identity_keys={t: tuple(s['primary_keys']) for t, s in registry.items()},
+    )
+    receipt = server.apply_fleet_merge(conn, bundle.manifest, extracted)
+    assert receipt['homepage_rollups']['test_league']['homepage_manager_profiles'] == 1
+    assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (140.0,)
+    assert conn.execute("SELECT manager,seasons,wins,losses FROM public.homepage_manager_rankings WHERE db_name='test_league'").fetchone() == ('Shared Alias',2,1,1)
+
+
+def test_homepage_failure_rolls_back_careers_and_partition_changes(merged_chain, tmp_path):
+    conn = merged_chain
+    bundle, extracted = _weekly_bundle(tmp_path, homepage=True)
+    conn.execute('DROP TABLE public.league_context')
+    before = conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall()
+    server = _fleet_server()
+    with pytest.raises(RuntimeError, match='league_context'):
+        server.apply_fleet_merge(conn, bundle.manifest, extracted)
+    assert conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall() == before
+    assert conn.execute("SELECT COUNT(*) FROM public.matchup_career WHERE db_name='test_league'").fetchone() == (0,)
+    assert server.current_generations(conn, ['test_league']) == {'test_league': 0}

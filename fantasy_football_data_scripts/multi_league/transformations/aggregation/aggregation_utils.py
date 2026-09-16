@@ -58,6 +58,10 @@ CAREER_ROLLUP_TABLES = (
     "draft_manager_career", "draft_player_career",
     "transaction_manager_career", "transaction_player_career",
 )
+HOMEPAGE_ROLLUP_TABLES = (
+    "homepage_league_summary", "homepage_manager_rankings",
+    "homepage_current_standings", "homepage_top_rivalries", "homepage_manager_profiles",
+)
 
 # Active table catalog — starts at the centralized database and is rebound
 # to ``current_database()`` by ``configure_table_catalog()`` when an aggregation
@@ -156,6 +160,69 @@ def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:
     result = {table: aggregate(conn, db_name) for table, aggregate in aggregations.items()}
     _, result["matchup_h2h_career"] = aggregate_matchup_h2h(conn, db_name, season_years=set())
     return result
+
+
+def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
+    """Reuse the import homepage builder on Fly's uncommitted full chain.
+
+    Publication owns the transaction. No remote reader, worker history copy,
+    synthetic career table, or null-value restoration is involved here.
+    """
+    from multi_league.core.sql_utils import validate_db_name
+    from multi_league.transformations.aggregation.homepage_summary import compute_homepage_frames
+    import pandas as pd
+
+    validate_db_name(db_name)
+    if current_catalog(conn) != CENTRAL_DB_NAME:
+        raise RuntimeError("Homepage publication requires the complete ___leagues connection")
+    configure_table_catalog(conn)
+    for source in (
+        "matchup", "matchup_season", "player_fantasy", "player_fantasy_season",
+        "player_fantasy_career", "draft", "transactions", "league_settings", "league_context",
+    ):
+        if not table_exists_in_catalog(conn, source):
+            raise RuntimeError(f"Homepage publication source is missing: {source}")
+    frames = compute_homepage_frames(conn, db_name)
+    if set(frames) != set(HOMEPAGE_ROLLUP_TABLES):
+        raise RuntimeError("Homepage builder did not return all canonical outputs")
+    if len(frames["homepage_league_summary"]) != 1:
+        raise RuntimeError("Homepage builder must return exactly one league summary")
+    for table in ("homepage_manager_rankings", "homepage_manager_profiles", "homepage_current_standings"):
+        year_scope = (
+            " AND year = (SELECT MAX(year) FROM public.matchup WHERE db_name = ?)"
+            if table == "homepage_current_standings" else ""
+        )
+        expected = {str(row[0]) for row in conn.execute(
+            "SELECT DISTINCT franchise_id FROM public.matchup WHERE db_name = ? "
+            "AND franchise_id IS NOT NULL" + year_scope,
+            [db_name, db_name] if year_scope else [db_name],
+        ).fetchall()}
+        frame = frames[table]
+        if "franchise_id" not in frame:
+            raise RuntimeError(f"{table} lacks franchise identities")
+        ids = frame["franchise_id"]
+        if ids.isna().any() or ids.duplicated().any() or set(ids.astype(str)) != expected:
+            raise RuntimeError(f"{table} franchise coverage differs from persisted history")
+    # A swallowed query error in a legacy homepage calculation must not erase
+    # a previously populated summary. Reject it; do not restore stale values.
+    if table_exists_in_catalog(conn, "homepage_league_summary"):
+        previous = conn.execute(
+            "SELECT * FROM public.homepage_league_summary WHERE db_name = ?", [db_name],
+        ).fetchdf()
+        if len(previous) > 1:
+            raise RuntimeError("Persisted homepage summary has duplicate league identity")
+        if not previous.empty:
+            summary = frames["homepage_league_summary"].iloc[0]
+            for column, old_value in previous.iloc[0].items():
+                if column in {"db_name", "last_updated"} or pd.isna(old_value):
+                    continue
+                if column not in summary or pd.isna(summary[column]):
+                    raise RuntimeError(f"Homepage summary lost populated value: {column}")
+    counts = {}
+    for table in HOMEPAGE_ROLLUP_TABLES:
+        replace_scoped_aggregate_table_from_dataframe(conn, db_name, table, frames[table])
+        counts[table] = len(frames[table])
+    return counts
 
 
 def table_exists_in_catalog(conn, table_name: str) -> bool:

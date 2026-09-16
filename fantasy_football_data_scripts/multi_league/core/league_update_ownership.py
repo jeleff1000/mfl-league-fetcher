@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from pandas.api.types import is_bool_dtype, is_numeric_dtype
+from pandas.api.types import infer_dtype, is_bool_dtype, is_numeric_dtype
 
 
 class OwnershipContractError(RuntimeError):
@@ -292,8 +292,20 @@ def _frame_fingerprint(frame: pd.DataFrame) -> str:
     normalized: dict[str, pd.Series] = {}
     for column in columns:
         values = frame[column]
-        if is_numeric_dtype(values) and not is_bool_dtype(values):
-            normalized[column] = pd.to_numeric(values, errors="coerce").astype("Float64")
+        present = values.notna()
+        value_kind = infer_dtype(values.loc[present], skipna=True) if present.any() else "empty"
+        numeric_values: pd.Series | None = None
+        if not is_bool_dtype(values) and value_kind != "boolean":
+            try:
+                candidate = pd.to_numeric(values, errors="coerce")
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate is not None and (not present.any() or candidate.notna().eq(present).all()):
+                numeric_values = candidate.astype("Float64")
+        if numeric_values is not None:
+            normalized[column] = numeric_values
+        elif not present.any():
+            normalized[column] = pd.Series("<NULL>", index=values.index, dtype="string")
         else:
             # Source fact tables are scalar, but preserve the previous
             # stringification behavior for any future structured field.

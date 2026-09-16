@@ -271,6 +271,13 @@ def test_preservation_fingerprint_ignores_database_integer_dtype_normalization()
     assert _frame_fingerprint(source) == _frame_fingerprint(local)
 
 
+def test_preservation_fingerprint_normalizes_numeric_values_stored_in_object_columns():
+    source = pd.DataFrame({"keeper_cost": pd.Series([1.0, None], dtype="object")})
+    local = pd.DataFrame({"keeper_cost": pd.Series([1, None], dtype="Int32")})
+
+    assert _frame_fingerprint(source) == _frame_fingerprint(local)
+
+
 def test_preservation_fingerprint_uses_columnar_serialization_not_cell_mapping(monkeypatch):
     frame = pd.DataFrame({"year": [2025, 2024], "points": [17.0, None]})
 

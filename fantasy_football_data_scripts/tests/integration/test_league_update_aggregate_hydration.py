@@ -142,3 +142,42 @@ def test_matchup_refresh_replaces_a_prior_enriched_team_week_by_provider_identit
         assert stored["team_points"].tolist() == [102.0]
     finally:
         local.close()
+
+
+def test_schedule_refresh_replaces_duplicate_prior_team_week_by_manager_guid(tmp_path):
+    """A complete active schedule replaces old derived-key variants for one owner."""
+    local = LocalLeagueDB(tmp_path, "afi_data")
+    try:
+        local.ensure_table("schedule")
+        local._insert_into_table("schedule", pd.DataFrame([
+            {
+                "db_name": "afi_data", "year": 2026, "week": 1,
+                "manager": "Gray", "manager_guid": "stable-owner",
+                "franchise_id": "stable-owner", "manager_week": "Gray_2026_1",
+                "opponent": "Tani", "team_points": 101.0,
+            },
+            {
+                "db_name": "afi_data", "year": 2026, "week": 1,
+                "manager": "Gray", "manager_guid": "stable-owner",
+                "franchise_id": "stable-owner", "manager_week": "stable-owner_2026_1",
+                "opponent": "Tani", "team_points": 101.0,
+            },
+        ]))
+        incoming = pd.DataFrame([{
+            "year": 2026, "week": 1,
+            "manager": "Gray", "manager_guid": "stable-owner",
+            "team_name": "Gray's Team", "manager_week": "Gray_2026_1",
+            "opponent": "Tani", "team_points": 102.0,
+        }])
+
+        merge_provider_refresh_table(
+            local, "schedule", incoming,
+            platform="sleeper", league_id="1352102370921705472",
+        )
+
+        stored = local.read_table("schedule")
+        assert len(stored) == 1
+        assert stored["team_points"].tolist() == [102.0]
+        assert stored["manager_guid"].tolist() == ["stable-owner"]
+    finally:
+        local.close()

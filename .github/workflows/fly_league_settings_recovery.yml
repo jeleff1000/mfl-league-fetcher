@@ -188,11 +188,19 @@ jobs:
           }, sort_keys=True))
           PY
           export_script_b64="$(base64 -w0 snapshot_export.py)"
-          recovery_machine_json="$(flyctl machine run "$image_ref" --app "$FLY_APP" \
+          recovery_machine_name="wkupd-recover-${GITHUB_RUN_ID}"
+          flyctl machine run "$image_ref" --app "$FLY_APP" \
+            --name "$recovery_machine_name" \
             --region "$source_region" --volume "$recovery_volume_id:/data" \
             --entrypoint /bin/sh --file-literal "/tmp/snapshot_export.py=$export_script_b64" \
-            --restart no --detach --vm-cpus 1 --vm-memory 2048 --json -- -lc 'sleep 3600')"
-          recovery_machine_id="$(printf '%s' "$recovery_machine_json" | jq -r '.id')"
+            --restart no --detach --vm-cpus 1 --vm-memory 2048 -- -lc 'sleep 3600' \
+            | tee recovery-machine-run.log
+          for _ in $(seq 1 30); do
+            recovery_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
+              | jq -r --arg name "$recovery_machine_name" 'map(select(.name == $name))[0].id // empty')"
+            [ -n "$recovery_machine_id" ] && break
+            sleep 2
+          done
           test -n "$recovery_machine_id"
           test "$recovery_machine_id" != "null"
 

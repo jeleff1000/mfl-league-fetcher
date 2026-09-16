@@ -151,17 +151,26 @@ jobs:
           sys.exit(1 if result["errors"] else 0)
           PY
             probe_b64="$(base64 -w0 snapshot_probe.py)"
-            recovery_machine_json="$(flyctl machine run "$image_ref" --app "$FLY_APP" --region "$source_region" \
+            recovery_machine_name="wkupd-probe-${GITHUB_RUN_ID}"
+            flyctl machine run "$image_ref" --app "$FLY_APP" --region "$source_region" \
+              --name "$recovery_machine_name" \
               --volume "$recovery_volume_id:/data" --entrypoint /bin/sh \
               --file-literal "/tmp/snapshot_probe.py=$probe_b64" \
-              --restart no --detach --vm-cpus 1 --vm-memory 2048 --json \
-              -- -lc 'sleep 900')"
-            printf '%s\n' "$recovery_machine_json" | tee recovery-machine.json
-            recovery_machine_id="$(printf '%s' "$recovery_machine_json" | jq -r '.id')"
+              --restart no --detach --vm-cpus 1 --vm-memory 2048 \
+              -- -lc 'sleep 900' | tee recovery-machine-run.log
+            for _ in $(seq 1 30); do
+              recovery_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
+                | jq -r --arg name "$recovery_machine_name" 'map(select(.name == $name))[0].id // empty')"
+              [ -n "$recovery_machine_id" ] && break
+              sleep 2
+            done
             if [ -z "$recovery_machine_id" ] || [ "$recovery_machine_id" = "null" ]; then
               echo "Snapshot probe did not return a recovery machine ID" >&2
               exit 5
             fi
+            flyctl machines list --app "$FLY_APP" --json \
+              | jq --arg id "$recovery_machine_id" '.[] | select(.id == $id)' \
+              | tee recovery-machine.json
             for _ in $(seq 1 60); do
               recovery_machine_state="$(flyctl machines list --app "$FLY_APP" --json \
                 | jq -r --arg id "$recovery_machine_id" '.[] | select(.id == $id) | .state')"
@@ -194,6 +203,7 @@ jobs:
             snapshots-*.json
             recovery-volume.json
             recovery-machine.json
+            recovery-machine-run.log
             snapshot-validation.jsonl
           if-no-files-found: warn
           retention-days: 7

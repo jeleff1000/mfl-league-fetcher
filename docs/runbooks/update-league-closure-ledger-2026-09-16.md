@@ -1,6 +1,49 @@
 # September Update League closure ledger
 
-State: blocked on D: disk capacity. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+
+## Current checkpoint - 2026-09-16 19:27 UTC
+
+Yahoo Update League is OAuth-only. The production caller maps Yahoo to
+`yahoo_incremental_refresh_worker.yml`; that workflow supplies the Yahoo OAuth
+client credentials and encrypted credential key, and
+`refresh_yahoo_active_season.py` obtains the provider session through
+`LeagueContext.get_oauth_session()`. No Yahoo cookie credential, cookie jar, or
+cookie fallback was used by the production canary below. The separate legacy
+cookie-import workflow is not an Update League caller and is outside this
+worker's execution path.
+
+Actual UI-dispatched KMFFL OAuth retry `35140405563` ran on public main
+`6f94712e87c5c04948708b13311e4c7d0daebd6b`, refreshed an expired stored OAuth
+access token, resolved the saved 2015-2026 Yahoo renewal chain, committed one
+generation (`10 -> 11`), finalized the cache, and completed successfully. The
+browser remained on the production page without a manual reload. Worker phases
+totaled 45.189s; the GitHub job ran for 79s; click-to-visible was approximately
+101s. Correctness passed for this canary, but the strict under-90-second
+acceptance requirement FAILED.
+
+All compact pre-2026/configuration witnesses were unchanged after publication.
+The 2026 week-1 partition contains 10 team rows, 10 nonblank franchise IDs, and
+1298.14 total points. Ten manager careers reconcile exactly to the complete
+season history (1,490 games; zero games/wins/losses/seasons mismatches), and the
+homepage now reports `data_year=2026`, `data_week=1` rather than the stale week
+17 value.
+
+The initial player-career audit used the wrong grain and its mismatch count is
+withdrawn. The exact production aggregate groups all regular-season
+`player_fantasy` rows by `NFL_player_id`, including the expanded unrostered
+population. Re-running that exact contract against Fly returned 2,177 source
+players, 2,177 target careers, zero rows missing in either direction, and zero
+mismatches across first/last year, years active, fantasy points, player/manager
+LAMAR, started-player clutch, starts, rostered games, wins, and losses.
+
+The preceding KMFFL attempt `35139531195` failed before publication because the
+active snapshot treated legacy server-generated `keeper_config.created_at` as
+an unregistered canonical field. Public main `6f94712e8` drops only that legacy
+metadata from the local non-published transform frame and makes existing
+`___ops` attachment detection idempotent. Generation remained 10 on the failed
+attempt. The focused weekly suite passed 361 tests, workflow/writer boundary
+suite passed 110 tests, and Ruff passed before the successful retry.
 
 ## Disk-blocked continuation checkpoint
 

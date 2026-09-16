@@ -271,6 +271,26 @@ def test_preservation_fingerprint_ignores_database_integer_dtype_normalization()
     assert _frame_fingerprint(source) == _frame_fingerprint(local)
 
 
+def test_preservation_fingerprint_uses_columnar_serialization_not_cell_mapping(monkeypatch):
+    frame = pd.DataFrame({"year": [2025, 2024], "points": [17.0, None]})
+
+    def fail_cell_mapping(*_args, **_kwargs):
+        raise AssertionError("fingerprinting must not map each cell in Python")
+
+    monkeypatch.setattr(pd.DataFrame, "map", fail_cell_mapping)
+    fingerprint = _frame_fingerprint(frame)
+
+    assert fingerprint == _frame_fingerprint(frame.iloc[::-1].reset_index(drop=True))
+
+
+def test_preservation_fingerprint_rejects_a_real_historical_value_change():
+    before = pd.DataFrame({"year": [2025], "player_week": ["p_2025_1"], "points": [17.0]})
+    after = before.copy()
+    after.loc[0, "points"] = 17.01
+
+    assert _frame_fingerprint(before) != _frame_fingerprint(after)
+
+
 def test_new_provider_row_does_not_copy_another_rows_enrichment():
     existing = pd.DataFrame([{
         "db_name": "league_a",

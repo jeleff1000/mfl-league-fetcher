@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 import json
-from numbers import Real
 from time import perf_counter
 from typing import Any
 
+import numpy as np
 import pandas as pd
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 
 class OwnershipContractError(RuntimeError):
@@ -278,28 +280,56 @@ def overlay_provider_columns(
 
 
 def _frame_fingerprint(frame: pd.DataFrame) -> str:
-    def canonical_value(value: Any) -> str:
-        if value is None or value is pd.NA:
-            return "<NULL>"
-        try:
-            if bool(pd.isna(value)):
-                return "<NULL>"
-        except (TypeError, ValueError):
-            pass
-        # Fly's JSON frames may decode a nullable integral field as float
-        # while DuckDB returns it as Int32.  That is a transport dtype change,
-        # not a historical data mutation.
-        if isinstance(value, Real) and not isinstance(value, bool):
-            numeric = float(value)
-            if numeric.is_integer():
-                return str(int(numeric))
-            return format(numeric, ".17g")
-        return str(value)
+    """Return an order-independent canonical witness fingerprint.
 
-    normalized = frame.map(canonical_value).sort_index(axis=1)
-    records = normalized.to_dict("records")
-    records.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
-    return json.dumps(records, sort_keys=True, separators=(",", ":"))
+    Fly may represent integral values as floats while local DuckDB exposes
+    nullable integers. Normalize numeric columns first, then use four
+    independent vectorized row hashes. This preserves the old dtype-tolerant,
+    row-order-independent witness contract without serializing every cell in
+    Python during a narrow weekly update.
+    """
+    columns = sorted(frame.columns)
+    normalized: dict[str, pd.Series] = {}
+    for column in columns:
+        values = frame[column]
+        if is_numeric_dtype(values) and not is_bool_dtype(values):
+            normalized[column] = pd.to_numeric(values, errors="coerce").astype("Float64")
+        else:
+            # Source fact tables are scalar, but preserve the previous
+            # stringification behavior for any future structured field.
+            if values.dtype == object and values.map(
+                lambda value: isinstance(value, (dict, list, tuple, set))
+            ).any():
+                normalized[column] = values.map(
+                    lambda value: "<NULL>" if _is_null_preservation_value(value) else str(value)
+                ).astype("string")
+            else:
+                normalized[column] = values.astype("string").fillna("<NULL>")
+    canonical = pd.DataFrame(normalized, columns=columns)
+    hash_keys = (
+        "0123456789abcdef",
+        "fedcba9876543210",
+        "0011223344556677",
+        "8899aabbccddeeff",
+    )
+    row_hashes = np.column_stack(
+        [
+            pd.util.hash_pandas_object(
+                canonical,
+                index=False,
+                hash_key=hash_key,
+                categorize=True,
+            ).to_numpy(dtype="uint64")
+            for hash_key in hash_keys
+        ]
+    )
+    if len(row_hashes):
+        order = np.lexsort(tuple(row_hashes[:, index] for index in range(row_hashes.shape[1] - 1, -1, -1)))
+        row_hashes = row_hashes[order]
+    digest = sha256()
+    digest.update(json.dumps(columns, separators=(",", ":")).encode("utf-8"))
+    digest.update(row_hashes.astype("<u8", copy=False).tobytes())
+    return digest.hexdigest()
 
 
 def _identity_columns(

@@ -1332,8 +1332,14 @@ def test_weekly_yahoo_refresh_refetches_a_draft_with_missing_provider_ids():
     assert not needs_active_season_draft_fetch(_Local(), platform="sleeper")
 
 
-def test_yahoo_refresh_history_snapshot_reads_all_league_years_in_one_round_trip(monkeypatch):
-    """Career rebuilds hydrate league history without walking the NFL lake."""
+def test_yahoo_refresh_history_snapshot_uses_bounded_table_year_payloads(monkeypatch):
+    """History hydration must not send every wide source row through one Fly query.
+
+    Full league history is still required for shared career/homepage enrichments,
+    but one tagged JSON UNION can exceed Fly's response budget.  The manifest
+    may be one small query; wide rows must be fetched in bounded table/year
+    payloads instead.
+    """
     from multi_league.core import delta_publish
     from scripts import refresh_yahoo_active_season
 
@@ -1350,13 +1356,18 @@ def test_yahoo_refresh_history_snapshot_reads_all_league_years_in_one_round_trip
 
         def query(self, sql, **_kwargs):
             self.sql.append(sql)
+            if "history_source_years" in sql:
+                return [
+                    {"source_table": "matchup", "year": 2024},
+                    {"source_table": "matchup", "year": 2025},
+                ]
+            if 'public."league_context"' in sql:
+                return [{"payload": '{"db_name":"league_a","platform":"yahoo"}'}]
             return [
                 {
-                    "source_table": "matchup",
                     "payload": '{"db_name":"league_a","year":2024}',
                 },
                 {
-                    "source_table": "matchup",
                     "payload": '{"db_name":"league_a","year":2025}',
                 },
             ]
@@ -1374,9 +1385,11 @@ def test_yahoo_refresh_history_snapshot_reads_all_league_years_in_one_round_trip
 
     assert set(frames) == set(refresh_yahoo_active_season.ACTIVE_REFRESH_SOURCE_TABLES)
     assert frames["matchup"]["year"].tolist() == [2024, 2025]
-    assert len(reader.sql) == 1
-    assert not any("SELECT DISTINCT year" in sql for sql in reader.sql)
-    assert not any("year =" in sql for sql in reader.sql)
+    assert len(reader.sql) == 3
+    assert "UNION ALL" in reader.sql[0]
+    assert "to_json" not in reader.sql[0]
+    assert all("UNION ALL" not in sql for sql in reader.sql[1:])
+    assert all("to_json" in sql for sql in reader.sql[1:])
 
 
 def test_yahoo_refresh_reads_only_quick_pipeline_source_tables(monkeypatch):

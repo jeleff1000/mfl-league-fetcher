@@ -505,6 +505,88 @@ def _active_source_snapshot_frames(
     }
 
 
+def _historical_source_snapshot_frames(
+    reader: Any,
+    *,
+    registry: dict[str, Any],
+    db_name: str,
+    table_names: tuple[str, ...],
+    year_chunk_size: int = 4,
+) -> dict[str, pd.DataFrame]:
+    """Read complete league history in bounded table/year JSON payloads.
+
+    A refresh must hydrate the full persisted chain before rebuilding shared
+    career and homepage enrichments.  It must *not* serialize every wide
+    source row from every table through one tagged ``UNION ALL`` request:
+    larger leagues exceed Fly's response budget and turn a retryable read into
+    several minutes of 503 retries.  A small year manifest keeps the snapshot
+    deterministic; each raw payload stays bounded to one table and a handful
+    of seasons.
+    """
+    if year_chunk_size < 1:
+        raise ValueError("year_chunk_size must be positive")
+
+    safe_db = _sql_literal(db_name)
+    year_tables = tuple(
+        table_name
+        for table_name in table_names
+        if "year" in registry[table_name]["columns"]
+    )
+    year_manifest_parts = [
+        "(SELECT "
+        f"{_sql_literal(table_name)} AS source_table, year "
+        f"FROM public.{_quoted_identifier(table_name)} "
+        f"WHERE db_name = {safe_db} AND year IS NOT NULL GROUP BY year)"
+        for table_name in year_tables
+    ]
+    year_rows = reader.query(
+        "SELECT source_table, year FROM ("
+        + " UNION ALL ".join(year_manifest_parts)
+        + ") AS history_source_years",
+        database=LEAGUES_DATABASE,
+    ) if year_manifest_parts else []
+
+    years_by_table: dict[str, list[int]] = {table_name: [] for table_name in year_tables}
+    for row in year_rows:
+        table_name = str(row.get("source_table", ""))
+        if table_name not in years_by_table:
+            raise RuntimeError(f"Fly historical source manifest returned unknown table {table_name!r}")
+        year = pd.to_numeric(pd.Series([row.get("year")]), errors="coerce").iloc[0]
+        if pd.notna(year):
+            years_by_table[table_name].append(int(year))
+
+    payloads: dict[str, list[dict[str, Any]]] = {table_name: [] for table_name in table_names}
+    for table_name in table_names:
+        table_ref = f"public.{_quoted_identifier(table_name)}"
+        predicates: list[str]
+        if table_name in years_by_table:
+            years = sorted(set(years_by_table[table_name]))
+            predicates = [
+                f"db_name = {safe_db} AND year IN ({','.join(str(year) for year in years[index:index + year_chunk_size])})"
+                for index in range(0, len(years), year_chunk_size)
+            ]
+        else:
+            predicates = [f"db_name = {safe_db}"]
+
+        for predicate in predicates:
+            rows = reader.query(
+                f"SELECT to_json(t) AS payload FROM {table_ref} AS t WHERE {predicate}",
+                database=LEAGUES_DATABASE,
+            )
+            for row in rows:
+                payload = row.get("payload")
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                if not isinstance(payload, dict):
+                    raise RuntimeError(f"Fly historical source snapshot returned invalid {table_name} payload")
+                payloads[table_name].append(payload)
+
+    return {
+        table_name: pd.DataFrame(records) if records else _empty_source_frame()
+        for table_name, records in payloads.items()
+    }
+
+
 def _transaction_matchup_windows(
     local_db: Any,
     *,
@@ -586,6 +668,13 @@ def _source_frames(
                 raise RuntimeError(f"{table_name} is not a canonical Fly table")
             scope = f"active {active_year}" if active_year is not None else "history"
             print(f"[hydrate] retaining existing {table_name} {scope} for {db_name}", flush=True)
+        if active_year is None:
+            return _historical_source_snapshot_frames(
+                reader,
+                registry=registry,
+                db_name=db_name,
+                table_names=requested_tables,
+            )
         return _active_source_snapshot_frames(
             reader,
             registry=registry,

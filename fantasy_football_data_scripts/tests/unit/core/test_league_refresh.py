@@ -818,6 +818,9 @@ def test_weekly_publish_selects_source_and_rebuilt_homepage_tables():
         conn.execute("CREATE TABLE public.manager_overrides (db_name VARCHAR, id INTEGER)")
 
         assert active_refresh_publish_tables(conn) == ["homepage_league_summary", "matchup"]
+        assert active_refresh_publish_tables(
+            conn, publication_schema_version="fleet-partition-v3",
+        ) == ["matchup"]
     finally:
         conn.close()
 

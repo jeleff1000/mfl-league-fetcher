@@ -936,7 +936,9 @@ def merge_provider_refresh_table(
     )
 
 
-def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str]:
+def active_refresh_publish_tables(
+    source: duckdb.DuckDBPyConnection, *, publication_schema_version: str = "fleet-partition-v2",
+) -> list[str]:
     """Return locally-built tables safe to replace in an active-season refresh.
 
     The normal quick importer builds a current-season DuckDB.  Its tables
@@ -945,6 +947,8 @@ def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str
     out of a weekly bundle unless they were rebuilt from full history.
     """
     from multi_league.core.delta_publish import CADENCE_ACTIVE_SEASON, canonical_table_registry
+    from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION
+    from multi_league.transformations.aggregation.aggregation_utils import HOMEPAGE_ROLLUP_TABLES
 
     registry = canonical_table_registry()
     # Frontend-owned configuration is an enrichment input, not active-season
@@ -962,6 +966,8 @@ def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str
         "homepage_manager_rankings",
         "homepage_top_rivalries",
     }
+    if publication_schema_version == FLEET_HOMEPAGE_SCHEMA_VERSION:
+        rebuilt_rollups -= set(HOMEPAGE_ROLLUP_TABLES)
     available = {
         str(row[0])
         for row in source.execute(

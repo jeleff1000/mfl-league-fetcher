@@ -265,6 +265,29 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
             conn, db_name="afi_data", year=2026, weeks=(1,),
             provider_id_column="espn_player_id", published_tables=publish,
         )
+    for table in ("homepage_league_summary", "homepage_manager_rankings", "homepage_current_standings"):
+        conn.execute(f"DROP TABLE public.{table}")
+    health = assert_refresh_derived_output_health(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column="espn_player_id", published_tables=("matchup",),
+        publication_schema_version="fleet-partition-v3",
+    )
+    assert health["active_scored_career_franchises"] == 1
+    assert health["homepage_summary_rows"] is None
+    assert health["homepage_validation_location"] == "atomic_fly"
+    with pytest.raises(IncompleteSourceError, match="homepages must be rebuilt on Fly"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=("matchup", "homepage_league_summary"),
+            publication_schema_version="fleet-partition-v3",
+        )
+    conn.execute("DELETE FROM public.matchup_career WHERE db_name='afi_data'")
+    with pytest.raises(IncompleteSourceError, match="matchup_career lacks"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column="espn_player_id", published_tables=("matchup",),
+            publication_schema_version="fleet-partition-v3",
+        )
 
 
 def test_yahoo_scoreboard_pair_graph_requires_complete_reciprocal_coverage():

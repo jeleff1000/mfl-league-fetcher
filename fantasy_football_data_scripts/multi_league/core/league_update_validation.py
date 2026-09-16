@@ -527,17 +527,24 @@ def assert_refresh_derived_output_health(
     conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
     provider_id_column: str, published_tables: tuple[str, ...] | list[str],
     publication_schema_version: str = "fleet-partition-v1",
-) -> dict[str, int]:
+) -> dict[str, int | str | None]:
     """Check derived coverage and ownership under the actual publication contract.
 
     V2 rebuilds careers on the full Fly connection inside the merge transaction;
     active-season scratch careers are checked here but must not be uploaded.
+    V3 also moves homepage generation and coverage validation into that atomic
+    transaction; no historical homepage inputs are hydrated into worker scratch.
     """
-    from multi_league.core.fleet_publish import FLEET_CAREER_SCHEMA_VERSION, FLEET_SCHEMA_VERSION
-    from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
+    from multi_league.core.fleet_publish import (
+        FLEET_CAREER_SCHEMA_VERSION, FLEET_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION,
+    )
+    from multi_league.transformations.aggregation.aggregation_utils import (
+        CAREER_ROLLUP_TABLES, HOMEPAGE_ROLLUP_TABLES,
+    )
 
-    if publication_schema_version not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION}:
+    if publication_schema_version not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
         raise IncompleteSourceError("unsupported publication schema for derived validation")
+    atomic_homepage = publication_schema_version == FLEET_HOMEPAGE_SCHEMA_VERSION
     if provider_id_column not in _ACTIVE_PROVIDER_PLAYER_COLUMNS:
         raise IncompleteSourceError("unsupported provider player identity column")
     selected_weeks = tuple(sorted({int(week) for week in weeks}))
@@ -586,21 +593,31 @@ def assert_refresh_derived_output_health(
         required_publish |= {
             "matchup_career", "homepage_manager_rankings", "homepage_current_standings",
         }
-    if publication_schema_version == FLEET_CAREER_SCHEMA_VERSION:
+    if publication_schema_version in {FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
         if set(published_tables) & set(CAREER_ROLLUP_TABLES):
             raise IncompleteSourceError("V2 careers must be rebuilt on Fly, not uploaded from scratch")
         required_publish -= set(CAREER_ROLLUP_TABLES)
+    if atomic_homepage:
+        if set(published_tables) & set(HOMEPAGE_ROLLUP_TABLES):
+            raise IncompleteSourceError("V3 homepages must be rebuilt on Fly, not uploaded from scratch")
+        required_publish -= set(HOMEPAGE_ROLLUP_TABLES)
+        if active_players:
+            required_publish.add("player_fantasy")
+        if active_franchises:
+            required_publish.add("matchup")
     missing_publish = required_publish - set(published_tables)
     if missing_publish:
         raise IncompleteSourceError(
             "derived output not in the publication bundle: " + ", ".join(sorted(missing_publish))
         )
-    summary = conn.execute(
-        "SELECT COUNT(*) FROM public.homepage_league_summary WHERE db_name = ?",
-        [str(db_name)],
-    ).fetchone()[0]
-    if int(summary or 0) != 1:
-        raise IncompleteSourceError("homepage_league_summary must contain exactly one league row")
+    summary = None
+    if not atomic_homepage:
+        summary = conn.execute(
+            "SELECT COUNT(*) FROM public.homepage_league_summary WHERE db_name = ?",
+            [str(db_name)],
+        ).fetchone()[0]
+        if int(summary or 0) != 1:
+            raise IncompleteSourceError("homepage_league_summary must contain exactly one league row")
     for table in ("player_fantasy_career", "player_fantasy_career_all"):
         if not active_players:
             continue
@@ -626,6 +643,8 @@ def assert_refresh_derived_output_health(
         ("homepage_manager_rankings", "seasons", True),
         ("homepage_current_standings", "wins", False),
     ):
+        if atomic_homepage and table in HOMEPAGE_ROLLUP_TABLES:
+            continue  # V3 server checks complete-chain homepage outputs before COMMIT.
         if not active_franchises:
             continue
         rows = _derived_id_rows(
@@ -649,7 +668,8 @@ def assert_refresh_derived_output_health(
     return {
         "active_scored_career_players": len(active_players),
         "active_scored_career_franchises": len(active_franchises),
-        "homepage_summary_rows": int(summary),
+        "homepage_summary_rows": int(summary) if summary is not None else None,
+        "homepage_validation_location": "atomic_fly" if atomic_homepage else "worker",
     }
 
 

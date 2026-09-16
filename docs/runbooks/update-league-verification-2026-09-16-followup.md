@@ -84,3 +84,24 @@ acceptance requirements remain open.
 
 Repository identity checked through GitHub API: jeleff1000/league-history-workers
 redirects to jeleff1000/mfl-league-fetcher; it is public and defaults to main.
+
+## Server deployment and worker activation checkpoint
+
+Server revision 3eb3ced3722c1d9df8a5184a00a9cd0140fb5bac deployed successfully
+in public workflow 35100693579. Docker context 7.14 MB; homepage module import
+passed in the actual image. Image deployment-01M2N5PM82QF5S9P8PPC42TRKN.
+After deployment /ready reports serving, accepting queries, zero active reads,
+OPS writes or delta publications.
+
+Yahoo/ESPN/Sleeper worker changes now request v3 and no longer call the
+remote-history homepage helper. They stage only active partitions/identity
+outputs, while the server returns career and homepage publication counts.
+The preflight checks local provider and career outputs but explicitly reports
+homepage validation as atomic_fly (not a fabricated local summary count).
+160 validation/refresh/worker tests passed; Ruff passed. Production execution
+of the activated worker revisions remains to be verified.
+
+Root application checkout predates all three weekly scripts and both weekly
+core modules. Server/shared capability edits were mirrored without overwriting
+unrelated root edits; do not invent a partial copy of the missing worker stack.
+App-main/caller alignment is still an explicit audit item.

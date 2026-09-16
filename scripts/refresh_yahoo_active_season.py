@@ -626,11 +626,42 @@ def _restore_historical_source_rows(
     historical_rows: dict[str, pd.DataFrame],
 ) -> None:
     """Restore immutable historical facts after current-season enrichment."""
+    from multi_league.core.delta_publish import canonical_table_registry
+
+    registry = canonical_table_registry()
     for table_name, frame in historical_rows.items():
         if frame.empty:
             continue
         if not local_db.table_exists(table_name):
             raise RuntimeError(f"active transform removed historical source table {table_name}")
+        conn = local_db.connect()
+        target_columns = {
+            str(column)
+            for column, *_ in conn.execute(f"DESCRIBE public.{_quoted_identifier(table_name)}").fetchall()
+        }
+        missing_columns = sorted(set(frame.columns) - target_columns)
+        allowed_columns = set(registry[table_name]["columns"])
+        unexpected = sorted(set(missing_columns) - allowed_columns)
+        if unexpected:
+            raise RuntimeError(
+                f"historical {table_name} has unregistered columns after active transform: {unexpected}"
+            )
+        if missing_columns:
+            conn.register("_historical_restore_schema", frame)
+            try:
+                source_types = {
+                    str(column): str(column_type)
+                    for column, column_type, *_ in conn.execute(
+                        "DESCRIBE _historical_restore_schema"
+                    ).fetchall()
+                }
+            finally:
+                conn.unregister("_historical_restore_schema")
+            for column in missing_columns:
+                conn.execute(
+                    f"ALTER TABLE public.{_quoted_identifier(table_name)} "
+                    f"ADD COLUMN {_quoted_identifier(column)} {source_types[column]}"
+                )
         local_db._insert_into_table(table_name, frame)
 
 

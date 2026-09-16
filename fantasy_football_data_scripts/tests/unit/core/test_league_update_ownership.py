@@ -64,6 +64,20 @@ def test_recomputed_optimal_label_may_clear_only_after_verified_deselection():
     assert set(receipt["source_fact_seconds"]) == {"player_fantasy"}
 
 
+def test_player_fantasy_preservation_uses_indexed_comparison_not_row_iteration(monkeypatch):
+    old, new = _optimal_week_frames()
+
+    def fail_row_iteration(*_args, **_kwargs):
+        raise AssertionError("player preservation must not iterate rows")
+
+    monkeypatch.setattr(pd.DataFrame, "iterrows", fail_row_iteration)
+    receipt = assert_refresh_preservation(
+        {"player_fantasy": old}, {"player_fantasy": new}, active_year=2026,
+    )
+
+    assert receipt["semantic_optimal_deselections"] == 1
+
+
 @pytest.mark.parametrize("mutation", ["still_selected", "all_deselected", "lost_clutch"])
 def test_optimal_deselection_exception_cannot_hide_incomplete_enrichment(mutation):
     old, new = _optimal_week_frames()

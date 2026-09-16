@@ -449,28 +449,36 @@ def _assert_derived_values_not_erased(
         )
         if any(tuple(scope) not in new_selected for scope in old_selected.itertuples(index=False, name=None)):
             raise PreservationError("league-wide optimal recomputation removed every selected player in a week")
-    for key, old_row in old_index.iterrows():
-        if key not in new_index.index:
-            # Active provider corrections may legitimately remove or re-key a
-            # source row. Completeness validation owns row-loss decisions;
-            # this gate protects enrichment only when the canonical key remains.
+    # Active provider corrections may legitimately remove or re-key a source
+    # row. Completeness validation owns row-loss decisions; this gate protects
+    # enrichment only when the canonical key remains. Reindex both sides once
+    # and compare each derived column as a vector: player_fantasy is wide and
+    # row-by-row Series construction made a one-week update take a minute.
+    shared_index = old_index.index[old_index.index.isin(new_index.index)]
+    if shared_index.empty:
+        return optimal_deselections
+    old_shared = old_index.reindex(shared_index)
+    new_shared = new_index.reindex(shared_index)
+    for column in derived:
+        missing = old_shared[column].notna() & new_shared[column].isna()
+        if not missing.any():
             continue
-        new_row = new_index.loc[key]
-        for column in derived:
-            if pd.notna(old_row[column]) and pd.isna(new_row[column]):
-                if table_name == "player_fantasy" and column == "league_wide_optimal_position":
-                    old_flag = pd.to_numeric(
-                        pd.Series([old_row.get("league_wide_optimal_player")]), errors="coerce"
-                    ).iloc[0]
-                    new_flag = pd.to_numeric(
-                        pd.Series([new_row.get("league_wide_optimal_player")]), errors="coerce"
-                    ).iloc[0]
-                    if old_flag == 1 and new_flag == 0:
-                        optimal_deselections += 1
-                        continue
-                raise PreservationError(
-                    f"derived value became null in {table_name}.{column} for {key}"
-                )
+        if table_name == "player_fantasy" and column == "league_wide_optimal_position":
+            old_flags = pd.to_numeric(
+                old_shared["league_wide_optimal_player"], errors="coerce"
+            )
+            new_flags = pd.to_numeric(
+                new_shared["league_wide_optimal_player"], errors="coerce"
+            )
+            deselected = missing & old_flags.eq(1) & new_flags.eq(0)
+            optimal_deselections += int(deselected.sum())
+            missing = missing & ~deselected
+            if not missing.any():
+                continue
+        key = missing.index[missing.to_numpy().nonzero()[0][0]]
+        raise PreservationError(
+            f"derived value became null in {table_name}.{column} for {key}"
+        )
     return optimal_deselections
 
 

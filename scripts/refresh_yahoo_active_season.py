@@ -1745,12 +1745,14 @@ def main(argv: list[str] | None = None) -> int:
             local_db.connect()
             from multi_league.core.homepage_refresh import prepare_homepage_refresh
 
+            stage_timer = PhaseTimer()
             homepage = prepare_homepage_refresh(
                 reader=reader,
                 local_db=local_db,
                 db_name=args.db,
                 active_year=active_year,
             )
+            stage_timer.mark("homepage_refresh")
             from multi_league.core.league_update_ownership import (
                 assert_refresh_preservation,
                 local_preservation_snapshot,
@@ -1761,6 +1763,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_preservation_snapshot(local_db, preservation_before),
                 active_year=active_year,
             )
+            stage_timer.mark("preservation_validation")
             publish_tables = active_refresh_publish_tables(local_db.connect())
             publish_tables.extend(homepage["published_tables"])
             if receipt["renewal_chain_backfilled"]:
@@ -1776,12 +1779,14 @@ def main(argv: list[str] | None = None) -> int:
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 
             receipt["ownership"] = assert_publish_table_ownership(publish_tables)
+            stage_timer.mark("derived_output_validation")
             stage = stage_refresh_partitions(
                 local_db.connect(),
                 db_name=args.db,
                 active_year=active_year,
                 tables=publish_tables,
             )
+            stage_timer.mark("stage_partitions")
             try:
                 if not publish_tables:
                     raise RuntimeError("refresh pipeline produced no active-season publish tables")
@@ -1794,6 +1799,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             finally:
                 stage.close()
+            stage_timer.mark("bundle_build")
+            receipt["homepage_preservation_stage_seconds"] = stage_timer.finish()
             timer.mark("homepage_preservation_stage")
             from multi_league.core.league_update_publish_claim import renew_claim_for_publication
 

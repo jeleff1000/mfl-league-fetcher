@@ -32,6 +32,24 @@ def test_weekly_worker_receipt_separates_provider_enrichment_and_fly_times(scrip
     assert 'receipt["phase_seconds"] = timer.finish()' in text
 
 
+@pytest.mark.parametrize("script_name", [
+    "refresh_yahoo_active_season.py",
+    "refresh_espn_active_season.py",
+    "refresh_sleeper_active_season.py",
+])
+def test_weekly_worker_receipt_breaks_down_homepage_preservation_and_staging(script_name):
+    text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+    assert 'receipt["homepage_preservation_stage_seconds"] = stage_timer.finish()' in text
+    for phase in (
+        "homepage_refresh",
+        "preservation_validation",
+        "derived_output_validation",
+        "stage_partitions",
+        "bundle_build",
+    ):
+        assert f'stage_timer.mark("{phase}")' in text
+
+
 WORKFLOWS = {
     "yahoo": "yahoo_incremental_refresh_worker.yml",
     "espn": "espn_incremental_refresh_worker.yml",

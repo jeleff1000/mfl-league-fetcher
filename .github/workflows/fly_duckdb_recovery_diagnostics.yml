@@ -137,12 +137,30 @@ jobs:
               "matchup": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.matchup",
               "player_fantasy": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.player_fantasy",
           }
+          deep_tables = [
+              "homepage_manager_rankings",
+              "matchup_h2h_career",
+              "player_fantasy_season",
+              "player_fantasy_season_all",
+              "standings_by_year",
+          ]
           result = {"path": path, "checks": {}, "errors": {}}
           connection = duckdb.connect(path, read_only=True)
           try:
               for name, sql in checks.items():
                   try:
                       result["checks"][name] = connection.execute(sql).fetchone()
+                  except Exception as exc:
+                      result["errors"][name] = str(exc)
+              for name in deep_tables:
+                  try:
+                      columns = [row[0] for row in connection.execute(
+                          f'DESCRIBE public."{name}"'
+                      ).fetchall()]
+                      quoted = ", ".join('"' + column.replace('"', '""') + '"' for column in columns)
+                      result["checks"][name] = connection.execute(
+                          f'SELECT COUNT(*), BIT_XOR(hash({quoted})) FROM public."{name}"'
+                      ).fetchone()
                   except Exception as exc:
                       result["errors"][name] = str(exc)
           finally:

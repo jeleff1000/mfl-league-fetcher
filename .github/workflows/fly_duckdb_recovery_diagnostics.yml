@@ -2,6 +2,12 @@ name: Fly DuckDB Recovery Diagnostics
 
 on:
   workflow_dispatch:
+    inputs:
+      preserve_current_volume:
+        description: Create a recovery snapshot of the current volume before inspection
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -20,6 +26,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP: league-history-duckdb
+          PRESERVE_CURRENT_VOLUME: ${{ inputs.preserve_current_volume }}
         run: |
           set -euo pipefail
           flyctl status --app "$FLY_APP"
@@ -28,6 +35,11 @@ jobs:
 
           jq -r '.[].id' volumes.json | while IFS= read -r volume_id; do
             [ -n "$volume_id" ] || continue
+            if [ "${PRESERVE_CURRENT_VOLUME}" = "true" ]; then
+              echo "Creating recovery snapshot for volume ${volume_id}"
+              flyctl volumes snapshots create "$volume_id" --app "$FLY_APP" --json \
+                | tee "created-snapshot-${volume_id}.json"
+            fi
             echo "Snapshots for volume ${volume_id}"
             flyctl volumes snapshots list "$volume_id" --app "$FLY_APP" --json \
               | tee "snapshots-${volume_id}.json"
@@ -47,6 +59,7 @@ jobs:
           path: |
             machines.json
             volumes.json
+            created-snapshot-*.json
             snapshots-*.json
           if-no-files-found: warn
           retention-days: 7

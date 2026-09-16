@@ -1,0 +1,52 @@
+name: Fly DuckDB Recovery Diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Inspect app, volume snapshots, and database files
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP: league-history-duckdb
+        run: |
+          set -euo pipefail
+          flyctl status --app "$FLY_APP"
+          flyctl machines list --app "$FLY_APP" --json | tee machines.json
+          flyctl volumes list --app "$FLY_APP" --json | tee volumes.json
+
+          jq -r '.[].id' volumes.json | while IFS= read -r volume_id; do
+            [ -n "$volume_id" ] || continue
+            echo "Snapshots for volume ${volume_id}"
+            flyctl volumes snapshots list "$volume_id" --app "$FLY_APP" --json \
+              | tee "snapshots-${volume_id}.json"
+          done
+
+          machine_id="$(jq -r 'map(select(.state == "started"))[0].id // .[0].id // empty' machines.json)"
+          if [ -n "$machine_id" ]; then
+            flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
+              -C "/bin/sh -lc 'ls -lah /data/___leagues.duckdb* /data/___ops.duckdb* 2>/dev/null || true'"
+          fi
+
+      - name: Upload diagnostic inventory
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fly-duckdb-recovery-diagnostics-${{ github.run_id }}
+          path: |
+            machines.json
+            volumes.json
+            snapshots-*.json
+          if-no-files-found: warn
+          retention-days: 7

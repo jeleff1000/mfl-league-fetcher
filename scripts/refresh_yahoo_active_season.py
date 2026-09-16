@@ -1870,6 +1870,7 @@ def main(argv: list[str] | None = None) -> int:
                 nfl_player_ids=active_nfl_player_ids(active_connection),
                 provider_name_hints=active_platform_player_name_hints(active_connection, platform="yahoo"),
             )
+            timer.mark("player_bio_sync")
             receipt["ops_cache"] = str(
                 _ensure_ops_cache_matches_live(
                     reader,

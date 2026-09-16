@@ -2395,7 +2395,7 @@ def test_update_source_snapshot_captures_generation_with_fly_frames(monkeypatch)
     assert generation == 7
 
 
-def test_update_source_snapshot_retains_history_for_read_only_rollups(monkeypatch):
+def test_update_source_snapshot_is_scoped_to_the_active_season(monkeypatch):
     import scripts.refresh_yahoo_active_season as worker
 
     source = {"league_context": pd.DataFrame({"db_name": ["the_league"]})}
@@ -2414,7 +2414,7 @@ def test_update_source_snapshot_retains_history_for_read_only_rollups(monkeypatc
 
     assert frames is source
     assert generation == 7
-    assert "active_year" not in captured
+    assert captured["active_year"] == 2026
 
 
 def test_active_transform_split_keeps_history_out_of_transform_input():

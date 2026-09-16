@@ -68,12 +68,19 @@ ACTIVE_REFRESH_SOURCE_TABLES = (
     "transactions",
     "schedule",
     "league_settings",
+    # These are small identity/configuration witnesses.  They retain the
+    # franchise graph and user aliases without moving historical fact tables.
+    "franchise_identity_audit",
+    "franchise_identity_registry",
     # League-level keeper configuration is an input to the normal quick
     # enrichment, but remains excluded from the weekly publish bundle.
     "keeper_config",
     "league_context",
 )
-UPDATE_REFRESH_SOURCE_TABLES = SOURCE_TABLES
+# A weekly refresh is a current-season delta.  Historical source partitions
+# remain canonical in Fly and are never copied into this disposable local DB.
+# Whole-history homepage rollups use their dedicated skinny Fly snapshot.
+UPDATE_REFRESH_SOURCE_TABLES = ACTIVE_REFRESH_SOURCE_TABLES
 YAHOO_LEAGUE_KEY_RE = re.compile(r"^\d+\.l\.\d+$")
 # Scoring rules are provider-defined and their threshold is deliberately part
 # of the key (for example ``scoring_bonus_pass_yd_325``).  The canonical
@@ -1612,7 +1619,12 @@ def _capture_update_source_frames(
     a later commit is rejected by the server when this base generation merges.
     """
     base_generation = _publish_generation(reader, db_name)
-    frames = _source_frames(reader, db_name=db_name, tables=tables)
+    frames = _source_frames(
+        reader,
+        db_name=db_name,
+        active_year=active_year,
+        tables=tables,
+    )
     if _publish_generation(reader, db_name) != base_generation:
         raise RuntimeError(f"{db_name} changed during source snapshot; retry the update")
     return frames, base_generation

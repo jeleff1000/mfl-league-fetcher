@@ -104,6 +104,24 @@ _SOURCE_FACT_TABLES = frozenset({
     "transactions",
 })
 
+# These values are sourced directly from the finalized weekly OPS row. A
+# rostered player with no finalized NFL stat row legitimately has no rank or
+# NFL PPG for that week; all other derived fields remain preservation-gated.
+_OPS_BACKED_PLAYER_RANK_COLUMNS = frozenset({
+    "position_rank",
+    "position_week_rank",
+    "position_season_rank",
+    "position_alltime_rank",
+    "flex_week_rank",
+    "flex_season_rank",
+    "flex_alltime_rank",
+    "sflex_week_rank",
+    "sflex_season_rank",
+    "sflex_alltime_rank",
+    "season_ppg",
+    "alltime_ppg",
+})
+
 # Source witnesses use the established exact canonical comparison until a
 # faster implementation is proven semantically identical against live mixed
 # historical frames. A refresh must never trade its preservation gate for
@@ -530,10 +548,12 @@ def _assert_derived_values_not_erased(
     table_name: str,
     old: pd.DataFrame,
     new: pd.DataFrame,
-) -> int:
+    *,
+    finalized_ops_player_weeks: set[str] | None = None,
+) -> tuple[int, int]:
     """Prevent an active provider refresh from turning valid enrichment into NULL."""
     if old.empty:
-        return 0
+        return 0, 0
     contract = table_ownership(table_name)
     default_keys = tuple(contract.key_columns)
     if any(column not in old.columns or column not in new.columns for column in default_keys):
@@ -547,6 +567,7 @@ def _assert_derived_values_not_erased(
         raise PreservationError(f"duplicate source identity in {table_name}: {keys}")
     derived = sorted(contract.derived_columns & set(old.columns) & set(new.columns))
     optimal_deselections = 0
+    ops_rank_deselections = 0
     if (
         table_name == "player_fantasy"
         and {"db_name", "year", "week", "league_wide_optimal_player", "league_wide_optimal_position"}
@@ -572,7 +593,7 @@ def _assert_derived_values_not_erased(
     # row-by-row Series construction made a one-week update take a minute.
     shared_index = old_index.index[old_index.index.isin(new_index.index)]
     if shared_index.empty:
-        return optimal_deselections
+        return optimal_deselections, ops_rank_deselections
     old_shared = old_index.reindex(shared_index)
     new_shared = new_index.reindex(shared_index)
     for column in derived:
@@ -591,11 +612,23 @@ def _assert_derived_values_not_erased(
             missing = missing & ~deselected
             if not missing.any():
                 continue
+        if (
+            table_name == "player_fantasy"
+            and column in _OPS_BACKED_PLAYER_RANK_COLUMNS
+            and finalized_ops_player_weeks is not None
+            and "player_week" in old_shared.columns
+        ):
+            no_finalized_ops_fact = ~old_shared["player_week"].astype(str).isin(finalized_ops_player_weeks)
+            deselected = missing & no_finalized_ops_fact
+            ops_rank_deselections += int(deselected.sum())
+            missing = missing & ~deselected
+            if not missing.any():
+                continue
         key = missing.index[missing.to_numpy().nonzero()[0][0]]
         raise PreservationError(
             f"derived value became null in {table_name}.{column} for {key}"
         )
-    return optimal_deselections
+    return optimal_deselections, ops_rank_deselections
 
 
 def assert_refresh_preservation(
@@ -603,6 +636,7 @@ def assert_refresh_preservation(
     after: dict[str, pd.DataFrame],
     *,
     active_year: int,
+    finalized_ops_player_weeks: set[str] | None = None,
 ) -> dict[str, Any]:
     """Fail closed when an active refresh erases history or user configuration."""
     started_at = perf_counter()
@@ -622,6 +656,7 @@ def assert_refresh_preservation(
     timing["active_aliases"] = round(aliases_at - user_configuration_at, 3)
 
     semantic_optimal_deselections = 0
+    semantic_ops_rank_deselections = 0
     source_fact_seconds: dict[str, float] = {}
     source_fact_operation_seconds: dict[str, dict[str, float]] = {}
     for table_name in sorted(_SOURCE_FACT_TABLES & before.keys()):
@@ -635,11 +670,14 @@ def assert_refresh_preservation(
         ):
             raise PreservationError(f"historical source rows changed in {table_name}")
         historical_fingerprint_at = perf_counter()
-        semantic_optimal_deselections += _assert_derived_values_not_erased(
+        optimal_deselections, ops_rank_deselections = _assert_derived_values_not_erased(
             table_name,
             before[table_name],
             after[table_name],
+            finalized_ops_player_weeks=finalized_ops_player_weeks,
         )
+        semantic_optimal_deselections += optimal_deselections
+        semantic_ops_rank_deselections += ops_rank_deselections
         source_fact_ended_at = perf_counter()
         source_fact_seconds[table_name] = round(source_fact_ended_at - source_fact_started_at, 3)
         source_fact_operation_seconds[table_name] = {
@@ -688,6 +726,7 @@ def assert_refresh_preservation(
         "homepage_values_preserved": True,
         "user_configuration_preserved": True,
         "semantic_optimal_deselections": semantic_optimal_deselections,
+        "semantic_ops_rank_deselections": semantic_ops_rank_deselections,
         "validation_seconds": timing,
         "source_fact_seconds": source_fact_seconds,
         "source_fact_operation_seconds": source_fact_operation_seconds,

@@ -731,6 +731,7 @@ def main(argv: list[str] | None = None) -> int:
                 assert_refresh_preservation,
                 local_preservation_snapshot,
             )
+            from multi_league.core.league_refresh import finalized_ops_player_weeks
 
             preservation_after = local_preservation_snapshot(local_db, preservation_before)
             stage_timer.mark("preservation_snapshot")
@@ -738,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
                 preservation_before,
                 preservation_after,
                 active_year=active_year,
+                finalized_ops_player_weeks=finalized_ops_player_weeks(finalized_ops, year=active_year),
             )
             stage_timer.mark("preservation_validation")
             publish_tables = active_refresh_publish_tables(local_db.connect())

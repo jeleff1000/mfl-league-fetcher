@@ -62,6 +62,24 @@ def finalized_source_boundary(finalized_ops: pd.DataFrame, *, year: int) -> dict
     }
 
 
+def finalized_ops_player_weeks(finalized_ops: pd.DataFrame, *, year: int) -> set[str]:
+    """Return player-week identities backed by an authoritative OPS stat row."""
+    required = {"NFL_player_id", "week"}
+    missing = sorted(required - set(finalized_ops.columns))
+    if missing:
+        raise RefreshScopeError("finalized ops payload is missing player-week columns: " + ", ".join(missing))
+    player_weeks: set[str] = set()
+    for player_id, week in finalized_ops.loc[:, ["NFL_player_id", "week"]].itertuples(index=False, name=None):
+        raw_player_id = str(player_id or "").strip()
+        try:
+            week_number = int(week)
+        except (TypeError, ValueError):
+            continue
+        if raw_player_id and week_number > 0:
+            player_weeks.add(f"{raw_player_id}_{int(year)}_{week_number}")
+    return player_weeks
+
+
 # ``___ops`` and fantasy providers use different abbreviations for a few
 # franchises. Compare them through one canonical team-code map.
 _TEAM_CODE_ALIASES = {

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from numbers import Real
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
@@ -480,11 +481,17 @@ def assert_refresh_preservation(
     active_year: int,
 ) -> dict[str, Any]:
     """Fail closed when an active refresh erases history or user configuration."""
+    started_at = perf_counter()
+    timing: dict[str, float] = {}
     for table_name in sorted(_USER_TABLES & before.keys()):
         if table_name not in after or _frame_fingerprint(before[table_name]) != _frame_fingerprint(after[table_name]):
             raise PreservationError(f"user configuration changed in {table_name}")
+    user_configuration_at = perf_counter()
+    timing["user_configuration"] = round(user_configuration_at - started_at, 3)
 
     _assert_active_aliases_preserved(before, after, active_year=active_year)
+    aliases_at = perf_counter()
+    timing["active_aliases"] = round(aliases_at - user_configuration_at, 3)
 
     semantic_optimal_deselections = 0
     for table_name in sorted(_SOURCE_FACT_TABLES & before.keys()):
@@ -499,6 +506,8 @@ def assert_refresh_preservation(
             before[table_name],
             after[table_name],
         )
+    source_facts_at = perf_counter()
+    timing["source_facts"] = round(source_facts_at - aliases_at, 3)
 
     for table_name, identities in _CAREER_IDENTITIES.items():
         old = before.get(table_name)
@@ -514,6 +523,8 @@ def assert_refresh_preservation(
             identity_candidates=identities,
             monotonic_columns=_MONOTONIC_COLUMNS.get(table_name, ()),
         )
+    career_rollups_at = perf_counter()
+    timing["career_rollups"] = round(career_rollups_at - source_facts_at, 3)
 
     for table_name, identities in _HOMEPAGE_IDENTITIES.items():
         old = before.get(table_name)
@@ -528,12 +539,16 @@ def assert_refresh_preservation(
             new,
             identity_candidates=identities,
         )
+    homepage_outputs_at = perf_counter()
+    timing["homepage_outputs"] = round(homepage_outputs_at - career_rollups_at, 3)
+    timing["total"] = round(homepage_outputs_at - started_at, 3)
 
     return {
         "historical_rows_preserved": True,
         "homepage_values_preserved": True,
         "user_configuration_preserved": True,
         "semantic_optimal_deselections": semantic_optimal_deselections,
+        "validation_seconds": timing,
     }
 
 

@@ -53,6 +53,14 @@ def test_recomputed_optimal_label_may_clear_only_after_verified_deselection():
     )
     assert receipt["historical_rows_preserved"] is True
     assert receipt["semantic_optimal_deselections"] == 1
+    assert set(receipt["validation_seconds"]) == {
+        "user_configuration",
+        "active_aliases",
+        "source_facts",
+        "career_rollups",
+        "homepage_outputs",
+        "total",
+    }
 
 
 @pytest.mark.parametrize("mutation", ["still_selected", "all_deselected", "lost_clutch"])

@@ -244,3 +244,25 @@ No workers from these three canaries remain running. No all-platform completion
 claim is justified. UI verification, all attempted-league recovery, multiplatform
 canary, exact Gray correction, full source-watermark reconciliation and the
 remaining audit items stay open.
+## Shared historical PPG and rank-applicability corrections
+
+Regression evidence: with a single hydrated week scoring 18.76, the old shared
+position-rank function returned both season and career PPG as 18.76. Three
+scoring variants failed before the fix. It now directly maps the existing
+precomputed OPS PPG columns using the existing scoring-column helper; no local
+career AVG or NFL-history download. Missing selected PPG columns fail before
+outputs are cleared. Valid zero PPG is retained.
+
+Read-only live OPS witness: Caleb Williams 2026 week 1 has half-PPR/4pt season
+PPG 37.26 and career PPG 17.52; all-time QB rank 216. Michael Dickson has
+position P, season PPG 0 and career PPG -0.02, with no QB rank. All 1,149 source
+rows in that week contain the selected season and career PPG values.
+
+ESPN's legacy non-applicable all-time rank is handled only for unchanged,
+recognized nonranked NFL positions (punters, long snappers, offensive line).
+Supported, unknown, blank or changed positions remain fail-closed. This
+exception affects only position_alltime_rank, not points, clutch or PPG.
+Tests exercise the real shared rank function and the preservation gate.
+Eight applicability regressions failed before implementation.
+Combined worker/validation/rank suite: 185 passed; focused preservation/rank
+group: 53 passed. Ruff passes. No production result for these new changes yet.

@@ -960,6 +960,19 @@ def position_rank(
     year_groups = helpers.group_years_by_scoring(years, roster_by_year)
     logger.info(f"[position_rank] {len(year_groups)} scoring variant group(s) for {len(years)} years")
 
+    from multi_league.transformations.player.modules.ppg_precompute import get_ppg_columns_for_scoring
+
+    ppg_by_group = [
+        get_ppg_columns_for_scoring(scoring["ppr"], int(scoring["td_key"].removesuffix("pt")))
+        for scoring, _years in year_groups
+    ]
+    source_columns = {
+        str(row[0]) for row in conn.execute("DESCRIBE ___ops.nfl_historical.nfl_player_stats_all").fetchall()
+    }
+    required_ppg = {mapping[key] for mapping in ppg_by_group for key in ("ppg_season", "ppg_alltime")}
+    if missing_ppg := required_ppg - source_columns:
+        raise RuntimeError("Historical PPG source columns are missing: " + ", ".join(sorted(missing_ppg)))
+
     if not dry_run:
         conn.execute(f"""
             UPDATE {player_table}
@@ -978,7 +991,7 @@ def position_rank(
             WHERE {_db_filter(db_name)}
         """)
 
-    for year_scoring, year_group in year_groups:
+    for (year_scoring, year_group), ppg_columns in zip(year_groups, ppg_by_group, strict=True):
         rank_cols_for_year = year_scoring["rank_cols"]
         years_csv = ", ".join(str(y) for y in year_group)
 
@@ -1058,7 +1071,9 @@ def position_rank(
                     {flex_alltime_expr} AS flex_alltime_rank,
                     {sflex_week_expr} AS sflex_week_rank,
                     {sflex_season_expr} AS sflex_season_rank,
-                    {sflex_alltime_expr} AS sflex_alltime_rank
+                    {sflex_alltime_expr} AS sflex_alltime_rank,
+                    s.{ppg_columns['ppg_season']} AS season_ppg,
+                    s.{ppg_columns['ppg_alltime']} AS alltime_ppg
                 FROM {player_table} p
                 JOIN ___ops.nfl_historical.player_bio pb
                   ON CAST(p.NFL_player_id AS VARCHAR) = CAST(pb.NFL_player_id AS VARCHAR)
@@ -1078,7 +1093,9 @@ def position_rank(
                     flex_alltime_rank = st.flex_alltime_rank,
                     sflex_week_rank = st.sflex_week_rank,
                     sflex_season_rank = st.sflex_season_rank,
-                    sflex_alltime_rank = st.sflex_alltime_rank
+                    sflex_alltime_rank = st.sflex_alltime_rank,
+                    season_ppg = st.season_ppg,
+                    alltime_ppg = st.alltime_ppg
                 FROM _position_rank_stage st
                 WHERE p.player_week = st.player_week
                   AND p.year IN ({years_csv})
@@ -1122,35 +1139,6 @@ def position_rank(
               AND {_db_filter(db_name, 'p')}
         """)
         conn.execute("DROP TABLE IF EXISTS _position_rank_metrics")
-
-        conn.execute(f"""
-            CREATE OR REPLACE TEMP TABLE _ppg_stats AS
-            WITH deduped AS (
-                SELECT DISTINCT player_week, NFL_player_id, year, fantasy_points
-                FROM {player_table}
-                WHERE NFL_player_id IS NOT NULL
-                  AND fantasy_points IS NOT NULL
-                  AND {_db_filter(db_name)}
-            )
-            SELECT DISTINCT
-                NFL_player_id,
-                year,
-                AVG(CASE WHEN fantasy_points > 0 THEN fantasy_points END)
-                    OVER (PARTITION BY NFL_player_id, year) AS season_ppg,
-                AVG(CASE WHEN fantasy_points > 0 THEN fantasy_points END)
-                    OVER (PARTITION BY NFL_player_id) AS alltime_ppg
-            FROM deduped
-        """)
-        conn.execute(f"""
-            UPDATE {player_table} p
-            SET season_ppg = s.season_ppg,
-                alltime_ppg = s.alltime_ppg
-            FROM _ppg_stats s
-            WHERE p.NFL_player_id = s.NFL_player_id
-              AND p.year = s.year
-              AND {_db_filter(db_name, 'p')}
-        """)
-        conn.execute("DROP TABLE IF EXISTS _ppg_stats")
 
         summary = conn.execute(f"""
             SELECT

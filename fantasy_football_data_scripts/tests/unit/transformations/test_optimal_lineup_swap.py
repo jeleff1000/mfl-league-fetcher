@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import duckdb
+import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent
 for path in (SCRIPTS_DIR, SCRIPTS_DIR / "multi_league"):
@@ -32,7 +33,12 @@ class _AggregationRunner(AggregationEnrichmentsMixin, SQLEnrichmentsBase):
     pass
 
 
-def test_position_alltime_rank_uses_ops_history_not_active_year_subset():
+@pytest.mark.parametrize("ppr,td_key,season_ppg,career_ppg", [
+    (0.5, "4pt", 12.25, 11.5),
+    (1.0, "6pt", 15.75, 13.25),
+    (0.0, "4pt", 0.0, 0.0),
+])
+def test_position_alltime_rank_uses_ops_history_not_active_year_subset(ppr, td_key, season_ppg, career_ppg):
     """A quick refresh must never call a single current-week player #1 ever.
 
     The historical rank is precomputed in the OPS super table.  The local
@@ -55,6 +61,10 @@ def test_position_alltime_rank_uses_ops_history_not_active_year_subset():
     conn.execute(
         "INSERT INTO ___ops.nfl_historical.nfl_player_stats_all VALUES ('2026_01_caleb', 'QB', 1, 222)"
     )
+    for suffix, season, career in (("4pt_half", 12.25, 11.5), ("6pt_ppr", 15.75, 13.25), ("4pt_0ppr", 0.0, 0.0)):
+        for metric, value in (("season", season), ("alltime", career)):
+            conn.execute(f"ALTER TABLE ___ops.nfl_historical.nfl_player_stats_all ADD COLUMN ppg_{metric}_{suffix} DOUBLE")
+            conn.execute(f"UPDATE ___ops.nfl_historical.nfl_player_stats_all SET ppg_{metric}_{suffix} = ?", [value])
     conn.execute(
         """
         CREATE TABLE player_fantasy (
@@ -73,6 +83,9 @@ def test_position_alltime_rank_uses_ops_history_not_active_year_subset():
         "('quick_scope', '2026_01_caleb', 'caleb', 2026, 1, 'QB', 18.76, "
         "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
     )
+    conn.execute("INSERT INTO ___ops.nfl_historical.player_bio VALUES ('punter', 'P')")
+    conn.execute("INSERT INTO ___ops.nfl_historical.nfl_player_stats_all (player_week,position) VALUES ('2026_01_punter','P')")
+    conn.execute("INSERT INTO player_fantasy (db_name,player_week,NFL_player_id,year,week,position,fantasy_points,position_alltime_rank) VALUES ('quick_scope','2026_01_punter','punter',2026,1,'P',0,7)")
     helpers = RosterHelpers(
         available_settings_years=lambda: [2026],
         resolve_settings_year=lambda year: year,
@@ -84,7 +97,7 @@ def test_position_alltime_rank_uses_ops_history_not_active_year_subset():
         front7_eligibility_sql=lambda _column: "FALSE",
         primary_position_sql=lambda column: f"UPPER({column})",
         group_years_by_scoring=lambda years, _settings: [(
-            {"rank_cols": {"QB": "rank_qb_4pt"}},
+            {"rank_cols": {"QB": "rank_qb_4pt"}, "ppr": ppr, "td_key": td_key},
             years,
         )],
     )
@@ -100,6 +113,17 @@ def test_position_alltime_rank_uses_ops_history_not_active_year_subset():
     assert conn.execute(
         "SELECT position_alltime_rank FROM player_fantasy WHERE player_week = '2026_01_caleb'"
     ).fetchone()[0] == 222
+    assert conn.execute(
+        "SELECT season_ppg, alltime_ppg FROM player_fantasy WHERE player_week = '2026_01_caleb'"
+    ).fetchone() == (season_ppg, career_ppg)
+    assert conn.execute("SELECT position_alltime_rank FROM player_fantasy WHERE NFL_player_id='punter'").fetchone()[0] is None
+
+    # A missing historical source must fail before erasing the previous output,
+    # not substitute the single hydrated week's 18.76 points for a career mean.
+    conn.execute("ALTER TABLE ___ops.nfl_historical.nfl_player_stats_all DROP COLUMN ppg_alltime_" + td_key + "_" + {0.0: "0ppr", 0.5: "half", 1.0: "ppr"}[ppr])
+    with pytest.raises(RuntimeError, match="PPG source columns"):
+        position_rank(conn, "player_fantasy", {2026: {}}, helpers, db_name="quick_scope")
+    assert conn.execute("SELECT alltime_ppg FROM player_fantasy WHERE NFL_player_id='caleb'").fetchone()[0] == career_ppg
 
 
 def _create_player_fantasy(conn) -> None:

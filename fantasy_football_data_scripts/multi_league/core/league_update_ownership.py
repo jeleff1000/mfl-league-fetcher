@@ -122,6 +122,11 @@ _OPS_BACKED_PLAYER_RANK_COLUMNS = frozenset({
     "alltime_ppg",
 })
 
+# These recognized NFL positions have no precomputed fantasy position-rank
+# family. Legacy local RANK() windows assigned them misleading all-time ranks.
+# Unknown/blank positions are deliberately NOT covered by this exception.
+_NFL_POSITIONS_WITHOUT_ALLTIME_RANK = frozenset({"P", "LS", "OL", "C", "G", "T", "OG", "OT"})
+
 # Source witnesses use the established exact canonical comparison until a
 # faster implementation is proven semantically identical against live mixed
 # historical frames. A refresh must never trade its preservation gate for
@@ -600,6 +605,20 @@ def _assert_derived_values_not_erased(
         missing = old_shared[column].notna() & new_shared[column].isna()
         if not missing.any():
             continue
+        if (
+            table_name == "player_fantasy" and column == "position_alltime_rank"
+            and "position" in old_shared.columns and "position" in new_shared.columns
+        ):
+            old_positions = old_shared["position"].astype("string").str.strip().str.upper()
+            new_positions = new_shared["position"].astype("string").str.strip().str.upper()
+            not_applicable = (
+                missing & old_positions.isin(_NFL_POSITIONS_WITHOUT_ALLTIME_RANK)
+                & old_positions.eq(new_positions).fillna(False)
+            )
+            ops_rank_deselections += int(not_applicable.sum())
+            missing = missing & ~not_applicable
+            if not missing.any():
+                continue
         if table_name == "player_fantasy" and column == "league_wide_optimal_position":
             old_flags = pd.to_numeric(
                 old_shared["league_wide_optimal_player"], errors="coerce"

@@ -88,6 +88,72 @@ class TransactionEnrichmentsMixin:
     Requires SQLEnrichmentsBase infrastructure (self._execute, self._table_exists, etc.)
     """
 
+    def _managed_roster_periods_sql(self, join_key: str) -> str:
+        """Shared acquisition windows; scoring-roster ownership resolves drop legs.
+
+        A provider's transaction leg can include moves after the game. Include
+        the drop leg, then require the player's actual franchise for that week.
+        Event timestamps distinguish a same-leg drop before an acquisition.
+        """
+        trans_cols = self._get_table_columns("transactions")
+        _faab_owner_column(self._get_table_columns("player_fantasy"), trans_cols)
+        event_time = (
+            "COALESCE(TRY_CAST(t.timestamp AS DOUBLE), "
+            "epoch(TRY_CAST(t.timestamp AS TIMESTAMP)))"
+            if "timestamp" in trans_cols else "NULL::DOUBLE"
+        )
+        return f"""
+            league_end_weeks AS (
+                SELECT CAST(year AS INTEGER) AS year, COALESCE(end_week, 18) AS end_week
+                FROM {self._qualified_name('league_settings')}
+                WHERE {self._db_filter()}
+            ),
+            add_transactions AS (
+                SELECT t.transaction_id, t.{join_key}, t.year, t.franchise_id,
+                       t.cumulative_week AS add_cw, {event_time} AS event_time
+                FROM {self._qualified_name('transactions')} t
+                WHERE {_add_like_predicate('t')} AND {self._db_filter('t')}
+                  AND t.{join_key} IS NOT NULL AND {_owner_presence_predicate('t')}
+            ),
+            drop_transactions AS (
+                SELECT t.{join_key}, t.year, t.franchise_id,
+                       t.cumulative_week AS drop_cw, {event_time} AS event_time
+                FROM {self._qualified_name('transactions')} t
+                WHERE {_drop_like_predicate('t')} AND {self._db_filter('t')}
+                  AND t.{join_key} IS NOT NULL
+            ),
+            roster_periods AS (
+                SELECT a.transaction_id, a.{join_key}, a.year, a.franchise_id, a.add_cw, a.event_time,
+                       COALESCE(
+                           (SELECT MIN(d.drop_cw) FROM drop_transactions d
+                            WHERE d.{join_key} = a.{join_key} AND d.year = a.year
+                              AND d.franchise_id = a.franchise_id
+                              AND (d.drop_cw > a.add_cw OR (
+                                  d.drop_cw = a.add_cw AND d.event_time >= a.event_time))),
+                           (SELECT CAST(lew.year AS BIGINT) * 100 + lew.end_week
+                            FROM league_end_weeks lew WHERE lew.year = CAST(a.year AS INTEGER))
+                       ) AS roster_end_cw
+                FROM add_transactions a
+            ),
+            managed_player_weeks AS (
+                SELECT p.*, rp.transaction_id AS _acquisition_id
+                FROM roster_periods rp
+                INNER JOIN {self._qualified_name('player_fantasy')} p
+                    ON p.{join_key} = rp.{join_key} AND p.year = rp.year
+                    AND p.franchise_id = rp.franchise_id
+                    AND p.cumulative_week >= rp.add_cw
+                    AND p.cumulative_week <= rp.roster_end_cw
+                LEFT JOIN league_end_weeks lew ON CAST(p.year AS INTEGER) = lew.year
+                WHERE {self._db_filter('p')} AND p.week <= COALESCE(lew.end_week, 18)
+                -- Never award the same scoring row to two acquisition periods.
+                -- At provider weekly grain the latest eligible acquisition owns it.
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY p.rowid
+                    ORDER BY rp.add_cw DESC, rp.event_time DESC NULLS LAST, rp.transaction_id DESC
+                ) = 1
+            )
+        """
+
     def transactions_to_player(self) -> int:
         """Add cumulative FAAB metrics to player_fantasy table.
 
@@ -483,7 +549,6 @@ class TransactionEnrichmentsMixin:
 
         if set_managed:
             add_like_predicate = _add_like_predicate("t")
-            drop_like_predicate = _drop_like_predicate("t")
             replacement_managed_select = ""
             if has_replacement_ppg and "replacement_ppg_ros_managed" in trans_cols:
                 replacement_managed_select = (
@@ -512,91 +577,26 @@ class TransactionEnrichmentsMixin:
                 rows += self._execute(sql_init_ros_managed, "player_to_transactions: init ROS managed to 0 for adds")
 
             settings_table = self._qualified_name("league_settings")
-            # Reuse the roster-period pattern from transaction_lamar_ros:
-            # For adds, find the next drop by the same franchise to determine
-            # how long the player was on roster.
+            # Points and LAMAR must use the exact same ownership windows.
             sql_ros_managed = f"""
-                WITH league_end_weeks AS (
-                    SELECT
-                        CAST(year AS INTEGER) AS year,
-                        COALESCE(
-                            end_week,
-                            18
-                        ) AS end_week
-                    FROM {settings_table}
-                    WHERE {self._db_filter()}
-                ),
-                add_transactions AS (
-                    SELECT
-                        t.transaction_id,
-                        t.{join_key},
-                        t.year,
-                    t.week AS add_week,
-                        t.cumulative_week AS add_cw,
-                        t.manager,
-                        t.franchise_id
-                FROM {trans_table} t
-                    WHERE {add_like_predicate}
-                      AND {self._db_filter('t')}
-                      AND t.{join_key} IS NOT NULL
-                ),
-                drop_transactions AS (
-                    SELECT
-                        t.{join_key},
-                        t.year,
-                        t.cumulative_week AS drop_cw,
-                        t.manager,
-                        t.franchise_id
-                    FROM {trans_table} t
-                    WHERE {drop_like_predicate}
-                      AND {self._db_filter('t')}
-                      AND t.{join_key} IS NOT NULL
-                ),
-                roster_periods AS (
-                    SELECT
-                        a.transaction_id,
-                        a.{join_key},
-                        a.year,
-                        a.add_week,
-                        a.add_cw,
-                        COALESCE(
-                            (SELECT MIN(d.drop_cw)
-                             FROM drop_transactions d
-                             WHERE d.{join_key} = a.{join_key}
-                               AND d.year = a.year
-                               AND d.drop_cw > a.add_cw
-                               AND d.franchise_id = a.franchise_id),
-                            -- Fallback: end of season in cumulative format
-                            (SELECT CAST(lew.year AS BIGINT) * 100 + lew.end_week + 1
-                             FROM league_end_weeks lew
-                             WHERE lew.year = CAST(a.year AS INTEGER))
-                        ) AS roster_end_cw
-                    FROM add_transactions a
-                ),
+                WITH {self._managed_roster_periods_sql(join_key)},
                 managed_calc AS (
                     SELECT
-                        rp.transaction_id,
-                        rp.{join_key},
+                        p._acquisition_id AS transaction_id,
+                        p.{join_key},
+                        p.franchise_id,
                         SUM(p.fantasy_points) AS total_points_ros_managed,
                         AVG(p.fantasy_points) AS ppg_ros_managed,
                         COUNT(*) AS weeks_ros_managed{replacement_managed_select}
-                    FROM roster_periods rp
-                    INNER JOIN {player_table} p
-                        ON p.{join_key} = rp.{join_key}
-                        AND p.year = rp.year
-                        AND p.cumulative_week >= rp.add_cw
-                        AND p.cumulative_week < rp.roster_end_cw
-                    LEFT JOIN league_end_weeks lew
-                        ON CAST(p.year AS INTEGER) = lew.year
-                    WHERE p.week <= COALESCE(lew.end_week, 18)
-                      AND {self._db_filter('p')}
-                    GROUP BY rp.transaction_id, rp.{join_key}
+                    FROM managed_player_weeks p
+                    GROUP BY p._acquisition_id, p.{join_key}, p.franchise_id
                 )
                 UPDATE {trans_table} t
                 SET {', '.join(set_managed)}
                 FROM managed_calc rm
                 WHERE t.transaction_id = rm.transaction_id
                   AND t.{join_key} = rm.{join_key}
+                  AND t.franchise_id = rm.franchise_id
                   AND {self._db_filter('t')}
             """
             rows += self._execute(sql_ros_managed, "player_to_transactions: ROS managed points")
@@ -700,7 +700,6 @@ class TransactionEnrichmentsMixin:
         # managers claim the same dropped player).
         settings_table = self._qualified_name("league_settings")
         add_like_predicate = _add_like_predicate("t")
-        drop_like_predicate = _drop_like_predicate("t")
 
         # Initialize fa_lamar_ros / player_lamar_ros_total to 0 for all adds
         # BEFORE the main UPDATE. Adds where the player has no player_fantasy
@@ -794,97 +793,28 @@ class TransactionEnrichmentsMixin:
             sql_init_managed, "transaction_lamar_ros: init managed LAMAR to 0 for adds/trades"
         )
 
-        # This requires finding the NEXT transaction for this player by this manager
-        # to determine when they stopped being rostered.
-        # NOTE: Uses end_week from league_settings to cap at the fantasy regular season end
+        # Use the same acquisition windows and scoring ownership as ROS points.
         sql_manager_lamar = f"""
-            WITH league_end_weeks AS (
-                -- Get end_week for each year from league_settings
-                SELECT
-                    CAST(year AS INTEGER) as year,
-                    COALESCE(
-                        end_week,
-                        18  -- Fallback to week 18 if not specified
-                    ) as end_week
-                FROM {settings_table}
-                WHERE {self._db_filter()}
-            ),
-            add_transactions AS (
-                -- Get all add-type transactions with their managers
-                SELECT
-                    t.transaction_id,
-                    t.{join_key},
-                    t.year,
-                    t.cumulative_week as add_week,
-                    t.manager,
-                    t.franchise_id
-                FROM {trans_table} t
-                WHERE {add_like_predicate}
-                  AND {self._db_filter('t')}
-                  AND t.{join_key} IS NOT NULL
-            ),
-            drop_transactions AS (
-                -- Get all drop-type transactions (when player left a roster)
-                SELECT
-                    t.{join_key},
-                    t.year,
-                    t.cumulative_week as drop_week,
-                    t.manager,
-                    t.franchise_id
-                FROM {trans_table} t
-                WHERE {drop_like_predicate}
-                  AND {self._db_filter('t')}
-                  AND t.{join_key} IS NOT NULL
-            ),
-            roster_periods AS (
-                -- For each add, find the next drop by the same manager (if any)
-                -- If no drop found, player was rostered until league's end_week
-                -- NOTE: roster_end_week MUST be in cumulative format (year*100+week)
-                -- because it's compared against p.cumulative_week in manager_lamar_calc
-                SELECT
-                    a.transaction_id,
-                    a.{join_key},
-                    a.year,
-                    a.add_week,
-                    COALESCE(
-                        (SELECT MIN(d.drop_week)
-                         FROM drop_transactions d
-                         WHERE d.{join_key} = a.{join_key}
-                           AND d.year = a.year
-                           AND d.drop_week > a.add_week
-                           AND d.franchise_id = a.franchise_id),
-                        -- Fallback: convert end_week to cumulative format (year*100+week)
-                        (SELECT CAST(lew.year AS BIGINT) * 100 + lew.end_week + 1
-                         FROM league_end_weeks lew WHERE lew.year = CAST(a.year AS INTEGER))
-                    ) as roster_end_week
-                FROM add_transactions a
-            ),
+            WITH {self._managed_roster_periods_sql(join_key)},
             manager_lamar_calc AS (
                 -- Sum LAMAR only for weeks the player was on this manager's roster
                 -- NOTE: Caps at league's end_week from settings
                 -- GROUP BY both transaction_id AND player key: trades have multiple
                 -- players sharing one transaction_id, each needs individual LAMAR
                 SELECT
-                    rp.transaction_id,
-                    rp.{join_key},
+                    p._acquisition_id AS transaction_id,
+                    p.{join_key},
+                    p.franchise_id,
                     SUM(COALESCE(p.{managed_lamar_col}, 0)) as manager_lamar
-                FROM roster_periods rp
-                INNER JOIN {player_table} p
-                    ON p.{join_key} = rp.{join_key}
-                    AND p.year = rp.year
-                    AND p.cumulative_week >= rp.add_week
-                    AND p.cumulative_week < rp.roster_end_week  -- Exclusive of drop week
-                LEFT JOIN league_end_weeks lew
-                    ON CAST(p.year AS INTEGER) = lew.year
-                WHERE p.week <= COALESCE(lew.end_week, 18)  -- Cap at league's end_week
-                  AND {self._db_filter('p')}
-                GROUP BY rp.transaction_id, rp.{join_key}
+                FROM managed_player_weeks p
+                GROUP BY p._acquisition_id, p.{join_key}, p.franchise_id
             )
             UPDATE {trans_table} t
             SET manager_lamar_ros_managed = COALESCE(m.manager_lamar, 0)
             FROM manager_lamar_calc m
             WHERE t.transaction_id = m.transaction_id
               AND t.{join_key} = m.{join_key}
+              AND t.franchise_id = m.franchise_id
               AND {self._db_filter('t')}
         """
         rows_updated += self._execute(sql_manager_lamar, "transaction_lamar_ros: manager_lamar for roster period")
@@ -900,28 +830,6 @@ class TransactionEnrichmentsMixin:
               )
         """
         rows_updated += self._execute(sql_drops, "transaction_lamar_ros: zero manager_lamar for drops")
-
-        # Step 4: Zero out managed LAMAR for same-week add+drop combos
-        # When a player is added and dropped in the same cumulative_week,
-        # the roster_periods query (which uses drop_week > add_week) won't find
-        # the drop, so the managed LAMAR incorrectly shows the full ROS value.
-        # This step catches those edge cases and zeroes them out.
-        sql_same_week = f"""
-            UPDATE {trans_table} t
-            SET manager_lamar_ros_managed = 0
-            WHERE {_non_trade_add_predicate("t")}
-              AND {self._db_filter('t')}
-              AND EXISTS (
-                  SELECT 1 FROM {trans_table} d
-                  WHERE d.transaction_type = 'drop'
-                    AND d.{join_key} = t.{join_key}
-                    AND d.year = t.year
-                    AND d.cumulative_week = t.cumulative_week
-                    AND {self._db_filter('d')}
-                    AND d.franchise_id = t.franchise_id
-              )
-        """
-        rows_updated += self._execute(sql_same_week, "transaction_lamar_ros: zero managed LAMAR for same-week add+drop")
 
         return rows_updated
 

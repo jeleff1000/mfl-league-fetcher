@@ -9,6 +9,140 @@ class _TxnRunner(TransactionEnrichmentsMixin, SQLEnrichmentsBase):
     pass
 
 
+@pytest.mark.parametrize(
+    "drop_week,drop_timestamp,weekly_owners,expected_lamar,expected_points",
+    [
+        (1, 300, [(1, "owner", 5.53, 12.54)], 5.53, 12.54),
+        (1, 300, [(1, "other", 5.53, 12.54)], 0, 0),
+        (2, 400, [(1, "owner", 5.53, 12.54), (2, "other", 8, 20)], 5.53, 12.54),
+        (2, 400, [(1, "owner", 5.53, 12.54), (2, "owner", 8, 20)], 13.53, 32.54),
+        (1, 300, [(1, "owner", 5.53, 12.54), (3, "owner", 8, 20)], 5.53, 12.54),
+        # A same-leg drop BEFORE the acquisition must not end that acquisition.
+        (1, 100, [(1, "owner", 5.53, 12.54), (2, "owner", 8, 20)], 13.53, 32.54),
+    ],
+)
+def test_managed_transaction_value_follows_scoring_roster_not_drop_leg(
+    tmp_path, drop_week, drop_timestamp, weekly_owners, expected_lamar, expected_points,
+):
+    """Sleeper can report a post-game drop in the same leg as an earned start."""
+    runner = _setup_txn_db(tmp_path, "txn_scoring_ownership")
+    conn = runner.conn
+    for column, dtype in {
+        "transaction_id": "VARCHAR", "timestamp": "VARCHAR", "trade_direction": "VARCHAR",
+        "manager_lamar_ros_managed": "DOUBLE", "fa_lamar_ros": "DOUBLE",
+        "player_lamar_ros_total": "DOUBLE", "total_points_ros_managed": "DOUBLE",
+        "ppg_ros_managed": "DOUBLE", "weeks_ros_managed": "INTEGER",
+    }.items():
+        conn.execute(f"ALTER TABLE public.transactions ADD COLUMN {column} {dtype}")
+    for column in ("manager_lamar", "player_lamar", "fantasy_points"):
+        conn.execute(f"ALTER TABLE public.player_fantasy ADD COLUMN {column} DOUBLE")
+    conn.execute("CREATE TABLE public.league_settings (year INTEGER, end_week INTEGER)")
+    conn.execute("INSERT INTO public.league_settings VALUES (2026, 14)")
+    conn.executemany(
+        "INSERT INTO public.transactions (NFL_player_id,year,week,cumulative_week,"
+        "transaction_type,manager,franchise_id,transaction_id,timestamp) VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+            ("00-0023459", 2026, 1, 202601, "add", "Old alias", "owner", "add", "200"),
+            ("00-0023459", 2026, drop_week, 202600 + drop_week, "drop", "Old alias", "owner", "drop", str(drop_timestamp)),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO public.player_fantasy (NFL_player_id,year,week,cumulative_week,manager,"
+        "franchise_id,manager_lamar,player_lamar,fantasy_points) VALUES (?,?,?,?,?,?,?,?,?)",
+        [("00-0023459", 2026, week, 202600 + week, "New alias", owner, lamar, lamar, points)
+         for week, owner, lamar, points in weekly_owners],
+    )
+    try:
+        for _ in range(2):
+            runner.transaction_lamar_ros()
+            runner._player_ros_points()
+            earned = conn.execute(
+                "SELECT manager_lamar_ros_managed,total_points_ros_managed "
+                "FROM public.transactions WHERE transaction_id='add'",
+            ).fetchone()
+            assert earned == pytest.approx((expected_lamar, expected_points))
+            assert conn.execute(
+                "SELECT manager_lamar_ros_managed,total_points_ros_managed "
+                "FROM public.transactions WHERE transaction_id='drop'",
+            ).fetchone() == (0, 0)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("timestamp_type", ["VARCHAR", "TIMESTAMP", "NULL", "ABSENT"])
+def test_managed_transaction_windows_accept_historical_timestamp_representations(tmp_path, timestamp_type):
+    runner = _setup_managed_window_db(tmp_path)
+    conn = runner.conn
+    if timestamp_type != "ABSENT":
+        dtype = "VARCHAR" if timestamp_type == "NULL" else timestamp_type
+        conn.execute(f"ALTER TABLE public.transactions ADD COLUMN timestamp {dtype}")
+    conn.execute("""
+        INSERT INTO public.transactions (NFL_player_id,year,week,cumulative_week,transaction_type,
+            manager,franchise_id,transaction_id)
+        VALUES ('P',2026,1,202601,'drop','Alias','owner','drop'),
+               ('P',2026,1,202601,'add','Alias','owner','add')
+    """)
+    if timestamp_type not in ("ABSENT", "NULL"):
+        conn.execute("UPDATE public.transactions SET timestamp = '2026-09-01 12:00:00' WHERE transaction_id='drop'")
+        conn.execute("UPDATE public.transactions SET timestamp = '2026-09-02 12:00:00' WHERE transaction_id='add'")
+    conn.execute("""
+        INSERT INTO public.player_fantasy VALUES
+            ('P',2026,1,202601,'New alias','owner',NULL,5.53,5.53,12.54),
+            ('P',2026,2,202602,'New alias','owner',NULL,8,8,20),
+            ('P',2026,3,202603,'New alias','owner',NULL,4,4,10)
+    """)
+    try:
+        runner.transaction_lamar_ros()
+        runner._player_ros_points()
+        assert conn.execute("SELECT manager_lamar_ros_managed,total_points_ros_managed FROM public.transactions WHERE transaction_id='add'").fetchone() == pytest.approx((17.53, 42.54))
+    finally:
+        conn.close()
+
+
+def _setup_managed_window_db(tmp_path):
+    runner = _setup_txn_db(tmp_path, "managed_windows")
+    conn = runner.conn
+    for column, dtype in {
+        "transaction_id": "VARCHAR", "trade_direction": "VARCHAR",
+        "manager_lamar_ros_managed": "DOUBLE", "fa_lamar_ros": "DOUBLE",
+        "player_lamar_ros_total": "DOUBLE", "total_points_ros_managed": "DOUBLE",
+        "ppg_ros_managed": "DOUBLE", "weeks_ros_managed": "INTEGER",
+    }.items():
+        conn.execute(f"ALTER TABLE public.transactions ADD COLUMN {column} {dtype}")
+    for column in ("manager_lamar", "player_lamar", "fantasy_points"):
+        conn.execute(f"ALTER TABLE public.player_fantasy ADD COLUMN {column} DOUBLE")
+    conn.execute("CREATE TABLE public.league_settings (year INTEGER, end_week INTEGER)")
+    conn.execute("INSERT INTO public.league_settings VALUES (2026, 14)")
+    return runner
+
+
+def test_managed_transaction_reacquisition_does_not_double_credit_scoring_week(tmp_path):
+    runner = _setup_managed_window_db(tmp_path)
+    conn = runner.conn
+    conn.execute("ALTER TABLE public.transactions ADD COLUMN timestamp VARCHAR")
+    conn.execute("""
+        INSERT INTO public.transactions (NFL_player_id,year,week,cumulative_week,transaction_type,
+            manager,franchise_id,transaction_id,timestamp)
+        VALUES ('P',2026,1,202601,'add','Alias','owner','first','100'),
+               ('P',2026,2,202602,'drop','Alias','owner','drop','200'),
+               ('P',2026,2,202602,'add','Alias','owner','second','300')
+    """)
+    conn.execute("""
+        INSERT INTO public.player_fantasy VALUES
+            ('P',2026,1,202601,'New alias','owner',NULL,5.53,5.53,12.54),
+            ('P',2026,2,202602,'New alias','owner',NULL,8,8,20),
+            ('P',2026,3,202603,'New alias','owner',NULL,4,4,10)
+    """)
+    try:
+        for _ in range(2):
+            runner.transaction_lamar_ros()
+            runner._player_ros_points()
+            rows = conn.execute("SELECT transaction_id,manager_lamar_ros_managed,total_points_ros_managed FROM public.transactions WHERE transaction_type='add' ORDER BY transaction_id").fetchall()
+            assert rows == [("first", 5.53, 12.54), ("second", 12, 30)]
+    finally:
+        conn.close()
+
+
 def test_transaction_score_indexes_to_season_median_100(tmp_path):
     db_name = "txn_score_index"
     db_path = tmp_path / f"{db_name}.duckdb"

@@ -231,3 +231,58 @@ Six regression cases failed before fixes. 102 refresh/lineage tests now pass;
 Ruff passes. Live read-only discovery proves 2019-2026 chain in 1.345 seconds.
 Agusta's missing historical played data is NOT repaired by this metadata fix;
 weekly recovery must not be reported as a completed historical import.
+
+## Agusta publication and Catalina source-confirmed rejection
+
+Agusta run 35104953658 (49a9a6bb0) COMMITTED and cache finalized. Dispatch
+13:54:31, refresh 13:54:55-13:55:39, cache 13:55:42 UTC: 71s manual
+dispatch-to-cache, 42.732s processing. The worker discovered active ID
+1389378435998052352 from its saved onboarding identity. All seven historical
+and configuration fingerprints matched the baseline. Twelve franchise careers
+and homepage managers were produced. This is not actual UI latency or proof
+that Agusta's absent historical played data has been backfilled.
+
+Catalina run 35105228797 (072aa96b9) FAILED. Dispatch 13:57:02, paid manual
+claim stalled 13:57:14-14:00:59, refresh 14:01:13-14:02:56 UTC. Read-only
+Fly capacity status run 35105585533 observed a machine startup at 14:00:20,
+then readiness recovered. No restart was requested by this agent. The restart
+cause is unverified; the outage already fails the 90s target.
+
+The same Catalina run resumed and completed shared transformations but its
+publication was rejected once with HTTP 422, not retried six times:
+`Homepage summary lost populated value: season_best_pickup_player`.
+No receipt artifact was available for this failed attempt.
+
+Scoped Fly read still shows data_year=2026 and Aaron Rodgers as season pickup,
+5.53 LAMAR. Current Sleeper API for league 1352102370921705472 confirms:
+- add 1402585196666040320, player 96, roster 10, leg 1;
+- later drop 1405647661364731904, same player/roster/leg after his game;
+- week 1 scoring roster still started Rodgers, 12.54 points.
+
+The shared transaction calculation unconditionally zeroed same-leg adds/drops,
+discarding earned value, and both managed points/LAMAR joins omitted franchise
+ownership. Six hand-checked DuckDB cases reproduced five failures before the
+fix (post-game drop, other owner, drop-leg earned start, later reacquisition,
+earlier same-leg drop). Shared acquisition-window logic now serves both metrics,
+joins by franchise, includes a drop leg only when scoring ownership matches,
+and uses available event ordering to distinguish a preceding same-leg drop.
+The homepage loss guard remains unchanged. Production recovery remains OPEN
+until the tested code is deployed and the source-to-publication result checked.
+
+Independent review found two additional cases before deployment: a second
+acquisition in the drop week double-counted that scoring row, and native/ISO/
+missing timestamps could falsely end a later acquisition. Five new regression
+cases failed first. Both metrics now share one scoring-row allocation to the
+latest eligible acquisition; supported timestamps normalize to epoch, and an
+unknown same-leg ordering does not prove an end. This is weekly-grain attribution,
+not proof of exact intragame transaction/lineup lock ordering. The expanded suite
+passes 56 tests, with four existing dataframe fragmentation warnings; Ruff and
+diff checks pass. Repeated runs are included in the ownership fixtures.
+
+Fight Club read-only run 35107363373 succeeds at provider fetch (4.301s) but
+does not run transforms. Publication attempt 35107492217 still fails before
+staging, now identifying the affected row: 2026 week 1 yahoo_player_id=100008
+(Detroit DST). Stored OAuth works, 147 roster rows and 51 transactions fetched;
+this is NOT an owner reconnection failure. The missing post-transform fantasy
+score requires tracing the shared DST mapping/scoring path; do not accept null
+or invent zero to pass validation.

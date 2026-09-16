@@ -76,6 +76,24 @@ def test_post_transform_player_scope_rejects_lost_provider_ids_and_unmapped_scor
         )
 
 
+@pytest.mark.parametrize('provider_column', ['yahoo_player_id', 'espn_player_id', 'sleeper_player_id'])
+def test_malformed_score_identifies_the_exact_provider_row(provider_column):
+    import duckdb
+    from multi_league.core.league_update_validation import assert_transformed_active_player_scope
+
+    with duckdb.connect() as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute(f'CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, {provider_column} VARCHAR, fantasy_points DOUBLE, NFL_player_id VARCHAR)')
+        conn.execute("INSERT INTO public.player_fantasy VALUES ('test_league',2026,1,'player-42',NULL,'00-42')")
+        with pytest.raises(IncompleteSourceError) as failed:
+            assert_transformed_active_player_scope(
+                conn, db_name='test_league', year=2026, weeks=(1,),
+                provider_id_column=provider_column, expected_keys={(1,'player-42')},
+            )
+        assert f'{provider_column}=player-42' in str(failed.value)
+        assert 'year=2026 week=1' in str(failed.value)
+
+
 def test_post_transform_player_scope_rejects_missing_required_columns():
     import duckdb
 

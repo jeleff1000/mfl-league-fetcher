@@ -392,10 +392,13 @@ def assert_transformed_active_player_scope(
         raise IncompleteSourceError("transformed provider player inventory changed")
     mapped_scored = 0
     unmapped_scored = 0
-    for _, _, nfl_id, points in rows:
+    for week, player_id, nfl_id, points in rows:
         score = pd.to_numeric(pd.Series([points]), errors="coerce").iloc[0]
         if pd.isna(score) or not isfinite(float(score)):
-            raise IncompleteSourceError("transformed provider player score is malformed")
+            raise IncompleteSourceError(
+                "transformed provider player score is malformed: "
+                f"year={int(year)} week={int(week)} {provider_id_column}={player_id}"
+            )
         if score == 0:
             continue
         identity = str(nfl_id or "").strip()

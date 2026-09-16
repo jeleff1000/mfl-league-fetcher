@@ -1310,6 +1310,29 @@ def _aggregate_subprocess_env() -> dict[str, str]:
     return env
 
 
+def _attach_ops_cache_for_enrichment(local_db: Any) -> None:
+    """Attach the patched local OPS cache before any shared SQL enrichment.
+
+    The active-season worker patches the small restored cache from live Fly
+    rows.  Rank enrichment is the first consumer of that table, so delaying
+    the attachment until aggregate generation leaves new players with null
+    generic ranks even when their live OPS ranks are present.
+    """
+    from multi_league.core.db_utils import attach_ops_cache
+
+    ops_cache = Path(os.environ.get("OPS_CACHE_PATH", ""))
+    if not ops_cache.is_file():
+        raise RuntimeError("weekly enrichment requires the local OPS cache")
+    conn = local_db.connect()
+    attached = {
+        str(row[1])
+        for row in conn.execute("PRAGMA database_list").fetchall()
+        if len(row) > 1
+    }
+    if "___ops" not in attached:
+        attach_ops_cache(conn, str(ops_cache))
+
+
 def _run_refresh_simulations(
     *,
     db_name: str,
@@ -1406,13 +1429,9 @@ def _run_refresh_aggregates(
         create_transaction_report_card_table,
     )
     from multi_league.transformations.aggregation.aggregation_utils import configure_table_catalog
-    from multi_league.core.db_utils import attach_ops_cache
 
     conn = local_db.connect()
-    ops_cache = Path(os.environ.get("OPS_CACHE_PATH", ""))
-    if not ops_cache.is_file():
-        raise RuntimeError("weekly aggregate graph requires the local OPS cache")
-    attach_ops_cache(conn, str(ops_cache))
+    _attach_ops_cache_for_enrichment(local_db)
     configure_table_catalog(conn)
     create_fantasy_season_table(conn, db_name)
     aggregate_fantasy_season(conn, db_name, year=active_year)
@@ -1501,6 +1520,7 @@ def _run_local_pipeline(
         raise RuntimeError("shared transformation pipeline failed: " + ", ".join(failed))
 
     local_db.connect()
+    _attach_ops_cache_for_enrichment(local_db)
     enricher = SQLEnrichments(
         db_name=db_name,
         data_dir=str(work_dir),

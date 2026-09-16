@@ -381,6 +381,7 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
 
     monkeypatch.setattr(import_pipeline, "run_transformation_pipeline", lambda *args, **kwargs: [])
     monkeypatch.setattr(sql_enrichments, "SQLEnrichments", FakeEnricher)
+    monkeypatch.setattr(refresh, "_attach_ops_cache_for_enrichment", lambda _local_db: None)
     monkeypatch.setattr(refresh, "_run_refresh_aggregates", lambda *args, **kwargs: None)
 
     ctx = SimpleNamespace(

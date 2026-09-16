@@ -1675,6 +1675,12 @@ def test_yahoo_refresh_rebuilds_only_published_season_aggregates_without_subproc
     ops_cache.touch()
     monkeypatch.setenv("OPS_CACHE_PATH", str(ops_cache))
     monkeypatch.setattr(db_utils, "attach_ops_cache", lambda _conn, _path: None)
+    # This contract isolates aggregate ordering; its connection double is not DuckDB.
+    monkeypatch.setattr(
+        refresh_yahoo_active_season,
+        "_attach_ops_cache_for_enrichment",
+        lambda _local_db: None,
+    )
 
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
     connection = object()
@@ -2077,6 +2083,12 @@ def test_refresh_aggregate_subprocess_releases_the_local_duckdb_lock(monkeypatch
     ops_cache.touch()
     monkeypatch.setenv("OPS_CACHE_PATH", str(ops_cache))
     monkeypatch.setattr(db_utils, "attach_ops_cache", lambda _conn, _path: None)
+    # This contract isolates child-process lock release; its connection double is not DuckDB.
+    monkeypatch.setattr(
+        refresh_yahoo_active_season,
+        "_attach_ops_cache_for_enrichment",
+        lambda _local_db: None,
+    )
 
     events: list[str] = []
     commands: list[list[str]] = []

@@ -372,3 +372,32 @@ requiring a registry match and coercing numeric season/week before resolution.
 159 focused tests now pass in17.15s; Ruff passes. Follow-up independent review
 using committed ownership code approves the bounded four-file change. Existing
 uncommitted ownership-restoration experiments are explicitly excluded.
+
+## Fight Club recovered on public main 0017cf401
+
+Run35111436541 COMMITTED/cache finalized. Dispatch14:51:54, refresh14:52:23-
+14:53:18, cache complete14:53:24 UTC. Exactly90s manual dispatch-to-cache does
+NOT meet the strict under90s target and does not prove UI-click latency.
+Processing53.745s: provider3.711s, bio3.273s, NFLcache10.947s, transforms8.390s,
+publication12.607s (server careers3.1691s/homepage7.2888s). Stored OAuth refreshed.
+
+Independent Fly checks after terminal status:
+- Yahoo100008 resolves DEF-6/DEF-6_2026_1,17.0points,Shane's persisted franchise.
+- All seven history/config fingerprints match the recovery baseline exactly.
+- 13manager careers reconcile652games,wins/losses,seasons/latestnames with0
+  mismatches; homepage13managers retains up to6seasons.
+- 1360regular/1362allplayer careers reconcile full weekly points/games,
+  managerLAMAR/startedclutch with0mismatches, including explicit null checks.
+- Receipt: D:/temp/update-evidence-35111436541/yahoo_active_season_refresh.json.
+All-NFL ranks, exact UI behavior, watermark integration and strict timing remain
+OPEN. This recovery does not prove full goal closure.
+
+## Cache delay instrumentation (no speculative optimization)
+
+Shared cache patch now reports cache-open, Fly-schema, schema-alignment,
+per-week fetch/validation/replacement, and close timings. The same function is
+used by all three workers. No provider scope, cache data, or pipeline changes.
+Real cache-preservation test failed before diagnostics, then passes. Review
+fault injection found print failures masking source failures; two regressions
+failed before guarding diagnostic output. 104refresh/script tests and Ruff now
+pass. Live per-stage timing evidence remains pending the next worker run.

@@ -2028,7 +2028,10 @@ def test_history_chunk_concat_preserves_values_without_all_null_dtype_warning():
     assert actual["legacy_null"].isna().all()
 
 
-def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(tmp_path):
+@pytest.mark.parametrize("fetch_fails, output_fails", [(False, False), (False, True), (True, True)])
+def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(
+    tmp_path, capsys, monkeypatch, fetch_fails, output_fails,
+):
     """The reduced research cache cannot use the full-artifact refresh gate.
 
     Refresh its one joined table from Fly's authoritative finalized rows while
@@ -2096,9 +2099,21 @@ def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(t
         def query_df(self, sql, *, database):
             assert database == "___ops"
             self.sql.append(sql)
+            if fetch_fails:
+                raise RuntimeError("source fetch failed")
             return source.copy()
 
     reader = _Reader()
+    if output_fails:
+        def fail_diagnostic(*args, **kwargs):
+            raise BrokenPipeError("diagnostic sink closed")
+        monkeypatch.setattr("builtins.print", fail_diagnostic)
+    if fetch_fails:
+        with pytest.raises(RuntimeError, match="source fetch failed"):
+            _patch_research_ops_cache_from_fly(
+                reader, base=base, finalized_ops=source, year=2026, weeks=[1], work_dir=tmp_path,
+            )
+        return
     output = _patch_research_ops_cache_from_fly(
         reader,
         base=base,
@@ -2117,6 +2132,20 @@ def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(t
         ).fetchall() == [("ne_player", 18.25), ("unplayed_player", 0.0)]
     finally:
         verified.close()
+
+    if output_fails:
+        return
+    timing_line = next(
+        line for line in capsys.readouterr().out.splitlines() if line.startswith("[ops-cache-timing] ")
+    )
+    timing = json.loads(timing_line.removeprefix("[ops-cache-timing] "))
+    assert set(timing["phases"]) == {
+        "cache_open", "fly_schema", "schema_alignment", "week_1_fetch",
+        "week_1_validate", "week_1_replace", "cache_close", "total", "unmarked",
+    }
+    assert all(value >= 0 for value in timing["phases"].values())
+    assert timing["year"] == 2026
+    assert timing["weeks"] == [1]
 
 
 def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monkeypatch):

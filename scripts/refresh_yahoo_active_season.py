@@ -910,6 +910,9 @@ def _patch_research_ops_cache_from_fly(
     reusable local cache; a GitHub Actions weekly worker may patch its
     disposable restored workspace cache in place and avoid copying 739 MB.
     """
+    from multi_league.core.league_update_timing import PhaseTimer
+
+    timer = PhaseTimer()
     if not base.is_file():
         raise RuntimeError(f"OPS_CACHE_PATH is missing: {base}")
     output = base if in_place else work_dir / "ops_cache_fly_finalized.duckdb"
@@ -917,6 +920,7 @@ def _patch_research_ops_cache_from_fly(
         shutil.copy2(base, output)
 
     cache = duckdb.connect(str(output))
+    timer.mark("cache_open")
     try:
         cache_columns = [
             str(row[0])
@@ -928,6 +932,7 @@ def _patch_research_ops_cache_from_fly(
             raise RuntimeError("research ops cache is missing required weekly columns: " + ", ".join(missing))
         target = "nfl_historical.nfl_player_stats_all"
         fly_schema_rows = reader.query(f"DESCRIBE {target}", database=OPS_DATABASE)
+        timer.mark("fly_schema")
         fly_columns = {
             str(row["column_name"]): str(row["column_type"])
             for row in fly_schema_rows
@@ -953,6 +958,7 @@ def _patch_research_ops_cache_from_fly(
             _quoted_identifier(column) if column in fly_columns else f"NULL AS {_quoted_identifier(column)}"
             for column in columns
         )
+        timer.mark("schema_alignment")
         for week in weeks:
             expected = finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)].copy()
             if expected.empty:
@@ -964,6 +970,7 @@ def _patch_research_ops_cache_from_fly(
                 "AND NFL_player_id IS NOT NULL AND nfl_team IS NOT NULL AND opponent_nfl_team IS NOT NULL",
                 database=OPS_DATABASE,
             )
+            timer.mark(f"week_{int(week)}_fetch")
             if source.empty:
                 raise RuntimeError(f"Fly returned no full finalized ops rows for {year} week {week}")
             source = source.loc[:, columns].copy()
@@ -985,6 +992,7 @@ def _patch_research_ops_cache_from_fly(
                 raise RuntimeError(
                     f"Fly cache refresh source does not match finalized admission facts for {year} week {week}"
                 )
+            timer.mark(f"week_{int(week)}_validate")
             cache.register("__refresh_facts", source)
             try:
                 cache.execute(
@@ -1007,8 +1015,19 @@ def _patch_research_ops_cache_from_fly(
                 )
             finally:
                 cache.unregister("__refresh_facts")
+            timer.mark(f"week_{int(week)}_replace")
     finally:
         cache.close()
+        timer.mark("cache_close")
+        diagnostic = "[ops-cache-timing] " + json.dumps({
+            "year": int(year), "weeks": [int(week) for week in weeks], "phases": timer.finish(),
+        })
+        try:
+            print(diagnostic, flush=True)
+        except (OSError, ValueError):
+            # A closed diagnostic sink must not replace a fetch exception or
+            # turn an otherwise successful cache patch into a failed update.
+            pass
 
     return output
 

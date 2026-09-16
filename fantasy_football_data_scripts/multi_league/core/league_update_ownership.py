@@ -77,6 +77,13 @@ _KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     "league_settings": ("db_name", "year"),
 }
 
+# Older imports can contain a manual historical finish row with no provider
+# ``manager_week`` value.  That row still has a stable matchup identity and
+# must remain protected by an active-season refresh.
+_MATCHUP_PRESERVATION_FALLBACK_KEYS = (
+    "db_name", "year", "week", "manager", "team_name", "opponent",
+)
+
 _SOURCE_SCHEMAS: dict[str, tuple[str, str]] = {
     "player_fantasy": ("multi_league.core.canonical_player", "PLAYER_FANTASY_SCHEMA"),
     "matchup": ("multi_league.core.canonical_matchup", "MATCHUP_SCHEMA"),
@@ -360,6 +367,31 @@ def _historical_source_witness(frame: pd.DataFrame, table_name: str, active_year
     return historical.sort_index(axis=1)
 
 
+def _preservation_identity_columns(
+    table_name: str,
+    old: pd.DataFrame,
+    new: pd.DataFrame,
+    default_keys: tuple[str, ...],
+) -> list[str]:
+    """Choose a complete, unique source identity for the preservation check."""
+    keys = list(default_keys)
+    old_has_duplicates = old.set_index(keys, drop=False).index.has_duplicates
+    new_has_duplicates = new.set_index(keys, drop=False).index.has_duplicates
+    if not old_has_duplicates and not new_has_duplicates:
+        return keys
+    if table_name != "matchup":
+        return keys
+    fallback = list(_MATCHUP_PRESERVATION_FALLBACK_KEYS)
+    if any(column not in old.columns or column not in new.columns for column in fallback):
+        return keys
+    if (
+        not old.set_index(fallback, drop=False).index.has_duplicates
+        and not new.set_index(fallback, drop=False).index.has_duplicates
+    ):
+        return fallback
+    return keys
+
+
 def _assert_derived_values_not_erased(
     table_name: str,
     old: pd.DataFrame,
@@ -369,7 +401,10 @@ def _assert_derived_values_not_erased(
     if old.empty:
         return 0
     contract = table_ownership(table_name)
-    keys = list(contract.key_columns)
+    default_keys = tuple(contract.key_columns)
+    if any(column not in old.columns or column not in new.columns for column in default_keys):
+        raise PreservationError(f"source identity is unavailable in {table_name}: {list(default_keys)}")
+    keys = _preservation_identity_columns(table_name, old, new, default_keys)
     if any(column not in old.columns or column not in new.columns for column in keys):
         raise PreservationError(f"source identity is unavailable in {table_name}: {keys}")
     old_index = old.set_index(keys, drop=False)

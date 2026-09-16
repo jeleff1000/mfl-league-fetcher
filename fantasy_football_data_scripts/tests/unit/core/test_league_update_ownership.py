@@ -118,6 +118,40 @@ def test_preservation_fingerprint_handles_nullable_integer_historical_witnesses(
     assert receipt["historical_rows_preserved"] is True
 
 
+def test_preservation_keeps_legacy_matchups_without_manager_week_identity():
+    """Manual historical finish rows have no provider manager_week key."""
+    legacy = pd.DataFrame(
+        [
+            {
+                "db_name": "league_a",
+                "year": 2018,
+                "week": 16,
+                "manager": "LargoRyan",
+                "team_name": "Historical finish (user supplied)",
+                "opponent": None,
+                "manager_week": None,
+                "team_points": None,
+            },
+            {
+                "db_name": "league_a",
+                "year": 2019,
+                "week": 16,
+                "manager": "Dak",
+                "team_name": "Historical finish (user supplied)",
+                "opponent": None,
+                "manager_week": None,
+                "team_points": None,
+            },
+        ]
+    )
+
+    receipt = assert_refresh_preservation(
+        {"matchup": legacy}, {"matchup": legacy.copy()}, active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_preservation_fingerprint_ignores_database_integer_dtype_normalization():
     source = pd.DataFrame(
         {

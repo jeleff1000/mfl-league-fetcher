@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from multi_league.core.league_refresh import (
     hydrate_local_refresh_sources,
@@ -6,6 +7,38 @@ from multi_league.core.league_refresh import (
 )
 from multi_league.core.local_db import LocalLeagueDB
 from multi_league.core.aggregate_ddl import ensure_aggregate_table
+
+
+@pytest.mark.parametrize("platform,provider_column,provider_id", [
+    ("yahoo", "yahoo_player_id", "100008"),
+    ("espn", "espn_player_id", "-16008"),
+    ("sleeper", "sleeper_player_id", "DET"),
+])
+def test_new_defense_identity_survives_refresh_ownership_overlay(
+    tmp_path, platform, provider_column, provider_id,
+):
+    """The actual merge must retain registry-derived keys, not fetcher enrichments."""
+    local = LocalLeagueDB(tmp_path, "defense_refresh")
+    try:
+        local.ensure_table("player_fantasy")
+        incoming = pd.DataFrame([{
+            "year": 2026, "week": 1, "team_key": "10", "manager": "Shared Team",
+            provider_column: provider_id, "position": "DEF", "nfl_team": "DET",
+            "fantasy_position": "DEF", "fantasy_points": 9.0,
+            "NFL_player_id": "untrusted-fetcher-id", "clutch_equity": 999.0,
+        }])
+        for _ in range(2):
+            merge_provider_refresh_table(
+                local, "player_fantasy", incoming, platform=platform, league_id="test",
+            )
+            stored = local.read_table("player_fantasy")
+            assert len(stored) == 1
+            assert stored["NFL_player_id"].tolist() == ["DEF-6"]
+            assert stored["player_week"].tolist() == ["DEF-6_2026_1"]
+            assert stored[provider_column].tolist() == [provider_id]
+            assert stored["clutch_equity"].isna().all()
+    finally:
+        local.close()
 
 
 def test_existing_career_hydration_preserves_canonical_integer_and_timestamp_types(tmp_path):
@@ -34,6 +67,29 @@ def test_existing_career_hydration_preserves_canonical_integer_and_timestamp_typ
         }
         assert types["wins"] == "INTEGER"
         assert types["last_updated"] == "TIMESTAMP"
+    finally:
+        local.close()
+
+
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+def test_unknown_defense_hint_does_not_poison_future_refresh_identity(tmp_path, platform):
+    local = LocalLeagueDB(tmp_path, "unknown_defense")
+    try:
+        local.ensure_table("player_fantasy")
+        incoming = pd.DataFrame([{
+            "year": 2026, "week": 1, "team_key": "10", "manager": "Shared Team",
+            f"{platform}_player_id": "991", "position": "DEF", "nfl_team": "UNKNOWN",
+            "fantasy_position": "DEF", "fantasy_points": 9.0,
+        }])
+        merge_provider_refresh_table(local, "player_fantasy", incoming, platform=platform, league_id="test")
+        stored = local.read_table("player_fantasy")
+        assert stored["NFL_player_id"].isna().all()
+        assert stored["player_week"].isna().all()
+        incoming["nfl_team"] = "DET"
+        merge_provider_refresh_table(local, "player_fantasy", incoming, platform=platform, league_id="test")
+        stored = local.read_table("player_fantasy")
+        assert len(stored) == 1
+        assert stored["NFL_player_id"].tolist() == ["DEF-6"]
     finally:
         local.close()
 

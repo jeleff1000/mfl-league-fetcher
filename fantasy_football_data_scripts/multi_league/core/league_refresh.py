@@ -885,12 +885,6 @@ def merge_provider_refresh_table(
     normalized = _bind_provider_db_name(local_db, table_name, normalized)
     contract = table_ownership(table_name)
     if table_name == "player_fantasy":
-        # The roster normalizer carries two fetch-only NFL mapping hints that
-        # are not columns in canonical player_fantasy. Every other unknown
-        # field still fails the ownership gate below.
-        normalized = normalized.drop(
-            columns=[column for column in ("eligible_positions", "nfl_team_api") if column in normalized]
-        )
         provider_id = {
             "yahoo": "yahoo_player_id",
             "espn": "espn_player_id",
@@ -905,6 +899,13 @@ def merge_provider_refresh_table(
         if normalized[list(provider_keys)].isna().any().any():
             raise RefreshScopeError(f"{table_name} provider payload has null ownership keys")
         contract = replace(contract, key_columns=provider_keys)
+        roster_hints = normalized[list(provider_keys)].copy()
+        roster_hints["nfl_team_api"] = normalized.get("nfl_team_api")
+        # Keep mapping hints only until protected identities can be rebuilt.
+        # Every other unknown field still fails the ownership gate below.
+        normalized = normalized.drop(
+            columns=[column for column in ("eligible_positions", "nfl_team_api") if column in normalized]
+        )
     elif table_name == "matchup":
         # ``manager_week`` is rebuilt from franchise identity during shared
         # enrichment.  It is not a stable provider key on a retry: using it
@@ -926,6 +927,15 @@ def merge_provider_refresh_table(
     if table_name == "player_fantasy" and not existing.empty:
         existing = existing.loc[existing[provider_id].notna()].copy()
     protected = overlay_provider_columns(existing, normalized, contract)
+    if table_name == "player_fantasy":
+        from multi_league.core.canonical_roster import resolve_roster_defense_keys
+
+        # Resolve only registry-backed defense keys AFTER discarding fetcher
+        # enrichments. New rows have no preserved NFL identity to carry forward.
+        protected = protected.merge(
+            roster_hints, on=list(contract.key_columns), how="left", validate="one_to_one",
+        )
+        protected = resolve_roster_defense_keys(protected, platform).drop(columns=["nfl_team_api"])
     local_db.merge_table(
         table_name,
         protected,

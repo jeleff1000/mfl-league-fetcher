@@ -76,6 +76,64 @@ UNROSTERED_MANAGER_VALUES = {"unrostered", "fa", "free agent", "waivers", "", "n
 # ---------------------------------------------------------------------------
 
 
+def resolve_roster_defense_keys(df: pd.DataFrame, platform: str) -> pd.DataFrame:
+    """Fill missing defense keys from the shared NFL franchise registry.
+
+    Accept a canonical frame, including its temporary API team hint. This is
+    also used after refresh ownership protection clears untrusted derived
+    fields; it must not modify existing keys or any other enrichment.
+    """
+    import pandas as pd
+    from nfl_data.nfl_franchises import get_def_player_id, get_franchise_id
+
+    if (platform or "").lower() not in {"sleeper", "yahoo", "espn"}:
+        return df
+    if df.empty or not {"year", "week"} <= set(df.columns):
+        return df
+    df = df.copy()
+    for column in ("year", "week"):
+        df[column] = pd.to_numeric(df[column], errors="coerce").astype("Int64")
+    if "NFL_player_id" not in df.columns:
+        df["NFL_player_id"] = None
+
+    def is_def_row(row):
+        pos = str(row.get("position", "")).upper()
+        sleeper_id = str(row.get("sleeper_player_id", "")).strip().upper()
+        return pos in {"DEF", "DST", "D/ST"} or (
+            sleeper_id.isalpha() and 2 <= len(sleeper_id) <= 3
+            and "DST" in str(row.get("player", "")).upper()
+        )
+
+    def build_def_id(row):
+        team = row.get("nfl_team_api")
+        if pd.isna(team) or not str(team).strip():
+            sleeper_team = str(row.get("sleeper_player_id", "")).strip().upper()
+            team = sleeper_team if sleeper_team.isalpha() and 2 <= len(sleeper_team) <= 3 else None
+        year = row.get("year")
+        if pd.isna(team) or pd.isna(year):
+            return None
+        if get_franchise_id(str(team).strip().upper(), int(year)) is None:
+            return None
+        return get_def_player_id(str(team).strip().upper(), int(year))
+
+    defenses = df.apply(is_def_row, axis=1)
+    missing_ids = defenses & df["NFL_player_id"].isna()
+    if missing_ids.any():
+        df.loc[missing_ids, "NFL_player_id"] = df.loc[missing_ids].apply(build_def_id, axis=1)
+    if defenses.any():
+        if "player_week" not in df.columns:
+            df["player_week"] = None
+        missing_keys = defenses & df["NFL_player_id"].notna() & df["year"].notna() & df["week"].notna() & (
+            df["player_week"].isna() | df["player_week"].astype(str).str.strip().eq("")
+        )
+        df.loc[missing_keys, "player_week"] = (
+            df.loc[missing_keys, "NFL_player_id"].astype(str) + "_"
+            + df.loc[missing_keys, "year"].astype("Int64").astype(str) + "_"
+            + df.loc[missing_keys, "week"].astype("Int64").astype(str)
+        )
+    return df
+
+
 def normalize_roster_df(df, platform: str, league_id: str | None = None) -> pd.DataFrame:
     """Normalize a roster DataFrame to canonical schema.
 
@@ -176,58 +234,7 @@ def normalize_roster_df(df, platform: str, league_id: str | None = None) -> pd.D
 
     preserved_sql_cols: list[str] = []
 
-    # Team defenses are franchise identities, not individual player_bio rows.
-    # Resolve all supported providers through the existing historical NFL team
-    # registry before canonical player storage discards the API team hint.
-    if (platform or "").lower() in {"sleeper", "yahoo", "espn"}:
-        if "NFL_player_id" not in df.columns:
-            df["NFL_player_id"] = None
-        if all(col in df.columns for col in ["year", "week"]):
-            try:
-                from nfl_data.nfl_franchises import get_def_player_id
-
-                def is_def_row(row) -> bool:
-                    pos = str(row.get("position", "")).upper()
-                    if pos in {"DEF", "DST", "D/ST"}:
-                        return True
-                    sleeper_id = str(row.get("sleeper_player_id", "")).strip().upper()
-                    return (
-                        sleeper_id.isalpha()
-                        and 2 <= len(sleeper_id) <= 3
-                        and "DST" in str(row.get("player", "")).upper()
-                    )
-
-                def build_def_id(row):
-                    team = row.get("nfl_team_api")
-                    if pd.isna(team) or not str(team).strip():
-                        sleeper_team = str(row.get("sleeper_player_id", "")).strip().upper()
-                        # Numeric provider player IDs are not NFL franchise IDs.
-                        team = sleeper_team if sleeper_team.isalpha() and 2 <= len(sleeper_team) <= 3 else None
-                    year_val = row.get("year")
-                    if pd.isna(team) or pd.isna(year_val):
-                        return None
-                    return get_def_player_id(str(team).strip().upper(), int(year_val))
-
-                dst_mask = df.apply(is_def_row, axis=1)
-                if dst_mask.any():
-                    missing_dst_ids = dst_mask & df["NFL_player_id"].isna()
-                    if missing_dst_ids.any():
-                        df.loc[missing_dst_ids, "NFL_player_id"] = df.loc[missing_dst_ids].apply(build_def_id, axis=1)
-
-                    df["player_week"] = df.get("player_week")
-                    missing_player_week = dst_mask & df["NFL_player_id"].notna() & (
-                        df["player_week"].isna() | (df["player_week"].astype(str).str.strip() == "")
-                    )
-                    if missing_player_week.any():
-                        df.loc[missing_player_week, "player_week"] = (
-                            df.loc[missing_player_week, "NFL_player_id"].astype(str)
-                            + "_"
-                            + df.loc[missing_player_week, "year"].astype("Int64").astype(str)
-                            + "_"
-                            + df.loc[missing_player_week, "week"].astype("Int64").astype(str)
-                        )
-            except Exception:
-                pass
+    df = resolve_roster_defense_keys(df, platform)
 
     if "NFL_player_id" in df.columns:
         preserved_sql_cols.append("NFL_player_id")

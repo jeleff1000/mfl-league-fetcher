@@ -348,3 +348,27 @@ Independent scoped Fly checks after terminal status:
   manager LAMAR and started clutch with zero mismatches, explicit null checks.
 All-NFL ranking columns, exact within-week acquisition attribution, actual UI
 click-to-visible behavior, and the under90s requirement remain unverified/open.
+
+## Yahoo defense follow-up: ownership boundary reproduced
+
+Run 35109769080 on 70f0a1f5b is terminal FAILED before staging, again on
+Yahoo player100008 with a null transformed score. OAuth successfully refreshed.
+The prior normalizer-only change was insufficient: merge_provider_refresh_table
+protects derived fields by discarding incoming NFL_player_id/player_week, then
+drops the API team hint. New defense rows therefore lose the registry mapping.
+
+Three real LocalLeagueDB integration cases (Yahoo/ESPN/Sleeper) all failed with
+stored NFL_player_id=None before this fix. Shared resolve_roster_defense_keys is
+now reused after the ownership overlay with hints joined by exact provider keys.
+Only missing defense identities are rebuilt; existing IDs/enrichments remain
+protected and arbitrary incoming NFL IDs/clutch values are discarded. Identical
+second merges retain one row and canonical DEF-6_2026_1. 154 focused integration,
+roster, validation and refresh tests pass; Ruff passes. Independent review and
+production retry are pending; no successful Yahoo recovery claim yet.
+
+Review found unknown hints yielding DEF-UNKNOWN and numeric season/week strings
+raising during extraction. Five new tests failed first, then passed after
+requiring a registry match and coercing numeric season/week before resolution.
+159 focused tests now pass in17.15s; Ruff passes. Follow-up independent review
+using committed ownership code approves the bounded four-file change. Existing
+uncommitted ownership-restoration experiments are explicitly excluded.

@@ -271,3 +271,14 @@ def test_unresolved_defenses_do_not_get_colliding_none_player_week_keys(platform
     result = normalize_roster_df(raw, platform=platform)
     assert result["NFL_player_id"].isna().all()
     assert result["player_week"].isna().all()
+
+
+@pytest.mark.parametrize("year,week", [("2026", "1.0"), ("2026.0", "1")])
+def test_defense_normalizer_accepts_numeric_provider_season_week_strings(year, week):
+    raw = pd.DataFrame([{
+        "year": year, "week": week, "position": "DEF", "nfl_team": "DET",
+        "yahoo_player_id": "100008", "fantasy_position": "DEF",
+    }])
+    result = normalize_roster_df(raw, platform="yahoo")
+    assert result["NFL_player_id"].tolist() == ["DEF-6"]
+    assert result["player_week"].tolist() == ["DEF-6_2026_1"]

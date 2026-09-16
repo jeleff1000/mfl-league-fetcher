@@ -515,8 +515,15 @@ class SQLEnrichmentsBase:
 
     @staticmethod
     def _primary_position_sql(column: str = "position") -> str:
-        """Return SQL expression for the normalized primary position token."""
-        return f"UPPER(SPLIT_PART(COALESCE({column}, ''), ',', 1))"
+        """Return the normalized primary fantasy-position token.
+
+        Fullbacks are represented as ``FB`` by some player-bio sources, but
+        every supported fantasy platform treats them as running backs.  Keep
+        that conversion in the shared SQL helper so rank, lineup, and FLEX
+        consumers cannot disagree.
+        """
+        token = f"UPPER(SPLIT_PART(COALESCE({column}, ''), ',', 1))"
+        return f"CASE WHEN {token} = 'FB' THEN 'RB' ELSE {token} END"
 
     @staticmethod
     def _available_settings_years(roster_by_year: dict | None) -> list[int]:
@@ -597,6 +604,9 @@ class SQLEnrichmentsBase:
         if pos_upper == "DEF":
             return f"len(list_intersect({token_list_sql}, ['DEF', 'DST', 'D/ST'])) > 0"
 
+        if pos_upper == "RB":
+            return f"len(list_intersect({token_list_sql}, ['RB', 'FB'])) > 0"
+
         return f"list_contains({token_list_sql}, '{pos_upper}')"
 
     def _front7_eligibility_sql(self, column: str) -> str:
@@ -611,6 +621,8 @@ class SQLEnrichmentsBase:
     def _flex_eligibility_sql(self, column: str, eligible_positions: list[str]) -> str:
         """Return SQL predicate for flex-eligible rows using normalized primary position."""
         normalized = sorted({pos.upper() for pos in eligible_positions})
+        if "RB" in normalized:
+            normalized.append("FB")
         eligible_sql = ", ".join(repr(pos) for pos in normalized)
         token_list_sql = f"string_split(UPPER(COALESCE({column}, '')), ',')"
         return f"len(list_intersect({token_list_sql}, [{eligible_sql}])) > 0"

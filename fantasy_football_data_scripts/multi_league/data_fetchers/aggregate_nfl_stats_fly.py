@@ -1466,16 +1466,22 @@ def rank_specs_for_scope(scope: str) -> list[RankSpec]:
 
     for pos in ("RB", "WR", "TE"):
         lower = pos.lower()
+        # Fullbacks are eligible running backs in every supported fantasy
+        # platform.  Keep that position family in the shared rank spec rather
+        # than letting a persisted FB primary_position fall out of the RB
+        # season/career population during a live OPS rebuild.
+        positions = ("RB", "FB") if pos == "RB" else (pos,)
         specs.extend(
             [
-                RankSpec(f"{prefix}_{lower}_0ppr", scope, (pos,), "fpts_4pt_0ppr"),
-                RankSpec(f"{prefix}_{lower}_half", scope, (pos,), "fpts_4pt_half"),
-                RankSpec(f"{prefix}_{lower}_ppr", scope, (pos,), "fpts_4pt_ppr"),
+                RankSpec(f"{prefix}_{lower}_0ppr", scope, positions, "fpts_4pt_0ppr"),
+                RankSpec(f"{prefix}_{lower}_half", scope, positions, "fpts_4pt_half"),
+                RankSpec(f"{prefix}_{lower}_ppr", scope, positions, "fpts_4pt_ppr"),
             ]
         )
     specs.append(RankSpec(f"{prefix}_te_tep", scope, ("TE",), "fpts_4pt_tep"))
     for pos in ("RB", "WR", "TE"):
-        specs.append(RankSpec(f"{prefix}_{pos.lower()}_ppfd", scope, (pos,), "fpts_4pt_ppfd"))
+        positions = ("RB", "FB") if pos == "RB" else (pos,)
+        specs.append(RankSpec(f"{prefix}_{pos.lower()}_ppfd", scope, positions, "fpts_4pt_ppfd"))
     specs.extend(
         [
             RankSpec(f"{prefix}_k", scope, ("K",), "pts_k_std"),  # distance-tier (modal Sleeper), not yardage

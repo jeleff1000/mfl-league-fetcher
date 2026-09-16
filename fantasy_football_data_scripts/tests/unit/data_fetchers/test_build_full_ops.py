@@ -197,7 +197,7 @@ _DERIVED_COLS = [
     "rank_season_overall_4pt_half", "ppg_season_4pt_half", "consistency_4pt_half",
     "weighted_ppg_4pt_half", "avg_pts_next_year_4pt_half",
     # career families
-    "rank_alltime_qb_4pt", "rank_alltime_overall_4pt_half", "ppg_alltime_4pt_half",
+    "rank_alltime_qb_4pt", "rank_alltime_rb_0ppr", "rank_alltime_overall_4pt_half", "ppg_alltime_4pt_half",
 ]
 _POS_BY_MOD = {0: "QB", 1: "RB", 2: "WR", 3: "TE", 4: "K", 5: "DEF", 6: "LB", 7: "DB"}
 
@@ -345,6 +345,44 @@ def test_live_ops_rank_surface_rebuilds_current_rows_against_full_history():
         ).fetchall()
         assert len(rows) == 1
         assert rows[0][0] != 1
+    finally:
+        conn.close()
+
+
+def test_rb_rank_specs_include_fullbacks_in_the_fantasy_rb_population():
+    """FB is a fantasy-RB alias across every shared OPS rank scope.
+
+    Patrick Ricard and Brady Russell exposed the production failure: the live
+    weekly fact normalizer emitted RB, while the persisted career primary
+    position remained FB.  Excluding FB made their shared all-time RB rank
+    null and caused every league refresh to fail its preservation gate.
+    """
+    from multi_league.data_fetchers.aggregate_nfl_stats_fly import rank_specs_for_scope
+
+    for scope in ("season", "alltime"):
+        rb_specs = [spec for spec in rank_specs_for_scope(scope) if "_rb_" in spec.col]
+        assert rb_specs
+        assert all(set(spec.positions) == {"RB", "FB"} for spec in rb_specs)
+
+
+def test_live_ops_rank_surface_assigns_fullback_career_to_rb_rank():
+    """A persisted FB primary position must receive the canonical RB career rank."""
+    conn = duckdb.connect(":memory:")
+    try:
+        _make_facts_wide(conn, weeks_by_year={2024: [1, 2, 3], 2026: [1]})
+        wide = "nfl_historical.nfl_player_stats_all"
+        conn.execute(
+            f"UPDATE {wide} SET primary_position = 'FB' WHERE NFL_player_id = 'nfl_1'"
+        )
+
+        rebuild_wide_rank_surface(conn, year=2026, week=1)
+
+        rows = conn.execute(
+            f"SELECT DISTINCT rank_alltime_rb_0ppr FROM {wide} "
+            "WHERE NFL_player_id = 'nfl_1'"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] is not None
     finally:
         conn.close()
 

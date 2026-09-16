@@ -1,4 +1,5 @@
 import pandas as pd
+import duckdb
 
 from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
 from multi_league.core.canonical_settings import (
@@ -8,6 +9,24 @@ from multi_league.core.canonical_settings import (
     extract_scoring_settings_from_flat_row,
     get_schema_keys,
 )
+
+
+def test_fullback_is_a_running_back_for_shared_sql_eligibility():
+    """The player-bio FB label must resolve to the RB rank and FLEX families."""
+    base = SQLEnrichmentsBase("test_db", dry_run=True)
+    conn = duckdb.connect(":memory:")
+    try:
+        for expression in (
+            base._position_eligibility_sql("position", "RB"),
+            base._flex_eligibility_sql("position", ["RB", "WR", "TE"]),
+        ):
+            assert conn.execute(
+                f"SELECT {expression} FROM (SELECT 'FB' AS position)"
+            ).fetchone()[0] is True
+        fullback_literal = base._primary_position_sql("'FB'")
+        assert conn.execute(f"SELECT {fullback_literal}").fetchone()[0] == "RB"
+    finally:
+        conn.close()
 
 
 def test_resolve_scoring_year_walks_past_empty_scoring_settings():

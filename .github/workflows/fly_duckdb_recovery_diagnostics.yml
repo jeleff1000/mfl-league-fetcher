@@ -63,7 +63,7 @@ jobs:
               exit 2
             fi
 
-            volume_name="weekly_update_recovery_${GITHUB_RUN_ID}"
+            volume_name="wkupd_${GITHUB_RUN_ID}"
             recovery_volume_id=""
             cleanup() {
               if [ -n "$recovery_volume_id" ]; then

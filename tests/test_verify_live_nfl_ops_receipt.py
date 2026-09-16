@@ -25,10 +25,10 @@ class _Reader:
 
     def query(self, sql: str, *, database: str):
         self.calls.append((sql, database))
-        if 'FROM nfl_historical."nfl_player_stats_all"' in sql and "GROUP BY game_id" in sql:
-            rows = [{"game_id": "2026_01_DAL_NYG", "rows": 44}]
+        if 'FROM nfl_historical."nfl_player_stats_all"' in sql and "GROUP BY game_key" in sql:
+            rows = [{"game_key": "2026-09-14:DAL:NYG", "rows": 44}]
             if not self.missing_game:
-                rows.insert(0, {"game_id": "2026_01_CHI_DET", "rows": 41})
+                rows.insert(0, {"game_key": "2026-09-09:CHI:DET", "rows": 41})
             return rows
         for table in (
             "player_nfl_season",
@@ -51,16 +51,20 @@ SCOPE = {
     "game_date": "2026-09-13",
     "game_ids": ["2026_01_CHI_DET", "2026_01_DAL_NYG"],
 }
+EXPECTED_GAME_ROWS = {
+    "2026-09-09:CHI:DET": 41,
+    "2026-09-14:DAL:NYG": 44,
+}
 
 
 def test_fly_receipt_proves_every_final_game_and_every_live_aggregate_is_present():
     module = _module()
     reader = _Reader()
 
-    receipt = module.collect_fly_receipt(reader, SCOPE)
+    receipt = module.collect_fly_receipt(reader, SCOPE, expected_game_rows=EXPECTED_GAME_ROWS)
 
     assert receipt["weekly"] == {
-        "game_ids": ["2026_01_CHI_DET", "2026_01_DAL_NYG"],
+        "game_keys": ["2026-09-09:CHI:DET", "2026-09-14:DAL:NYG"],
         "rows": 85,
     }
     assert receipt["aggregates"]["player_nfl_season"] == {
@@ -83,15 +87,21 @@ def test_fly_receipt_proves_every_final_game_and_every_live_aggregate_is_present
 def test_fly_receipt_fails_closed_when_a_final_game_is_absent():
     module = _module()
 
-    with pytest.raises(module.FlyReceiptError, match="game IDs"):
-        module.collect_fly_receipt(_Reader(missing_game=True), SCOPE)
+    with pytest.raises(module.FlyReceiptError, match="game identities"):
+        module.collect_fly_receipt(
+            _Reader(missing_game=True), SCOPE, expected_game_rows=EXPECTED_GAME_ROWS
+        )
 
 
 def test_fly_receipt_fails_closed_when_an_aggregate_misses_a_refreshed_player():
     module = _module()
 
     with pytest.raises(module.FlyReceiptError, match="player_nfl_career_all"):
-        module.collect_fly_receipt(_Reader(missing_aggregate="player_nfl_career_all"), SCOPE)
+        module.collect_fly_receipt(
+            _Reader(missing_aggregate="player_nfl_career_all"),
+            SCOPE,
+            expected_game_rows=EXPECTED_GAME_ROWS,
+        )
 
 
 def test_fly_receipt_uses_candidate_games_for_a_manual_whole_week_scope():
@@ -106,12 +116,12 @@ def test_fly_receipt_uses_candidate_games_for_a_manual_whole_week_scope():
     receipt = module.collect_fly_receipt(
         _Reader(),
         manual_scope,
-        expected_game_rows={"2026_01_CHI_DET": 41, "2026_01_DAL_NYG": 44},
+        expected_game_rows={"2026-09-09:CHI:DET": 41, "2026-09-14:DAL:NYG": 44},
     )
 
     assert receipt["scope"]["game_date"] is None
     assert receipt["weekly"] == {
-        "game_ids": ["2026_01_CHI_DET", "2026_01_DAL_NYG"],
+        "game_keys": ["2026-09-09:CHI:DET", "2026-09-14:DAL:NYG"],
         "rows": 85,
     }
 
@@ -124,20 +134,21 @@ def test_candidate_game_receipt_accepts_a_manual_whole_week_scope(tmp_path):
         connection.execute(
             '''
             CREATE TABLE nfl_historical.nfl_player_stats_all (
-                game_id VARCHAR,
                 year INTEGER,
                 week INTEGER,
                 season_type VARCHAR,
-                game_date DATE
+                game_date DATE,
+                nfl_team VARCHAR,
+                opponent_nfl_team VARCHAR
             )
             '''
         )
         connection.execute(
             "INSERT INTO nfl_historical.nfl_player_stats_all VALUES "
-            "('2026_01_CHI_DET', 2026, 1, 'REG', '2026-09-09'), "
-            "('2026_01_CHI_DET', 2026, 1, 'REG', '2026-09-09'), "
-            "('2026_01_DAL_NYG', 2026, 1, 'REG', '2026-09-14'), "
-            "('2026_02_CHI_GB', 2026, 2, 'REG', '2026-09-20')"
+            "(2026, 1, 'REG', '2026-09-09', 'CHI', 'DET'), "
+            "(2026, 1, 'REG', '2026-09-09', 'DET', 'CHI'), "
+            "(2026, 1, 'REG', '2026-09-14', 'DAL', 'NYG'), "
+            "(2026, 2, 'REG', '2026-09-20', 'CHI', 'GB')"
         )
 
     scope = module._normalized_scope(
@@ -145,6 +156,6 @@ def test_candidate_game_receipt_accepts_a_manual_whole_week_scope(tmp_path):
     )
 
     assert module._candidate_game_rows(candidate, scope) == {
-        "2026_01_CHI_DET": 2,
-        "2026_01_DAL_NYG": 1,
+        "2026-09-09:CHI:DET": 2,
+        "2026-09-14:DAL:NYG": 1,
     }

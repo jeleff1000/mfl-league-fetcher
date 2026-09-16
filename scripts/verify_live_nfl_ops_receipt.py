@@ -66,6 +66,26 @@ def _weekly_filter(scope: dict[str, Any], *, alias: str = "") -> str:
     return " AND ".join(predicates)
 
 
+def _game_identity_sql(*, alias: str = "") -> str:
+    """Return the canonical weekly game identity carried by the live artifact.
+
+    The artifact deliberately keeps team/opponent/date facts, not an upstream
+    provider game-id column.  A date plus an unordered team pair is therefore
+    the stable game-level identity available on both the candidate and Fly.
+    """
+    prefix = f"{alias}." if alias else ""
+    return (
+        "CASE "
+        f"WHEN {prefix}game_date IS NULL "
+        f"OR NULLIF(TRIM({prefix}nfl_team), '') IS NULL "
+        f"OR NULLIF(TRIM({prefix}opponent_nfl_team), '') IS NULL "
+        "THEN NULL "
+        f"ELSE CAST({prefix}game_date AS VARCHAR) || ':' || "
+        f"LEAST(TRIM({prefix}nfl_team), TRIM({prefix}opponent_nfl_team)) || ':' || "
+        f"GREATEST(TRIM({prefix}nfl_team), TRIM({prefix}opponent_nfl_team)) END"
+    )
+
+
 def _candidate_game_rows(candidate: Path, scope: dict[str, Any]) -> dict[str, int]:
     """Read the exact promoted game set from the verified candidate artifact."""
     if not candidate.is_file():
@@ -75,13 +95,15 @@ def _candidate_game_rows(candidate: Path, scope: dict[str, Any]) -> dict[str, in
     with duckdb.connect(str(candidate), read_only=True) as connection:
         rows = connection.execute(
             f'''\
-            SELECT game_id, COUNT(*) AS rows
+            SELECT {_game_identity_sql()} AS game_key, COUNT(*) AS rows
             FROM nfl_historical."nfl_player_stats_all"
             WHERE {_weekly_filter(scope)}
-            GROUP BY game_id
-            ORDER BY game_id
+            GROUP BY game_key
+            ORDER BY game_key
             '''
         ).fetchall()
+    if any(not str(game_key or "").strip() for game_key, _row_count in rows):
+        raise FlyReceiptError("candidate artifact has rows without a canonical game identity")
     game_rows = {
         str(game_id).strip(): int(row_count or 0)
         for game_id, row_count in rows
@@ -127,27 +149,27 @@ def collect_fly_receipt(
     normalized = _normalized_scope(scope)
     weekly_rows = reader.query(
         f"""
-        SELECT game_id, COUNT(*) AS rows
+        SELECT {_game_identity_sql()} AS game_key, COUNT(*) AS rows
         FROM nfl_historical."nfl_player_stats_all"
         WHERE {_weekly_filter(normalized)}
-        GROUP BY game_id
-        ORDER BY game_id
+        GROUP BY game_key
+        ORDER BY game_key
         """,
         database="___ops",
     )
+    if any(not str(row.get("game_key", "")).strip() for row in weekly_rows):
+        raise FlyReceiptError("Fly weekly receipt has rows without a canonical game identity")
     observed_game_rows = {
-        str(row.get("game_id", "")).strip(): int(row.get("rows") or 0)
+        str(row.get("game_key", "")).strip(): int(row.get("rows") or 0)
         for row in weekly_rows
-        if str(row.get("game_id", "")).strip()
+        if str(row.get("game_key", "")).strip()
     }
-    expected_rows = expected_game_rows or {
-        game_id: None for game_id in normalized["game_ids"]
-    }
+    expected_rows = expected_game_rows or {}
     if not expected_rows:
-        raise FlyReceiptError("verification needs the candidate artifact or explicit finalized game IDs")
+        raise FlyReceiptError("verification needs exact candidate game identities")
     if set(observed_game_rows) != set(expected_rows):
         raise FlyReceiptError(
-            "Fly weekly game IDs do not exactly match the finalized refresh scope: "
+            "Fly weekly game identities do not exactly match the verified candidate: "
             f"expected={sorted(expected_rows)}, observed={sorted(observed_game_rows)}"
         )
     if any(rows <= 0 for rows in observed_game_rows.values()):
@@ -157,8 +179,6 @@ def collect_fly_receipt(
         for game_id in expected_rows
     ):
         raise FlyReceiptError("Fly weekly game row counts do not match the verified candidate artifact")
-    normalized["game_ids"] = sorted(expected_rows)
-
     aggregates: dict[str, dict[str, int]] = {}
     for table in ALL_AGGREGATES:
         coverage = _read_single(reader, _aggregate_coverage_sql(table, normalized))
@@ -177,7 +197,7 @@ def collect_fly_receipt(
     return {
         "scope": normalized,
         "weekly": {
-            "game_ids": sorted(observed_game_rows),
+            "game_keys": sorted(observed_game_rows),
             "rows": sum(observed_game_rows.values()),
         },
         "aggregates": aggregates,

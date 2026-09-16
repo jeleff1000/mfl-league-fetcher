@@ -168,3 +168,79 @@ career, and validator run passed 166 tests before two provider variants were add
 
 Actual UI verification remains unverified: the browser surface reported no
 connected browsers. Backend/manual canaries do not satisfy the UI criterion.
+## Yahoo recovery canary verified, 2026-09-16 12:34 UTC
+
+Public main revision: `372ee4e106c22cbd4a8a3353edf9d1fad1205dc8`.
+Manual run: https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35096470346
+COMMITTED bundle: `fleet-0c2397c55cda84e10acb0715b75a5563358cde17a416df2d72017629d283ef99`.
+Dispatch 12:32:56; refresh step 12:33:25–12:34:16; cache finalized 12:34:20.
+Manual dispatch-to-cache: 84 seconds; worker phases: 49.435 seconds.
+Server full-chain career aggregation: 4.4958 seconds. This is NOT UI-click evidence.
+
+Independent Fly checks for `the_league`:
+- Career games recovered from 12 to 2,532, exactly matching season totals.
+- All 37 franchise careers match season games, wins, losses, points and latest
+  manager/alias; zero discrepancies.
+- All 4,316 regular-season and 4,319 all-games player careers match persisted
+  weekly games, fantasy points, manager LAMAR and started-player clutch sums.
+  Zero discrepancies at 1e-5 tolerance. The first audit incorrectly summed
+  bench clutch; corrected audit follows the established started-player metric.
+- Historical rows and row fingerprints unchanged:
+  matchup 2940 / 11727621620591406241;
+  player_fantasy 186017 / 13727482781365112600;
+  draft 2577 / 12085463288980457930;
+  transactions 12512 / 14259586135160535248;
+  league_settings 15 / 11640897616840183947.
+- league_context fingerprint unchanged: 13149953313368572827; manager_overrides,
+  keeper_config, league_rules and standings_config remain empty.
+- Receipt downloaded: D:/temp/update-evidence-35096470346/yahoo_active_season_refresh.json.
+
+Additional confirmed open gap: `homepage_refresh._load_homepage_source_frames`
+still downloads skinny all-history matchup, draft, transaction and started-player
+rows to rebuild homepage outputs locally. Although bounded by league, it does
+not satisfy the no-local-history-hydration objective. The existing
+`homepage_summary.compute_homepage_frames` accepts a complete connection and is
+the reuse target; do not duplicate its formulas or declare this requirement done.
+
+ESPN canary now queued/running: `35096876781` for
+`tfl_of_extraordinary_gentleman`, same public main revision.
+## Sleeper verification and ESPN remaining failure
+
+Sleeper manual canary `35097064614` on public `372ee4e10` COMMITTED for `nyu_ffl`.
+Dispatch 12:39:06; worker 12:39:28–12:40:12; cache finalized 12:40:18 UTC.
+Manual dispatch-to-cache: 72 seconds. Processing phases: 42.855 seconds;
+server career rebuild: 3.0701 seconds. Not an actual UI-click canary.
+
+Independent Fly reconciliation:
+- 12 franchise careers, 1,400 career games; every franchise's games, wins,
+  losses, points and latest manager/alias matches its retained season summaries.
+- 1,686 regular-season and 1,689 all-games player careers match weekly games,
+  points, manager LAMAR and started-player clutch; zero mismatches at 1e-5.
+- All pre-2026 row counts and fingerprints unchanged:
+  matchup 1596 / 13524715644287174441;
+  player_fantasy 61442 / 7588907656652896125;
+  draft 1452 / 17688804873191818872;
+  transactions 9281 / 5272688981035236134;
+  league_settings 8 / 1549569747058823479.
+- league_context unchanged: 13373334383361378998. Empty user-configuration
+  tables remain empty.
+- Receipt: D:/temp/update-evidence-35097064614/sleeper_active_season_refresh.json.
+
+ESPN manual canary `35096876781` FAILED before publication on the same revision.
+The bonus-points failure no longer occurs. Preservation now rejects null
+`position_alltime_rank` for `00-0034160_2026_1`, Michael Dickson, position P.
+Persisted legacy rank is 7; shared position-rank mapping supports QB/RB/WR/TE/K/
+DEF/LB/DL/DB but no P source column. Do NOT blindly restore rank 7 or relax
+all rank validation. Next: prove the unsupported-position semantics with the
+actual shared rank function and distinguish legitimate non-applicability from
+missing supported-position source data.
+
+Additional audit finding: `optimal_lineup.position_rank` uses OPS for position
+all-time rank but still computes `alltime_ppg` from local active-year rows.
+That remains an open complete-history violation; successful career rollup
+checks do not validate all weekly NFL comparison fields.
+
+No workers from these three canaries remain running. No all-platform completion
+claim is justified. UI verification, all attempted-league recovery, multiplatform
+canary, exact Gray correction, full source-watermark reconciliation and the
+remaining audit items stay open.

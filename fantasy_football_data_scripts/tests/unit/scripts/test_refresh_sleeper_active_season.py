@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT / "scripts") not in sys.path:
@@ -27,6 +29,71 @@ class ChainReader:
             assert "WHERE db_name = 'mixed_league'" in sql
             return self.settings
         raise AssertionError(f"unexpected Fly query: {sql}")
+
+
+@pytest.mark.parametrize('previous', [None, 'old'])
+def test_context_only_onboarding_identity_reuses_import_history_discovery(tmp_path, monkeypatch, previous):
+    from refresh_sleeper_active_season import _build_context
+    from multi_league.data_fetchers.sleeper import sleeper_api_client
+
+    class Provider:
+        def get_league(self, league_id):
+            return {
+                'active': {'league_id':'active', 'season':'2026', 'previous_league_id':previous, 'name':'Provider Name'},
+                'old': {'league_id':'old', 'season':'2025', 'previous_league_id':None},
+            }[league_id]
+
+        def get_league_users(self, league_id):
+            assert league_id == 'active'
+            return [{'user_id':'u1', 'display_name':'Owner', 'metadata':{}}]
+
+        def get_league_rosters(self, league_id):
+            assert league_id == 'active'
+            return [{'roster_id':1, 'owner_id':'u1', 'players':[], 'settings':{}}]
+
+    monkeypatch.setattr(sleeper_api_client, 'SleeperAPIClient', Provider)
+    context = {'platform':'sleeper', 'league_id':'active', 'league_ids_json':None,
+               'league_name':'Saved Name', 'manager_name_overrides_json':'{"Owner":"Shared Alias"}'}
+    ctx, path, _, league = _build_context(
+        reader=ChainReader(context=context, settings=[]), db_name='mixed_league',
+        active_year=2026, work_dir=tmp_path,
+    )
+    assert ctx.league_id == 'active'
+    assert ctx.league_name == 'Saved Name'
+    assert ctx.manager_name_overrides == {'Owner':'Shared Alias'}
+    assert ctx.league_ids == ({'2026':'active'} if previous is None else {'2026':'active','2025':'old'})
+    assert league['league_id'] == 'active'
+    assert path.is_file()
+
+
+@pytest.mark.parametrize('broken', ['cycle', 'wrong_identity', 'missing_link', 'duplicate_season'])
+def test_shared_import_discovery_rejects_unprovable_chain(broken):
+    from multi_league.data_fetchers.sleeper.sleeper_context import discover_league_history
+
+    leagues = {
+        'new': {'league_id':'new', 'season':'2026', 'previous_league_id':'old'},
+        'old': {'league_id':'old', 'season':'2025', 'previous_league_id':None},
+    }
+    if broken == 'cycle':
+        leagues['old']['previous_league_id'] = 'new'
+    elif broken == 'wrong_identity':
+        leagues['old']['league_id'] = 'unrelated'
+    elif broken == 'missing_link':
+        leagues['old'] = {}
+    else:
+        leagues['old']['season'] = '2026'
+
+    class Provider:
+        calls = 0
+
+        def get_league(self, league_id):
+            self.calls += 1
+            if self.calls > 4:
+                raise AssertionError('unbounded renewal discovery')
+            return leagues[league_id]
+
+    with pytest.raises(ValueError, match='chain|identity|season'):
+        discover_league_history(Provider(), 'new', skip_empty_seasons=False)
 
 
 def test_sleeper_worker_excludes_other_platform_context_chain():

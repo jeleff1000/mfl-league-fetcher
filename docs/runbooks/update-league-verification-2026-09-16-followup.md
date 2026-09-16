@@ -187,3 +187,47 @@ all-time cases passed; 22 HTTP/fleet tests passed; expanded eight HTTP/caller
 tests passed. Ruff and git diff --check passed. Existing pandas fragmentation
 warnings remain. Production changes mirrored to root main without staging
 unrelated work. Deployment and retry evidence follow separately.
+
+## Rollover deployment and ESPN result
+
+Public main 6a51191b94c9fdde80c6c2d41cee5080ccd3e813 deployed via 35103595536.
+Image deployment-01M2N785XWN5GWFMRA6F9PW800; build context 7.14 MB, code only.
+Fly /ready healthy after deployment. No authenticated local Fly log access;
+the Fly MCP log call also reports no access token. Browser checks still return
+no browsers and getBrowser returns No browser is available.
+
+Live Draft Beer League retry 35103750383 COMMITTED and cache finalized.
+Dispatch 13:43:26, refresh 13:43:56-13:46:13, cache complete 13:46:18 UTC.
+172 seconds dispatch-to-cache (FAILS target); 136.284 seconds worker processing.
+Provider fetch 5.789, shared transformations 9.920, player/OPS cache 59.287,
+publication 49.110. Server careers 12.4589, homepage 25.1868. No transient
+publication retry occurred. These are manual metrics, not UI-visible latency.
+
+Independent post-publication Fly checks:
+- All seven historical/config fingerprints exactly match the recovery baseline.
+- 30 franchise careers reconcile games/wins/losses/seasons/latest aliases to
+  persisted season rows: 2374 games, zero mismatches (explicit null comparisons).
+- 2852 regular and 2855 all-games player careers reconcile weekly games/points/
+  manager LAMAR/started clutch with explicit null checks: zero mismatches.
+- Homepage has 30 managers, up to 18 seasons; data_year=2026, current-season
+  pickup null, all-time pickup still Justin Herbert. No stale season value copy.
+- Receipt D:/temp/update-evidence-35103750383/espn_active_season_refresh.json.
+
+## Sleeper onboarding-only context gap
+
+Agusta retry 35104260898 failed before fetch/publication in 2 seconds:
+Fly has no active Sleeper league ID. Scoped Fly read actually contains its
+onboarding ID 1389378435998052352, platform sleeper, but no league_ids_json
+and no league_settings rows. The worker ignored this saved identity.
+
+Fix: when no persisted year map exists for an explicitly Sleeper context,
+call the normal import discover_league_history metadata path. Do not supply
+a manual ID, discover by manager name, or fetch historical game data. Empty
+saved settings are allowed into provider fetch; fresh provider settings remain
+mandatory before enrichment. The shared discovery now rejects cycles, missing
+links, wrong returned identities, and nondecreasing/duplicate seasons.
+
+Six regression cases failed before fixes. 102 refresh/lineage tests now pass;
+Ruff passes. Live read-only discovery proves 2019-2026 chain in 1.345 seconds.
+Agusta's missing historical played data is NOT repaired by this metadata fix;
+weekly recovery must not be reported as a completed historical import.

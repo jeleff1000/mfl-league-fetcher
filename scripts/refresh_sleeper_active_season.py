@@ -271,13 +271,20 @@ def _build_context(
     """Create the active Sleeper context from Fly registry/context state."""
     from initial_import_v3 import _load_frontend_context_settings
     from multi_league.data_fetchers.sleeper.sleeper_api_client import SleeperAPIClient
-    from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext
+    from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext, discover_league_history
 
     frontend, known_league_ids = _load_persisted_sleeper_chain(
         reader,
         db_name=db_name,
         active_year=active_year,
     )
+    client = SleeperAPIClient()
+    if not known_league_ids and str(frontend.get("platform") or "").strip().lower() == "sleeper":
+        onboarding_id = str(frontend.get("league_id") or "").strip()
+        if onboarding_id:
+            # Some original imports persisted only the onboarding ID. Reuse
+            # import discovery for its metadata chain, not historical games.
+            known_league_ids = discover_league_history(client, onboarding_id, skip_empty_seasons=False)
     if active_league_id:
         saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
         if saved_active_id and saved_active_id != str(active_league_id).strip():
@@ -291,7 +298,6 @@ def _build_context(
     seed_league_id = max(predecessors)[1] if predecessors else None
     if seed_league_id is None and not known_league_ids.get(str(active_year)):
         raise RuntimeError(f"Fly has no active Sleeper league ID for {db_name}")
-    client = SleeperAPIClient()
     renewal = _resolve_active_renewal(
         client,
         seed_league_id=seed_league_id,
@@ -613,8 +619,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         timer.mark("source_snapshot")
         receipt["base_generation"] = base_generation
-        if source_frames["league_context"].empty or source_frames["league_settings"].empty:
-            raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
+        # Context is required by the shared segment resolver. Settings can be
+        # absent for a first played season; the normal provider fetch below
+        # must supply and validate them before any enrichment/publication.
         active_segment = _active_update_segment_from_source_frames(
             source_frames,
             db_name=args.db,

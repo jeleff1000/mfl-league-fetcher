@@ -718,14 +718,24 @@ def discover_league_history(
         # Returns: {'2024': '1131974495503253504', '2025': '1257088277819691008'}
     """
     league_ids = {}
-    current_id = league_id
+    current_id = str(league_id)
+    seen_ids: set[str] = set()
+    newer_season: int | None = None
 
     while current_id:
+        if current_id in seen_ids:
+            raise ValueError("Sleeper renewal chain contains a cycle")
+        seen_ids.add(current_id)
         league = client.get_league(current_id)
-        if not league:
-            break
+        if not isinstance(league, dict) or str(league.get("league_id") or "") != current_id:
+            raise ValueError(f"Sleeper renewal chain identity is missing or mismatched: {current_id}")
 
         season = league.get("season")
+        if not str(season or "").isdigit():
+            raise ValueError(f"Sleeper renewal chain omitted a valid season: {current_id}")
+        if newer_season is not None and int(season) >= newer_season:
+            raise ValueError("Sleeper renewal chain seasons are not strictly decreasing")
+        newer_season = int(season)
         if season:
             # Check if season has actual data (skip empty future seasons)
             if skip_empty_seasons:
@@ -738,7 +748,8 @@ def discover_league_history(
                 league_ids[str(season)] = current_id
 
         # Follow the chain backwards
-        current_id = league.get("previous_league_id")
+        previous_id = league.get("previous_league_id")
+        current_id = str(previous_id) if previous_id else ""
 
     return league_ids
 

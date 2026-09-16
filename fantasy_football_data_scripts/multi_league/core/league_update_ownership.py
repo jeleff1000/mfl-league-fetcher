@@ -110,6 +110,13 @@ _SOURCE_FACT_TABLES = frozenset({
 # speed.
 _FAST_SOURCE_FINGERPRINT_TABLES = frozenset()
 
+# Fly serializes timestamps in JSON without trailing fractional zeroes, while
+# DuckDB reads the same values back as Timestamp objects at microsecond
+# precision. These are system metadata fields on frontend-owned settings, not
+# user-entered text, so compare their instants rather than their transport
+# spelling.
+_CONFIGURATION_TIMESTAMP_COLUMNS = frozenset({"created_at", "updated_at", "applied_at"})
+
 _CAREER_IDENTITIES: dict[str, tuple[str, ...]] = {
     "draft_manager_career": ("franchise_id", "manager", "draft_category"),
     "draft_player_career": ("player", "position", "draft_category"),
@@ -358,7 +365,7 @@ def _configuration_frame_fingerprint(frame: pd.DataFrame) -> str:
     values). They are tiny, so retaining the prior scalar canonicalization is
     safer than broadening the fast source-fact normalization contract.
     """
-    def canonical_value(value: Any) -> str:
+    def canonical_value(value: Any, *, timestamp_column: bool) -> str:
         if value is None or value is pd.NA:
             return "<NULL>"
         try:
@@ -366,6 +373,21 @@ def _configuration_frame_fingerprint(frame: pd.DataFrame) -> str:
                 return "<NULL>"
         except (TypeError, ValueError):
             pass
+        if timestamp_column:
+            try:
+                timestamp = pd.Timestamp(value)
+                if pd.notna(timestamp):
+                    if timestamp.tzinfo is not None:
+                        timestamp = timestamp.tz_convert("UTC")
+                        suffix = "+00:00"
+                    else:
+                        suffix = ""
+                    base = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                    if timestamp.microsecond:
+                        return f"{base}.{timestamp.microsecond:06d}".rstrip("0") + suffix
+                    return base + suffix
+            except (TypeError, ValueError, OverflowError):
+                pass
         if isinstance(value, Real) and not isinstance(value, bool):
             numeric = float(value)
             if numeric.is_integer():
@@ -373,7 +395,18 @@ def _configuration_frame_fingerprint(frame: pd.DataFrame) -> str:
             return format(numeric, ".17g")
         return str(value)
 
-    normalized = frame.map(canonical_value).sort_index(axis=1)
+    normalized = pd.DataFrame(
+        {
+            column: frame[column].map(
+                lambda value, is_timestamp=column in _CONFIGURATION_TIMESTAMP_COLUMNS: canonical_value(
+                    value,
+                    timestamp_column=is_timestamp,
+                )
+            )
+            for column in frame.columns
+        },
+        index=frame.index,
+    ).sort_index(axis=1)
     records = normalized.to_dict("records")
     records.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
     return json.dumps(records, sort_keys=True, separators=(",", ":"))

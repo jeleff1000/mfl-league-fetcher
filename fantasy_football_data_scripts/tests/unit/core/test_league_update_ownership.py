@@ -293,6 +293,26 @@ def test_user_configuration_preservation_uses_the_legacy_canonical_comparison(mo
     assert receipt["user_configuration_preserved"] is True
 
 
+def test_user_configuration_preservation_normalizes_equivalent_system_timestamps():
+    """Fly JSON and DuckDB timestamps can differ only by trailing precision."""
+    before = pd.DataFrame(
+        [{
+            "id": 1,
+            "db_name": "afi_data",
+            "operation": "rename",
+            "from_name": "Elizabeth",
+            "to_name": "Elizabeth + Joe",
+            "applied_at": "2026-09-15 03:06:43.85424",
+        }]
+    )
+    after = before.copy()
+    after["applied_at"] = pd.to_datetime(after["applied_at"])
+
+    assert ownership._configuration_frame_fingerprint(before) == ownership._configuration_frame_fingerprint(after)
+    changed = after.assign(to_name="Provider Name")
+    assert ownership._configuration_frame_fingerprint(before) != ownership._configuration_frame_fingerprint(changed)
+
+
 def test_small_source_fact_preservation_uses_the_legacy_canonical_comparison(monkeypatch):
     frame = pd.DataFrame({"db_name": ["league_a"], "year": [2025], "uses_median": [True]})
 

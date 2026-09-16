@@ -578,6 +578,32 @@ No workers from these three canaries remain running. No all-platform completion
 claim is justified. UI verification, all attempted-league recovery, multiplatform
 canary, exact Gray correction, full source-watermark reconciliation and the
 remaining audit items stay open.
+
+## Fly corruption recovery and post-snapshot import preservation
+
+The live `league_settings` checksum failure was isolated to a damaged physical
+block. Validated source snapshot `vs_PAq3Q9kRqKnfnAJNXyOb` predates 33 leagues
+that were imported or updated afterward. Preservation snapshot
+`vs_Avgke1o8gO9fwXw7p9bw` is created and healthy. The guarded settings swap
+preserved all 215 post-snapshot settings rows: live remains 6,255 rows, 6,255
+distinct `(db_name, year)` keys, and 1,782 leagues. The generation ledger's
+latest publication is 2026-09-16 20:04:35 UTC, before the independently captured
+overlay at 21:03:10 UTC. No interim league loss is observed.
+
+Five derived tables share the damaged block: `homepage_manager_rankings`,
+`matchup_h2h_career`, `player_fantasy_season`, `player_fantasy_season_all`, and
+`standings_by_year`. An isolated restore proved all five readable and key-unique
+in the source snapshot. Recovery now exports those exact tables, overlays every
+post-snapshot league from live at each atomic swap, rejects a stale overlay
+cohort or row count, and rebuilds changed leagues through the existing shared
+full-chain aggregators. A post-commit checkpoint failure is reported explicitly
+instead of becoming an ambiguous 500; same-run retries are idempotent.
+
+Local evidence: 62/62 DuckDB server integration tests, 3/3 recovery-workflow
+contract tests, YAML parse, Ruff, compileall, and diff checks pass. Production
+recovery has not yet run. The live source tables remain intact, but the five
+derived tables still require the guarded recovery before update canaries resume.
+
 ## Shared historical PPG and rank-applicability corrections
 
 Regression evidence: with a single hydrated week scoring 18.76, the old shared

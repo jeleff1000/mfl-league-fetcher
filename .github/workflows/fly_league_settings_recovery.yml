@@ -37,6 +37,11 @@ on:
         required: true
         default: false
         type: boolean
+      recover_derived_rollups:
+        description: Restore the five validated derived tables and rebuild changed leagues from persisted sources
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -80,6 +85,7 @@ jobs:
           EXPECTED_OVERLAY_LEAGUES: ${{ inputs.expected_overlay_leagues }}
           EXPECTED_OVERLAY_ROWS: ${{ inputs.expected_overlay_rows }}
           APPLY_RECOVERY: ${{ inputs.apply_recovery }}
+          RECOVER_DERIVED_ROLLUPS: ${{ inputs.recover_derived_rollups }}
         run: |
           set -euo pipefail
           for value in "$SNAPSHOT_ID" "$PRESERVATION_SNAPSHOT_ID"; do
@@ -179,6 +185,19 @@ jobs:
           quoted = ",".join("'" + name.replace("'", "''") + "'" for name in names)
           overlay_rows = 0
           overlay_keys = 0
+          derived_keys = {
+              "homepage_manager_rankings": ("db_name", "franchise_id"),
+              "matchup_h2h_career": (
+                  "db_name", "franchise_id", "opponent_franchise_id",
+              ),
+              "player_fantasy_season": ("db_name", "NFL_player_id", "year"),
+              "player_fantasy_season_all": ("db_name", "NFL_player_id", "year"),
+              "standings_by_year": ("db_name", "franchise_id", "year"),
+          }
+          derived_overlay = {
+              table: {"rows": 0, "keys": 0}
+              for table in derived_keys
+          } if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true" else {}
           if names:
               scope = query(
                   "___leagues",
@@ -187,6 +206,26 @@ jobs:
               )[0]
               overlay_rows = int(scope["rows"])
               overlay_keys = int(scope["keys"])
+              if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true":
+                  for table, key_columns in derived_keys.items():
+                      key_sql = ", ".join(key_columns)
+                      table_scope = query(
+                          "___leagues",
+                          "SELECT COUNT(*) AS rows, "
+                          f"COUNT(DISTINCT ({key_sql})) AS keys "
+                          f"FROM public.{table} WHERE db_name IN ({quoted})",
+                      )[0]
+                      table_rows = int(table_scope["rows"])
+                      table_keys = int(table_scope["keys"])
+                      if table_rows != table_keys:
+                          raise RuntimeError(
+                              f"live {table} overlay has duplicate keys: "
+                              f"rows={table_rows}, keys={table_keys}"
+                          )
+                      derived_overlay[table] = {
+                          "rows": table_rows,
+                          "keys": table_keys,
+                      }
           expected_leagues = int(os.environ["EXPECTED_OVERLAY_LEAGUES"])
           expected_rows = int(os.environ["EXPECTED_OVERLAY_ROWS"])
           if len(names) != expected_leagues or overlay_rows != expected_rows:
@@ -203,6 +242,7 @@ jobs:
               "names": names,
               "overlay_rows": overlay_rows,
               "overlay_keys": overlay_keys,
+              "derived_overlay": derived_overlay,
           }
           Path("recovery-overlay-manifest.json").write_text(
               json.dumps(manifest, sort_keys=True), encoding="utf-8"
@@ -276,6 +316,83 @@ jobs:
               - int(snapshot_overlay_rows)
               + int(overlay_manifest["overlay_rows"])
           )
+          derived_bundles = {}
+          if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true":
+              derived_keys = {
+                  "homepage_manager_rankings": ("db_name", "franchise_id"),
+                  "matchup_h2h_career": (
+                      "db_name", "franchise_id", "opponent_franchise_id",
+                  ),
+                  "player_fantasy_season": ("db_name", "NFL_player_id", "year"),
+                  "player_fantasy_season_all": ("db_name", "NFL_player_id", "year"),
+                  "standings_by_year": ("db_name", "franchise_id", "year"),
+              }
+              for table, key_columns in derived_keys.items():
+                  bundle_path = Path(f"/tmp/{table}_snapshot.duckdb")
+                  bundle_path.unlink(missing_ok=True)
+                  source = duckdb.connect(str(source_path), read_only=True)
+                  ddl_row = source.execute(
+                      "SELECT sql FROM duckdb_tables() "
+                      "WHERE database_name = '___leagues' AND schema_name = 'public' "
+                      "AND table_name = ?",
+                      [table],
+                  ).fetchone()
+                  if not ddl_row or not ddl_row[0]:
+                      raise RuntimeError(f"snapshot has no {table} DDL")
+                  table_ddl = str(ddl_row[0])
+                  quoted_keys = ", ".join('"' + key.replace('"', '""') + '"' for key in key_columns)
+                  expected = source.execute(
+                      f'SELECT COUNT(*), COUNT(*) - COUNT(DISTINCT ({quoted_keys})) '
+                      f'FROM public."{table}"'
+                  ).fetchone()
+                  snapshot_overlay_rows = 0
+                  overlay_names = list(overlay_manifest["names"])
+                  if overlay_names:
+                      placeholders = ",".join("?" for _ in overlay_names)
+                      snapshot_overlay_rows = int(source.execute(
+                          f'SELECT COUNT(*) FROM public."{table}" '
+                          f'WHERE db_name IN ({placeholders})',
+                          overlay_names,
+                      ).fetchone()[0])
+                  source.close()
+                  if int(expected[0]) <= 0 or int(expected[1]) != 0:
+                      raise RuntimeError(
+                          f"snapshot {table} has invalid rows/keys: {expected!r}"
+                      )
+
+                  bundle = duckdb.connect(str(bundle_path))
+                  bundle.execute("CREATE SCHEMA public")
+                  bundle.execute(table_ddl)
+                  bundle.execute(f"ATTACH '{source_path.as_posix()}' AS snapshot (READ_ONLY)")
+                  bundle.execute(
+                      f'INSERT INTO public."{table}" BY NAME '
+                      f'SELECT * FROM snapshot.public."{table}"'
+                  )
+                  bundle.execute("DETACH snapshot")
+                  verified = bundle.execute(
+                      f'SELECT COUNT(*), COUNT(*) - COUNT(DISTINCT ({quoted_keys})) '
+                      f'FROM public."{table}"'
+                  ).fetchone()
+                  bundle.execute("CHECKPOINT")
+                  bundle.close()
+                  if verified != expected:
+                      raise RuntimeError(
+                          f"snapshot {table} export mismatch: expected={expected!r}, actual={verified!r}"
+                      )
+                  derived_bundles[table] = {
+                      "rows": int(verified[0]),
+                      "sha256": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+                      "bytes": bundle_path.stat().st_size,
+                      "snapshot_overlay_rows": snapshot_overlay_rows,
+                      "live_overlay_rows": int(
+                          overlay_manifest["derived_overlay"][table]["rows"]
+                      ),
+                      "calculated_final_rows": (
+                          int(verified[0])
+                          - snapshot_overlay_rows
+                          + int(overlay_manifest["derived_overlay"][table]["rows"])
+                      ),
+                  }
           print(json.dumps({
               "checks": results,
               "bundle_rows": exported[0],
@@ -283,6 +400,7 @@ jobs:
               "bundle_bytes": output_path.stat().st_size,
               "snapshot_overlay_rows": snapshot_overlay_rows,
               "calculated_final_rows": calculated_final_rows,
+              "derived_bundles": derived_bundles,
           }, sort_keys=True))
           PY
           recovery_machine_name="wkupd-recover-${GITHUB_RUN_ID}"
@@ -315,6 +433,12 @@ jobs:
             -C "python /tmp/snapshot_export.py" | tee snapshot-export.log
           flyctl ssh sftp get /tmp/league_settings_snapshot.duckdb \
             league_settings_snapshot.duckdb --app "$FLY_APP" --machine "$recovery_machine_id"
+          if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
+            for table in homepage_manager_rankings matchup_h2h_career player_fantasy_season player_fantasy_season_all standings_by_year; do
+              flyctl ssh sftp get "/tmp/${table}_snapshot.duckdb" \
+                "${table}_snapshot.duckdb" --app "$FLY_APP" --machine "$recovery_machine_id"
+            done
+          fi
 
           bundle_sha256="$(sha256sum league_settings_snapshot.duckdb | awk '{print $1}')"
           bundle_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r '.bundle_rows')"
@@ -323,6 +447,15 @@ jobs:
           test "$bundle_sha256" = "$logged_sha256"
           test "$bundle_rows" -gt 0
           test "$calculated_final_rows" -gt 0
+          if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
+            for table in homepage_manager_rankings matchup_h2h_career player_fantasy_season player_fantasy_season_all standings_by_year; do
+              expected_sha="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].sha256')"
+              expected_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].rows')"
+              actual_sha="$(sha256sum "${table}_snapshot.duckdb" | awk '{print $1}')"
+              test "$expected_sha" = "$actual_sha"
+              test "$expected_rows" -gt 0
+            done
+          fi
           if [ "$EXPECTED_FINAL_ROWS" != "auto" ]; then
             test "$EXPECTED_FINAL_ROWS" = "$calculated_final_rows"
           fi
@@ -350,6 +483,48 @@ jobs:
             '.status == "replaced" and .rows == $rows and .distinct_keys == $rows' \
             recovery-response.json >/dev/null
 
+          if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
+            for table in homepage_manager_rankings matchup_h2h_career player_fantasy_season player_fantasy_season_all standings_by_year; do
+              table_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].calculated_final_rows')"
+              table_overlay_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].live_overlay_rows')"
+              table_sha="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].sha256')"
+              curl --fail-with-body --silent --show-error \
+                -X POST "${DATABASE_SERVER_URL%/}/replace-canonical-table" \
+                -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
+                -H "X-Db-Name: ___leagues" \
+                -H "X-Table-Name: ${table}" \
+                -H "X-Expected-Rows: ${table_rows}" \
+                -H "X-Content-Sha256: ${table_sha}" \
+                -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
+                -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
+                -H "X-Expected-Overlay-Rows: ${table_overlay_rows}" \
+                -F "file=@${table}_snapshot.duckdb;type=application/octet-stream" \
+                | tee "recovery-response-${table}.json"
+              jq -e --arg table "$table" --argjson rows "$table_rows" \
+                --argjson overlay_leagues "$EXPECTED_OVERLAY_LEAGUES" \
+                --argjson overlay_rows "$table_overlay_rows" \
+                '.status == "replaced" and .table == $table and .rows == $rows and
+                 .distinct_keys == $rows and .overlay_leagues == $overlay_leagues and
+                 .overlay_rows == $overlay_rows' \
+                "recovery-response-${table}.json" >/dev/null
+            done
+
+            recovery_run_id="fly-derived-recovery-${GITHUB_RUN_ID}"
+            jq -r '.names[]' recovery-overlay-manifest.json | while IFS= read -r db_name; do
+              rebuild_body="$(jq -cn --arg db "$db_name" --arg run "$recovery_run_id" \
+                '{db_name:$db,run_id:$run}')"
+              curl --fail-with-body --silent --show-error \
+                -X POST "${DATABASE_SERVER_URL%/}/rebuild-league-derived" \
+                -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "$rebuild_body" \
+                | tee "derived-rebuild-${db_name}.json"
+              jq -e --arg db "$db_name" \
+                '(.status == "COMMITTED" or .status == "ALREADY_COMMITTED") and .db_name == $db' \
+                "derived-rebuild-${db_name}.json" >/dev/null
+            done
+          fi
+
           query_body="$(jq -cn '{database:"___leagues",sql:"SELECT COUNT(*) AS rows, COUNT(DISTINCT (db_name, year)) AS distinct_keys, MAX(year) AS max_year FROM public.league_settings"}')"
           curl --fail-with-body --silent --show-error \
             -X POST "${DATABASE_SERVER_URL%/}/query" \
@@ -358,6 +533,65 @@ jobs:
             --data "$query_body" | tee recovery-readback.json
           jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
             '.[0].rows == $rows and .[0].distinct_keys == $rows' recovery-readback.json >/dev/null
+
+          if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
+            cat > verify_recovered_rollups.py <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          server = os.environ["DATABASE_SERVER_URL"].rstrip("/")
+          token = os.environ["DATABASE_READ_TOKEN"]
+          tables = [
+              "homepage_manager_rankings",
+              "matchup_h2h_career",
+              "player_fantasy_season",
+              "player_fantasy_season_all",
+              "standings_by_year",
+          ]
+
+          def query(sql):
+              request = urllib.request.Request(
+                  f"{server}/query",
+                  data=json.dumps({"database": "___leagues", "sql": sql}).encode(),
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  return json.load(response)
+
+          result = {}
+          for table in tables:
+              columns = query(
+                  "SELECT column_name FROM information_schema.columns "
+                  "WHERE table_catalog='___leagues' AND table_schema='public' "
+                  f"AND table_name='{table}' ORDER BY ordinal_position"
+              )
+              quoted = ", ".join(
+                  '"' + row["column_name"].replace('"', '""') + '"' for row in columns
+              )
+              row = query(
+                  f'SELECT COUNT(*) AS rows, BIT_XOR(hash({quoted})) AS digest '
+                  f'FROM public."{table}"'
+              )[0]
+              if int(row["rows"]) <= 0 or row["digest"] is None:
+                  raise RuntimeError(f"recovered table is empty or unreadable: {table} {row}")
+              result[table] = row
+          print(json.dumps(result, sort_keys=True))
+          PY
+            python verify_recovered_rollups.py | tee derived-recovery-readback.json
+
+            checkpoint_body='{"database":"___leagues","sql":"CHECKPOINT"}'
+            curl --fail-with-body --silent --show-error \
+              -X POST "${DATABASE_SERVER_URL%/}/query-rw" \
+              -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$checkpoint_body" \
+              | tee derived-recovery-checkpoint.json
+          fi
 
           trap - EXIT
           cleanup

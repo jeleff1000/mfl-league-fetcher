@@ -1016,6 +1016,192 @@ def test_replace_canonical_table_swaps_only_allowlisted_table(data_dir, client):
     db_mod.init_pool()
 
 
+def test_replace_canonical_table_allows_verified_derived_recovery(data_dir, client):
+    import db as db_mod
+
+    db_mod.close_all()
+    target = data_dir / "___leagues.duckdb"
+    conn = duckdb.connect(str(target))
+    conn.execute("DROP TABLE IF EXISTS public.homepage_manager_rankings")
+    conn.execute(
+        "CREATE TABLE public.homepage_manager_rankings "
+        "(db_name VARCHAR NOT NULL, franchise_id VARCHAR NOT NULL, wins INTEGER, "
+        "PRIMARY KEY (db_name, franchise_id))"
+    )
+    conn.execute(
+        "INSERT INTO public.homepage_manager_rankings VALUES ('old', 'old-1', 1)"
+    )
+    conn.close()
+    db_mod.init_pool()
+
+    bundle = data_dir / "homepage_rankings_recovery.duckdb"
+    incoming = duckdb.connect(str(bundle))
+    incoming.execute("CREATE SCHEMA public")
+    incoming.execute(
+        "CREATE TABLE public.homepage_manager_rankings "
+        "(db_name VARCHAR NOT NULL, franchise_id VARCHAR NOT NULL, wins INTEGER, "
+        "PRIMARY KEY (db_name, franchise_id))"
+    )
+    incoming.execute(
+        "INSERT INTO public.homepage_manager_rankings VALUES "
+        "('alpha', 'a-1', 3), ('beta', 'b-1', 4)"
+    )
+    incoming.close()
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "___leagues",
+                "x-table-name": "homepage_manager_rankings",
+                "x-expected-rows": "2",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["rows"] == 2
+    rows = client.post(
+        "/query",
+        json={
+            "sql": "SELECT db_name, franchise_id, wins "
+            "FROM public.homepage_manager_rankings ORDER BY db_name"
+        },
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert rows.status_code == 200
+    assert rows.json() == [
+        {"db_name": "alpha", "franchise_id": "a-1", "wins": 3},
+        {"db_name": "beta", "franchise_id": "b-1", "wins": 4},
+    ]
+
+
+def test_replace_derived_table_preserves_leagues_published_after_snapshot(data_dir, client):
+    import db as db_mod
+
+    db_mod.close_all()
+    target = data_dir / "___leagues.duckdb"
+    conn = duckdb.connect(str(target))
+    conn.execute("DROP TABLE IF EXISTS public.homepage_manager_rankings")
+    conn.execute(
+        "CREATE TABLE public.homepage_manager_rankings "
+        "(db_name VARCHAR NOT NULL, franchise_id VARCHAR NOT NULL, wins INTEGER, "
+        "PRIMARY KEY (db_name, franchise_id))"
+    )
+    conn.execute(
+        "INSERT INTO public.homepage_manager_rankings VALUES "
+        "('alpha', 'a-1', 30), ('gamma', 'g-1', 40)"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_context "
+        "(db_name VARCHAR, updated_at TIMESTAMP)"
+    )
+    conn.execute(
+        "INSERT INTO public.league_context VALUES "
+        "('alpha', TIMESTAMP '2026-09-16 01:00:00'), "
+        "('gamma', TIMESTAMP '2026-09-16 02:00:00'), "
+        "('beta', TIMESTAMP '2026-09-14 00:00:00')"
+    )
+    conn.close()
+    db_mod.init_pool()
+
+    bundle = data_dir / "homepage_rankings_snapshot_bundle.duckdb"
+    incoming = duckdb.connect(str(bundle))
+    incoming.execute("CREATE SCHEMA public")
+    incoming.execute(
+        "CREATE TABLE public.homepage_manager_rankings "
+        "(db_name VARCHAR NOT NULL, franchise_id VARCHAR NOT NULL, wins INTEGER, "
+        "PRIMARY KEY (db_name, franchise_id))"
+    )
+    incoming.execute(
+        "INSERT INTO public.homepage_manager_rankings VALUES "
+        "('alpha', 'a-1', 3), ('beta', 'b-1', 4)"
+    )
+    incoming.close()
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "___leagues",
+                "x-table-name": "homepage_manager_rankings",
+                "x-expected-rows": "3",
+                "x-recovery-since": "2026-09-15T21:18:28Z",
+                "x-expected-overlay-leagues": "2",
+                "x-expected-overlay-rows": "2",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overlay_leagues"] == 2
+    assert resp.json()["overlay_rows"] == 2
+    rows = client.post(
+        "/query",
+        json={
+            "sql": "SELECT db_name, franchise_id, wins "
+            "FROM public.homepage_manager_rankings ORDER BY db_name"
+        },
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert rows.status_code == 200
+    assert rows.json() == [
+        {"db_name": "alpha", "franchise_id": "a-1", "wins": 30},
+        {"db_name": "beta", "franchise_id": "b-1", "wins": 4},
+        {"db_name": "gamma", "franchise_id": "g-1", "wins": 40},
+    ]
+
+
+def test_derived_recovery_retry_is_idempotent(data_dir, client):
+    import db as db_mod
+    import main as main_mod
+
+    db_mod.close_all()
+    database_path = data_dir / "___leagues.duckdb"
+    conn = duckdb.connect(str(database_path))
+    conn.execute("CREATE SCHEMA IF NOT EXISTS merge_admin")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS merge_admin.league_publish_generations ("
+        "db_name VARCHAR PRIMARY KEY, generation BIGINT NOT NULL, lane VARCHAR, "
+        "run_id VARCHAR, updated_at TIMESTAMP)"
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO merge_admin.league_publish_generations "
+        "VALUES ('alpha', 7, 'derived_recovery', 'repair-run', current_timestamp)"
+    )
+    conn.close()
+
+    result = main_mod._rebuild_league_derived_from_sources(
+        database_path,
+        db_name="alpha",
+        run_id="repair-run",
+    )
+
+    assert result == {
+        "status": "ALREADY_COMMITTED",
+        "db_name": "alpha",
+        "generation": 7,
+        "run_id": "repair-run",
+        "checkpointed": True,
+    }
+
+
+def test_checkpoint_failure_is_reported_without_hiding_committed_state(client):
+    import main as main_mod
+
+    class BrokenCheckpoint:
+        def execute(self, sql):
+            assert sql == "CHECKPOINT"
+            raise OSError("checkpoint storage failure")
+
+    assert main_mod._checkpoint_result(BrokenCheckpoint()) == (
+        False,
+        "checkpoint storage failure",
+    )
+
+
 @pytest.mark.parametrize(
     ("bundle_options", "expected_detail"),
     [

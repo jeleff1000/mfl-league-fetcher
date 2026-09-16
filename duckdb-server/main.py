@@ -1529,17 +1529,35 @@ async def server_state():
 # artifact that has outgrown the legacy 5 GiB cap.
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_FULL_DATABASE_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
 MAX_CANONICAL_TABLE_REPLACEMENT_BYTES = int(
-    os.environ.get("MAX_CANONICAL_TABLE_REPLACEMENT_BYTES", str(512 * 1024 * 1024))
+    os.environ.get("MAX_CANONICAL_TABLE_REPLACEMENT_BYTES", str(3 * 1024 * 1024 * 1024))
 )
 _FILE_PARAM = File(...)
 
 _CANONICAL_TABLE_REPLACEMENTS = {
     ("___leagues", "league_settings"): ("db_name", "year"),
+    ("___leagues", "homepage_manager_rankings"): ("db_name", "franchise_id"),
+    ("___leagues", "matchup_h2h_career"): (
+        "db_name",
+        "franchise_id",
+        "opponent_franchise_id",
+    ),
+    ("___leagues", "player_fantasy_season"): ("db_name", "NFL_player_id", "year"),
+    ("___leagues", "player_fantasy_season_all"): ("db_name", "NFL_player_id", "year"),
+    ("___leagues", "standings_by_year"): ("db_name", "franchise_id", "year"),
 }
 
 
 def _quote_identifier(value: str) -> str:
     return '"' + str(value).replace('"', '""') + '"'
+
+
+def _checkpoint_result(conn) -> tuple[bool, str | None]:
+    """Checkpoint without turning a committed write into an ambiguous failure."""
+    try:
+        conn.execute("CHECKPOINT")
+    except Exception as exc:
+        return False, str(exc)
+    return True, None
 
 
 def _replace_canonical_table(
@@ -1764,7 +1782,7 @@ def _replace_canonical_table(
                 "post-replacement validation failed: "
                 f"rows={final_rows}, distinct_keys={final_distinct}, expected={expected_rows}"
             )
-        conn.execute("CHECKPOINT")
+        checkpointed, checkpoint_error = _checkpoint_result(conn)
         return {
             "status": "replaced",
             "database": database_name,
@@ -1774,6 +1792,8 @@ def _replace_canonical_table(
             "snapshot_rows": incoming_rows,
             "overlay_leagues": len(overlay_names),
             "overlay_rows": overlay_rows,
+            "checkpointed": checkpointed,
+            "checkpoint_error": checkpoint_error,
         }
     finally:
         if conn is not None:
@@ -1783,6 +1803,144 @@ def _replace_canonical_table(
             with suppress(Exception):
                 conn.execute(f"DROP TABLE IF EXISTS {replacement_ref}")
             conn.close()
+
+
+def _rebuild_league_derived_from_sources(
+    database_path: Path,
+    *,
+    db_name: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Rebuild one league's canonical derived outputs from persisted source facts.
+
+    This is an admin recovery primitive for a damaged derived table, not an
+    alternate import path. It calls the same complete-chain aggregators used by
+    fleet publication and never fetches provider data or rewrites source facts.
+    ``run_id`` is persisted in the normal generation ledger so a retry after an
+    ambiguous HTTP response is idempotent.
+    """
+    if not _DB_NAME_PATTERN.fullmatch(db_name):
+        raise ValueError("invalid league database name")
+    if not run_id or len(run_id) > 200:
+        raise ValueError("run_id is required and must be at most 200 characters")
+
+    conn = db.connect_database(
+        database_path,
+        data_dir=db.get_data_dir(),
+        threads=WRITE_DUCKDB_THREADS,
+    )
+    committed = False
+    try:
+        fleet_merge.ensure_generation_tables(conn)
+        prior = conn.execute(
+            "SELECT generation, lane, run_id FROM merge_admin.league_publish_generations "
+            "WHERE db_name = ?",
+            [db_name],
+        ).fetchone()
+        if prior and str(prior[1] or "") == "derived_recovery" and str(prior[2] or "") == run_id:
+            return {
+                "status": "ALREADY_COMMITTED",
+                "db_name": db_name,
+                "generation": int(prior[0]),
+                "run_id": run_id,
+                "checkpointed": True,
+            }
+
+        from multi_league.transformations.aggregation.aggregate_standings import (
+            aggregate_standings,
+        )
+        from multi_league.transformations.aggregation.aggregation_utils import (
+            aggregate_career_rollups,
+            aggregate_complete_chain_season_rollups,
+            aggregate_homepage_rollups,
+        )
+
+        source_counts = {
+            table: int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
+                    [db_name],
+                ).fetchone()[0]
+            )
+            for table in ("matchup", "player_fantasy", "league_settings")
+        }
+        if any(source_counts[table] <= 0 for table in source_counts):
+            raise ValueError(
+                f"cannot rebuild {db_name}: required persisted source facts are missing {source_counts}"
+            )
+        years = [
+            int(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT TRY_CAST(year AS INTEGER) FROM public.matchup "
+                "WHERE db_name = ? AND TRY_CAST(year AS INTEGER) IS NOT NULL ORDER BY 1",
+                [db_name],
+            ).fetchall()
+        ]
+        if not years:
+            raise ValueError(f"cannot rebuild {db_name}: matchup history has no seasons")
+
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            season_rollups = aggregate_complete_chain_season_rollups(conn, db_name)
+            career_rollups = aggregate_career_rollups(conn, db_name)
+            aggregate_standings(conn, db_name, years)
+            homepage_rollups = aggregate_homepage_rollups(conn, db_name)
+            target_counts = {
+                table: int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
+                        [db_name],
+                    ).fetchone()[0]
+                )
+                for table in (
+                    "homepage_manager_rankings",
+                    "matchup_h2h_career",
+                    "player_fantasy_season",
+                    "player_fantasy_season_all",
+                    "standings_by_year",
+                )
+            }
+            empty_targets = sorted(table for table, count in target_counts.items() if count <= 0)
+            if empty_targets:
+                raise RuntimeError(
+                    f"derived recovery produced empty required tables for {db_name}: {empty_targets}"
+                )
+            fleet_merge.bump_generations(
+                conn,
+                [db_name],
+                lane="derived_recovery",
+                run_id=run_id,
+            )
+            generation = fleet_merge.current_generations(conn, [db_name])[db_name]
+            conn.execute("COMMIT")
+            committed = True
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+        # The publication is already committed. Return an explicit durable
+        # state instead of converting a post-commit maintenance failure into
+        # an ambiguous HTTP 500 that callers might blindly retry.
+        checkpointed, checkpoint_error = _checkpoint_result(conn)
+        return {
+            "status": "COMMITTED",
+            "db_name": db_name,
+            "run_id": run_id,
+            "generation": generation,
+            "checkpointed": checkpointed,
+            "checkpoint_error": checkpoint_error,
+            "source_counts": source_counts,
+            "target_counts": target_counts,
+            "season_rollups": season_rollups,
+            "career_rollups": career_rollups,
+            "homepage_rollups": homepage_rollups,
+        }
+    except Exception:
+        if committed:
+            logger.exception("Post-commit derived recovery failure for %s", db_name)
+        raise
+    finally:
+        conn.close()
 
 
 class DeltaValidationError(ValueError):
@@ -2906,6 +3064,66 @@ async def replace_canonical_table(
             return result
     finally:
         incoming_path.unlink(missing_ok=True)
+
+
+@app.post("/rebuild-league-derived")
+async def rebuild_league_derived(request: Request):
+    """Recompute one league's derived tables from its persisted full chain."""
+    try:
+        validate_admin_token(get_bearer_token(request))
+    except AuthError as exc:
+        track_event("auth_failed", {"endpoint": "/rebuild-league-derived"})
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="request body must be JSON") from exc
+    db_name = str(body.get("db_name") or "").strip()
+    run_id = str(body.get("run_id") or "").strip()
+    if not _DB_NAME_PATTERN.fullmatch(db_name):
+        raise HTTPException(status_code=400, detail="invalid league database name")
+    if not run_id or len(run_id) > 200:
+        raise HTTPException(status_code=400, detail="run_id is required and must be at most 200 characters")
+
+    database_path = db.get_data_dir() / "___leagues.duckdb"
+    async with _merge_lock:
+        _state["status"] = "draining"
+        elapsed = 0.0
+        while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+        if db.get_active_count() > 0:
+            await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
+        db.close_pool()
+        _state["status"] = "writing"
+        try:
+            result = await asyncio.to_thread(
+                _rebuild_league_derived_from_sources,
+                database_path,
+                db_name=db_name,
+                run_id=run_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("Derived recovery failed for %s: %s", db_name, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            await _reopen_pool_after_write(f"{db_name} derived recovery")
+            _set_serving_or_ops_writing()
+
+    track_event(
+        "league_derived_recovered",
+        {
+            "db_name": db_name,
+            "run_id": run_id,
+            "status": result["status"],
+            "generation": result["generation"],
+            "checkpointed": result["checkpointed"],
+        },
+    )
+    return result
 
 
 @app.post("/replace-db")

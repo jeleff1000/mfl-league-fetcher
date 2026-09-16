@@ -1,0 +1,251 @@
+name: Fly League Settings Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: Validated Fly volume snapshot to source league_settings from
+        required: true
+        type: string
+      snapshot_created_at:
+        description: UTC cutoff used to preserve every later import/update settings row
+        required: true
+        type: string
+      preservation_snapshot_id:
+        description: Created snapshot preserving the current pre-recovery volume
+        required: true
+        type: string
+      expected_final_rows:
+        description: Exact league_settings row count after snapshot plus live overlay
+        required: true
+        type: string
+      expected_overlay_leagues:
+        description: Exact changed-league count since the source snapshot
+        required: true
+        type: string
+      expected_overlay_rows:
+        description: Exact current settings rows across the changed-league overlay
+        required: true
+        type: string
+      expected_source_sha:
+        description: Exact public main SHA containing the guarded recovery endpoint
+        required: true
+        type: string
+      apply_recovery:
+        description: Upload and atomically apply after isolated validation
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-league-settings-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact public main
+        uses: actions/checkout@v5
+
+      - name: Verify requested source revision
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$EXPECTED_SOURCE_SHA"
+
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Validate snapshot and optionally recover league_settings
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+          DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
+          FLY_APP: league-history-duckdb
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          SNAPSHOT_CREATED_AT: ${{ inputs.snapshot_created_at }}
+          PRESERVATION_SNAPSHOT_ID: ${{ inputs.preservation_snapshot_id }}
+          EXPECTED_FINAL_ROWS: ${{ inputs.expected_final_rows }}
+          EXPECTED_OVERLAY_LEAGUES: ${{ inputs.expected_overlay_leagues }}
+          EXPECTED_OVERLAY_ROWS: ${{ inputs.expected_overlay_rows }}
+          APPLY_RECOVERY: ${{ inputs.apply_recovery }}
+        run: |
+          set -euo pipefail
+          for value in "$SNAPSHOT_ID" "$PRESERVATION_SNAPSHOT_ID"; do
+            [[ "$value" =~ ^vs_[A-Za-z0-9]+$ ]] || { echo "Invalid snapshot ID" >&2; exit 2; }
+          done
+          [[ "$EXPECTED_FINAL_ROWS" =~ ^[1-9][0-9]*$ ]] || exit 2
+          [[ "$EXPECTED_OVERLAY_LEAGUES" =~ ^[0-9]+$ ]] || exit 2
+          [[ "$EXPECTED_OVERLAY_ROWS" =~ ^[0-9]+$ ]] || exit 2
+
+          flyctl machines list --app "$FLY_APP" --json > machines.json
+          flyctl volumes list --app "$FLY_APP" --json > volumes.json
+          source_volume_id="$(jq -r 'map(select(.name == "duckdb_data"))[0].id // empty' volumes.json)"
+          source_region="$(jq -r 'map(select(.name == "duckdb_data"))[0].region // empty' volumes.json)"
+          source_size_gb="$(jq -r 'map(select(.name == "duckdb_data"))[0].size_gb // empty' volumes.json)"
+          image_ref="$(jq -r 'map(select(.state == "started"))[0].config.image // empty' machines.json)"
+          test -n "$source_volume_id"
+          test -n "$source_region"
+          test -n "$source_size_gb"
+          test -n "$image_ref"
+
+          snapshots_json="$(flyctl volumes snapshots list "$source_volume_id" --app "$FLY_APP" --json)"
+          printf '%s' "$snapshots_json" | jq -e --arg id "$SNAPSHOT_ID" \
+            '.[] | select(.id == $id and .status == "created")' >/dev/null
+          printf '%s' "$snapshots_json" | jq -e --arg id "$PRESERVATION_SNAPSHOT_ID" \
+            '.[] | select(.id == $id and .status == "created")' >/dev/null
+
+          recovery_volume_id=""
+          recovery_machine_id=""
+          cleanup() {
+            if [ -n "$recovery_machine_id" ]; then
+              flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force || true
+            fi
+            if [ -n "$recovery_volume_id" ]; then
+              flyctl volumes destroy "$recovery_volume_id" --app "$FLY_APP" --yes || true
+            fi
+          }
+          trap cleanup EXIT
+
+          recovery_json="$(flyctl volumes create "wkupd_${GITHUB_RUN_ID}" --app "$FLY_APP" \
+            --region "$source_region" --size "$source_size_gb" --snapshot-id "$SNAPSHOT_ID" \
+            --scheduled-snapshots=false --require-unique-zone=false --yes --json)"
+          recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
+          test -n "$recovery_volume_id"
+          test "$recovery_volume_id" != "null"
+
+          recovery_state="restoring"
+          for _ in $(seq 1 720); do
+            recovery_state="$(flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json | jq -r '.state')"
+            [ "$recovery_state" = "created" ] && break
+            sleep 5
+          done
+          [ "$recovery_state" = "created" ] || { echo "Snapshot restore timed out" >&2; exit 3; }
+
+          cat > snapshot_export.py <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          import duckdb
+
+          source_path = Path("/data/___leagues.duckdb")
+          output_path = Path("/tmp/league_settings_snapshot.duckdb")
+          output_path.unlink(missing_ok=True)
+
+          source = duckdb.connect(str(source_path), read_only=True)
+          checks = {
+              "league_settings": "SELECT COUNT(*), COUNT(DISTINCT (db_name, year)), MAX(year) FROM public.league_settings",
+              "league_context": "SELECT COUNT(*), COUNT(DISTINCT db_name) FROM public.league_context",
+              "matchup": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.matchup",
+              "player_fantasy": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.player_fantasy",
+          }
+          results = {name: source.execute(sql).fetchone() for name, sql in checks.items()}
+          ddl_row = source.execute(
+              "SELECT sql FROM duckdb_tables() "
+              "WHERE database_name = '___leagues' AND schema_name = 'public' "
+              "AND table_name = 'league_settings'"
+          ).fetchone()
+          if not ddl_row or not ddl_row[0]:
+              raise RuntimeError("snapshot has no league_settings DDL")
+          ddl = str(ddl_row[0])
+          source.close()
+
+          output = duckdb.connect(str(output_path))
+          output.execute("CREATE SCHEMA public")
+          output.execute(ddl)
+          output.execute(f"ATTACH '{source_path.as_posix()}' AS snapshot (READ_ONLY)")
+          output.execute(
+              "INSERT INTO public.league_settings BY NAME "
+              "SELECT * FROM snapshot.public.league_settings"
+          )
+          output.execute("DETACH snapshot")
+          exported = output.execute(
+              "SELECT COUNT(*), COUNT(DISTINCT (db_name, year)) FROM public.league_settings"
+          ).fetchone()
+          output.execute("CHECKPOINT")
+          output.close()
+          if exported[0] != exported[1] or exported[0] != results["league_settings"][0]:
+              raise RuntimeError(f"snapshot export key/count mismatch: {exported!r}")
+
+          digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+          print(json.dumps({
+              "checks": results,
+              "bundle_rows": exported[0],
+              "bundle_sha256": digest,
+              "bundle_bytes": output_path.stat().st_size,
+          }, sort_keys=True))
+          PY
+          export_script_b64="$(base64 -w0 snapshot_export.py)"
+          recovery_machine_json="$(flyctl machine run "$image_ref" --app "$FLY_APP" \
+            --region "$source_region" --volume "$recovery_volume_id:/data" \
+            --entrypoint /bin/sh --file-literal "/tmp/snapshot_export.py=$export_script_b64" \
+            --restart no --detach --vm-cpus 1 --vm-memory 2048 --json -- -lc 'sleep 3600')"
+          recovery_machine_id="$(printf '%s' "$recovery_machine_json" | jq -r '.id')"
+          test -n "$recovery_machine_id"
+          test "$recovery_machine_id" != "null"
+
+          recovery_machine_state=""
+          for _ in $(seq 1 60); do
+            recovery_machine_state="$(flyctl machines list --app "$FLY_APP" --json \
+              | jq -r --arg id "$recovery_machine_id" '.[] | select(.id == $id) | .state')"
+            [ "$recovery_machine_state" = "started" ] && break
+            sleep 2
+          done
+          [ "$recovery_machine_state" = "started" ] || exit 4
+
+          flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
+            -C "python /tmp/snapshot_export.py" | tee snapshot-export.log
+          flyctl ssh sftp get /tmp/league_settings_snapshot.duckdb \
+            league_settings_snapshot.duckdb --app "$FLY_APP" --machine "$recovery_machine_id"
+
+          bundle_sha256="$(sha256sum league_settings_snapshot.duckdb | awk '{print $1}')"
+          bundle_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r '.bundle_rows')"
+          logged_sha256="$(grep '^{' snapshot-export.log | tail -1 | jq -r '.bundle_sha256')"
+          test "$bundle_sha256" = "$logged_sha256"
+          test "$bundle_rows" -gt 0
+
+          if [ "$APPLY_RECOVERY" != "true" ]; then
+            echo "Snapshot bundle validated; apply_recovery=false, production unchanged"
+            exit 0
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            -X POST "${DATABASE_SERVER_URL%/}/replace-canonical-table" \
+            -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
+            -H "X-Db-Name: ___leagues" \
+            -H "X-Table-Name: league_settings" \
+            -H "X-Expected-Rows: ${EXPECTED_FINAL_ROWS}" \
+            -H "X-Content-Sha256: ${bundle_sha256}" \
+            -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
+            -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
+            -H "X-Expected-Overlay-Rows: ${EXPECTED_OVERLAY_ROWS}" \
+            -F "file=@league_settings_snapshot.duckdb;type=application/octet-stream" \
+            | tee recovery-response.json
+
+          jq -e --argjson rows "$EXPECTED_FINAL_ROWS" \
+            '.status == "replaced" and .rows == $rows and .distinct_keys == $rows' \
+            recovery-response.json >/dev/null
+
+          query_body="$(jq -cn '{database:"___leagues",sql:"SELECT COUNT(*) AS rows, COUNT(DISTINCT (db_name, year)) AS distinct_keys, MAX(year) AS max_year FROM public.league_settings"}')"
+          curl --fail-with-body --silent --show-error \
+            -X POST "${DATABASE_SERVER_URL%/}/query" \
+            -H "Authorization: Bearer ${DATABASE_READ_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$query_body" | tee recovery-readback.json
+          jq -e --argjson rows "$EXPECTED_FINAL_ROWS" \
+            '.[0].rows == $rows and .[0].distinct_keys == $rows' recovery-readback.json >/dev/null
+
+          trap - EXIT
+          cleanup

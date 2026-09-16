@@ -63,6 +63,44 @@ def test_weekly_snapshot_reads_each_franchise_identity_row_once():
         conn.close()
 
 
+def test_weekly_refresh_restores_exact_frontend_owned_alias_rows(tmp_path):
+    """Shared enrichment may never leave a rewritten user alias table behind."""
+    from multi_league.core.local_db import LocalLeagueDB
+    from refresh_yahoo_active_season import _restore_frontend_configuration_rows
+
+    source = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "db_name": "afi_data",
+                "operation": "rename",
+                "from_name": "Elizabeth",
+                "to_name": "Elizabeth + Joe",
+                "applied_at": "2026-09-15 03:06:43.85424",
+            }
+        ]
+    )
+    local = LocalLeagueDB(tmp_path, "afi_data")
+    try:
+        local.ensure_table("manager_overrides")
+        local._insert_into_table("manager_overrides", source)
+        local.connect().execute(
+            "UPDATE public.manager_overrides SET to_name = 'Provider Name' WHERE db_name = 'afi_data'"
+        )
+
+        _restore_frontend_configuration_rows(
+            local,
+            {"manager_overrides": source},
+            db_name="afi_data",
+        )
+
+        actual = local.read_table("manager_overrides").sort_values("id").reset_index(drop=True)
+        assert actual["to_name"].tolist() == ["Elizabeth + Joe"]
+        assert actual["from_name"].tolist() == ["Elizabeth"]
+    finally:
+        local.close()
+
+
 def test_identity_repair_preserves_hydrated_draft_metadata_and_fills_yahoo_ids():
     """The fast repair may replace identities, never the retained draft payload."""
     from refresh_yahoo_active_season import _patched_yahoo_draft_identities

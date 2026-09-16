@@ -704,6 +704,7 @@ def main(argv: list[str] | None = None) -> int:
                 platform="sleeper",
                 keeper_config_hydrated="keeper_config" in transform_source_frames,
                 historical_source_rows=historical_source_rows,
+                frontend_configuration_rows=preservation_witnesses,
             )
             timer.mark("shared_transformations")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(

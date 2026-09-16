@@ -796,6 +796,46 @@ def _restore_historical_source_rows(
         local_db._insert_into_table(table_name, frame)
 
 
+_FRONTEND_OWNED_REFRESH_TABLES = (
+    "keeper_config",
+    "league_context",
+    "league_rules",
+    "manager_overrides",
+    "standings_config",
+)
+
+
+def _restore_frontend_configuration_rows(
+    local_db: Any,
+    source_frames: dict[str, pd.DataFrame],
+    *,
+    db_name: str,
+) -> None:
+    """Restore exact saved user configuration after shared enrichment.
+
+    These tables are inputs to a refresh, never provider output.  The normal
+    transformation pipeline may materialize an import context while building
+    local artifacts; restore the Fly snapshot before preservation validation so
+    aliases, keeper rules, and other user choices cannot be rewritten by a
+    weekly update.
+    """
+    for table_name in _FRONTEND_OWNED_REFRESH_TABLES:
+        source = source_frames.get(table_name)
+        if source is None:
+            continue
+        if "db_name" not in source.columns:
+            raise RuntimeError(f"saved frontend configuration {table_name} has no db_name")
+        configured = source.loc[source["db_name"].astype(str).eq(str(db_name))].copy()
+        local_db.ensure_table(table_name)
+        conn = local_db.connect()
+        conn.execute(
+            f"DELETE FROM public.{_quoted_identifier(table_name)} WHERE db_name = ?",
+            [db_name],
+        )
+        if not configured.empty:
+            local_db._insert_into_table(table_name, configured)
+
+
 def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.DataFrame:
     week_clause = f" AND week <= {int(through_week)}" if through_week is not None else ""
     return reader.query_df(
@@ -1425,6 +1465,7 @@ def _run_local_pipeline(
     platform: str = "yahoo",
     keeper_config_hydrated: bool = False,
     historical_source_rows: dict[str, pd.DataFrame] | None = None,
+    frontend_configuration_rows: dict[str, pd.DataFrame] | None = None,
 ) -> None:
     from multi_league.core.import_pipeline import (
         require_sql_enrichment_success,
@@ -1492,6 +1533,11 @@ def _run_local_pipeline(
     finally:
         enricher.close()
     _restore_historical_source_rows(local_db, historical_source_rows or {})
+    _restore_frontend_configuration_rows(
+        local_db,
+        frontend_configuration_rows or {},
+        db_name=db_name,
+    )
     active_matchup_row = local_db.connect().execute(
         "SELECT COUNT(*), MAX(week) FROM public.matchup "
         "WHERE db_name = ? AND year = ? AND team_points IS NOT NULL "
@@ -1809,6 +1855,7 @@ def main(argv: list[str] | None = None) -> int:
                 work_dir=work_dir,
                 keeper_config_hydrated="keeper_config" in transform_source_frames,
                 historical_source_rows=historical_source_rows,
+                frontend_configuration_rows=preservation_witnesses,
             )
             timer.mark("shared_transformations")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(

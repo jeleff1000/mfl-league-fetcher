@@ -11,6 +11,51 @@ for path in (SCRIPTS_DIR, SCRIPTS_DIR / "multi_league"):
         sys.path.insert(0, path_str)
 
 
+def test_h2h_career_refresh_uses_full_chain_without_rewriting_seasons():
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import aggregate_matchup_h2h
+
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("ATTACH ':memory:' AS ___leagues")
+        conn.execute("USE ___leagues")
+        conn.execute("CREATE SCHEMA public")
+        conn.execute(create_aggregate_table_sql("___leagues", "matchup_h2h_season"))
+        conn.execute(create_aggregate_table_sql("___leagues", "matchup_h2h_career"))
+        conn.execute("""
+            INSERT INTO public.matchup_h2h_season
+                (db_name, manager, opponent, franchise_id, opponent_franchise_id, year, games)
+            VALUES ('test_league', 'Historical Alias', 'Opponent', 'f1', 'f2', 2025, 14)
+        """)
+        conn.execute("""
+            CREATE TABLE public.matchup (
+                db_name VARCHAR, manager VARCHAR, opponent VARCHAR,
+                franchise_id VARCHAR, opponent_franchise_id VARCHAR,
+                year INTEGER, week INTEGER, team_points DOUBLE, margin DOUBLE,
+                win INTEGER, loss INTEGER, tie INTEGER
+            )
+        """)
+        conn.execute("""
+            INSERT INTO public.matchup VALUES
+              ('test_league', 'Old Name', 'Opponent', 'f1', 'f2', 2025, 1, 100, 10, 1, 0, 0),
+              ('test_league', 'Shared Alias', 'Opponent', 'f1', 'f2', 2026, 1, 110, -5, 0, 1, 0),
+              ('another_league', 'Other', 'Other Opponent', 'f1', 'f2', 2024, 1, 900, 90, 1, 0, 0)
+        """)
+        conn.execute("""
+            CREATE TABLE public.league_settings AS
+            SELECT 'test_league' AS db_name, 2025 AS year, 15 AS playoff_start_week
+            UNION ALL SELECT 'test_league', 2026, 15
+        """)
+        prior_seasons = conn.execute("SELECT * FROM public.matchup_h2h_season").fetchall()
+        for current_points, expected_total in [(110.0, 210.0), (110.25, 210.25), (110.25, 210.25)]:
+            conn.execute("UPDATE public.matchup SET team_points=? WHERE db_name='test_league' AND year=2026", [current_points])
+            aggregate_matchup_h2h(conn, "test_league", season_years=set())
+            assert conn.execute("""
+                SELECT manager, franchise_id, games, wins, losses, total_team_points, results
+                FROM public.matchup_h2h_career WHERE db_name='test_league'
+            """).fetchall() == [("Shared Alias", "f1", 2, 1, 1, expected_total, [1, 0])]
+            assert conn.execute("SELECT * FROM public.matchup_h2h_season").fetchall() == prior_seasons
+
+
 def test_aggregate_matchup_season_raises_when_franchise_id_missing():
     """Bug #1.7: warn-and-skip on missing franchise_id is replaced with a
     loud KeyError so the franchise_id no-fallback invariant fails fast

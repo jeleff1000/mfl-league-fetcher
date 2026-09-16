@@ -20,7 +20,6 @@ jobs:
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
       - name: Deploy DuckDB server
-        working-directory: duckdb-server
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl deploy --config fly.toml --remote-only
+        run: flyctl deploy --config duckdb-server/fly.toml --dockerfile duckdb-server/Dockerfile --ignorefile duckdb-server/Dockerfile.dockerignore --build-context-warn-size 20MB --remote-only

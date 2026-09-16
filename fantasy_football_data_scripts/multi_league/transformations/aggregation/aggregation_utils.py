@@ -52,6 +52,12 @@ log = make_logger("AGG-UTILS")
 # ---------------------------------------------------------------------------
 
 CENTRAL_DB_NAME = "___leagues"
+CAREER_ROLLUP_TABLES = (
+    "matchup_career", "matchup_h2h_career",
+    "player_fantasy_career", "player_fantasy_career_all",
+    "draft_manager_career", "draft_player_career",
+    "transaction_manager_career", "transaction_player_career",
+)
 
 # Active table catalog — starts at the centralized database and is rebound
 # to ``current_database()`` by ``configure_table_catalog()`` when an aggregation
@@ -100,6 +106,56 @@ def league_db_filter(db_name: str, alias: str = "") -> str:
     """Return a ``db_name = '...'`` SQL fragment for scoping a single league."""
     prefix = f"{alias}." if alias else ""
     return f"{prefix}db_name = '{db_name}'"
+
+
+def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:
+    """Run the normal career aggregations on a complete, merged league connection.
+
+    Weekly publication must call this on Fly after merging changed partitions,
+    inside the publication transaction. It neither commits nor opens another
+    connection, and it never rewrites historical season tables. Supplying a
+    current-season-only scratch database is not a valid use of this function.
+    """
+    from multi_league.core.aggregate_ddl import ensure_aggregate_table
+    from multi_league.core.sql_utils import validate_db_name
+    from multi_league.transformations.aggregation.aggregate_draft_context import (
+        aggregate_draft_manager_career, aggregate_draft_player_career,
+    )
+    from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+        aggregate_fantasy_career, aggregate_fantasy_career_all,
+    )
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_career, aggregate_matchup_h2h,
+    )
+    from multi_league.transformations.aggregation.aggregate_transaction_context import (
+        aggregate_transaction_manager_career, aggregate_transaction_player_career,
+    )
+
+    validate_db_name(db_name)
+    if current_catalog(conn) != CENTRAL_DB_NAME:
+        raise RuntimeError("Career publication requires the complete ___leagues connection, not worker scratch data")
+    configure_table_catalog(conn)
+    for source in (
+        "matchup", "matchup_season", "league_settings", "player_fantasy",
+        "draft", "draft_manager_season", "transactions", "transaction_manager_season",
+    ):
+        if not table_exists_in_catalog(conn, source):
+            raise RuntimeError(f"Career publication source is missing: {source}")
+    aggregations = {
+        "matchup_career": aggregate_matchup_career,
+        "player_fantasy_career": aggregate_fantasy_career,
+        "player_fantasy_career_all": aggregate_fantasy_career_all,
+        "draft_manager_career": aggregate_draft_manager_career,
+        "draft_player_career": aggregate_draft_player_career,
+        "transaction_manager_career": aggregate_transaction_manager_career,
+        "transaction_player_career": aggregate_transaction_player_career,
+    }
+    # Validate the centralized shell before the first destructive operation.
+    for table in (*aggregations, "matchup_h2h_career", "matchup_h2h_season"):
+        ensure_aggregate_table(conn, get_active_catalog(), table)
+    result = {table: aggregate(conn, db_name) for table, aggregate in aggregations.items()}
+    _, result["matchup_h2h_career"] = aggregate_matchup_h2h(conn, db_name, season_years=set())
+    return result
 
 
 def table_exists_in_catalog(conn, table_name: str) -> bool:

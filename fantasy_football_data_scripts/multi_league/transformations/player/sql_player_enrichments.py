@@ -668,18 +668,18 @@ class PlayerEnrichmentsMixin:
         )
         null_points_clause = "p.fantasy_points IS NULL"
         if platform in {"sleeper", "fleaflicker"}:
-            scope_filter = f"AND ({unrostered_clause} OR {null_points_clause})"
+            recompute_points = f"({unrostered_clause} OR {null_points_clause})"
         elif platform == "espn":
-            scope_filter = f"AND (p.year < 2019 OR {unrostered_clause} OR {null_points_clause})"
+            recompute_points = f"(p.year < 2019 OR {unrostered_clause} OR {null_points_clause})"
         elif platform == "yahoo":
             # Yahoo imports are DDL-scored end-to-end. The matchup table keeps
             # Yahoo's official team score for reconciliation, while every
             # player row is recomputed from super_table x league_settings so
             # reimports are idempotent and scoring-rule gaps are visible.
-            scope_filter = ""
+            recompute_points = "TRUE"
         else:
             # Unknown fallback: keep the historical behavior and recompute.
-            scope_filter = ""
+            recompute_points = "TRUE"
 
         # Note: the unconditional kicker pre-reset that used to live here
         # (UPDATE ... SET fantasy_points = NULL WHERE position = 'K') was
@@ -953,6 +953,7 @@ class PlayerEnrichmentsMixin:
                           ON p.player_week = s.player_week
                         WHERE p.year IN ({years_csv})
                           AND p.NFL_player_id IS NOT NULL
+                          AND {self._db_filter('p')}
                     """)
                     # COALESCE fallback: if the recompute produces NULL for a row
                     # (e.g. super_table has no stats for that player_week), preserve
@@ -961,14 +962,15 @@ class PlayerEnrichmentsMixin:
                     # still wins where it has data; stored values survive the gaps.
                     conn.execute(f"""
                         UPDATE {player_table} p
-                        SET fantasy_points = COALESCE(st.fantasy_points, p.fantasy_points),
+                        SET fantasy_points = CASE WHEN {recompute_points}
+                                THEN COALESCE(st.fantasy_points, p.fantasy_points)
+                                ELSE p.fantasy_points END,
                             bonus_points = COALESCE(st.bonus_points, p.bonus_points),
                             te_premium_points = COALESCE(st.te_premium_points, p.te_premium_points)
                         FROM _points_stage st
                         WHERE p.player_week = st.player_week
                           AND p.year IN ({years_csv})
                           AND {self._db_filter('p')}
-                          {scope_filter}
                     """)
                     total += conn.execute("SELECT COUNT(*) FROM _points_stage").fetchone()[0]
                     conn.execute("DROP TABLE IF EXISTS _points_stage")

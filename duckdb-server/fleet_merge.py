@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import duckdb
 
 FLEET_SCHEMA_VERSION = "fleet-partition-v1"
+FLEET_CAREER_SCHEMA_VERSION = "fleet-partition-v2"
 FLEET_MANIFEST_VERSION = 1
 FLEET_DB_SENTINEL = "___fleet"
 
@@ -108,7 +110,7 @@ def validate_fleet_manifest_shape(
         raise FleetValidationError("Manifest must be an object")
     if manifest.get("manifest_version") != FLEET_MANIFEST_VERSION:
         raise FleetValidationError(f"Unsupported manifest_version: {manifest.get('manifest_version')!r}")
-    if manifest.get("schema_version") != FLEET_SCHEMA_VERSION:
+    if manifest.get("schema_version") not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION}:
         raise FleetValidationError(f"Unsupported schema_version: {manifest.get('schema_version')!r}")
     if manifest.get("db_name") != FLEET_DB_SENTINEL:
         raise FleetValidationError(f"Fleet manifest db_name must be {FLEET_DB_SENTINEL!r}")
@@ -158,6 +160,11 @@ def validate_fleet_manifest_shape(
         if table in seen_tables:
             raise FleetValidationError(f"Duplicate table entry: {table}")
         seen_tables.add(table)
+        if manifest.get("schema_version") == FLEET_CAREER_SCHEMA_VERSION:
+            from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
+
+            if table in CAREER_ROLLUP_TABLES:
+                raise FleetValidationError(f"{table} must be recomputed on the full persisted chain, not uploaded")
 
         expected_path = f"tables/{table}.parquet"
         if entry.get("path") != expected_path:
@@ -366,6 +373,20 @@ def _default_execute(conn, sql: str, params=None, *, step: str = ""):
     return conn.execute(sql, params)
 
 
+class _AggregationConnection:
+    """Keep shared aggregation SQL on the publication's timed connection."""
+
+    def __init__(self, conn, execute):
+        self._conn = conn
+        self._execute = execute
+
+    def execute(self, sql, params=None):
+        return self._execute(self._conn, sql, params, step="fleet career aggregation")
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 def apply_fleet_merge(
     conn: duckdb.DuckDBPyConnection,
     manifest: dict,
@@ -382,6 +403,9 @@ def apply_fleet_merge(
     """
     run = execute or _default_execute
     merged: dict[str, int] = {}
+    career_rollups: dict[str, dict[str, int]] = {}
+    career_seconds: dict[str, float] = {}
+    merged_db_names: set[str] = set()
     timings: dict[str, dict[str, float]] = {}
     total_start = time.perf_counter()
     in_transaction = False
@@ -488,6 +512,7 @@ def apply_fleet_merge(
                 step=f"fleet scope dbs {table}",
             )
             predicate, params = scope_predicate(entry, "_fleet_scope_dbs")
+            merged_db_names.update(row[0] for row in conn.execute("SELECT db_name FROM _fleet_scope_dbs").fetchall())
 
             delete_start = time.perf_counter()
             run(conn, f"DELETE FROM {target} WHERE {predicate}", params, step=f"fleet delete {table}")
@@ -523,6 +548,21 @@ def apply_fleet_merge(
                 },
             }
 
+        if merged_db_names != set(manifest.get("db_names") or []):
+            raise FleetValidationError("Published row scope does not match the generation-protected league scope")
+
+        if manifest.get("schema_version") == FLEET_CAREER_SCHEMA_VERSION:
+            from multi_league.transformations.aggregation.aggregation_utils import aggregate_career_rollups
+
+            # The source and season partitions are now merged, but still
+            # uncommitted. Reuse normal career SQL against this same full
+            # history connection. Any error rolls the entire publication back.
+            aggregation_conn = _AggregationConnection(conn, run)
+            for db_name in sorted(merged_db_names):
+                career_start = time.perf_counter()
+                career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)
+                career_seconds[db_name] = round(time.perf_counter() - career_start, 4)
+
         bump_generations(
             conn,
             list(manifest.get("db_names") or []),
@@ -548,6 +588,8 @@ def apply_fleet_merge(
         "bundle_hash": manifest["bundle_hash"],
         "active_year": manifest["active_year"],
         "tables": merged,
+        "career_rollups": career_rollups,
+        "career_seconds": career_seconds,
         "table_count": len(merged),
         "row_count": sum(merged.values()),
         "timings": timings,

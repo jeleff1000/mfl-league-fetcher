@@ -892,11 +892,17 @@ def aggregate_matchup_career(conn, db_name: str, dry_run: bool = False) -> int:
     return count
 
 
-def aggregate_matchup_h2h(conn, db_name: str, dry_run: bool = False) -> tuple:
+def aggregate_matchup_h2h(
+    conn, db_name: str, dry_run: bool = False, *, season_years: set[int] | None = None
+) -> tuple:
     """Build matchup_h2h_season and matchup_h2h_career tables.
 
     H2H season: one row per (manager, opponent, year)
     H2H career: one row per (manager, opponent) with streak info
+
+    ``season_years`` limits season-table writes, not career inputs. An empty
+    set rebuilds only careers from the full persisted matchup chain, allowing
+    a weekly publish to retain already-finalized historical season outputs.
     """
     log("Building matchup H2H tables...")
     configure_table_catalog(conn)
@@ -935,12 +941,18 @@ def aggregate_matchup_h2h(conn, db_name: str, dry_run: bool = False) -> tuple:
 
     # H2H Season
     ensure_aggregate_table(conn, get_active_catalog(), "matchup_h2h_season")
-    execute_scoped(
-        conn,
-        f"DELETE FROM {central_table('matchup_h2h_season')} WHERE db_name = '{db_name}'",
-        db_name,
-        label="matchup_h2h_season:delete",
-    )
+    selected_years = years if season_years is None else [yr for yr in years if yr in season_years]
+    if selected_years:
+        season_filter = (
+            "" if season_years is None
+            else f" AND year IN ({','.join(str(int(yr)) for yr in selected_years)})"
+        )
+        execute_scoped(
+            conn,
+            f"DELETE FROM {central_table('matchup_h2h_season')} WHERE db_name = '{db_name}'{season_filter}",
+            db_name,
+            label="matchup_h2h_season:delete",
+        )
 
     # Build optional franchise columns for H2H
     # When franchise_id is available, use it as GROUP BY key; manager/opponent become MAX()
@@ -952,7 +964,7 @@ def aggregate_matchup_h2h(conn, db_name: str, dry_run: bool = False) -> tuple:
         h2h_fid_cols.append("opponent_franchise_id")
 
     season_total = 0
-    for yr in years:
+    for yr in selected_years:
         last_reg_week = year_boundaries.get(yr, 14)
 
         h2h_season_sql = f"""

@@ -48,6 +48,7 @@ from multi_league.core.delta_publish import (
 )
 
 FLEET_SCHEMA_VERSION = "fleet-partition-v1"
+FLEET_CAREER_SCHEMA_VERSION = "fleet-partition-v2"
 FLEET_PRODUCER = "league-history-fleet-builder"
 
 # Sentinel db_name used for publish-state bookkeeping on the server. It shares
@@ -227,6 +228,7 @@ def build_fleet_partition_bundle(
     import_run_id: str | None = None,
     publish_sequence: int | None = None,
     producer_version: str | None = None,
+    rebuild_career_rollups: bool = False,
 ) -> FleetBundle:
     """Build a fleet partition bundle from a staged fleet DuckDB.
 
@@ -240,12 +242,20 @@ def build_fleet_partition_bundle(
     league was at when this bundle's data was built — read from the server's
     ``merge_admin.league_publish_generations`` table (missing league = 0).
     The merge rejects the bundle if any league was republished since.
+
+    ``rebuild_career_rollups`` requires the v2 server contract: career tables
+    are not uploaded from worker scratch data. The server recomputes them
+    from the merged full chain before committing. A v1 server rejects v2.
     """
     registry = canonical_table_registry()
     requested = list(tables) if tables is not None else sorted(registry)
     unknown = sorted(set(requested) - set(registry))
     if unknown:
         raise ValueError(f"Unknown canonical tables requested: {', '.join(unknown)}")
+    if rebuild_career_rollups:
+        from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
+
+        requested = [table for table in requested if table not in CAREER_ROLLUP_TABLES]
 
     run_id = str(
         import_run_id
@@ -386,7 +396,7 @@ def build_fleet_partition_bundle(
 
     logical_payload = {
         "manifest_version": MANIFEST_VERSION,
-        "schema_version": FLEET_SCHEMA_VERSION,
+        "schema_version": FLEET_CAREER_SCHEMA_VERSION if rebuild_career_rollups else FLEET_SCHEMA_VERSION,
         "db_name": FLEET_DB_SENTINEL,
         "mode": "weekly",
         "active_year": int(active_year),

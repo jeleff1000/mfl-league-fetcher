@@ -1,10 +1,14 @@
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY requirements.txt .
+COPY duckdb-server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY *.py .
+COPY duckdb-server/*.py .
+# The merge endpoint calls the same canonical aggregations as imports. The
+# Dockerfile-specific allowlist admits Python source only, never league/NFL data.
+COPY fantasy_football_data_scripts/multi_league ./multi_league
+RUN python -c "from multi_league.transformations.aggregation import aggregate_matchup_context, aggregate_fantasy_context, aggregate_draft_context, aggregate_transaction_context"
 
 # Data directory (mounted as Fly volume)
 RUN mkdir -p /data

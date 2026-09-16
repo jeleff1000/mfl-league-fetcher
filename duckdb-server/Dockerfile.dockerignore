@@ -1,0 +1,11 @@
+**
+!duckdb-server/
+!duckdb-server/*.py
+!duckdb-server/requirements.txt
+!fantasy_football_data_scripts/
+!fantasy_football_data_scripts/multi_league/
+!fantasy_football_data_scripts/multi_league/**/
+!fantasy_football_data_scripts/multi_league/**/*.py
+**/__pycache__/
+**/tests/
+**/test_*.py

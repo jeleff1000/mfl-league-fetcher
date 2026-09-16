@@ -2303,6 +2303,7 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
     hard_exit_timer = _start_merge_hard_exit_timer(sentinel, FLEET_MERGE_HARD_EXIT_SECONDS)
     conn = None
     in_transaction = False
+    ops_attached = False
     try:
         conn = db.connect_database(leagues_path, data_dir=db.get_data_dir())
         _ensure_delta_state_table(conn)
@@ -2345,6 +2346,9 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             )
 
         try:
+            if manifest.get("schema_version") == fleet_merge.FLEET_CAREER_SCHEMA_VERSION:
+                _acquire_ops_attachment(conn)
+                ops_attached = True
             _interrupting_execute(conn, "BEGIN TRANSACTION", step="begin fleet partition")
             in_transaction = True
             _delta_upsert_state(conn, manifest, "STAGED")
@@ -2381,6 +2385,8 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
     finally:
         hard_exit_timer.cancel()
         if conn is not None:
+            if ops_attached:
+                _release_ops_attachment(conn)
             conn.close()
 
 

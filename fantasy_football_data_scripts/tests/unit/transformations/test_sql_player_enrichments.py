@@ -9,6 +9,54 @@ class _PlayerRunner(PlayerEnrichmentsMixin, SQLEnrichmentsBase):
     pass
 
 
+@pytest.mark.parametrize("platform", ["espn", "sleeper", "fleaflicker"])
+@pytest.mark.parametrize("te_premium, expected_premium", [(0.0, 0.0), (0.5, 2.0)])
+@pytest.mark.parametrize("bonus_multiplier", [0.0, 3.0])
+def test_provider_score_preservation_still_enriches_bonus_fields(
+    platform, te_premium, expected_premium, bonus_multiplier
+):
+    """An authoritative score must not exclude the row from component enrichment."""
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("ATTACH ':memory:' AS ___ops")
+        conn.execute("CREATE SCHEMA ___ops.nfl_historical")
+        conn.execute("""
+            CREATE TABLE public.player_fantasy AS
+            SELECT 'test_db' AS db_name, 'te_2026_1' AS player_week,
+                   'te' AS NFL_player_id, 2026 AS year, 1 AS week,
+                   'TE' AS position, 'Shared Team Alias' AS manager,
+                   19.37::DOUBLE AS fantasy_points,
+                   NULL::DOUBLE AS bonus_points, NULL::DOUBLE AS te_premium_points
+        """)
+        conn.execute("""
+            CREATE TABLE ___ops.nfl_historical.nfl_player_stats_all AS
+            SELECT 'te_2026_1' AS player_week, 'te' AS NFL_player_id,
+                   0.0 AS pts_pass_4pt, 0.0 AS pts_rush, 8.0 AS pts_rec_half,
+                   0.0 AS pts_misc, 0.0 AS pts_def_std, 0.0 AS pts_idp_std,
+                   0.0 AS pts_k_std, 4 AS receptions, 1 AS pts_bonus_rec_100
+        """)
+        conn.execute("""
+            CREATE TABLE ___ops.nfl_historical.player_bio AS
+            SELECT 'te' AS NFL_player_id, 'TE' AS nfl_position
+        """)
+        runner = _PlayerRunner(
+            db_name="test_db", data_dir="local",
+            roster_by_year={2026: {
+                "TE": 1, "te_premium": te_premium,
+                "bonus_multipliers": {"pts_bonus_rec_100": bonus_multiplier},
+                "scoring_settings": {"rec": 0.5, "pass_td": 4.0},
+            }},
+        )
+        runner._conn = conn
+        runner._platform = platform
+        for _ in range(2):
+            runner.populate_fantasy_points()
+            assert conn.execute("""
+                SELECT fantasy_points, bonus_points, te_premium_points, manager
+                FROM public.player_fantasy
+            """).fetchone() == (19.37, bonus_multiplier, expected_premium, "Shared Team Alias")
+
+
 def test_expand_to_all_nfl_full_mode_respects_active_year_bounds():
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA IF NOT EXISTS public")

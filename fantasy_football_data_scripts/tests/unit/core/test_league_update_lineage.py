@@ -67,3 +67,31 @@ def test_resolve_active_update_segment_rejects_overlapping_active_platform_owner
                 {"year": 2026, "platform": "yahoo", "league_key": "470.l.999"},
             ],
         )
+
+
+@pytest.mark.parametrize(
+    "saved_platform,unexpected_platform,unexpected_id",
+    [("sleeper", "yahoo", "470.l.164172"),
+     ("yahoo", "espn", "110800"),
+     ("espn", "sleeper", "1385696375349448704")],
+)
+def test_active_settings_cannot_silently_change_the_import_target(
+    saved_platform, unexpected_platform, unexpected_id,
+):
+    """A prior bad update must not authorize another unrelated provider leg."""
+    from multi_league.core.league_update_lineage import (
+        ActiveUpdateSegmentError,
+        resolve_active_update_segment,
+    )
+
+    with pytest.raises(ActiveUpdateSegmentError, match="conflicts with saved import target"):
+        resolve_active_update_segment(
+            active_year=2026,
+            context_platform=saved_platform,
+            context_league_id="saved-import-target",
+            expected_platform=unexpected_platform,
+            settings_rows=[
+                {"year": 2025, "platform": saved_platform, "league_key": "saved-2025"},
+                {"year": 2026, "platform": unexpected_platform, "league_key": unexpected_id},
+            ],
+        )

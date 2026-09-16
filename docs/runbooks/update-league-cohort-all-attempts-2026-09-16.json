@@ -1,0 +1,2723 @@
+{
+  "frozen_at": "2026-09-16T16:58:35.513900+00:00",
+  "repository": "jeleff1000/mfl-league-fetcher",
+  "runs": [
+    {
+      "id": 35110193415,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T14:41:00Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35109099189,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T14:31:23Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35108159916,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T14:23:09Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35105228797,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:57:02Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35104953658,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:54:31Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "agusta_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35104260898,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:48:07Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "agusta_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35102286423,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:29:53Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "group_chat_foosball",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35102035881,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:27:31Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35101677473,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:24:10Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "nyu_ffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35101291332,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:20:33Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35101194997,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T13:19:39Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "nyu_ffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35098485348,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T12:53:32Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35097064614,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T12:39:06Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "nyu_ffl",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35052703365,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T03:40:49Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "agusta_fantasy_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35051533368,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T03:22:14Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "agusta_fantasy_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35051306850,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T03:18:40Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "nyu_ffl",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35047801539,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T02:23:36Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35046831205,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T02:08:31Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35046547004,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T02:04:16Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35046336000,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T02:01:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35046095128,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:57:22Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35045896312,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:54:17Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35045508555,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:48:16Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35045255233,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:44:19Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35044865162,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:38:14Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35044618140,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:34:25Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35044323750,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:30:03Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35043980023,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:24:47Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35043379654,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:15:44Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35042683267,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:05:22Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35042384641,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T01:01:04Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35042028054,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:55:58Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35041756458,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:51:58Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35040844358,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:38:30Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35040579022,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:34:34Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35040208661,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:29:22Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35039927714,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:25:21Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35039638601,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:21:16Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35039319882,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:16:41Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35038992701,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:12:11Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35038707199,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:08:17Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35038407724,
+      "platform": "sleeper",
+      "created_at": "2026-09-16T00:04:17Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35037791035,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:55:35Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35036388785,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:36:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35034573242,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:12:02Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "handegg_dynasty_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35034571545,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:12:00Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "group_chat_foosball",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35034570034,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:11:59Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35034568474,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:11:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35034566323,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:11:56Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35034564156,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:11:55Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35033858616,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:02:43Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "handegg_dynasty_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35033856564,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:02:41Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "group_chat_foosball",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35033854617,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:02:39Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35033852940,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:02:38Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35033851317,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:02:37Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35033849539,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T23:02:36Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35031859653,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T22:37:05Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "workflow_definition_push_failure",
+      "event": "push",
+      "recovery_scope": "excluded_no_dispatch_no_jobs"
+    },
+    {
+      "id": 35018852948,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T20:19:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35018480216,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T20:15:09Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35015562006,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T19:45:51Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35014260106,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T19:32:41Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35014116456,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T19:31:17Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35004307850,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:55:56Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35003702633,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:49:55Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35002617611,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:39:21Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "handegg_dynasty_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35001181242,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:25:32Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34999502364,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:09:38Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34999499373,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:09:36Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34999309815,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:07:48Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34999237602,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:07:05Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34998941932,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T17:04:18Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34997982833,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T16:55:00Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34997048950,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T16:45:53Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34992250656,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T16:00:52Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991462829,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:53:37Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991183574,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:51:02Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34990850316,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:48:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "group_chat_foosball",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34990768505,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:47:15Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "group_chat_foosball",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34990727989,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:46:54Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34990259999,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:42:40Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "clemson_fantasy_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34990160069,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T15:41:46Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34983492721,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T14:42:48Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34980662321,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T14:17:49Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34980574735,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T14:17:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34980410277,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T14:15:31Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34980018605,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T14:12:01Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mawhinney_s_vixens",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34973368094,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T13:10:58Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fanball_3e8d",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34929878916,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T04:42:47Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "franchise_mode_fantasy",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34925037199,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T03:27:15Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mirabeau_fantasy_football",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34924250046,
+      "platform": "sleeper",
+      "created_at": "2026-09-15T03:14:50Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "mirabeau_fantasy_football",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34909713792,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T23:37:40Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_dfb_league_ii",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34909485579,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T23:34:36Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_dfb_league_ii",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34905056280,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T22:37:50Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "playing_for_keeps_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34899796823,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T21:36:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "playing_for_keeps_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34898460546,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T21:22:40Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "playing_for_keeps_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34895968477,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T20:57:12Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "nyu_ffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34895078672,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T20:47:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "nyu_ffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34894378041,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T20:40:48Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34892274511,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T20:20:05Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34863624106,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T15:39:42Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "ambiguous_or_absent",
+      "candidates": [],
+      "event": "workflow_dispatch",
+      "recovery_scope": "unresolved_pre_worker_failure"
+    },
+    {
+      "id": 34798334197,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T02:10:49Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_dfb_league_ii",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34796230020,
+      "platform": "sleeper",
+      "created_at": "2026-09-14T01:32:13Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_dfb_league_ii",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766964679,
+      "platform": "sleeper",
+      "created_at": "2026-09-13T15:53:54Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766560374,
+      "platform": "sleeper",
+      "created_at": "2026-09-13T15:45:38Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765713401,
+      "platform": "sleeper",
+      "created_at": "2026-09-13T15:28:37Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765288243,
+      "platform": "sleeper",
+      "created_at": "2026-09-13T15:20:10Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765212994,
+      "platform": "sleeper",
+      "created_at": "2026-09-13T15:18:41Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34604481466,
+      "platform": "sleeper",
+      "created_at": "2026-09-11T13:28:17Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34603194518,
+      "platform": "sleeper",
+      "created_at": "2026-09-11T13:14:36Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34566851671,
+      "platform": "sleeper",
+      "created_at": "2026-09-11T05:40:15Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 2,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34542023537,
+      "platform": "sleeper",
+      "created_at": "2026-09-10T23:24:41Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34541784337,
+      "platform": "sleeper",
+      "created_at": "2026-09-10T23:21:33Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34541607460,
+      "platform": "sleeper",
+      "created_at": "2026-09-10T23:19:11Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_real_ff_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35111436541,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T14:51:54Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "fight_club_except_we_do_talk",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35109769080,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T14:37:14Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fight_club_except_we_do_talk",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35107492217,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T14:17:19Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fight_club_except_we_do_talk",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35107363373,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T14:16:11Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "fight_club_except_we_do_talk",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35096470346,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T12:32:56Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35095696367,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T12:25:04Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35058034929,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T05:04:04Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "fight_club_except_we_do_talk",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35057508667,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T04:55:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35057070359,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T04:49:07Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35056657131,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T04:42:45Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35055957817,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T04:31:53Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35051396580,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T03:20:05Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35051306685,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T03:18:40Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35048669674,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T02:37:00Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "pass_interferance",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35047345702,
+      "platform": "yahoo",
+      "created_at": "2026-09-16T02:16:25Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "pass_interferance",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35031862539,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T22:37:07Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "workflow_definition_push_failure",
+      "event": "push",
+      "recovery_scope": "excluded_no_dispatch_no_jobs"
+    },
+    {
+      "id": 35017435896,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T20:04:49Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "pass_interferance",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34985851294,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T15:03:34Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "league_of_snakes",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34985778601,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T15:02:56Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "league_of_snakes",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34979471542,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T14:07:04Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_super_bowlava",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34975062227,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T13:27:02Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34965793047,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T11:53:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34963298640,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T11:26:33Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "pimps_and_ochos",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34939178389,
+      "platform": "yahoo",
+      "created_at": "2026-09-15T06:55:47Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "bethany_beach_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34907579431,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T23:10:05Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34907426597,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T23:08:09Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34906937075,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T23:01:57Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34905052723,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T22:37:47Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34899793146,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T21:36:55Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34898455699,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T21:22:37Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34895871817,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T20:56:11Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34895614878,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T20:53:31Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "ambiguous_or_absent",
+      "candidates": [],
+      "event": "workflow_dispatch",
+      "recovery_scope": "unresolved_pre_worker_failure"
+    },
+    {
+      "id": 34895069989,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T20:47:53Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34797767760,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T02:00:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34795524466,
+      "platform": "yahoo",
+      "created_at": "2026-09-14T01:19:00Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766882960,
+      "platform": "yahoo",
+      "created_at": "2026-09-13T15:52:11Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766468340,
+      "platform": "yahoo",
+      "created_at": "2026-09-13T15:43:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766261193,
+      "platform": "yahoo",
+      "created_at": "2026-09-13T15:39:32Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766041860,
+      "platform": "yahoo",
+      "created_at": "2026-09-13T15:35:07Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765619646,
+      "platform": "yahoo",
+      "created_at": "2026-09-13T15:26:45Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765213057,
+      "platform": "yahoo",
+      "created_at": "2026-09-13T15:18:41Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34604228765,
+      "platform": "yahoo",
+      "created_at": "2026-09-11T13:25:35Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34603937297,
+      "platform": "yahoo",
+      "created_at": "2026-09-11T13:22:30Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34603403821,
+      "platform": "yahoo",
+      "created_at": "2026-09-11T13:16:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34566945240,
+      "platform": "yahoo",
+      "created_at": "2026-09-11T05:41:41Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 2,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34566849671,
+      "platform": "yahoo",
+      "created_at": "2026-09-11T05:40:13Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34534446765,
+      "platform": "yahoo",
+      "created_at": "2026-09-10T21:51:48Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34533897957,
+      "platform": "yahoo",
+      "created_at": "2026-09-10T21:45:24Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34533465983,
+      "platform": "yahoo",
+      "created_at": "2026-09-10T21:40:28Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34532988319,
+      "platform": "yahoo",
+      "created_at": "2026-09-10T21:35:07Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34531875112,
+      "platform": "yahoo",
+      "created_at": "2026-09-10T21:23:02Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "kmffl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35103750383,
+      "platform": "espn",
+      "created_at": "2026-09-16T13:43:26Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "live_draft_beer_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35101976587,
+      "platform": "espn",
+      "created_at": "2026-09-16T13:26:57Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "live_draft_beer_league",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35098482421,
+      "platform": "espn",
+      "created_at": "2026-09-16T12:53:31Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "afi_data",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35098145142,
+      "platform": "espn",
+      "created_at": "2026-09-16T12:50:09Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35096876781,
+      "platform": "espn",
+      "created_at": "2026-09-16T12:37:08Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35058032294,
+      "platform": "espn",
+      "created_at": "2026-09-16T05:04:02Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35057665071,
+      "platform": "espn",
+      "created_at": "2026-09-16T04:58:23Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35051306425,
+      "platform": "espn",
+      "created_at": "2026-09-16T03:18:40Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35048916783,
+      "platform": "espn",
+      "created_at": "2026-09-16T02:40:56Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "afi_data",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35048668267,
+      "platform": "espn",
+      "created_at": "2026-09-16T02:36:59Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "afi_data",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35047344186,
+      "platform": "espn",
+      "created_at": "2026-09-16T02:16:24Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "afi_data",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35042426172,
+      "platform": "espn",
+      "created_at": "2026-09-16T01:01:39Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "live_draft_beer_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35041982033,
+      "platform": "espn",
+      "created_at": "2026-09-16T00:55:17Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "live_draft_beer_league",
+      "identity_source": "prior_log_receipt"
+    },
+    {
+      "id": 35033424344,
+      "platform": "espn",
+      "created_at": "2026-09-15T22:57:07Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "afi_data",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35031858907,
+      "platform": "espn",
+      "created_at": "2026-09-15T22:37:05Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "workflow_definition_push_failure",
+      "event": "push",
+      "recovery_scope": "excluded_no_dispatch_no_jobs"
+    },
+    {
+      "id": 35029856351,
+      "platform": "espn",
+      "created_at": "2026-09-15T22:13:28Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "fantasy_football_8ad9",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 35007638420,
+      "platform": "espn",
+      "created_at": "2026-09-15T18:27:54Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "new_league_same_result",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34993038697,
+      "platform": "espn",
+      "created_at": "2026-09-15T16:08:04Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991554961,
+      "platform": "espn",
+      "created_at": "2026-09-15T15:54:25Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "dom_s_year",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991513233,
+      "platform": "espn",
+      "created_at": "2026-09-15T15:54:03Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_chulent_bowl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991342765,
+      "platform": "espn",
+      "created_at": "2026-09-15T15:52:30Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "always_sunny_in_emmitsburg",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991156379,
+      "platform": "espn",
+      "created_at": "2026-09-15T15:50:47Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_chulent_bowl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34991070985,
+      "platform": "espn",
+      "created_at": "2026-09-15T15:50:03Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_chulent_bowl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34983674402,
+      "platform": "espn",
+      "created_at": "2026-09-15T14:44:25Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "the_beata_cup",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34972331054,
+      "platform": "espn",
+      "created_at": "2026-09-15T13:00:58Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "l_78_shootas",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34968225996,
+      "platform": "espn",
+      "created_at": "2026-09-15T12:19:56Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "bfl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34964138581,
+      "platform": "espn",
+      "created_at": "2026-09-15T11:35:51Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "joes_pussy",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34956950526,
+      "platform": "espn",
+      "created_at": "2026-09-15T10:15:11Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "world_league_of_howell",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34933384490,
+      "platform": "espn",
+      "created_at": "2026-09-15T05:35:50Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "superleague_v2_0",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34926144600,
+      "platform": "espn",
+      "created_at": "2026-09-15T03:44:36Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "joes_pussy",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34925370257,
+      "platform": "espn",
+      "created_at": "2026-09-15T03:32:24Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "afi_data",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34920543110,
+      "platform": "espn",
+      "created_at": "2026-09-15T02:16:27Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_chulent_bowl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34920512149,
+      "platform": "espn",
+      "created_at": "2026-09-15T02:15:57Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_chulent_bowl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34920479226,
+      "platform": "espn",
+      "created_at": "2026-09-15T02:15:27Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": "the_chulent_bowl",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34909614108,
+      "platform": "espn",
+      "created_at": "2026-09-14T23:36:19Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34909482905,
+      "platform": "espn",
+      "created_at": "2026-09-14T23:34:34Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34905054412,
+      "platform": "espn",
+      "created_at": "2026-09-14T22:37:49Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34899795129,
+      "platform": "espn",
+      "created_at": "2026-09-14T21:36:57Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34898458412,
+      "platform": "espn",
+      "created_at": "2026-09-14T21:22:38Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34895965141,
+      "platform": "espn",
+      "created_at": "2026-09-14T20:57:10Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34895074713,
+      "platform": "espn",
+      "created_at": "2026-09-14T20:47:56Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34884963158,
+      "platform": "espn",
+      "created_at": "2026-09-14T19:07:22Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "not_for_long",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34878950751,
+      "platform": "espn",
+      "created_at": "2026-09-14T18:08:07Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "not_for_long",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34876171739,
+      "platform": "espn",
+      "created_at": "2026-09-14T17:40:24Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "ambiguous_or_absent",
+      "candidates": [],
+      "event": "workflow_dispatch",
+      "recovery_scope": "unresolved_pre_worker_failure"
+    },
+    {
+      "id": 34861484048,
+      "platform": "espn",
+      "created_at": "2026-09-14T15:20:14Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "db_name": null,
+      "identity_source": null,
+      "identity_error": "ambiguous_or_absent",
+      "candidates": [],
+      "event": "workflow_dispatch",
+      "recovery_scope": "unresolved_pre_worker_failure"
+    },
+    {
+      "id": 34798334223,
+      "platform": "espn",
+      "created_at": "2026-09-14T02:10:49Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34796086867,
+      "platform": "espn",
+      "created_at": "2026-09-14T01:29:36Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766925930,
+      "platform": "espn",
+      "created_at": "2026-09-13T15:53:06Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34766515079,
+      "platform": "espn",
+      "created_at": "2026-09-13T15:44:47Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765672617,
+      "platform": "espn",
+      "created_at": "2026-09-13T15:27:49Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34765213002,
+      "platform": "espn",
+      "created_at": "2026-09-13T15:18:41Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34604365643,
+      "platform": "espn",
+      "created_at": "2026-09-11T13:27:02Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34566853971,
+      "platform": "espn",
+      "created_at": "2026-09-11T05:40:17Z",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 2,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34538716391,
+      "platform": "espn",
+      "created_at": "2026-09-10T22:41:54Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    },
+    {
+      "id": 34538400721,
+      "platform": "espn",
+      "created_at": "2026-09-10T22:38:00Z",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "identity_source": "workflow_log"
+    }
+  ],
+  "leagues": {
+    "afi_data": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        35098482421,
+        35048916783,
+        35048668267,
+        35047344186,
+        35033424344,
+        34925370257
+      ],
+      "recovery_status": "unverified"
+    },
+    "agusta_fantasy_league": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35104953658,
+        35104260898,
+        35052703365,
+        35051533368
+      ],
+      "recovery_status": "unverified"
+    },
+    "always_sunny_in_emmitsburg": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34991342765
+      ],
+      "recovery_status": "unverified"
+    },
+    "bethany_beach_league": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        34939178389
+      ],
+      "recovery_status": "unverified"
+    },
+    "bfl": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34968225996
+      ],
+      "recovery_status": "unverified"
+    },
+    "clemson_fantasy_league": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35110193415,
+        35102035881,
+        35101291332,
+        35034566323,
+        35033851317,
+        35018480216,
+        35014260106,
+        35014116456,
+        34990727989,
+        34990259999
+      ],
+      "recovery_status": "unverified"
+    },
+    "dom_s_year": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34991554961
+      ],
+      "recovery_status": "unverified"
+    },
+    "fanball_3e8d": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35034564156,
+        35033849539,
+        35018852948,
+        35015562006,
+        34992250656,
+        34983492721,
+        34973368094
+      ],
+      "recovery_status": "unverified"
+    },
+    "fantasy_football_8ad9": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        35029856351
+      ],
+      "recovery_status": "unverified"
+    },
+    "fight_club_except_we_do_talk": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        35111436541,
+        35109769080,
+        35107492217,
+        35107363373,
+        35058034929
+      ],
+      "recovery_status": "unverified"
+    },
+    "franchise_mode_fantasy": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        34929878916
+      ],
+      "recovery_status": "unverified"
+    },
+    "group_chat_foosball": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35102286423,
+        35034571545,
+        35033856564,
+        34990850316,
+        34990768505
+      ],
+      "recovery_status": "unverified"
+    },
+    "handegg_dynasty_league": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35034573242,
+        35033858616,
+        35002617611
+      ],
+      "recovery_status": "unverified"
+    },
+    "joes_pussy": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34964138581,
+        34926144600
+      ],
+      "recovery_status": "unverified"
+    },
+    "kmffl": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        34975062227,
+        34965793047,
+        34907579431,
+        34907426597,
+        34906937075,
+        34797767760,
+        34795524466,
+        34534446765,
+        34533897957,
+        34533465983,
+        34532988319,
+        34531875112
+      ],
+      "recovery_status": "unverified"
+    },
+    "l_78_shootas": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34972331054
+      ],
+      "recovery_status": "unverified"
+    },
+    "league_of_snakes": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        34985851294,
+        34985778601
+      ],
+      "recovery_status": "unverified"
+    },
+    "live_draft_beer_league": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        35103750383,
+        35101976587,
+        35042426172,
+        35041982033
+      ],
+      "recovery_status": "unverified"
+    },
+    "mawhinney_s_vixens": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35098485348,
+        35047801539,
+        35034568474,
+        35033852940,
+        35004307850,
+        35003702633,
+        34999502364,
+        34998941932,
+        34997982833,
+        34997048950,
+        34991462829,
+        34991183574,
+        34990160069,
+        34980662321,
+        34980574735,
+        34980410277,
+        34980018605
+      ],
+      "recovery_status": "unverified"
+    },
+    "mirabeau_fantasy_football": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        34925037199,
+        34924250046
+      ],
+      "recovery_status": "unverified"
+    },
+    "new_league_same_result": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        35007638420
+      ],
+      "recovery_status": "unverified"
+    },
+    "not_for_long": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34884963158,
+        34878950751
+      ],
+      "recovery_status": "unverified"
+    },
+    "nyu_ffl": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35101677473,
+        35101194997,
+        35097064614,
+        35051306850,
+        34895968477,
+        34895078672
+      ],
+      "recovery_status": "unverified"
+    },
+    "pass_interferance": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        35048669674,
+        35047345702,
+        35017435896
+      ],
+      "recovery_status": "unverified"
+    },
+    "pimps_and_ochos": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        34963298640
+      ],
+      "recovery_status": "unverified"
+    },
+    "playing_for_keeps_league": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        34905056280,
+        34899796823,
+        34898460546
+      ],
+      "recovery_status": "unverified"
+    },
+    "superleague_v2_0": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34933384490
+      ],
+      "recovery_status": "unverified"
+    },
+    "tfl_of_extraordinary_gentleman": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        35098145142,
+        35096876781,
+        35058032294,
+        35057665071,
+        35051306425,
+        34993038697,
+        34909614108,
+        34909482905,
+        34905054412,
+        34899795129,
+        34898458412,
+        34895965141,
+        34895074713,
+        34798334223,
+        34796086867,
+        34766925930,
+        34766515079,
+        34765672617,
+        34765213002,
+        34604365643,
+        34566853971,
+        34538716391,
+        34538400721
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_beata_cup": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34983674402
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_chulent_bowl": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34991513233,
+        34991156379,
+        34991070985,
+        34920543110,
+        34920512149,
+        34920479226
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_dfb_league_ii": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        34909713792,
+        34909485579,
+        34798334197,
+        34796230020
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_fucking_catalina_wine_mixer": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        35109099189,
+        35108159916,
+        35105228797,
+        35046831205,
+        35046547004,
+        35046336000,
+        35046095128,
+        35045896312,
+        35045508555,
+        35045255233,
+        35044865162,
+        35044618140,
+        35044323750,
+        35043980023,
+        35043379654,
+        35042683267,
+        35042384641,
+        35042028054,
+        35041756458,
+        35040844358,
+        35040579022,
+        35040208661,
+        35039927714,
+        35039638601,
+        35039319882,
+        35038992701,
+        35038707199,
+        35038407724,
+        35037791035,
+        35036388785,
+        35034570034,
+        35033854617,
+        35001181242,
+        34999499373,
+        34999309815,
+        34999237602,
+        34894378041,
+        34892274511
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_league": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        35096470346,
+        35095696367,
+        35057508667,
+        35057070359,
+        35056657131,
+        35055957817,
+        35051396580,
+        35051306685,
+        34905052723,
+        34899793146,
+        34898455699,
+        34895871817,
+        34895069989,
+        34766882960,
+        34766468340,
+        34766261193,
+        34766041860,
+        34765619646,
+        34765213057,
+        34604228765,
+        34603937297,
+        34603403821,
+        34566945240,
+        34566849671
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_real_ff_league": {
+      "platforms": [
+        "sleeper"
+      ],
+      "run_ids": [
+        34766964679,
+        34766560374,
+        34765713401,
+        34765288243,
+        34765212994,
+        34604481466,
+        34603194518,
+        34566851671,
+        34542023537,
+        34541784337,
+        34541607460
+      ],
+      "recovery_status": "unverified"
+    },
+    "the_super_bowlava": {
+      "platforms": [
+        "yahoo"
+      ],
+      "run_ids": [
+        34979471542
+      ],
+      "recovery_status": "unverified"
+    },
+    "world_league_of_howell": {
+      "platforms": [
+        "espn"
+      ],
+      "run_ids": [
+        34956950526
+      ],
+      "recovery_status": "unverified"
+    }
+  }
+}

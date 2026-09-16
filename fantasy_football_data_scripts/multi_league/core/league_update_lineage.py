@@ -86,6 +86,14 @@ def resolve_active_update_segment(
         raise ActiveUpdateSegmentError(
             f"active season {active_year} belongs to {platform}; expected {requested}"
         )
+    if platform != persisted_platform:
+        # Full imports persist their chosen target provider in league_context.
+        # Current-year rows from a misrouted prior update are not authority to
+        # change that target and append an unrelated provider's league chain.
+        raise ActiveUpdateSegmentError(
+            f"active season {active_year} provider {platform} conflicts with saved import target "
+            f"{persisted_platform}; reconcile the imported league chain before updating"
+        )
 
     league_ids = {
         str(year): values[platform]

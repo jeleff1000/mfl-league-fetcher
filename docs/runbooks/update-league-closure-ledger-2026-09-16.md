@@ -1,6 +1,231 @@
 # September Update League closure ledger
 
-State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+State: blocked on D: disk capacity. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+
+## Disk-blocked continuation checkpoint
+
+D: again reports zero free bytes after three consecutive goal turns with this
+same capacity blocker. The current worker HEAD remains a36d876fda916bd0817b7c5479ca117625e3ec0d;
+the tested lineage guard is local/uncommitted. No canary or lineage-test process
+remains running. Earlier exact temporary-test cleanup was denied; no alternate
+deletion mechanism was used. Small C: fixtures allowed the Python regressions,
+but the frontend runner still requires its D:/temp module directory and fails
+with ENOSPC. Commit/build/deployment cannot proceed safely with zero headroom.
+
+Resume when the user frees D: space: run the pending frontend regression RED,
+finish the same ownership check in the existing freshness reader, verify the
+worker/frontend suites, then commit only this scoped fix and deploy through
+the existing main paths. Recover the_league through the original ESPN/Sleeper
+import identity, not its incorrect Yahoo leg. NYU latency/rank issues, remaining
+platform canaries, cohort recovery and every other open acceptance item remain
+in scope; this is not completion or a narrower replacement objective.
+
+## Latest checkpoint - 2026-09-16 17:50 UTC
+
+The six-file traded-pick/homepage fix is now committed and pushed to public main
+as a36d876fda916bd0817b7c5479ca117625e3ec0d. Deployment 35129686647 succeeded
+on that exact SHA at 17:42:47 UTC. Fly /ready is serving and accepting queries.
+The final transaction/homepage/career/HTTP-publication suite passed 81 tests
+in 48.49s using small C: test fixtures. Dirty ownership/planner experiments were
+excluded; no workflow or replacement pipeline was introduced.
+
+Second actual NYU UI canary: clicked Retry Update once at 17:50:12.851 UTC;
+POST acknowledgment took 17.873s, dispatching run 35130659510. Publication,
+rendered results and under-90-second latency remain unverified while it runs.
+Read-only observer processes were closed before this single click. D: has no
+free space; the browser uses a small C: profile, not another checkout or lake.
+
+NYU UI run 35130659510 subsequently COMMITTED bundle
+fleet-83ca13699546f4303aa27e20f09f8724628f6afc2a7a5b367b7056351f180c3b.
+Browser observed committed at 150.062s, succeeded/hidden at 153.003s, and the
+updated rendered page at 154.911s. The false +13 current-season trade card is
+gone; the 2025 +815 all-time trade card, all nine-year manager careers and the
+weekly/season/career clutch cards remain visible. No manual page reload.
+Worker phases total 103.344s: NFL-week cache patch 54.255s (fetch 51.944s),
+shared transformations 8.001s, Fly publication 29.422s. Server career rebuild
+3.26s and homepage rebuild 9.0593s are within that publication phase.
+The under-90-second requirement FAILED; success is not fleet completion.
+Independent Fly career reconciliation: all 12 franchises agree with all-season
+games/wins/losses totals (1,400 career games), zero discrepancies. Matchup
+identities are nonempty and the same 12 display aliases appear in 2018-2026.
+Further independent score/rank checks and remaining platform canaries are open.
+
+Independent post-publication NYU checks: all 12 week-1 team scores match live
+Sleeper exactly. All eight mirrored pick perspectives now name the four correct
+conveyed players, each with zero trade-asset LAMAR. The old Rams DST mapping is
+absent. Fly's all-time trade winner remains KrispyChris at 814.65.
+All 430 active player rows match live OPS season/career PPG. Caleb Williams is
+QB rank 216 with standard-scoring career PPG 17.49, not rank 1.
+One position-rank discrepancy remains: unrostered Bo Melton is displayed WR
+but carries DB rank 3699; current Fly WR rank is null, DB rank is 3699. Nine
+rostered, nonstarted zero-point players lack a week-1 OPS row. Do not silently
+count these as fully verified. Cache-bio synchronization currently refreshes
+only missing identities, so stale cached position metadata is a concrete
+candidate; source-position/eligibility consistency still requires resolution.
+
+### Yahoo canary paused before dispatch: conflicting active-chain ownership
+
+At 17:59 UTC the actual the_league page offered Update League. No click was
+made; the read-only browser was closed. Fly context says platform=sleeper and
+league_id=1385696375349448704, while its league_ids_json contains a Yahoo chain
+ending 470.l.164172. Persisted settings contain ESPN 110800 for 2011-2024,
+Sleeper 1223059438311575552 for 2025, and Yahoo 470.l.164172 for 2026.
+The live Sleeper API independently confirms 1385696375349448704 is the 2026
+successor of 1223059438311575552. Yahoo 2026 has a different manager identity
+set. This is an unresolved ownership/provenance conflict, not proof of an
+intentional platform transition. The prior manual Yahoo success is therefore
+not a chain-correctness receipt. Do not refresh that Yahoo target again until
+the intended active leg is established from import provenance or owner input.
+Current frontend and worker selection prefer persisted current-year settings
+over the conflicting context, so merely repeating the same canary cannot
+resolve the ambiguity. Reuse original import-chain ownership; do not create
+another name-based resolver or directly rewrite Fly rows.
+
+### Ownership provenance and local regression fix - 2026-09-16 18:08 UTC
+
+The existing accounts.pending_paid_imports record dated 2026-09-09 03:55:08
+resolves the_league's intended import: platform=multi-platform, target index=1,
+segments ESPN 110800 then Sleeper 1385696375349448704. No Yahoo segment is in
+that saved plan. The league_context platform/ID agree with the Sleeper target;
+its updated_at is 2026-09-11 05:42:37. Thus the 2026 Yahoo leg is not supported
+by the original import plan. Recovery must retain the ESPN/Sleeper history and
+use the established Sleeper continuation, not another Yahoo canary.
+
+Added three real worker regression cases for context/provider contradictions.
+All three failed before the fix (wrong provider was accepted). The existing
+resolve_active_update_segment now rejects active ownership that contradicts
+the saved import target. The lineage + three platform-worker suites pass
+40 tests in 1.62s. This two-file worker change is LOCAL ONLY, not committed or
+deployed. Unrelated ownership/planner experiments remain excluded.
+
+Frontend regression added in the existing freshness-chain test, but execution
+is environment-blocked: Vitest cannot mkdir D:/temp/<run>/ssr (ENOSPC). Its
+configuration loader issue was isolated using a small C: test config, without
+installing packages or moving the repository. TEMP/TMP remain D:/temp. No
+frontend implementation was changed before a valid RED test can run.
+D: remains at zero free bytes. Need user to free disk before frontend tests,
+commit/deployment and the verified existing-path recovery can continue safely.
+
+## Current sequential checkpoint — 2026-09-16 16:58 UTC
+
+One implementation lane; no new checkout, branch, worktree, or parallel agent.
+App UI revision 84cb66f5af4a7be6917104affca26228da355bf3 was deployed in the
+preceding continuation; this is not evidence of worker completion. Public worker
+checkout remains dc3f3e0221a1bcb730413d90c52b5b698e932c35. Existing modified
+ownership experiments are excluded from this work and must not be staged.
+
+Recovery inventory: `update-league-cohort-all-attempts-2026-09-16.json` is the
+supporting all-attempts evidence for this ledger (not a second tracker).
+All pages of the three incremental-refresh workflow histories returned 219 runs:
+113 Sleeper, 51 Yahoo, 55 ESPN, starting 2026-09-10. Run logs resolve 212 runs to
+36 unique league database identities. Every league remains unverified for the
+full recovery contract, regardless of previous green runs.
+
+Three unmatched runs (35031859653, 35031862539, 35031858907) are push-triggered
+workflow-definition failures with no jobs, not league update dispatches.
+Four actual dispatches remain identity-unresolved: 34863624106, 34895614878,
+34876171739, 34861484048. Three failed before any steps; Yahoo 34895614878 failed
+restoring the ops cache before the worker. Do not silently drop these attempts.
+The older offseason-update workflow and persisted dispatch registry still need
+scope reconciliation before declaring the recovery inventory exhaustive.
+
+Next active task: finish identity/scope reconciliation and compact before-update
+witnesses, then trace a real Sleeper UI update. Browser connector returns no
+available browser; existing Playwright Chromium is being checked as the browser
+test fallback. No new production update has been dispatched in this continuation.
+
+### Live Sleeper UI canary failed — 17:08 UTC
+
+Compact before-witnesses for 36 identified leagues are saved in
+`update-league-cohort-before-witnesses-2026-09-16.json`: selected value hashes by
+season, configuration hashes, and stable before/after publication generations.
+The first whole-row player_fantasy hash timed out without writes; the successful
+witness hashes explicit identity/score/alias/LAMAR/clutch columns instead.
+No league-history rows or NFL lake were downloaded.
+
+Playwright Chromium loaded the actual production NYU page, with no mocked HTTP
+routes. One click at 17:06:51.439Z dispatched public run 35126173284 on exact
+worker main dc3f3e0221a1bcb730413d90c52b5b698e932c35. Acknowledgment took 18.802s.
+The workflow's paid UI claim succeeded; manual-claim steps were skipped.
+NYU before publication generation is 3. The UI reported failure at 99.406s;
+the refresh step ran about 59s. Fly rejected publication with HTTP 422:
+`Homepage summary lost populated value: season_trade_winner`. Generation remains
+3 and the previous +12.93 season trade highlight remains. No successful or
+under-90-second publication occurred. This additional attempt belongs to the
+same NYU recovery entry; NYU is not recovered.
+
+Source verification found a real shared traded-pick mapping defect: Sleeper's
+`pick_{season}_{round}_{roster_id}` was matched to draft slot for startup drafts.
+NYU's original roster 4 owns draft slot 6, not slot 4. The old mapping borrowed
+an unrelated Rams DST's -12.925 LAMAR and manufactured the +12.93 trade winner.
+The four actual conveyed bench assets currently have zero manager LAMAR.
+
+Local fix uses the existing original-roster mapping for every draft category.
+The full transaction-enrichment test file passed 26 tests. Homepage correction
+uses the existing DDL trade fields and shared calculation: valid no-winner
+results are explicit nulls; SQL failures propagate; the existing mirrored
+trade-asset contract is checked before calculating the highlight. Tests first
+reproduced six failures, then the 72 transaction/homepage regressions passed
+within the wider run (95 passing tests total before the failures below).
+No replacement pipeline, new checkout, or production write has been introduced.
+
+Read-only cohort inspection found invalid mirrored trade assets in 10 leagues,
+across 15 league/year partitions. Examples include 2026 sent-only trade rows in
+franchise_mode_fantasy and the_dfb_league_ii, and missing historical sent values
+in bethany_beach_league. These are open source/enrichment recovery defects, not
+credential blockers. NYU's complete 2018–2026 trade assets pass this check.
+
+Broader verification found an unchanged baseline test disagreement:
+`test_draft_manager_season_pk_excludes_draft_category` expects category absent,
+but the existing DDL explicitly includes category in the key. Neither file was
+changed in this fix. HTTP merge tests could not complete because D: filled with
+temporary test databases (2 failures/7 errors total in the 104-test run, with
+the remaining failures/errors attributable to disk exhaustion). Cleanup of
+only this run's disposable pytest-2419 directory was denied by tool policy;
+no alternative deletion mechanism was attempted. User was asked to free space.
+The same 8 HTTP publication tests were subsequently rerun with small disposable
+fixtures on C: (`--basetemp=C:/Users/joeye/AppData/Local/Temp/league-update-trade-http-20260916-1733`):
+8 passed in 16.66s, including atomic rollback and replay. TEMP/TMP remained D:/temp.
+No repository, NFL lake, or league-history dataset was moved to C:.
+Remaining D: space is approximately 5.5 MiB, insufficient headroom to safely
+stage/commit/deploy. The cleanup request remains outstanding.
+
+Review also found pre-existing ambiguous traded-pick fallback branches when
+original-roster metadata is absent; these still require a source-backed fix and
+regressions. The current mapping fix proves only the metadata-present branch.
+Application and public-worker Python files have diverged; do not overwrite the
+app's files wholesale. The executing incremental workflow and Fly Dockerfile
+both read the canonical public-worker checkout. No workflow was changed here.
+The local changes have NOT been committed, deployed, or production-verified.
+
+### Follow-up read-only isolation while deployment is disk-blocked
+
+The next continuation rechecked D: at 4 MiB free; pytest-2419 still exists.
+No cleanup retry, new checkout, production rerun, or deployment was attempted.
+
+For the_real_ff_league, Fly contains only 5 sent perspectives for 2026
+transaction 1401414684367687680 in league 1389755141288124416. The live Sleeper
+transactions/1 response still contains all five assets (one player/four picks).
+The current real parser and canonical normalizer produce 5 received + 5 sent
+rows, and a second normalization preserves all 10. This is not evidence of a
+current provider or normalizer omission.
+
+A subsequent in-memory DuckDB replay loaded only those five live Fly rows into
+the canonical DDL, then called the actual merge_provider_refresh_table with the
+provider-parsed assets. It explicitly loaded committed HEAD ownership code to
+exclude the dirty local ownership experiments. First merge and identical repeat
+both yielded 5 received + 5 sent, with zero duplicate transaction/sequence keys.
+No real league data was written. Thus the committed merge can restore these
+missing perspectives; do not add a speculative replacement normalizer. Full
+enrichment/publication of this league remains unverified and must follow the
+sequential NYU canary after the publication fix is deployed.
+
+The four identity-unresolved old dispatch IDs have no matches in the current
+Fly dispatch registry. They remain unresolved, not credential-blocked/recovered.
+September predecessor audit enumerated 93 offseason-draft workflow runs; their
+logs invoke check_offseason_drafts.py, not any active-season refresh script.
+They are not silently added as weekly-update recoveries: indirect-call/scope
+reconciliation remains open, and names require the predecessor's DB_NAMES field.
 
 ## Objective and acceptance
 

@@ -361,6 +361,46 @@ def test_preservation_fingerprint_rejects_a_real_historical_value_change():
     assert _frame_fingerprint(before) != _frame_fingerprint(after)
 
 
+def test_active_refresh_restores_a_valid_derived_player_value_only_when_rebuild_nulls_it(tmp_path):
+    """Inactive players retain their valid all-time rank when OPS has no new row."""
+    from multi_league.core.local_db import LocalLeagueDB
+    from multi_league.core.league_update_ownership import restore_active_derived_source_values
+
+    source = pd.DataFrame(
+        [
+            {
+                "db_name": "afi_data",
+                "year": 2026,
+                "player_week": "00-0038977_2026_1",
+                "NFL_player_id": "00-0038977",
+                "position_alltime_rank": 129,
+            }
+        ]
+    )
+    local = LocalLeagueDB(tmp_path, "afi_data")
+    try:
+        local.ensure_table("player_fantasy")
+        local._insert_into_table("player_fantasy", source)
+        local.connect().execute(
+            "UPDATE public.player_fantasy SET position_alltime_rank = NULL "
+            "WHERE player_week = '00-0038977_2026_1'"
+        )
+
+        restored = restore_active_derived_source_values(
+            local,
+            {"player_fantasy": source},
+            active_year=2026,
+        )
+
+        assert restored["player_fantasy"]["position_alltime_rank"] == 1
+        assert local.connect().execute(
+            "SELECT position_alltime_rank FROM public.player_fantasy "
+            "WHERE player_week = '00-0038977_2026_1'"
+        ).fetchone()[0] == 129
+    finally:
+        local.close()
+
+
 def test_new_provider_row_does_not_copy_another_rows_enrichment():
     existing = pd.DataFrame([{
         "db_name": "league_a",

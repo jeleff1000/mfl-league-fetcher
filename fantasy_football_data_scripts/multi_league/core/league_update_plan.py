@@ -25,6 +25,9 @@ class RefreshPlan:
     changed_resources: tuple[ResourceRevision, ...]
     reasons: tuple[str, ...]
     rebuild_full_active_season: bool
+    # Empty weeks still represent work (for example a corrected draft).
+    # The legacy `weeks` field addresses only `active_season`.
+    weeks_by_season: tuple[tuple[int, tuple[int, ...]], ...] = ()
 
     @property
     def requires_refresh(self) -> bool:
@@ -114,10 +117,11 @@ def build_refresh_plan(
     published: SourceManifest,
     materialized_keys: Iterable[object],
 ) -> RefreshPlan:
-    """Plan all changed active-season scopes with no newest-week lower bound."""
+    """Retain changed chain partitions without a newest-week lower bound."""
     delta = diff_manifests(observed, published)
     season = observed.active_season
     resources = _delta_resources(delta)
+    materialized_keys = tuple(materialized_keys)
     materialized = _materialized_weeks(materialized_keys, season=season)
     observed_weeks = _observed_nfl_weeks(observed)
     weeks: set[int] = set()
@@ -152,6 +156,23 @@ def build_refresh_plan(
         if overlap in observed_weeks:
             weeks.add(overlap)
 
+    partitions: dict[int, set[int]] = {}
+    if weeks or full_active:
+        partitions[season] = set(weeks)
+    for row in resources:
+        year, week = _scope_year_week(row.scope)
+        if year is None:
+            raise PersistedManifestError(f"changed resource has no season: {row.scope!r}")
+        selected = partitions.setdefault(year, set())
+        if week is not None and week > 0:
+            selected.add(week)
+        if row.resource == "settings":
+            selected.update(_materialized_weeks(materialized_keys, season=year))
+            for nfl_row in observed.nfl_revisions:
+                nfl_year, nfl_week = _scope_year_week(nfl_row.scope)
+                if nfl_year == year and nfl_week is not None and nfl_week > 0:
+                    selected.add(nfl_week)
+
     return RefreshPlan(
         database_name=observed.database_name,
         active_season=season,
@@ -159,6 +180,9 @@ def build_refresh_plan(
         changed_resources=resources,
         reasons=tuple(sorted(reasons)),
         rebuild_full_active_season=full_active,
+        weeks_by_season=tuple(
+            (year, tuple(sorted(selected))) for year, selected in sorted(partitions.items())
+        ),
     )
 
 
@@ -236,17 +260,23 @@ def load_persisted_refresh_plan(
         )
         published_digest = None
 
+    affected_seasons = {int(active_season)}
+    for revision in _delta_resources(diff_manifests(observed, published)):
+        year, _ = _scope_year_week(revision.scope)
+        if year is not None:
+            affected_seasons.add(year)
+    season_sql = ", ".join(str(year) for year in sorted(affected_seasons))
     materialized_rows = reader.query(
-        "SELECT DISTINCT TRY_CAST(week AS INTEGER) AS week "
+        "SELECT DISTINCT TRY_CAST(year AS INTEGER) AS year, TRY_CAST(week AS INTEGER) AS week "
         "FROM public.player_fantasy "
-        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) IN ({season_sql}) "
         "AND TRY_CAST(week AS INTEGER) > 0",
         database="___leagues",
     )
     materialized = {
-        (int(active_season), int(item["week"]))
+        (int(item["year"]), int(item["week"]))
         for item in materialized_rows
-        if item.get("week") is not None
+        if item.get("year") is not None and item.get("week") is not None
     }
     plan = build_refresh_plan(observed, published, materialized)
     return PersistedRefreshPlan(

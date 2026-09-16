@@ -316,6 +316,89 @@ def overlay_provider_columns(
     return pd.concat([provider_result, protected_values], axis=1)
 
 
+def restore_active_derived_source_values(
+    local_db: Any,
+    source_frames: dict[str, pd.DataFrame],
+    *,
+    active_year: int,
+) -> dict[str, dict[str, int]]:
+    """Restore a prior active derived value only when recomputation erased it.
+
+    A player can remain rostered while having no current-week OPS fact (for
+    example an injured player).  The provider row is still authoritative, but
+    a quick recomputation must not turn its previously valid career/all-time
+    derived values into NULL.  Restrict restoration to exact canonical source
+    keys in the active year; a freshly recomputed non-null value always wins.
+    """
+    restored: dict[str, dict[str, int]] = {}
+    for table_name in sorted(_SOURCE_SCHEMAS & source_frames.keys()):
+        source = source_frames[table_name]
+        if source.empty or "year" not in source.columns or not local_db.table_exists(table_name):
+            continue
+        years = pd.to_numeric(source["year"], errors="coerce")
+        source_active = source.loc[years.eq(int(active_year))].copy()
+        if source_active.empty:
+            continue
+
+        contract = table_ownership(table_name)
+        keys = list(contract.key_columns)
+        if any(column not in source_active.columns for column in keys):
+            raise PreservationError(f"active source identity is unavailable in {table_name}: {keys}")
+        if source_active.duplicated(keys, keep=False).any():
+            raise PreservationError(f"duplicate active source identity in {table_name}: {keys}")
+
+        conn = local_db.connect()
+        target_columns = {
+            str(column)
+            for column, *_ in conn.execute(f'DESCRIBE public."{table_name}"').fetchall()
+        }
+        derived = sorted(
+            contract.derived_columns & set(source_active.columns) & target_columns
+        )
+        if not derived:
+            continue
+
+        source_relation = f"__restore_active_{table_name}"
+        conn.register(source_relation, source_active.loc[:, [*keys, *derived]])
+        try:
+            join = " AND ".join(
+                f'target."{column}" = source."{column}"'
+                for column in keys
+            )
+            restored_columns: dict[str, int] = {}
+            for column in derived:
+                count = int(
+                    conn.execute(
+                        f'''SELECT COUNT(*)
+                            FROM public."{table_name}" AS target
+                            JOIN {source_relation} AS source ON {join}
+                            WHERE target.year = ?
+                              AND target."{column}" IS NULL
+                              AND source."{column}" IS NOT NULL''',
+                        [int(active_year)],
+                    ).fetchone()[0]
+                    or 0
+                )
+                if not count:
+                    continue
+                conn.execute(
+                    f'''UPDATE public."{table_name}" AS target
+                        SET "{column}" = source."{column}"
+                        FROM {source_relation} AS source
+                        WHERE {join}
+                          AND target.year = ?
+                          AND target."{column}" IS NULL
+                          AND source."{column}" IS NOT NULL''',
+                    [int(active_year)],
+                )
+                restored_columns[column] = count
+            if restored_columns:
+                restored[table_name] = restored_columns
+        finally:
+            conn.unregister(source_relation)
+    return restored
+
+
 def _frame_fingerprint(frame: pd.DataFrame) -> str:
     """Return an order-independent canonical witness fingerprint.
 

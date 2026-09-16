@@ -92,6 +92,38 @@ def test_identical_complete_manifest_is_a_no_op():
     assert plan.changed_resources == ()
 
 
+def test_prior_season_correction_retains_its_year_and_week():
+    old = manifest(
+        nfl=(resource("nfl", "game", "2026:1:A@B", "same"),),
+        provider=(resource("sleeper", "matchups", "2025:17", "old"),),
+    )
+    observed = replace(old, provider_revisions=(
+        resource("sleeper", "matchups", "2025:17", "corrected"),
+    ))
+    plan = build_refresh_plan(observed, old, {(2025, 17), (2026, 1)})
+    assert dict(plan.weeks_by_season)[2025] == (17,)
+    assert set(dict(plan.weeks_by_season)) == {2025, 2026}
+
+
+def test_provider_only_change_remains_a_partition_without_played_weeks():
+    old = manifest(provider=(resource("sleeper", "draft", "2026", "old"),))
+    observed = replace(old, provider_revisions=(
+        resource("sleeper", "draft", "2026", "corrected"),
+    ))
+    plan = build_refresh_plan(observed, old, set())
+    assert plan.requires_refresh is True
+    assert plan.weeks_by_season == ((2026, ()),)
+
+
+def test_historical_settings_change_selects_only_that_seasons_materialized_weeks():
+    old = manifest(provider=(resource("sleeper", "settings", "2025", "old"),))
+    observed = replace(old, provider_revisions=(
+        resource("sleeper", "settings", "2025", "corrected"),
+    ))
+    plan = build_refresh_plan(observed, old, iter(((2024, 1), (2025, 1), (2025, 17))))
+    assert plan.weeks_by_season == ((2025, (1, 17)),)
+
+
 def test_renewal_segment_change_refreshes_the_active_season():
     nfl = tuple(resource("nfl", "game", f"2026:{week}:A@B", f"n{week}") for week in (1, 2, 3))
     old = manifest(nfl=nfl)
@@ -129,7 +161,7 @@ class Reader:
         if database == "___ops":
             return [self.manifest_row] if self.manifest_row else []
         assert database == "___leagues"
-        return [{"week": week} for week in self.weeks]
+        return [{"year": 2026, "week": week} for week in self.weeks]
 
 
 def test_persisted_plan_verifies_the_exact_ui_observation_and_selects_changed_week():
@@ -184,6 +216,41 @@ def test_persisted_plan_rejects_a_stale_ui_digest_before_fetching_provider_data(
             active_season=2026,
             expected_observed_digest="stale",
         )
+
+
+def test_persisted_plan_reads_historical_week_keys_without_other_leagues():
+    import duckdb
+
+    old = manifest(provider=(resource("sleeper", "settings", "2025", "old"),))
+    observed = replace(old, provider_revisions=(
+        resource("sleeper", "settings", "2025", "corrected"),
+    ))
+    row = {
+        "observed_manifest_json": canonical_manifest_json(observed),
+        "observed_manifest_digest": manifest_digest(observed),
+        "published_manifest_json": canonical_manifest_json(old),
+        "published_manifest_digest": manifest_digest(old),
+    }
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER)")
+        conn.execute("INSERT INTO public.player_fantasy VALUES "
+                     "('league_a', 2024, 3), ('league_a', 2025, 1), ('league_a', 2025, 17), "
+                     "('league_a', 2026, 1), ('other', 2025, 99)")
+
+        class ScopedReader:
+            def query(self, sql, *, database):
+                if database == "___ops":
+                    return [row]
+                result = conn.execute(sql)
+                columns = [item[0] for item in result.description]
+                return [dict(zip(columns, values)) for values in result.fetchall()]
+
+        plan = load_persisted_refresh_plan(
+            ScopedReader(), database_name="league_a", active_season=2026,
+            expected_observed_digest=manifest_digest(observed),
+        )
+    assert plan.weeks_by_season == ((2025, (1, 17)),)
 
 
 def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():

@@ -2382,7 +2382,7 @@ def test_update_source_snapshot_captures_generation_with_fly_frames(monkeypatch)
     assert generation == 7
 
 
-def test_update_source_snapshot_scopes_weekly_source_rows_to_active_year(monkeypatch):
+def test_update_source_snapshot_retains_history_for_read_only_rollups(monkeypatch):
     import scripts.refresh_yahoo_active_season as worker
 
     source = {"league_context": pd.DataFrame({"db_name": ["the_league"]})}
@@ -2401,7 +2401,30 @@ def test_update_source_snapshot_scopes_weekly_source_rows_to_active_year(monkeyp
 
     assert frames is source
     assert generation == 7
-    assert captured["active_year"] == 2026
+    assert "active_year" not in captured
+
+
+def test_active_transform_split_keeps_history_out_of_transform_input():
+    import scripts.refresh_yahoo_active_season as worker
+
+    source = {
+        "matchup": pd.DataFrame(
+            {
+                "db_name": ["the_league", "the_league"],
+                "year": [2025, 2026],
+                "manager_week": ["manager_2025_1", "manager_2026_1"],
+            }
+        ),
+        "league_context": pd.DataFrame({"db_name": ["the_league"], "payload": ["context"]}),
+    }
+
+    transform_input, historical_rows = worker._split_active_transform_source_frames(
+        source, active_year=2026,
+    )
+
+    assert transform_input["matchup"]["year"].tolist() == [2026]
+    assert historical_rows["matchup"]["year"].tolist() == [2025]
+    assert transform_input["league_context"].equals(source["league_context"])
 
 
 def test_update_source_snapshot_rejects_concurrent_publication(monkeypatch):

@@ -513,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         _capture_update_source_frames,
         _run_local_pipeline,
         _scope_counts,
+        _split_active_transform_source_frames,
     )
 
     timer = PhaseTimer()
@@ -593,11 +594,14 @@ def main(argv: list[str] | None = None) -> int:
         from multi_league.core.league_update_ownership import source_preservation_snapshot
 
         preservation_witnesses = source_preservation_snapshot(source_frames)
+        transform_source_frames, historical_source_rows = _split_active_transform_source_frames(
+            source_frames, active_year=active_year,
+        )
         local_db = LocalLeagueDB(work_dir, args.db)
         try:
             receipt["hydrated_rows"] = hydrate_local_refresh_sources(
                 local_db,
-                source_frames,
+                transform_source_frames,
                 db_name=args.db,
                 active_year=active_year,
                 expected_platform="sleeper",
@@ -663,7 +667,8 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 work_dir=work_dir,
                 platform="sleeper",
-                keeper_config_hydrated="keeper_config" in source_frames,
+                keeper_config_hydrated="keeper_config" in transform_source_frames,
+                historical_source_rows=historical_source_rows,
             )
             timer.mark("shared_transformations")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(

@@ -601,6 +601,39 @@ def _source_frames(
     return frames
 
 
+def _split_active_transform_source_frames(
+    source_frames: dict[str, pd.DataFrame],
+    *,
+    active_year: int,
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    """Keep historical source facts for rollups, never for active transforms."""
+    transform_input = {name: frame.copy() for name, frame in source_frames.items()}
+    historical_rows: dict[str, pd.DataFrame] = {}
+    for table_name in ACTIVE_REFRESH_SOURCE_TABLES:
+        frame = transform_input.get(table_name)
+        if frame is None or frame.empty or "year" not in frame.columns:
+            continue
+        historical = pd.to_numeric(frame["year"], errors="coerce").lt(int(active_year))
+        if not historical.any():
+            continue
+        historical_rows[table_name] = frame.loc[historical].copy()
+        transform_input[table_name] = frame.loc[~historical].copy()
+    return transform_input, historical_rows
+
+
+def _restore_historical_source_rows(
+    local_db: Any,
+    historical_rows: dict[str, pd.DataFrame],
+) -> None:
+    """Restore immutable historical facts after current-season enrichment."""
+    for table_name, frame in historical_rows.items():
+        if frame.empty:
+            continue
+        if not local_db.table_exists(table_name):
+            raise RuntimeError(f"active transform removed historical source table {table_name}")
+        local_db._insert_into_table(table_name, frame)
+
+
 def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.DataFrame:
     week_clause = f" AND week <= {int(through_week)}" if through_week is not None else ""
     return reader.query_df(
@@ -1229,6 +1262,7 @@ def _run_local_pipeline(
     work_dir: Path,
     platform: str = "yahoo",
     keeper_config_hydrated: bool = False,
+    historical_source_rows: dict[str, pd.DataFrame] | None = None,
 ) -> None:
     from multi_league.core.import_pipeline import (
         require_sql_enrichment_success,
@@ -1288,6 +1322,7 @@ def _run_local_pipeline(
             enricher.reapply_saved_identity_settings()
     finally:
         enricher.close()
+    _restore_historical_source_rows(local_db, historical_source_rows or {})
     active_matchup_row = local_db.connect().execute(
         "SELECT COUNT(*), MAX(week) FROM public.matchup "
         "WHERE db_name = ? AND year = ? AND team_points IS NOT NULL "
@@ -1337,12 +1372,7 @@ def _capture_update_source_frames(
     a later commit is rejected by the server when this base generation merges.
     """
     base_generation = _publish_generation(reader, db_name)
-    frames = _source_frames(
-        reader,
-        db_name=db_name,
-        active_year=active_year,
-        tables=tables,
-    )
+    frames = _source_frames(reader, db_name=db_name, tables=tables)
     if _publish_generation(reader, db_name) != base_generation:
         raise RuntimeError(f"{db_name} changed during source snapshot; retry the update")
     return frames, base_generation
@@ -1455,6 +1485,9 @@ def main(argv: list[str] | None = None) -> int:
         from multi_league.core.league_update_ownership import source_preservation_snapshot
 
         preservation_witnesses = source_preservation_snapshot(source_frames)
+        transform_source_frames, historical_source_rows = _split_active_transform_source_frames(
+            source_frames, active_year=active_year,
+        )
         source_active_key = _active_yahoo_key_from_source_frames(
             source_frames,
             active_year=active_year,
@@ -1492,7 +1525,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             receipt["hydrated_rows"] = hydrate_local_refresh_sources(
                 local_db,
-                source_frames,
+                transform_source_frames,
                 db_name=args.db,
                 active_year=active_year,
                 expected_platform="yahoo",
@@ -1568,7 +1601,8 @@ def main(argv: list[str] | None = None) -> int:
                 db_name=args.db,
                 active_year=active_year,
                 work_dir=work_dir,
-                keeper_config_hydrated="keeper_config" in source_frames,
+                keeper_config_hydrated="keeper_config" in transform_source_frames,
+                historical_source_rows=historical_source_rows,
             )
             timer.mark("shared_transformations")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(

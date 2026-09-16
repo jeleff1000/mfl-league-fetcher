@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      validate_snapshot_id:
+        description: Optional snapshot ID to restore to a temporary volume and validate read-only
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP: league-history-duckdb
           PRESERVE_CURRENT_VOLUME: ${{ inputs.preserve_current_volume }}
+          VALIDATE_SNAPSHOT_ID: ${{ inputs.validate_snapshot_id }}
         run: |
           set -euo pipefail
           flyctl status --app "$FLY_APP"
@@ -51,6 +57,71 @@ jobs:
               -C "/bin/sh -lc 'ls -lah /data/___leagues.duckdb* /data/___ops.duckdb* 2>/dev/null || true'"
           fi
 
+          if [ -n "$VALIDATE_SNAPSHOT_ID" ]; then
+            if ! [[ "$VALIDATE_SNAPSHOT_ID" =~ ^vs_[A-Za-z0-9]+$ ]]; then
+              echo "Invalid snapshot ID" >&2
+              exit 2
+            fi
+
+            volume_name="weekly_update_recovery_${GITHUB_RUN_ID}"
+            recovery_volume_id=""
+            cleanup() {
+              if [ -n "$recovery_volume_id" ]; then
+                flyctl volumes destroy "$recovery_volume_id" --app "$FLY_APP" --yes || true
+              fi
+            }
+            trap cleanup EXIT
+
+            source_region="$(jq -r '.[0].region' volumes.json)"
+            source_size_gb="$(jq -r '.[0].size_gb' volumes.json)"
+            image_ref="$(jq -r 'map(select(.state == "started"))[0].config.image' machines.json)"
+            recovery_json="$(flyctl volumes create "$volume_name" --app "$FLY_APP" \
+              --region "$source_region" --size "$source_size_gb" \
+              --snapshot-id "$VALIDATE_SNAPSHOT_ID" --scheduled-snapshots=false \
+              --require-unique-zone=false --yes --json)"
+            printf '%s\n' "$recovery_json" | tee recovery-volume.json
+            recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
+            if [ -z "$recovery_volume_id" ] || [ "$recovery_volume_id" = "null" ]; then
+              echo "Snapshot restore did not return a recovery volume ID" >&2
+              exit 3
+            fi
+
+            cat > snapshot_probe.py <<'PY'
+          import json
+          import sys
+
+          import duckdb
+
+          path = "/data/___leagues.duckdb"
+          checks = {
+              "league_settings": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.league_settings",
+              "league_context": "SELECT COUNT(*), COUNT(DISTINCT db_name) FROM public.league_context",
+              "matchup": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.matchup",
+              "player_fantasy": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.player_fantasy",
+          }
+          result = {"path": path, "checks": {}, "errors": {}}
+          connection = duckdb.connect(path, read_only=True)
+          try:
+              for name, sql in checks.items():
+                  try:
+                      result["checks"][name] = connection.execute(sql).fetchone()
+                  except Exception as exc:
+                      result["errors"][name] = str(exc)
+          finally:
+              connection.close()
+          print(json.dumps(result, sort_keys=True))
+          sys.exit(1 if result["errors"] else 0)
+          PY
+            probe_b64="$(base64 -w0 snapshot_probe.py)"
+            flyctl machine run "$image_ref" --app "$FLY_APP" --region "$source_region" \
+              --volume "$recovery_volume_id:/data" --entrypoint python \
+              --file-literal "/tmp/snapshot_probe.py=$probe_b64" \
+              --restart no --rm --vm-cpus 1 --vm-memory 2048 /tmp/snapshot_probe.py \
+              | tee snapshot-validation.jsonl
+            trap - EXIT
+            cleanup
+          fi
+
       - name: Upload diagnostic inventory
         if: always()
         uses: actions/upload-artifact@v6
@@ -61,5 +132,7 @@ jobs:
             volumes.json
             created-snapshot-*.json
             snapshots-*.json
+            recovery-volume.json
+            snapshot-validation.jsonl
           if-no-files-found: warn
           retention-days: 7

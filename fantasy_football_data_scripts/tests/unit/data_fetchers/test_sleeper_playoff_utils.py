@@ -400,6 +400,7 @@ def test_schedule_fetcher_keeps_second_leg_in_same_sleeper_bracket_round(tmp_pat
 
     week_15 = fetcher.fetch_schedule_for_week("league_two_leg", 2025, 15, roster_map)
     alpha_week_15 = next(row for row in week_15 if row["manager"] == "Alpha")
+    assert alpha_week_15["team_key"] == "1"
     assert alpha_week_15["opponent"] == "Delta"
     assert alpha_week_15["is_playoffs"] is True
     assert alpha_week_15["playoff_round"] == "Semifinal"

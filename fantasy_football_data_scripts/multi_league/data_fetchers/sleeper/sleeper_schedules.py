@@ -484,6 +484,11 @@ class SleeperScheduleFetcher:
                 row_1 = {
                     "year": year,
                     "week": week,
+                    # Sleeper's roster id is the stable per-season team
+                    # identity.  Preserve it so a later delta refresh can
+                    # replace this row without depending on a derived
+                    # manager_week string.
+                    "team_key": str(roster_id_1),
                     "cumulative_week": cumulative_week,
                     "league_id": league_id,
                     "manager": manager_1,
@@ -506,6 +511,7 @@ class SleeperScheduleFetcher:
                 row_2 = {
                     "year": year,
                     "week": week,
+                    "team_key": str(roster_id_2),
                     "cumulative_week": cumulative_week,
                     "league_id": league_id,
                     "manager": manager_2,
@@ -529,6 +535,7 @@ class SleeperScheduleFetcher:
                 row_bye = {
                     "year": year,
                     "week": week,
+                    "team_key": str(roster_id_1),
                     "cumulative_week": cumulative_week,
                     "league_id": league_id,
                     "manager": manager_1,
@@ -576,6 +583,7 @@ class SleeperScheduleFetcher:
                     bye_row = {
                         "year": year,
                         "week": week,
+                        "team_key": str(bye_roster_id),
                         "cumulative_week": cumulative_week,
                         "league_id": league_id,
                         "manager": manager_name,

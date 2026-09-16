@@ -42,6 +42,7 @@ def test_weekly_worker_receipt_breaks_down_homepage_preservation_and_staging(scr
     assert 'receipt["homepage_preservation_stage_seconds"] = stage_timer.finish()' in text
     for phase in (
         "homepage_refresh",
+        "preservation_snapshot",
         "preservation_validation",
         "derived_output_validation",
         "stage_partitions",

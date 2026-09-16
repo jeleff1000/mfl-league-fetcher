@@ -580,9 +580,11 @@ def main(argv: list[str] | None = None) -> int:
                 local_preservation_snapshot,
             )
 
+            preservation_after = local_preservation_snapshot(local_db, preservation_before)
+            stage_timer.mark("preservation_snapshot")
             receipt["preservation"] = assert_refresh_preservation(
                 preservation_before,
-                local_preservation_snapshot(local_db, preservation_before),
+                preservation_after,
                 active_year=active_year,
             )
             stage_timer.mark("preservation_validation")

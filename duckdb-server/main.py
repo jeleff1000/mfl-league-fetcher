@@ -1528,7 +1528,261 @@ async def server_state():
 # delta lane has its own independent limit), but leave enough headroom for an
 # artifact that has outgrown the legacy 5 GiB cap.
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_FULL_DATABASE_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
+MAX_CANONICAL_TABLE_REPLACEMENT_BYTES = int(
+    os.environ.get("MAX_CANONICAL_TABLE_REPLACEMENT_BYTES", str(512 * 1024 * 1024))
+)
 _FILE_PARAM = File(...)
+
+_CANONICAL_TABLE_REPLACEMENTS = {
+    ("___leagues", "league_settings"): ("db_name", "year"),
+}
+
+
+def _quote_identifier(value: str) -> str:
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _replace_canonical_table(
+    database_path: Path,
+    incoming_path: Path,
+    *,
+    database_name: str,
+    table_name: str,
+    expected_rows: int,
+    recovery_since: str | None = None,
+    expected_overlay_leagues: int | None = None,
+    expected_overlay_rows: int | None = None,
+) -> dict[str, Any]:
+    """Atomically replace one explicitly allowlisted canonical table.
+
+    This is a storage-recovery primitive, not an import path.  The uploaded
+    bundle must contain exactly the target table with the live table's exact
+    column names/types.  The live DDL is reused so constraints and indexes are
+    preserved across the transactional rename.
+    """
+    key_columns = _CANONICAL_TABLE_REPLACEMENTS.get((database_name, table_name))
+    if key_columns is None:
+        raise ValueError("canonical table replacement target is not allowlisted")
+    if expected_rows <= 0:
+        raise ValueError("x-expected-rows must be a positive integer")
+
+    conn = None
+    attached = False
+    replacement_name = f"__recovered_{table_name}_{time.time_ns()}"
+    replaced_name = f"__replaced_{table_name}_{time.time_ns()}"
+    target_ref = f"public.{_quote_identifier(table_name)}"
+    replacement_ref = f"public.{_quote_identifier(replacement_name)}"
+    replaced_ref = f"public.{_quote_identifier(replaced_name)}"
+    incoming_ref = f"_incoming.public.{_quote_identifier(table_name)}"
+
+    try:
+        conn = db.connect_database(
+            database_path,
+            data_dir=db.get_data_dir(),
+            threads=WRITE_DUCKDB_THREADS,
+        )
+        conn.execute(f"ATTACH '{incoming_path.as_posix()}' AS _incoming (READ_ONLY)")
+        attached = True
+
+        incoming_tables = conn.execute(
+            "SELECT schema, name FROM (SHOW ALL TABLES) "
+            "WHERE database = '_incoming' ORDER BY schema, name"
+        ).fetchall()
+        if incoming_tables != [("public", table_name)]:
+            raise ValueError(
+                "replacement bundle must contain exactly one public table named "
+                f"{table_name}; found {incoming_tables!r}"
+            )
+
+        target_row = conn.execute(
+            "SELECT sql FROM duckdb_tables() "
+            "WHERE database_name = ? AND schema_name = 'public' AND table_name = ?",
+            [database_name, table_name],
+        ).fetchone()
+        if not target_row or not target_row[0]:
+            raise ValueError(f"target table public.{table_name} does not exist")
+        target_ddl = str(target_row[0])
+
+        target_schema = [(row[0], str(row[1]).upper()) for row in conn.execute(f"DESCRIBE {target_ref}").fetchall()]
+        incoming_schema = [
+            (row[0], str(row[1]).upper()) for row in conn.execute(f"DESCRIBE {incoming_ref}").fetchall()
+        ]
+        if incoming_schema != target_schema:
+            raise ValueError(
+                "replacement table schema does not exactly match the live canonical schema"
+            )
+
+        incoming_rows = int(conn.execute(f"SELECT COUNT(*) FROM {incoming_ref}").fetchone()[0])
+        if recovery_since is None and incoming_rows != expected_rows:
+            raise ValueError(
+                f"replacement row count {incoming_rows} does not match expected {expected_rows}"
+            )
+
+        keys = ", ".join(_quote_identifier(column) for column in key_columns)
+        null_predicate = " OR ".join(
+            f"{_quote_identifier(column)} IS NULL" for column in key_columns
+        )
+        null_keys = int(
+            conn.execute(f"SELECT COUNT(*) FROM {incoming_ref} WHERE {null_predicate}").fetchone()[0]
+        )
+        duplicate_keys = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM (SELECT {keys}, COUNT(*) AS n FROM {incoming_ref} "
+                f"GROUP BY {keys} HAVING COUNT(*) <> 1)"
+            ).fetchone()[0]
+        )
+        if null_keys or duplicate_keys:
+            raise ValueError(
+                "replacement table has invalid canonical keys: "
+                f"null={null_keys}, duplicate={duplicate_keys}"
+            )
+
+        replacement_ddl = re.sub(
+            rf"(?i)^CREATE TABLE\s+(?:\"?public\"?\.)?\"?{re.escape(table_name)}\"?",
+            f"CREATE TABLE public.{_quote_identifier(replacement_name)}",
+            target_ddl,
+            count=1,
+        )
+        if replacement_ddl == target_ddl:
+            raise ValueError("could not derive replacement DDL from the live canonical table")
+
+        conn.execute(replacement_ddl)
+        conn.execute(f"INSERT INTO {replacement_ref} BY NAME SELECT * FROM {incoming_ref}")
+
+        overlay_names: list[str] = []
+        overlay_rows = 0
+        ops_attached = False
+        if recovery_since is not None:
+            try:
+                conn.execute("SELECT CAST(? AS TIMESTAMP)", [recovery_since]).fetchone()
+            except Exception as exc:
+                raise ValueError("x-recovery-since must be an ISO timestamp") from exc
+
+            context_table = conn.execute(
+                "SELECT 1 FROM duckdb_tables() "
+                "WHERE database_name = ? AND schema_name = 'public' "
+                "AND table_name = 'league_context'",
+                [database_name],
+            ).fetchone()
+            if not context_table:
+                raise ValueError("live database has no public.league_context recovery ledger")
+            names = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT db_name FROM public.league_context "
+                    "WHERE updated_at >= CAST(? AS TIMESTAMP) AND db_name IS NOT NULL",
+                    [recovery_since],
+                ).fetchall()
+            }
+
+            ops_path = db.get_data_dir() / "___ops.duckdb"
+            if ops_path.exists():
+                conn.execute(f"ATTACH '{ops_path.as_posix()}' AS _ops_recovery (READ_ONLY)")
+                ops_attached = True
+                dispatch_table = conn.execute(
+                    "SELECT 1 FROM duckdb_tables() "
+                    "WHERE database_name = '_ops_recovery' AND schema_name = 'accounts' "
+                    "AND table_name = 'league_update_dispatches'"
+                ).fetchone()
+                if dispatch_table:
+                    names.update(
+                        str(row[0])
+                        for row in conn.execute(
+                            "SELECT DISTINCT database_name "
+                            "FROM _ops_recovery.accounts.league_update_dispatches "
+                            "WHERE updated_at >= CAST(? AS TIMESTAMP) "
+                            "AND database_name IS NOT NULL",
+                            [recovery_since],
+                        ).fetchall()
+                    )
+
+            overlay_names = sorted(name for name in names if name)
+            if expected_overlay_leagues is None or expected_overlay_rows is None:
+                raise ValueError(
+                    "recovery overlay requires expected league and row counts"
+                )
+            if len(overlay_names) != expected_overlay_leagues:
+                raise ValueError(
+                    "recovery overlay league count does not match expectation: "
+                    f"actual={len(overlay_names)}, expected={expected_overlay_leagues}"
+                )
+
+            for db_name in overlay_names:
+                conn.execute(
+                    f"DELETE FROM {replacement_ref} WHERE db_name = ?",
+                    [db_name],
+                )
+                current_rows = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {target_ref} WHERE db_name = ?",
+                        [db_name],
+                    ).fetchone()[0]
+                )
+                conn.execute(
+                    f"INSERT INTO {replacement_ref} BY NAME "
+                    f"SELECT * FROM {target_ref} WHERE db_name = ?",
+                    [db_name],
+                )
+                overlay_rows += current_rows
+            if overlay_rows != expected_overlay_rows:
+                raise ValueError(
+                    "recovery overlay row count does not match expectation: "
+                    f"actual={overlay_rows}, expected={expected_overlay_rows}"
+                )
+            if ops_attached:
+                conn.execute("DETACH _ops_recovery")
+                ops_attached = False
+
+        staged_rows = int(conn.execute(f"SELECT COUNT(*) FROM {replacement_ref}").fetchone()[0])
+        if staged_rows != expected_rows:
+            raise ValueError(
+                f"staged replacement row count {staged_rows} does not match expected {expected_rows}"
+            )
+
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            conn.execute(
+                f"ALTER TABLE {target_ref} RENAME TO {_quote_identifier(replaced_name)}"
+            )
+            conn.execute(
+                f"ALTER TABLE {replacement_ref} RENAME TO {_quote_identifier(table_name)}"
+            )
+            conn.execute(f"DROP TABLE {replaced_ref}")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+        final_rows = int(conn.execute(f"SELECT COUNT(*) FROM {target_ref}").fetchone()[0])
+        final_distinct = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM (SELECT {keys} FROM {target_ref} GROUP BY {keys})"
+            ).fetchone()[0]
+        )
+        if final_rows != expected_rows or final_distinct != expected_rows:
+            raise RuntimeError(
+                "post-replacement validation failed: "
+                f"rows={final_rows}, distinct_keys={final_distinct}, expected={expected_rows}"
+            )
+        conn.execute("CHECKPOINT")
+        return {
+            "status": "replaced",
+            "database": database_name,
+            "table": table_name,
+            "rows": final_rows,
+            "distinct_keys": final_distinct,
+            "snapshot_rows": incoming_rows,
+            "overlay_leagues": len(overlay_names),
+            "overlay_rows": overlay_rows,
+        }
+    finally:
+        if conn is not None:
+            with suppress(Exception):
+                if attached:
+                    conn.execute("DETACH _incoming")
+            with suppress(Exception):
+                conn.execute(f"DROP TABLE IF EXISTS {replacement_ref}")
+            conn.close()
 
 
 class DeltaValidationError(ValueError):
@@ -2528,6 +2782,130 @@ async def fleet_publish_lock_endpoint(request: Request):
         result = await asyncio.to_thread(_apply)
     track_event("fleet_publish_lock", result)
     return result
+
+
+@app.post("/replace-canonical-table")
+async def replace_canonical_table(
+    request: Request,
+    file: UploadFile = _FILE_PARAM,
+    x_db_name: str = Header(...),
+    x_table_name: str = Header(...),
+    x_expected_rows: str = Header(...),
+    x_content_sha256: str = Header(None),
+    x_recovery_since: str | None = Header(None),
+    x_expected_overlay_leagues: str | None = Header(None),
+    x_expected_overlay_rows: str | None = Header(None),
+):
+    """Atomically replace one allowlisted canonical table from a DuckDB bundle."""
+    try:
+        validate_admin_token(get_bearer_token(request))
+    except AuthError as exc:
+        track_event("auth_failed", {"endpoint": "/replace-canonical-table"})
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    table_name = str(x_table_name or "").strip()
+    if (x_db_name, table_name) not in _CANONICAL_TABLE_REPLACEMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail="canonical table replacement target is not allowlisted",
+        )
+    try:
+        expected_rows = int(x_expected_rows)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="x-expected-rows must be an integer") from exc
+    if expected_rows <= 0:
+        raise HTTPException(status_code=400, detail="x-expected-rows must be positive")
+    expected_overlay_leagues = None
+    expected_overlay_rows = None
+    if x_recovery_since:
+        try:
+            expected_overlay_leagues = int(str(x_expected_overlay_leagues))
+            expected_overlay_rows = int(str(x_expected_overlay_rows))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="recovery overlay requires integer expected league and row counts",
+            ) from exc
+        if expected_overlay_leagues < 0 or expected_overlay_rows < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="recovery overlay expected counts cannot be negative",
+            )
+
+    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
+    database_path = data_dir / f"{x_db_name}.duckdb"
+    incoming_path = data_dir / (
+        f"canonical_table_{table_name}_{time.time_ns()}_{random.randint(100000, 999999)}.duckdb"
+    )
+    written = 0
+    try:
+        with open(incoming_path, "wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > MAX_CANONICAL_TABLE_REPLACEMENT_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Canonical table replacement bundle is too large",
+                    )
+                output.write(chunk)
+        if x_content_sha256:
+            try:
+                verify_checksum(incoming_path, x_content_sha256)
+            except SwapError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        async with _merge_lock:
+            _state["status"] = "draining"
+            elapsed = 0.0
+            while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
+                await asyncio.sleep(0.5)
+                elapsed += 0.5
+            if db.get_active_count() > 0:
+                await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
+            db.close_pool()
+            _state["status"] = "writing"
+            try:
+                result = await asyncio.to_thread(
+                    _replace_canonical_table,
+                    database_path,
+                    incoming_path,
+                    database_name=x_db_name,
+                    table_name=table_name,
+                    expected_rows=expected_rows,
+                    recovery_since=x_recovery_since,
+                    expected_overlay_leagues=expected_overlay_leagues,
+                    expected_overlay_rows=expected_overlay_rows,
+                )
+            except ValueError as exc:
+                await _reopen_pool_after_write("rejected canonical table replacement")
+                _set_serving_or_ops_writing()
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                logger.error(
+                    "Canonical table replacement failed for %s.%s: %s",
+                    x_db_name,
+                    table_name,
+                    exc,
+                    exc_info=True,
+                )
+                await _reopen_pool_after_write("failed canonical table replacement")
+                _set_serving_or_ops_writing()
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            await _reopen_pool_after_write(f"{x_db_name}.{table_name} replacement")
+            _set_serving_or_ops_writing()
+            track_event(
+                "canonical_table_replaced",
+                {
+                    "database": x_db_name,
+                    "table": table_name,
+                    "rows": result["rows"],
+                    "size_mb": round(written / (1024 * 1024), 2),
+                },
+            )
+            return result
+    finally:
+        incoming_path.unlink(missing_ok=True)
 
 
 @app.post("/replace-db")

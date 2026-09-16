@@ -896,6 +896,253 @@ def test_replace_db_rejects_invalid_name(client):
     assert resp.status_code == 400
 
 
+def _create_league_settings_bundle(path, rows, *, duplicate=False, extra_table=False, wrong_schema=False):
+    conn = duckdb.connect(str(path))
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    if wrong_schema:
+        conn.execute(
+            "CREATE TABLE public.league_settings "
+            "(db_name VARCHAR NOT NULL, year INTEGER NOT NULL, wrong_value INTEGER, "
+            "PRIMARY KEY (db_name, year))"
+        )
+        for db_name, year, _setting in rows:
+            conn.execute(
+                "INSERT INTO public.league_settings VALUES (?, ?, ?)",
+                [db_name, year, 1],
+            )
+    else:
+        conn.execute(
+            "CREATE TABLE public.league_settings "
+            "(db_name VARCHAR NOT NULL, year INTEGER NOT NULL, setting VARCHAR, "
+            "PRIMARY KEY (db_name, year))"
+        )
+        for row in rows:
+            conn.execute("INSERT INTO public.league_settings VALUES (?, ?, ?)", row)
+        if duplicate:
+            conn.execute("ALTER TABLE public.league_settings DROP CONSTRAINT league_settings_db_name_year_pkey")
+            conn.execute("INSERT INTO public.league_settings VALUES (?, ?, ?)", rows[0])
+    if extra_table:
+        conn.execute("CREATE TABLE public.unexpected (value INTEGER)")
+    conn.close()
+
+
+def _install_target_league_settings(data_dir):
+    import db as db_mod
+
+    db_mod.close_all()
+    conn = duckdb.connect(str(data_dir / "___leagues.duckdb"))
+    conn.execute(
+        "CREATE TABLE public.league_settings "
+        "(db_name VARCHAR NOT NULL, year INTEGER NOT NULL, setting VARCHAR, "
+        "PRIMARY KEY (db_name, year))"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('old_league', 2025, 'old')")
+    conn.close()
+    db_mod.init_pool()
+
+
+def test_replace_canonical_table_requires_admin(data_dir, client):
+    _install_target_league_settings(data_dir)
+    bundle = data_dir / "settings_bundle_auth.duckdb"
+    _create_league_settings_bundle(bundle, [("new_league", 2026, "new")])
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-read",
+                "x-db-name": "___leagues",
+                "x-table-name": "league_settings",
+                "x-expected-rows": "1",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 401
+
+
+def test_replace_canonical_table_swaps_only_allowlisted_table(data_dir, client):
+    _install_target_league_settings(data_dir)
+    bundle = data_dir / "settings_bundle.duckdb"
+    _create_league_settings_bundle(
+        bundle,
+        [("alpha", 2025, "a"), ("alpha", 2026, "b"), ("beta", 2026, "c")],
+    )
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "___leagues",
+                "x-table-name": "league_settings",
+                "x-expected-rows": "3",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "replaced"
+    assert resp.json()["rows"] == 3
+
+    settings = client.post(
+        "/query",
+        json={
+            "sql": "SELECT db_name, year, setting FROM public.league_settings ORDER BY db_name, year"
+        },
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert settings.status_code == 200
+    assert settings.json() == [
+        {"db_name": "alpha", "year": 2025, "setting": "a"},
+        {"db_name": "alpha", "year": 2026, "setting": "b"},
+        {"db_name": "beta", "year": 2026, "setting": "c"},
+    ]
+
+    matchup = client.post(
+        "/query",
+        json={"sql": "SELECT COUNT(*) AS count FROM public.matchup"},
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert matchup.status_code == 200
+    assert matchup.json() == [{"count": 2}]
+
+    db_mod = __import__("db")
+    db_mod.close_all()
+    conn = duckdb.connect(str(data_dir / "___leagues.duckdb"))
+    with pytest.raises(duckdb.ConstraintException):
+        conn.execute("INSERT INTO public.league_settings VALUES ('alpha', 2026, 'duplicate')")
+    conn.close()
+    db_mod.init_pool()
+
+
+@pytest.mark.parametrize(
+    ("bundle_options", "expected_detail"),
+    [
+        ({"wrong_schema": True}, "schema"),
+        ({"extra_table": True}, "exactly one"),
+    ],
+)
+def test_replace_canonical_table_rejects_invalid_bundle(
+    data_dir, client, bundle_options, expected_detail
+):
+    _install_target_league_settings(data_dir)
+    bundle = data_dir / f"settings_bundle_invalid_{expected_detail}.duckdb"
+    _create_league_settings_bundle(
+        bundle,
+        [("new_league", 2026, "new")],
+        **bundle_options,
+    )
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "___leagues",
+                "x-table-name": "league_settings",
+                "x-expected-rows": "1",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 400
+    assert expected_detail in resp.json()["detail"].lower()
+
+    unchanged = client.post(
+        "/query",
+        json={"sql": "SELECT * FROM public.league_settings"},
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert unchanged.status_code == 200
+    assert unchanged.json() == [{"db_name": "old_league", "year": 2025, "setting": "old"}]
+
+
+def test_replace_canonical_table_rejects_non_allowlisted_target(data_dir, client):
+    _install_target_league_settings(data_dir)
+    bundle = data_dir / "settings_bundle_wrong_target.duckdb"
+    _create_league_settings_bundle(bundle, [("new_league", 2026, "new")])
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "___leagues",
+                "x-table-name": "matchup",
+                "x-expected-rows": "1",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 400
+    assert "allowlisted" in resp.json()["detail"].lower()
+
+
+def test_replace_canonical_table_preserves_rows_changed_after_snapshot(data_dir, client):
+    import db as db_mod
+
+    _install_target_league_settings(data_dir)
+    db_mod.close_all()
+    conn = duckdb.connect(str(data_dir / "___leagues.duckdb"))
+    conn.execute("DELETE FROM public.league_settings")
+    conn.execute(
+        "INSERT INTO public.league_settings VALUES "
+        "('alpha', 2026, 'current-alpha'), ('gamma', 2026, 'current-gamma')"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_context "
+        "(db_name VARCHAR, updated_at TIMESTAMP)"
+    )
+    conn.execute(
+        "INSERT INTO public.league_context VALUES "
+        "('alpha', TIMESTAMP '2026-09-16 01:00:00'), "
+        "('gamma', TIMESTAMP '2026-09-16 02:00:00'), "
+        "('beta', TIMESTAMP '2026-09-14 00:00:00')"
+    )
+    conn.close()
+    db_mod.init_pool()
+
+    bundle = data_dir / "settings_snapshot_bundle.duckdb"
+    _create_league_settings_bundle(
+        bundle,
+        [("alpha", 2026, "snapshot-alpha"), ("beta", 2026, "snapshot-beta")],
+    )
+
+    with open(bundle, "rb") as file_handle:
+        resp = client.post(
+            "/replace-canonical-table",
+            headers={
+                "Authorization": "Bearer test-admin",
+                "x-db-name": "___leagues",
+                "x-table-name": "league_settings",
+                "x-expected-rows": "3",
+                "x-recovery-since": "2026-09-15T21:18:28Z",
+                "x-expected-overlay-leagues": "2",
+                "x-expected-overlay-rows": "2",
+            },
+            files={"file": (bundle.name, file_handle, "application/octet-stream")},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overlay_leagues"] == 2
+    assert resp.json()["overlay_rows"] == 2
+
+    settings = client.post(
+        "/query",
+        json={
+            "sql": "SELECT db_name, year, setting FROM public.league_settings ORDER BY db_name"
+        },
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert settings.status_code == 200
+    assert settings.json() == [
+        {"db_name": "alpha", "year": 2026, "setting": "current-alpha"},
+        {"db_name": "beta", "year": 2026, "setting": "snapshot-beta"},
+        {"db_name": "gamma", "year": 2026, "setting": "current-gamma"},
+    ]
+
+
 def test_merge_league(data_dir, client):
     """Merge a per-league .duckdb file into ___leagues."""
     import db as db_mod

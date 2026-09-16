@@ -25,7 +25,7 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - name: Install flyctl
         run: |
@@ -108,7 +108,11 @@ jobs:
               echo "Snapshot restore did not return a recovery volume ID" >&2
               exit 3
             fi
-            for _ in $(seq 1 240); do
+            # Large restored volumes routinely remain in Fly's `restoring`
+            # state for more than twenty minutes.  Let the platform finish
+            # instead of destroying a healthy in-progress restore and starting
+            # the same work again.
+            for _ in $(seq 1 720); do
               recovery_state="$(flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json | jq -r '.state')"
               if [ "$recovery_state" = "created" ]; then
                 break

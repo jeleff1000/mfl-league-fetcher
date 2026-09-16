@@ -37,11 +37,10 @@ def test_weekly_worker_receipt_separates_provider_enrichment_and_fly_times(scrip
     "refresh_espn_active_season.py",
     "refresh_sleeper_active_season.py",
 ])
-def test_weekly_worker_receipt_breaks_down_homepage_preservation_and_staging(script_name):
+def test_weekly_worker_receipt_breaks_down_preservation_and_staging(script_name):
     text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
     assert 'receipt["homepage_preservation_stage_seconds"] = stage_timer.finish()' in text
     for phase in (
-        "homepage_refresh",
         "preservation_snapshot",
         "preservation_validation",
         "derived_output_validation",
@@ -241,17 +240,21 @@ def test_sleeper_validates_the_actual_active_draft_not_an_empty_placeholder():
     assert "draft=draft" in fetch
 
 
-def test_shared_active_refresh_publishes_data_and_homepage_in_one_bundle():
+def test_shared_active_refresh_rebuilds_data_and_homepage_atomically_on_fly():
     for script_name in (
         "refresh_yahoo_active_season.py",
         "refresh_espn_active_season.py",
         "refresh_sleeper_active_season.py",
     ):
         text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
-        assert "prepare_homepage_refresh" in text
+        assert "prepare_homepage_refresh" not in text
         assert "publish_homepage_refresh_bundle" not in text
-        assert text.index("homepage = prepare_homepage_refresh(") < text.index("bundle = build_fleet_partition_bundle(")
+        bundle_call = text.split("bundle = build_fleet_partition_bundle(", 1)[1].split(")", 1)[0]
+        assert "rebuild_career_rollups=True" in bundle_call
+        assert "rebuild_homepage_rollups=True" in bundle_call
         assert text.count("merge_fleet_partition(") == 1
+        assert 'receipt["homepage_rows"] = result.get("homepage_rollups", {}).get(args.db, {})' in text
+        assert 'receipt["homepage_seconds"] = result.get("homepage_seconds", {}).get(args.db)' in text
         assert 'parser.add_argument("--observed-manifest-digest")' in text
         assert "load_persisted_refresh_plan(" in text
         assert 'receipt["source_manifest_digest"]' in text

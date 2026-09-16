@@ -1339,17 +1339,19 @@ def _attach_ops_cache_for_enrichment(local_db: Any) -> None:
     """
     from multi_league.core.db_utils import attach_ops_cache
 
-    ops_cache = Path(os.environ.get("OPS_CACHE_PATH", ""))
-    if not ops_cache.is_file():
-        raise RuntimeError("weekly enrichment requires the local OPS cache")
     conn = local_db.connect()
     attached = {
         str(row[1])
         for row in conn.execute("PRAGMA database_list").fetchall()
         if len(row) > 1
     }
-    if "___ops" not in attached:
-        attach_ops_cache(conn, str(ops_cache))
+    if "___ops" in attached:
+        return
+
+    ops_cache = Path(os.environ.get("OPS_CACHE_PATH", ""))
+    if not ops_cache.is_file():
+        raise RuntimeError("weekly enrichment requires the local OPS cache")
+    attach_ops_cache(conn, str(ops_cache))
 
 
 def _run_refresh_simulations(

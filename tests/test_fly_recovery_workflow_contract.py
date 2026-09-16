@@ -15,5 +15,7 @@ def test_recovery_helper_machine_does_not_request_unsupported_json_output():
 
         assert "--json" not in helper_invocation, workflow
         assert '--name "$recovery_machine_name"' in helper_invocation, workflow
+        assert "--file-local" in helper_invocation, workflow
+        assert "--file-literal" not in helper_invocation, workflow
         assert "flyctl machines list" in source, workflow
         assert "select(.name == $name)" in source, workflow

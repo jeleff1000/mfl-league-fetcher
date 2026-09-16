@@ -150,12 +150,11 @@ jobs:
           print(json.dumps(result, sort_keys=True))
           sys.exit(1 if result["errors"] else 0)
           PY
-            probe_b64="$(base64 -w0 snapshot_probe.py)"
             recovery_machine_name="wkupd-probe-${GITHUB_RUN_ID}"
             flyctl machine run "$image_ref" --app "$FLY_APP" --region "$source_region" \
               --name "$recovery_machine_name" \
               --volume "$recovery_volume_id:/data" --entrypoint /bin/sh \
-              --file-literal "/tmp/snapshot_probe.py=$probe_b64" \
+              --file-local "/tmp/snapshot_probe.py=snapshot_probe.py" \
               --restart no --detach --vm-cpus 1 --vm-memory 2048 \
               -- -lc 'sleep 900' | tee recovery-machine-run.log
             for _ in $(seq 1 30); do

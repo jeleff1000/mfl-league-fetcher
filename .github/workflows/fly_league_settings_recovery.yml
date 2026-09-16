@@ -187,12 +187,11 @@ jobs:
               "bundle_bytes": output_path.stat().st_size,
           }, sort_keys=True))
           PY
-          export_script_b64="$(base64 -w0 snapshot_export.py)"
           recovery_machine_name="wkupd-recover-${GITHUB_RUN_ID}"
           flyctl machine run "$image_ref" --app "$FLY_APP" \
             --name "$recovery_machine_name" \
             --region "$source_region" --volume "$recovery_volume_id:/data" \
-            --entrypoint /bin/sh --file-literal "/tmp/snapshot_export.py=$export_script_b64" \
+            --entrypoint /bin/sh --file-local "/tmp/snapshot_export.py=snapshot_export.py" \
             --restart no --detach --vm-cpus 1 --vm-memory 2048 -- -lc 'sleep 3600' \
             | tee recovery-machine-run.log
           for _ in $(seq 1 30); do

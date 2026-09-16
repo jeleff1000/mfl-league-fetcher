@@ -112,16 +112,12 @@ _CAREER_IDENTITIES: dict[str, tuple[str, ...]] = {
 }
 
 _HOMEPAGE_IDENTITIES: dict[str, tuple[str, ...]] = {
-    "homepage_current_standings": ("franchise_id", "manager"),
+    # Current standings, manager profiles, and top rivalries are deliberately
+    # rebuilt from the active roster and current scores.  They can legitimately
+    # add/drop rows when a manager leaves or the top-N set changes; derived
+    # output-health validates the rebuilt result instead of freezing it.
     "homepage_league_summary": ("db_name",),
-    "homepage_manager_profiles": ("franchise_id", "manager"),
     "homepage_manager_rankings": ("franchise_id", "manager"),
-    "homepage_top_rivalries": (
-        "franchise_id_1",
-        "franchise_id_2",
-        "manager1",
-        "manager2",
-    ),
 }
 
 _MONOTONIC_COLUMNS: dict[str, tuple[str, ...]] = {

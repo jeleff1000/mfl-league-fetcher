@@ -207,6 +207,24 @@ def test_preservation_accepts_structured_non_null_career_values():
     assert receipt["historical_rows_preserved"] is True
 
 
+def test_preservation_allows_recomputed_current_standings_to_drop_departed_manager():
+    """Current standings are a live projection, not an immutable career table."""
+    before = pd.DataFrame(
+        [{"db_name": "league_a", "franchise_id": "departed", "manager": "Former"}]
+    )
+    after = pd.DataFrame(
+        [{"db_name": "league_a", "franchise_id": "current", "manager": "Current"}]
+    )
+
+    receipt = assert_refresh_preservation(
+        {"homepage_current_standings": before},
+        {"homepage_current_standings": after},
+        active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_preservation_fingerprint_ignores_database_integer_dtype_normalization():
     source = pd.DataFrame(
         {

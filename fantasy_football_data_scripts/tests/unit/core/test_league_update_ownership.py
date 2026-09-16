@@ -62,6 +62,10 @@ def test_recomputed_optimal_label_may_clear_only_after_verified_deselection():
         "total",
     }
     assert set(receipt["source_fact_seconds"]) == {"player_fantasy"}
+    assert set(receipt["source_fact_operation_seconds"]["player_fantasy"]) == {
+        "historical_fingerprint",
+        "derived_columns",
+    }
 
 
 def test_player_fantasy_preservation_uses_indexed_comparison_not_row_iteration(monkeypatch):

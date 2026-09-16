@@ -503,6 +503,7 @@ def assert_refresh_preservation(
 
     semantic_optimal_deselections = 0
     source_fact_seconds: dict[str, float] = {}
+    source_fact_operation_seconds: dict[str, dict[str, float]] = {}
     for table_name in sorted(_SOURCE_FACT_TABLES & before.keys()):
         source_fact_started_at = perf_counter()
         if table_name not in after:
@@ -511,12 +512,18 @@ def assert_refresh_preservation(
         new_history = _historical_source_witness(after[table_name], table_name, active_year)
         if _frame_fingerprint(old_history) != _frame_fingerprint(new_history):
             raise PreservationError(f"historical source rows changed in {table_name}")
+        historical_fingerprint_at = perf_counter()
         semantic_optimal_deselections += _assert_derived_values_not_erased(
             table_name,
             before[table_name],
             after[table_name],
         )
-        source_fact_seconds[table_name] = round(perf_counter() - source_fact_started_at, 3)
+        source_fact_ended_at = perf_counter()
+        source_fact_seconds[table_name] = round(source_fact_ended_at - source_fact_started_at, 3)
+        source_fact_operation_seconds[table_name] = {
+            "historical_fingerprint": round(historical_fingerprint_at - source_fact_started_at, 3),
+            "derived_columns": round(source_fact_ended_at - historical_fingerprint_at, 3),
+        }
     source_facts_at = perf_counter()
     timing["source_facts"] = round(source_facts_at - aliases_at, 3)
 
@@ -561,6 +568,7 @@ def assert_refresh_preservation(
         "semantic_optimal_deselections": semantic_optimal_deselections,
         "validation_seconds": timing,
         "source_fact_seconds": source_fact_seconds,
+        "source_fact_operation_seconds": source_fact_operation_seconds,
     }
 
 

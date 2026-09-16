@@ -273,7 +273,11 @@ def overlay_provider_columns(
 
 
 def _frame_fingerprint(frame: pd.DataFrame) -> str:
-    records = frame.fillna("<NULL>").astype(str).sort_index(axis=1).to_dict("records")
+    # Convert extension dtypes before applying the string null sentinel.  In
+    # particular, pandas Nullable Int32 refuses ``fillna("<NULL>")`` even
+    # though this representation is used only for deterministic comparison.
+    normalized = frame.astype(object).where(frame.notna(), "<NULL>")
+    records = normalized.astype(str).sort_index(axis=1).to_dict("records")
     records.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
     return json.dumps(records, sort_keys=True, separators=(",", ":"))
 

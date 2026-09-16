@@ -97,6 +97,26 @@ def test_provider_refresh_preserves_existing_derived_player_values():
     assert actual.loc[0, "clutch_equity"] == 4.5
 
 
+def test_preservation_fingerprint_handles_nullable_integer_historical_witnesses():
+    historical = pd.DataFrame(
+        {
+            "db_name": ["league_a"],
+            "year": pd.Series([2025], dtype="Int32"),
+            "week": pd.Series([pd.NA], dtype="Int32"),
+            "manager_week": ["manager_2025_16"],
+            "manager": ["Legacy manager"],
+        }
+    )
+
+    receipt = assert_refresh_preservation(
+        {"matchup": historical},
+        {"matchup": historical.copy()},
+        active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_new_provider_row_does_not_copy_another_rows_enrichment():
     existing = pd.DataFrame([{
         "db_name": "league_a",

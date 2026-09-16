@@ -418,6 +418,53 @@ def test_active_player_bio_cache_sync_skips_fly_when_every_provider_id_is_cached
     assert receipt == {"provider_ids": 1, "player_bio_rows": 0}
 
 
+def test_active_player_bio_cache_sync_fetches_an_active_name_missing_from_cached_ids(tmp_path):
+    """A cached roster must not hide an unmapped active player from rank enrichment."""
+    import duckdb
+
+    from multi_league.core.league_refresh import sync_player_bio_cache_from_fly
+
+    cache_path = tmp_path / "ops_cache.duckdb"
+    cache = duckdb.connect(str(cache_path))
+    cache.execute("CREATE SCHEMA nfl_historical")
+    cache.execute(
+        "CREATE TABLE nfl_historical.player_bio ("
+        "NFL_player_id VARCHAR, player VARCHAR, nfl_position VARCHAR, yahoo_player_id DOUBLE)"
+    )
+    cache.execute(
+        "INSERT INTO nfl_historical.player_bio VALUES ('00-0040888', 'Cached Player', 'WR', 13302)"
+    )
+    cache.close()
+
+    class Reader:
+        def query_df(self, sql, *, database):
+            assert database == "___ops"
+            assert "LOWER(TRIM(player)) IN ('eli raridon')" in sql
+            assert "cached player" not in sql
+            return pd.DataFrame(
+                [{
+                    "NFL_player_id": "00-0041395",
+                    "player": "Eli Raridon",
+                    "nfl_position": "TE",
+                    "yahoo_player_id": None,
+                }]
+            )
+
+    receipt = sync_player_bio_cache_from_fly(
+        Reader(),
+        ops_cache=cache_path,
+        platform="yahoo",
+        provider_ids={"13302"},
+        player_names={"Cached Player", "Eli Raridon"},
+    )
+
+    assert receipt == {"provider_ids": 1, "player_bio_rows": 1}
+    with duckdb.connect(str(cache_path), read_only=True) as check:
+        assert check.execute(
+            "SELECT nfl_position FROM nfl_historical.player_bio WHERE NFL_player_id = '00-0041395'"
+        ).fetchone() == ("TE",)
+
+
 def test_active_player_bio_cache_sync_normalizes_integer_looking_espn_ids_before_cache_lookup(tmp_path):
     """ESPN's float-shaped frame IDs must hit their integer-shaped bio mappings."""
     import duckdb

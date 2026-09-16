@@ -306,32 +306,43 @@ def sync_player_bio_cache_from_fly(
     target = "nfl_historical.player_bio"
 
     # A restored release cache already contains almost every established
-    # provider identity.  Avoid a repeated Fly read and local merge when the
-    # complete requested provider-ID set is present.  Names alone deliberately
-    # never take this path: they remain the fallback for a newly promoted
-    # player whose provider ID is not yet mapped in the cache.
+    # provider identity.  Check IDs and names independently: an active player
+    # can lack a provider ID even while every other roster ID is cached.  In
+    # that case its name is still required for the local SQL rank join.
     missing_ids = canonical_ids
-    if canonical_ids:
+    missing_names = canonical_names
+    if canonical_ids or canonical_names:
         cache = duckdb.connect(str(cache_path), read_only=True)
         try:
-            if numeric_ids:
+            cached_ids: set[str] = set()
+            if canonical_ids and numeric_ids:
                 numeric_id_sql = ", ".join(canonical_ids)
                 cached_rows = cache.execute(
                     f"SELECT DISTINCT CAST(TRY_CAST({_qident(bio_column)} AS BIGINT) AS VARCHAR) "
                     f"FROM {target} WHERE TRY_CAST({_qident(bio_column)} AS BIGINT) "
                     f"IN ({numeric_id_sql})"
                 ).fetchall()
-            else:
+                cached_ids = {str(value).strip() for (value,) in cached_rows if value is not None}
+            elif canonical_ids:
                 provider_id_sql = ", ".join(_sql_literal(value) for value in canonical_ids)
                 cached_rows = cache.execute(
                     f"SELECT DISTINCT CAST({_qident(bio_column)} AS VARCHAR) FROM {target} "
                     f"WHERE CAST({_qident(bio_column)} AS VARCHAR) IN ({provider_id_sql})"
                 ).fetchall()
+                cached_ids = {str(value).strip() for (value,) in cached_rows if value is not None}
+            cached_names: set[str] = set()
+            if canonical_names:
+                name_sql = ", ".join(_sql_literal(value) for value in canonical_names)
+                cached_name_rows = cache.execute(
+                    f"SELECT DISTINCT LOWER(TRIM(player)) FROM {target} "
+                    f"WHERE LOWER(TRIM(player)) IN ({name_sql})"
+                ).fetchall()
+                cached_names = {str(value).strip().lower() for (value,) in cached_name_rows if value is not None}
         finally:
             cache.close()
-        cached_ids = {str(value).strip() for (value,) in cached_rows if value is not None}
         missing_ids = sorted(set(canonical_ids) - cached_ids)
-        if not missing_ids:
+        missing_names = sorted(set(canonical_names) - cached_names)
+        if not missing_ids and not missing_names:
             return {"provider_ids": len(canonical_ids), "player_bio_rows": 0}
 
         # ESPN sometimes publishes a new numeric ID before the central bio
@@ -373,13 +384,16 @@ def sync_player_bio_cache_from_fly(
                 return {"provider_ids": len(canonical_ids), "player_bio_rows": 0}
 
         if names_by_provider_id and all(provider_id in names_by_provider_id for provider_id in missing_ids):
-            canonical_names = sorted(
-                {
+            missing_names = sorted(
+                set(missing_names)
+                | {
                     name
                     for provider_id in missing_ids
                     for name in names_by_provider_id[provider_id]
                 }
             )
+
+    canonical_names = missing_names
 
     predicates: list[str] = []
     if numeric_ids:

@@ -31,7 +31,6 @@ DATA_SCRIPTS = ROOT / "fantasy_football_data_scripts"
 if str(DATA_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(DATA_SCRIPTS))
 
-
 LEAGUES_DATABASE = "___leagues"
 OPS_DATABASE = "___ops"
 SOURCE_TABLES = (
@@ -1380,11 +1379,18 @@ def _run_local_pipeline(
         require_sql_enrichment_success(results)
 
         # The common matchup enrichment rebuilds schedule from finalized matchup
-        # rows. Restore the provider's live schedule graph afterward, then apply
-        # the saved identity settings to that final copy as well.
+        # rows. Restore only provider rows that are still live: restoring a
+        # finalized week would append its provider manager_week alongside the
+        # canonical franchise-derived identity on a later retry.
         if not local_db._conn:
             local_db.connect()
 
+        provider_schedule = _unresolved_provider_schedule_rows(
+            provider_schedule,
+            local_db=local_db,
+            db_name=db_name,
+            active_year=active_year,
+        )
         if not provider_schedule.empty:
             local_db.merge_table(
                 "schedule",
@@ -1421,6 +1427,31 @@ def _run_local_pipeline(
         work_dir=work_dir,
         has_finalized_matchups=has_finalized_matchups,
     )
+
+
+def _unresolved_provider_schedule_rows(
+    provider_schedule: pd.DataFrame,
+    *,
+    local_db: Any,
+    db_name: str,
+    active_year: int,
+) -> pd.DataFrame:
+    """Return provider schedule rows only for weeks not derived from final matchups."""
+    if provider_schedule is None or provider_schedule.empty or "week" not in provider_schedule:
+        return provider_schedule.copy() if isinstance(provider_schedule, pd.DataFrame) else pd.DataFrame()
+    rows = local_db.connect().execute(
+        """
+        SELECT DISTINCT week
+        FROM public.matchup
+        WHERE db_name = ? AND year = ?
+          AND team_points IS NOT NULL AND opponent_points IS NOT NULL
+          AND COALESCE(is_bye_week, FALSE) = FALSE
+        """,
+        [db_name, int(active_year)],
+    ).fetchall()
+    finalized_weeks = {int(row[0]) for row in rows if row and row[0] is not None}
+    weeks = pd.to_numeric(provider_schedule["week"], errors="coerce")
+    return provider_schedule.loc[~weeks.isin(finalized_weeks)].copy()
 
 
 def _publish_generation(reader: Any, db_name: str) -> int:

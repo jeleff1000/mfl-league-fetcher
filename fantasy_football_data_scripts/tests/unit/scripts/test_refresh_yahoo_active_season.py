@@ -316,15 +316,13 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
         class Connection:
             @staticmethod
             def execute(_sql, _params):
-                return SimpleNamespace(fetchone=lambda: (0, None))
+                return SimpleNamespace(fetchone=lambda: (0, None), fetchall=lambda: [])
 
         _conn = Connection()
 
         def read_table(self, _table, *, year):
             assert year == 2026
-            return pd.DataFrame(
-                [{"db_name": "demo_league", "year": 2026, "manager_week": "Joe202601"}]
-            )
+            return pd.DataFrame([{"db_name": "demo_league", "year": 2026, "manager_week": "Joe202601"}])
 
         def close(self):
             return None
@@ -420,3 +418,28 @@ def test_active_refresh_inputs_read_independent_fly_scopes_concurrently():
 
     assert finalized_ops["week"].tolist() == [1, 2]
     assert last_materialized_week == 2
+
+
+def test_finalized_provider_schedule_rows_are_not_restored_over_canonical_schedule():
+    """A retry keeps the live graph but never appends a second final-week identity."""
+    from refresh_yahoo_active_season import _unresolved_provider_schedule_rows
+
+    class Local:
+        class Connection:
+            @staticmethod
+            def execute(_sql, _params):
+                return SimpleNamespace(fetchall=lambda: [(1,)])
+
+        def connect(self):
+            return self.Connection()
+
+    source = pd.DataFrame([
+        {"year": 2026, "week": 1, "manager_week": "Gray_2026_1"},
+        {"year": 2026, "week": 2, "manager_week": "Gray_2026_2"},
+    ])
+
+    remaining = _unresolved_provider_schedule_rows(
+        source, local_db=Local(), db_name="league_a", active_year=2026,
+    )
+
+    assert remaining["week"].tolist() == [2]

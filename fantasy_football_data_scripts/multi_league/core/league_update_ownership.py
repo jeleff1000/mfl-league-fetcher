@@ -494,7 +494,9 @@ def assert_refresh_preservation(
     timing["active_aliases"] = round(aliases_at - user_configuration_at, 3)
 
     semantic_optimal_deselections = 0
+    source_fact_seconds: dict[str, float] = {}
     for table_name in sorted(_SOURCE_FACT_TABLES & before.keys()):
+        source_fact_started_at = perf_counter()
         if table_name not in after:
             raise PreservationError(f"historical source table disappeared: {table_name}")
         old_history = _historical_source_witness(before[table_name], table_name, active_year)
@@ -506,6 +508,7 @@ def assert_refresh_preservation(
             before[table_name],
             after[table_name],
         )
+        source_fact_seconds[table_name] = round(perf_counter() - source_fact_started_at, 3)
     source_facts_at = perf_counter()
     timing["source_facts"] = round(source_facts_at - aliases_at, 3)
 
@@ -549,6 +552,7 @@ def assert_refresh_preservation(
         "user_configuration_preserved": True,
         "semantic_optimal_deselections": semantic_optimal_deselections,
         "validation_seconds": timing,
+        "source_fact_seconds": source_fact_seconds,
     }
 
 

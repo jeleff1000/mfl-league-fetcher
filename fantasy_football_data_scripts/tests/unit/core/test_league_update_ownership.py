@@ -61,6 +61,7 @@ def test_recomputed_optimal_label_may_clear_only_after_verified_deselection():
         "homepage_outputs",
         "total",
     }
+    assert set(receipt["source_fact_seconds"]) == {"player_fantasy"}
 
 
 @pytest.mark.parametrize("mutation", ["still_selected", "all_deselected", "lost_clutch"])

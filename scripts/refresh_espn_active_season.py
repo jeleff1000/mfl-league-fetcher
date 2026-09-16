@@ -622,6 +622,7 @@ def main(argv: list[str] | None = None) -> int:
                     league_generations={args.db: base_generation},
                     tables=publish_tables,
                     output_dir=work_dir / "bundle",
+                    rebuild_career_rollups=True,
                 )
             finally:
                 stage.close()
@@ -644,7 +645,9 @@ def main(argv: list[str] | None = None) -> int:
             receipt["bundle_id"] = bundle.bundle_id
             receipt["homepage_bundle_id"] = bundle.bundle_id
             receipt["homepage_rows"] = homepage["rows"]
-            receipt["published_tables"] = publish_tables
+            receipt["career_rollups"] = result.get("career_rollups", {}).get(args.db, {})
+            receipt["career_seconds"] = result.get("career_seconds", {}).get(args.db)
+            receipt["published_tables"] = sorted(set(publish_tables) | set(receipt["career_rollups"]))
             timer.mark("fly_publication")
             receipt["post_publish_counts"] = _scope_counts(
                 reader,

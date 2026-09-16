@@ -822,7 +822,7 @@ def test_weekly_publish_selects_source_and_rebuilt_homepage_tables():
         conn.close()
 
 
-def test_weekly_publish_includes_only_rebuilt_derived_rollups():
+def test_weekly_publish_excludes_scratch_careers_rebuilt_on_fly():
     import duckdb
 
     from multi_league.core.league_refresh import active_refresh_publish_tables
@@ -835,7 +835,7 @@ def test_weekly_publish_includes_only_rebuilt_derived_rollups():
         conn.execute("CREATE TABLE public.league_context (db_name VARCHAR, league_name VARCHAR)")
         conn.execute("CREATE TABLE public.manager_overrides (db_name VARCHAR, id INTEGER)")
 
-        assert active_refresh_publish_tables(conn) == ["matchup_career", "player_fantasy_career"]
+        assert active_refresh_publish_tables(conn) == []
     finally:
         conn.close()
 

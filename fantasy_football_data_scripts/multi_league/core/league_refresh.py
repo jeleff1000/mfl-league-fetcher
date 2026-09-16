@@ -954,8 +954,6 @@ def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str
     # explicitly by its worker only when a legacy context needs backfilling.
     excluded_config_tables = {"keeper_config", "league_context", "league_rules", "manager_overrides", "standings_config"}
     rebuilt_rollups = {
-        "draft_manager_career",
-        "draft_player_career",
         "franchise_identity_audit",
         "franchise_identity_registry",
         "homepage_current_standings",
@@ -963,12 +961,6 @@ def active_refresh_publish_tables(source: duckdb.DuckDBPyConnection) -> list[str
         "homepage_manager_profiles",
         "homepage_manager_rankings",
         "homepage_top_rivalries",
-        "matchup_career",
-        "matchup_h2h_career",
-        "player_fantasy_career",
-        "player_fantasy_career_all",
-        "transaction_manager_career",
-        "transaction_player_career",
     }
     available = {
         str(row[0])

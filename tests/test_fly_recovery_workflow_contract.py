@@ -19,3 +19,13 @@ def test_recovery_helper_machine_does_not_request_unsupported_json_output():
         assert "--file-literal" not in helper_invocation, workflow
         assert "flyctl machines list" in source, workflow
         assert "select(.name == $name)" in source, workflow
+
+
+def test_settings_recovery_derives_final_live_count_from_snapshot_and_overlay():
+    source = WORKFLOWS[1].read_text(encoding="utf-8")
+
+    assert "recovery-overlay-manifest.json" in source
+    assert "snapshot_overlay_rows" in source
+    assert "calculated_final_rows" in source
+    assert 'EXPECTED_FINAL_ROWS" != "auto"' in source
+    assert "X-Expected-Rows: ${FINAL_EXPECTED_ROWS}" in source

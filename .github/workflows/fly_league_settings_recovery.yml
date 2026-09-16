@@ -16,8 +16,9 @@ on:
         required: true
         type: string
       expected_final_rows:
-        description: Exact league_settings row count after snapshot plus live overlay
+        description: Exact live row count after overlay, or auto to derive and verify it
         required: true
+        default: auto
         type: string
       expected_overlay_leagues:
         description: Exact changed-league count since the source snapshot
@@ -84,7 +85,7 @@ jobs:
           for value in "$SNAPSHOT_ID" "$PRESERVATION_SNAPSHOT_ID"; do
             [[ "$value" =~ ^vs_[A-Za-z0-9]+$ ]] || { echo "Invalid snapshot ID" >&2; exit 2; }
           done
-          [[ "$EXPECTED_FINAL_ROWS" =~ ^[1-9][0-9]*$ ]] || exit 2
+          [[ "$EXPECTED_FINAL_ROWS" = "auto" || "$EXPECTED_FINAL_ROWS" =~ ^[1-9][0-9]*$ ]] || exit 2
           [[ "$EXPECTED_OVERLAY_LEAGUES" =~ ^[0-9]+$ ]] || exit 2
           [[ "$EXPECTED_OVERLAY_ROWS" =~ ^[0-9]+$ ]] || exit 2
 
@@ -132,6 +133,84 @@ jobs:
           done
           [ "$recovery_state" = "created" ] || { echo "Snapshot restore timed out" >&2; exit 3; }
 
+          cat > build_recovery_overlay_manifest.py <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          server = os.environ["DATABASE_SERVER_URL"].rstrip("/")
+          token = os.environ["DATABASE_READ_TOKEN"]
+          cutoff = dt.datetime.fromisoformat(
+              os.environ["SNAPSHOT_CREATED_AT"].replace("Z", "+00:00")
+          ).isoformat()
+
+          def query(database, sql):
+              request = urllib.request.Request(
+                  f"{server}/query",
+                  data=json.dumps({"database": database, "sql": sql}).encode(),
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  return json.load(response)
+
+          context_names = {
+              str(row["db_name"])
+              for row in query(
+                  "___leagues",
+                  "SELECT DISTINCT db_name FROM public.league_context "
+                  f"WHERE updated_at >= TIMESTAMPTZ '{cutoff}' AND db_name IS NOT NULL",
+              )
+          }
+          dispatch_names = {
+              str(row["database_name"])
+              for row in query(
+                  "___ops",
+                  "SELECT DISTINCT database_name FROM accounts.league_update_dispatches "
+                  f"WHERE updated_at >= TIMESTAMPTZ '{cutoff}' AND database_name IS NOT NULL",
+              )
+          }
+          names = sorted(context_names | dispatch_names)
+          quoted = ",".join("'" + name.replace("'", "''") + "'" for name in names)
+          overlay_rows = 0
+          overlay_keys = 0
+          if names:
+              scope = query(
+                  "___leagues",
+                  "SELECT COUNT(*) AS rows, COUNT(DISTINCT (db_name, year)) AS keys "
+                  f"FROM public.league_settings WHERE db_name IN ({quoted})",
+              )[0]
+              overlay_rows = int(scope["rows"])
+              overlay_keys = int(scope["keys"])
+          expected_leagues = int(os.environ["EXPECTED_OVERLAY_LEAGUES"])
+          expected_rows = int(os.environ["EXPECTED_OVERLAY_ROWS"])
+          if len(names) != expected_leagues or overlay_rows != expected_rows:
+              raise RuntimeError(
+                  "live overlay changed while recovery was prepared: "
+                  f"leagues={len(names)}/{expected_leagues}, rows={overlay_rows}/{expected_rows}"
+              )
+          if overlay_keys != overlay_rows:
+              raise RuntimeError(
+                  f"live overlay has duplicate settings keys: rows={overlay_rows}, keys={overlay_keys}"
+              )
+          manifest = {
+              "cutoff": cutoff,
+              "names": names,
+              "overlay_rows": overlay_rows,
+              "overlay_keys": overlay_keys,
+          }
+          Path("recovery-overlay-manifest.json").write_text(
+              json.dumps(manifest, sort_keys=True), encoding="utf-8"
+          )
+          print(json.dumps({"overlay_leagues": len(names), "overlay_rows": overlay_rows}, sort_keys=True))
+          PY
+          python build_recovery_overlay_manifest.py
+
           cat > snapshot_export.py <<'PY'
           import hashlib
           import json
@@ -142,6 +221,9 @@ jobs:
 
           source_path = Path("/data/___leagues.duckdb")
           output_path = Path("/tmp/league_settings_snapshot.duckdb")
+          overlay_manifest = json.loads(
+              Path("/tmp/recovery-overlay-manifest.json").read_text(encoding="utf-8")
+          )
           output_path.unlink(missing_ok=True)
 
           source = duckdb.connect(str(source_path), read_only=True)
@@ -170,6 +252,15 @@ jobs:
               "INSERT INTO public.league_settings BY NAME "
               "SELECT * FROM snapshot.public.league_settings"
           )
+          overlay_names = list(overlay_manifest["names"])
+          snapshot_overlay_rows = 0
+          if overlay_names:
+              placeholders = ",".join("?" for _ in overlay_names)
+              snapshot_overlay_rows = output.execute(
+                  "SELECT COUNT(*) FROM snapshot.public.league_settings "
+                  f"WHERE db_name IN ({placeholders})",
+                  overlay_names,
+              ).fetchone()[0]
           output.execute("DETACH snapshot")
           exported = output.execute(
               "SELECT COUNT(*), COUNT(DISTINCT (db_name, year)) FROM public.league_settings"
@@ -180,11 +271,18 @@ jobs:
               raise RuntimeError(f"snapshot export key/count mismatch: {exported!r}")
 
           digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+          calculated_final_rows = (
+              int(exported[0])
+              - int(snapshot_overlay_rows)
+              + int(overlay_manifest["overlay_rows"])
+          )
           print(json.dumps({
               "checks": results,
               "bundle_rows": exported[0],
               "bundle_sha256": digest,
               "bundle_bytes": output_path.stat().st_size,
+              "snapshot_overlay_rows": snapshot_overlay_rows,
+              "calculated_final_rows": calculated_final_rows,
           }, sort_keys=True))
           PY
           recovery_machine_name="wkupd-recover-${GITHUB_RUN_ID}"
@@ -192,6 +290,7 @@ jobs:
             --name "$recovery_machine_name" \
             --region "$source_region" --volume "$recovery_volume_id:/data" \
             --entrypoint /bin/sh --file-local "/tmp/snapshot_export.py=snapshot_export.py" \
+            --file-local "/tmp/recovery-overlay-manifest.json=recovery-overlay-manifest.json" \
             --restart no --detach --vm-cpus 1 --vm-memory 2048 -- -lc 'sleep 3600' \
             | tee recovery-machine-run.log
           for _ in $(seq 1 30); do
@@ -220,8 +319,14 @@ jobs:
           bundle_sha256="$(sha256sum league_settings_snapshot.duckdb | awk '{print $1}')"
           bundle_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r '.bundle_rows')"
           logged_sha256="$(grep '^{' snapshot-export.log | tail -1 | jq -r '.bundle_sha256')"
+          calculated_final_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r '.calculated_final_rows')"
           test "$bundle_sha256" = "$logged_sha256"
           test "$bundle_rows" -gt 0
+          test "$calculated_final_rows" -gt 0
+          if [ "$EXPECTED_FINAL_ROWS" != "auto" ]; then
+            test "$EXPECTED_FINAL_ROWS" = "$calculated_final_rows"
+          fi
+          FINAL_EXPECTED_ROWS="$calculated_final_rows"
 
           if [ "$APPLY_RECOVERY" != "true" ]; then
             echo "Snapshot bundle validated; apply_recovery=false, production unchanged"
@@ -233,7 +338,7 @@ jobs:
             -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
             -H "X-Db-Name: ___leagues" \
             -H "X-Table-Name: league_settings" \
-            -H "X-Expected-Rows: ${EXPECTED_FINAL_ROWS}" \
+            -H "X-Expected-Rows: ${FINAL_EXPECTED_ROWS}" \
             -H "X-Content-Sha256: ${bundle_sha256}" \
             -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
             -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
@@ -241,7 +346,7 @@ jobs:
             -F "file=@league_settings_snapshot.duckdb;type=application/octet-stream" \
             | tee recovery-response.json
 
-          jq -e --argjson rows "$EXPECTED_FINAL_ROWS" \
+          jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
             '.status == "replaced" and .rows == $rows and .distinct_keys == $rows' \
             recovery-response.json >/dev/null
 
@@ -251,7 +356,7 @@ jobs:
             -H "Authorization: Bearer ${DATABASE_READ_TOKEN}" \
             -H "Content-Type: application/json" \
             --data "$query_body" | tee recovery-readback.json
-          jq -e --argjson rows "$EXPECTED_FINAL_ROWS" \
+          jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
             '.[0].rows == $rows and .[0].distinct_keys == $rows' recovery-readback.json >/dev/null
 
           trap - EXIT

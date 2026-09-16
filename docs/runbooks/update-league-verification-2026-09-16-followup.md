@@ -286,3 +286,21 @@ staging, now identifying the affected row: 2026 week 1 yahoo_player_id=100008
 this is NOT an owner reconnection failure. The missing post-transform fantasy
 score requires tracing the shared DST mapping/scoring path; do not accept null
 or invent zero to pass validation.
+
+## Catalina stale current-season trade highlight
+
+Reviewed transaction fix is live on public main b1091fdba. Retry 35108159916
+finished its shared transforms and passed the previous pickup-value check, but
+publication rejected a second field: season_trade_winner (HTTP 422 at 14:24:11).
+No publication succeeded. Source read shows the stored summary data_year=2026
+but its season_trade_year=2025, week=4: a stale previous-season trade retained
+by an earlier partial publisher, not a current-season value to preserve.
+
+The guard now recognizes each season highlight's explicit companion year and
+allows clearing only that proven-stale highlight family. Missing/current/future
+year and all-time values remain protected. Three regressions demonstrate old
+2025 clear versus current/null-year rejection; the stale case failed before
+the change. Twenty-two shared rollup tests and 24 real HTTP/fleet tests pass,
+with existing dataframe fragmentation warnings. Independent read-only review
+also verified nine guard cases including cross-family isolation. Production
+deployment/retry is still required; this entry is not a recovery claim.

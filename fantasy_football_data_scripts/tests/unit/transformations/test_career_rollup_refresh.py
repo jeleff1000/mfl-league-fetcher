@@ -314,6 +314,26 @@ def test_homepage_same_season_does_not_erase_populated_highlight(homepage_chain)
     assert conn.execute("SELECT season_best_pickup_player FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == ('Missing Pickup',)
 
 
+@pytest.mark.parametrize('highlight_year', [2025, 2026, None])
+def test_homepage_highlight_scope_not_summary_stamp_controls_stale_trade_clear(homepage_chain, highlight_year):
+    conn = homepage_chain
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET data_year=2026,
+            season_trade_winner='Old trade winner', season_trade_year=?,
+            season_trade_week=4, season_trade_net_lamar=10
+        WHERE db_name='test_league'
+    """, [highlight_year])
+    if highlight_year != 2025:
+        with pytest.raises(aggregation_utils.HomepageValidationError, match='season_trade_winner'):
+            aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    else:
+        aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+        assert conn.execute("""
+            SELECT data_year,season_trade_winner,season_trade_year,season_trade_net_lamar
+            FROM public.homepage_league_summary WHERE db_name='test_league'
+        """).fetchone() == (2026, None, None, None)
+
+
 def test_homepage_rollover_still_rejects_lost_alltime_highlight(homepage_chain):
     conn = homepage_chain
     conn.execute("""

@@ -220,6 +220,15 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
             old_year = previous.iloc[0].get("data_year")
             new_year = summary.get("data_year")
             season_advanced = pd.notna(old_year) and pd.notna(new_year) and new_year > old_year
+            # Older partial publishers could advance data_year while retaining
+            # a prior year's individual season highlight. Its own year is the
+            # authoritative scope; do not force the corrected builder to keep it.
+            stale_highlight_prefixes = tuple(
+                column[:-5] + "_"
+                for column, value in previous.iloc[0].items()
+                if column.startswith("season_") and column.endswith("_year")
+                and pd.notna(value) and pd.notna(new_year) and value < new_year
+            )
             for column, old_value in previous.iloc[0].items():
                 if column in {"db_name", "last_updated"} or pd.isna(old_value):
                     continue
@@ -227,6 +236,8 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
                 # new-season pickup/trade is valid; last year's winner is not
                 # a current-season value. All-time and same-season guards stay.
                 if season_advanced and column.startswith("season_"):
+                    continue
+                if stale_highlight_prefixes and column.startswith(stale_highlight_prefixes):
                     continue
                 if column not in summary or pd.isna(summary[column]):
                     raise HomepageValidationError(f"Homepage summary lost populated value: {column}")

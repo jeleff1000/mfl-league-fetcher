@@ -35,6 +35,12 @@ def data_dir(tmp_path, request):
             conn.execute('DROP TABLE public.player_fantasy')
         if getattr(request, 'param', None) == 'missing_homepage_source':
             conn.execute('DROP TABLE public.league_context')
+        if getattr(request, 'param', None) == 'lost_homepage_value':
+            conn.execute("""
+                INSERT INTO public.homepage_league_summary
+                    (db_name, data_year, season_best_pickup_player)
+                VALUES ('test_league', 2026, 'Missing Pickup')
+            """)
     if getattr(request, 'param', None) == 'missing_ops':
         return tmp_path
     with duckdb.connect(str(tmp_path / '___ops.duckdb')) as conn:
@@ -117,10 +123,31 @@ def test_http_attachment_failure_records_recoverable_terminal_state(client, tmp_
     assert _query(client, "SELECT status FROM merge_admin.league_delta_merge_state WHERE db_name='___fleet'") == [{'status': 'FAILED_MERGE'}]
 
 
-@pytest.mark.parametrize('data_dir', ['missing_homepage_source'], indirect=True)
+@pytest.mark.parametrize('data_dir', ['missing_homepage_source', 'lost_homepage_value'], indirect=True)
 def test_http_homepage_error_rolls_back_partition_and_career(client, tmp_path):  # noqa: F811
     response = _publish(client, _bundle(tmp_path, homepage=True))
-    assert response.status_code == 500, response.text
+    assert response.status_code == 422, response.text
     assert _query(client, "SELECT status FROM merge_admin.league_delta_merge_state WHERE db_name='___fleet'") == [{'status':'FAILED_MERGE'}]
     assert _query(client, "SELECT year,games FROM public.matchup_season WHERE db_name='test_league' ORDER BY year") == [{'year':2025,'games':14},{'year':2026,'games':1}]
     assert _query(client, "SELECT COUNT(*) n FROM public.matchup_career WHERE db_name='test_league'") == [{'n':0}]
+
+
+@pytest.mark.parametrize('data_dir', ['lost_homepage_value'], indirect=True)
+def test_target_does_not_retry_deterministic_homepage_rejection(client, tmp_path, monkeypatch):  # noqa: F811
+    from multi_league.core.targets.fly_target import FlyTarget
+
+    monkeypatch.setenv('DATABASE_SERVER_URL', 'https://fly.test')
+    monkeypatch.setenv('DATABASE_ADMIN_TOKEN', 'test-admin')
+    requests_seen = []
+
+    def local_transport(url, *, headers, files, timeout):
+        assert url == 'https://fly.test/merge-fleet-partition'
+        requests_seen.append(url)
+        return client.post('/merge-fleet-partition', headers=headers, files=files)
+
+    monkeypatch.setattr('multi_league.core.targets.fly_target.requests.post', local_transport)
+    bundle = _bundle(tmp_path, homepage=True)
+    with pytest.raises(RuntimeError, match='Fleet partition merge failed \\(422\\)'):
+        FlyTarget().merge_fleet_partition(bundle.path, bundle_id=bundle.bundle_id, bundle_hash=bundle.bundle_hash)
+    assert len(requests_seen) == 1
+    assert _query(client, "SELECT season_best_pickup_player FROM public.homepage_league_summary WHERE db_name='test_league'") == [{'season_best_pickup_player':'Missing Pickup'}]

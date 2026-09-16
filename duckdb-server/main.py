@@ -2463,6 +2463,9 @@ async def merge_fleet_partition(
             except DeltaConflictError as exc:
                 track_event("fleet_partition_conflict", {"bundle_id": manifest.get("bundle_id")})
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except fleet_merge.FleetValidationError as exc:
+                track_event("fleet_partition_validation_failed", {"error": str(exc)[:200]})
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except Exception as exc:
                 logger.error("Fleet partition merge failed: %s", exc, exc_info=True)
                 track_event("fleet_partition_merge_failed", {"error": type(exc).__name__})

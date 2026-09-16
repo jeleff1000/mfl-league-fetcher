@@ -281,6 +281,50 @@ def test_shared_homepage_rebuild_rejects_worker_scratch_connection():
             aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
 
 
+def test_homepage_new_season_clears_old_season_highlight_but_keeps_alltime(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name, year, week, transaction_type, player, manager, franchise_id, manager_lamar_ros_managed)
+        VALUES ('test_league', 2025, 2, 'add', 'Historical Pickup', 'Shared Alias', 'f1', 12)
+    """)
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET data_year=2025,
+            season_best_pickup_player='Historical Pickup', season_best_pickup_year=2025,
+            alltime_best_pickup_player='Historical Pickup'
+        WHERE db_name='test_league'
+    """)
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("""
+        SELECT data_year, season_best_pickup_player, season_best_pickup_year,
+               alltime_best_pickup_player, highest_score_points
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == (2026, None, None, 'Historical Pickup', 140.0)
+
+
+def test_homepage_same_season_does_not_erase_populated_highlight(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET data_year=2026,
+            season_best_pickup_player='Missing Pickup'
+        WHERE db_name='test_league'
+    """)
+    with pytest.raises(RuntimeError, match='season_best_pickup_player'):
+        aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("SELECT season_best_pickup_player FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == ('Missing Pickup',)
+
+
+def test_homepage_rollover_still_rejects_lost_alltime_highlight(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET data_year=2025,
+            alltime_best_pickup_player='Missing Pickup'
+        WHERE db_name='test_league'
+    """)
+    with pytest.raises(RuntimeError, match='alltime_best_pickup_player'):
+        aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+
+
 def test_weekly_publication_rebuilds_homepage_on_same_full_chain(merged_chain, tmp_path):
     conn = merged_chain
     conn.execute("""
@@ -310,7 +354,7 @@ def test_homepage_failure_rolls_back_careers_and_partition_changes(merged_chain,
     conn.execute('DROP TABLE public.league_context')
     before = conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall()
     server = _fleet_server()
-    with pytest.raises(RuntimeError, match='league_context'):
+    with pytest.raises(server.FleetValidationError, match='league_context'):
         server.apply_fleet_merge(conn, bundle.manifest, extracted)
     assert conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall() == before
     assert conn.execute("SELECT COUNT(*) FROM public.matchup_career WHERE db_name='test_league'").fetchone() == (0,)

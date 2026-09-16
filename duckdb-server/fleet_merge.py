@@ -571,10 +571,15 @@ def apply_fleet_merge(
                 career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)
                 career_seconds[db_name] = round(time.perf_counter() - career_start, 4)
                 if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
-                    from multi_league.transformations.aggregation.aggregation_utils import aggregate_homepage_rollups
+                    from multi_league.transformations.aggregation.aggregation_utils import (
+                        HomepageValidationError, aggregate_homepage_rollups,
+                    )
 
                     homepage_start = time.perf_counter()
-                    homepage_rollups[db_name] = aggregate_homepage_rollups(aggregation_conn, db_name)
+                    try:
+                        homepage_rollups[db_name] = aggregate_homepage_rollups(aggregation_conn, db_name)
+                    except HomepageValidationError as exc:
+                        raise FleetValidationError(str(exc)) from exc
                     homepage_seconds[db_name] = round(time.perf_counter() - homepage_start, 4)
 
         bump_generations(

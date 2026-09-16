@@ -63,6 +63,10 @@ HOMEPAGE_ROLLUP_TABLES = (
     "homepage_current_standings", "homepage_top_rivalries", "homepage_manager_profiles",
 )
 
+
+class HomepageValidationError(RuntimeError):
+    """Deterministic invalid homepage output; retrying the same input cannot fix it."""
+
 # Active table catalog — starts at the centralized database and is rebound
 # to ``current_database()`` by ``configure_table_catalog()`` when an aggregation
 # script runs on a local DuckDB scratch connection (e.g. ``memory``).
@@ -174,19 +178,19 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
 
     validate_db_name(db_name)
     if current_catalog(conn) != CENTRAL_DB_NAME:
-        raise RuntimeError("Homepage publication requires the complete ___leagues connection")
+        raise HomepageValidationError("Homepage publication requires the complete ___leagues connection")
     configure_table_catalog(conn)
     for source in (
         "matchup", "matchup_season", "player_fantasy", "player_fantasy_season",
         "player_fantasy_career", "draft", "transactions", "league_settings", "league_context",
     ):
         if not table_exists_in_catalog(conn, source):
-            raise RuntimeError(f"Homepage publication source is missing: {source}")
+            raise HomepageValidationError(f"Homepage publication source is missing: {source}")
     frames = compute_homepage_frames(conn, db_name)
     if set(frames) != set(HOMEPAGE_ROLLUP_TABLES):
-        raise RuntimeError("Homepage builder did not return all canonical outputs")
+        raise HomepageValidationError("Homepage builder did not return all canonical outputs")
     if len(frames["homepage_league_summary"]) != 1:
-        raise RuntimeError("Homepage builder must return exactly one league summary")
+        raise HomepageValidationError("Homepage builder must return exactly one league summary")
     for table in ("homepage_manager_rankings", "homepage_manager_profiles", "homepage_current_standings"):
         year_scope = (
             " AND year = (SELECT MAX(year) FROM public.matchup WHERE db_name = ?)"
@@ -199,10 +203,10 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
         ).fetchall()}
         frame = frames[table]
         if "franchise_id" not in frame:
-            raise RuntimeError(f"{table} lacks franchise identities")
+            raise HomepageValidationError(f"{table} lacks franchise identities")
         ids = frame["franchise_id"]
         if ids.isna().any() or ids.duplicated().any() or set(ids.astype(str)) != expected:
-            raise RuntimeError(f"{table} franchise coverage differs from persisted history")
+            raise HomepageValidationError(f"{table} franchise coverage differs from persisted history")
     # A swallowed query error in a legacy homepage calculation must not erase
     # a previously populated summary. Reject it; do not restore stale values.
     if table_exists_in_catalog(conn, "homepage_league_summary"):
@@ -210,14 +214,22 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
             "SELECT * FROM public.homepage_league_summary WHERE db_name = ?", [db_name],
         ).fetchdf()
         if len(previous) > 1:
-            raise RuntimeError("Persisted homepage summary has duplicate league identity")
+            raise HomepageValidationError("Persisted homepage summary has duplicate league identity")
         if not previous.empty:
             summary = frames["homepage_league_summary"].iloc[0]
+            old_year = previous.iloc[0].get("data_year")
+            new_year = summary.get("data_year")
+            season_advanced = pd.notna(old_year) and pd.notna(new_year) and new_year > old_year
             for column, old_value in previous.iloc[0].items():
                 if column in {"db_name", "last_updated"} or pd.isna(old_value):
                     continue
+                # Current-season highlights change scope at rollover. An empty
+                # new-season pickup/trade is valid; last year's winner is not
+                # a current-season value. All-time and same-season guards stay.
+                if season_advanced and column.startswith("season_"):
+                    continue
                 if column not in summary or pd.isna(summary[column]):
-                    raise RuntimeError(f"Homepage summary lost populated value: {column}")
+                    raise HomepageValidationError(f"Homepage summary lost populated value: {column}")
     counts = {}
     for table in HOMEPAGE_ROLLUP_TABLES:
         replace_scoped_aggregate_table_from_dataframe(conn, db_name, table, frames[table])

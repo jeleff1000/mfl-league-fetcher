@@ -113,3 +113,32 @@ def test_espn_roster_overlay_uses_provider_identity_before_player_week_rebuild(t
         assert stored["clutch_equity"].tolist() == [4.5]
     finally:
         local.close()
+
+
+def test_matchup_refresh_replaces_a_prior_enriched_team_week_by_provider_identity(tmp_path):
+    """A second identical update cannot append a row when manager_week was rebuilt."""
+    local = LocalLeagueDB(tmp_path, "afi_data")
+    try:
+        local.ensure_table("matchup")
+        local._insert_into_table("matchup", pd.DataFrame([{
+            "db_name": "afi_data", "year": 2026, "week": 1,
+            "team_key": "1", "manager": "Gray", "manager_guid": "stable-owner",
+            "manager_week": "stable-owner_2026_1", "opponent": "Tani",
+            "team_points": 101.0, "opponent_points": 99.0,
+        }]))
+        incoming = pd.DataFrame([{
+            "year": 2026, "week": 1, "team_key": "1",
+            "manager": "Gray", "opponent": "Tani",
+            "team_points": 102.0, "opponent_points": 99.0,
+        }])
+
+        merge_provider_refresh_table(
+            local, "matchup", incoming,
+            platform="sleeper", league_id="1352102370921705472",
+        )
+
+        stored = local.read_table("matchup")
+        assert len(stored) == 1
+        assert stored["team_points"].tolist() == [102.0]
+    finally:
+        local.close()

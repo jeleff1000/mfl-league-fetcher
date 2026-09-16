@@ -832,6 +832,19 @@ def merge_provider_refresh_table(
         if normalized[list(provider_keys)].isna().any().any():
             raise RefreshScopeError(f"{table_name} provider payload has null ownership keys")
         contract = replace(contract, key_columns=provider_keys)
+    elif table_name in {"matchup", "schedule"}:
+        # ``manager_week`` is rebuilt from franchise identity during shared
+        # enrichment.  It is not a stable provider key on a retry: using it
+        # makes an identical second update append a duplicate team-week.
+        # Every supported provider exposes a per-league ``team_key`` that is
+        # stable for the active season, so replace provider rows by that key.
+        provider_keys = ("db_name", "year", "week", "team_key")
+        missing = sorted(set(provider_keys) - set(normalized))
+        if missing:
+            raise RefreshScopeError(f"{table_name} provider payload is missing keys: {missing}")
+        if normalized[list(provider_keys)].isna().any().any():
+            raise RefreshScopeError(f"{table_name} provider payload has null ownership keys")
+        contract = replace(contract, key_columns=provider_keys)
     existing = (
         local_db.read_table(table_name)
         if local_db.table_exists(table_name)

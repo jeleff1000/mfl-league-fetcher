@@ -104,10 +104,11 @@ _SOURCE_FACT_TABLES = frozenset({
     "transactions",
 })
 
-# Player history is the only wide source witness. The remaining source tables
-# are small but have legacy mixed-object representations, so they keep the
-# established exact fingerprint semantics.
-_FAST_SOURCE_FINGERPRINT_TABLES = frozenset({"player_fantasy"})
+# Source witnesses use the established exact canonical comparison until a
+# faster implementation is proven semantically identical against live mixed
+# historical frames. A refresh must never trade its preservation gate for
+# speed.
+_FAST_SOURCE_FINGERPRINT_TABLES = frozenset()
 
 _CAREER_IDENTITIES: dict[str, tuple[str, ...]] = {
     "draft_manager_career": ("franchise_id", "manager", "draft_category"),

@@ -307,6 +307,20 @@ def test_small_source_fact_preservation_uses_the_legacy_canonical_comparison(mon
     assert receipt["historical_rows_preserved"] is True
 
 
+def test_player_source_fact_preservation_keeps_the_exact_legacy_comparison(monkeypatch):
+    frame = pd.DataFrame({"db_name": ["league_a"], "year": [2025], "player_week": ["p_2025_1"]})
+
+    def fail_fast_source_fingerprint(*_args, **_kwargs):
+        raise AssertionError("player source history must retain exact comparison semantics")
+
+    monkeypatch.setattr(ownership, "_frame_fingerprint", fail_fast_source_fingerprint)
+    receipt = ownership.assert_refresh_preservation(
+        {"player_fantasy": frame}, {"player_fantasy": frame.copy()}, active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_preservation_fingerprint_uses_columnar_serialization_not_cell_mapping(monkeypatch):
     frame = pd.DataFrame({"year": [2025, 2024], "points": [17.0, None]})
 

@@ -99,6 +99,7 @@ def test_compute_best_trade_separates_got_and_gave_packages(monkeypatch):
             manager VARCHAR,
             franchise_id VARCHAR,
             source_manager VARCHAR,
+            source_franchise_id VARCHAR,
             trade_direction VARCHAR,
             trade_asset_lamar DOUBLE
         )
@@ -107,10 +108,10 @@ def test_compute_best_trade_separates_got_and_gave_packages(monkeypatch):
     conn.execute(
         f"""
         INSERT INTO public.transactions VALUES
-            ('{db_name}', 't1', 2025, 8, 'trade', 'Nico Collins',         'Gavi',   'f_gavi',   'Yaacov', 'received', 90),
-            ('{db_name}', 't1', 2025, 8, 'trade', 'Michael Pittman Jr.', 'Gavi',   'f_gavi',   'Yaacov', 'sent',     60),
-            ('{db_name}', 't1', 2025, 8, 'trade', 'Michael Pittman Jr.', 'Yaacov', 'f_yaacov', 'Gavi',   'received', 60),
-            ('{db_name}', 't1', 2025, 8, 'trade', 'Nico Collins',         'Yaacov', 'f_yaacov', 'Gavi',   'sent',     90)
+            ('{db_name}', 't1', 2025, 8, 'trade', 'Nico Collins',         'Gavi',   'f_gavi',   'Yaacov', 'f_yaacov', 'received', 90),
+            ('{db_name}', 't1', 2025, 8, 'trade', 'Michael Pittman Jr.', 'Gavi',   'f_gavi',   'Yaacov', 'f_yaacov', 'sent',     60),
+            ('{db_name}', 't1', 2025, 8, 'trade', 'Michael Pittman Jr.', 'Yaacov', 'f_yaacov', 'Gavi',   'f_gavi',   'received', 60),
+            ('{db_name}', 't1', 2025, 8, 'trade', 'Nico Collins',         'Yaacov', 'f_yaacov', 'Gavi',   'f_gavi',   'sent',     90)
         """
     )
 
@@ -127,6 +128,7 @@ def test_compute_best_trade_separates_got_and_gave_packages(monkeypatch):
             "manager",
             "franchise_id",
             "source_manager",
+            "source_franchise_id",
             "trade_direction",
             "trade_asset_lamar",
         }
@@ -159,6 +161,7 @@ def test_compute_best_trade_keeps_same_name_trade_partners_separate_by_franchise
             manager VARCHAR,
             franchise_id VARCHAR,
             source_manager VARCHAR,
+            source_franchise_id VARCHAR,
             trade_direction VARCHAR,
             trade_asset_lamar DOUBLE
         )
@@ -167,10 +170,10 @@ def test_compute_best_trade_keeps_same_name_trade_partners_separate_by_franchise
     conn.execute(
         f"""
         INSERT INTO public.transactions VALUES
-            ('{db_name}', 't_same', 2025, 9, 'trade', 'Alpha Asset', 'Chris', 'fid_alpha', 'Chris', 'received', 90),
-            ('{db_name}', 't_same', 2025, 9, 'trade', 'Beta Asset',  'Chris', 'fid_alpha', 'Chris', 'sent',     60),
-            ('{db_name}', 't_same', 2025, 9, 'trade', 'Beta Asset',  'Chris', 'fid_beta',  'Chris', 'received', 60),
-            ('{db_name}', 't_same', 2025, 9, 'trade', 'Alpha Asset', 'Chris', 'fid_beta',  'Chris', 'sent',     90)
+            ('{db_name}', 't_same', 2025, 9, 'trade', 'Alpha Asset', 'Chris', 'fid_alpha', 'Chris', 'fid_beta',  'received', 90),
+            ('{db_name}', 't_same', 2025, 9, 'trade', 'Beta Asset',  'Chris', 'fid_alpha', 'Chris', 'fid_beta',  'sent',     60),
+            ('{db_name}', 't_same', 2025, 9, 'trade', 'Beta Asset',  'Chris', 'fid_beta',  'Chris', 'fid_alpha', 'received', 60),
+            ('{db_name}', 't_same', 2025, 9, 'trade', 'Alpha Asset', 'Chris', 'fid_beta',  'Chris', 'fid_alpha', 'sent',     90)
         """
     )
 
@@ -187,6 +190,7 @@ def test_compute_best_trade_keeps_same_name_trade_partners_separate_by_franchise
             "manager",
             "franchise_id",
             "source_manager",
+            "source_franchise_id",
             "trade_direction",
             "trade_asset_lamar",
         }

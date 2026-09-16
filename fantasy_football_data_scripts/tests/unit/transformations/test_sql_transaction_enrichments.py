@@ -509,7 +509,7 @@ def test_draft_pick_conveyance_uses_roster_id_mapping_without_replacing_pick_lab
     assert row[0].count("(became Colston Loveland)") == 1
 
 
-def test_draft_pick_conveyance_still_maps_startup_slots_by_draft_slot(tmp_path):
+def test_draft_pick_conveyance_uses_original_roster_identity_even_for_startup(tmp_path):
     runner = _setup_pick_conveyance_db(tmp_path, "txn_pick_conveyance_startup")
     runner.conn.execute(
         """
@@ -539,7 +539,40 @@ def test_draft_pick_conveyance_still_maps_startup_slots_by_draft_slot(tmp_path):
         if runner._conn is not None:
             runner._conn.close()
 
-    assert row == ("2022 1st (from camicies) (became Josh Allen)", "Josh Allen", "ALLEN")
+    # Sleeper trade roster_id=1 is not draft_slot=1. The explicit original
+    # roster mapping identifies slot 2 even when legacy category says startup.
+    assert row == ("2022 1st (from camicies) (became Justin Jefferson)", "Justin Jefferson", "JJ")
+
+
+@pytest.mark.parametrize("category", ["startup", "veteran", "rookie"])
+def test_pick_conveyance_does_not_borrow_unrelated_rosters_negative_value(tmp_path, category):
+    runner = _setup_pick_conveyance_db(tmp_path, "txn_pick_original_roster")
+    try:
+        runner.conn.execute("""
+            INSERT INTO public.transactions
+                (transaction_id,year,week,transaction_type,trade_direction,manager,
+                 player,sleeper_player_id,traded_pick_season,traded_pick_round,
+                 traded_pick_original_owner)
+            VALUES ('pick-swap',2026,1,'trade_pick','received','Shared Alias',
+                    '2026 10th (from Original Owner)','pick_2026_10_4',2026,10,'Original Owner')
+        """)
+        runner.conn.executemany("INSERT INTO public.draft VALUES (?,?,?,?,?,?,?,?,?)", [
+            (2026,10,4,3,category,'Unrelated Defense',-12.925,-2.1,'DEF-14'),
+            (2026,10,6,4,category,'Correct Bench Player',0,5.7,'correct-player'),
+        ])
+        for _ in range(2):
+            runner.draft_pick_conveyances()
+            assert runner.conn.execute("""
+                SELECT player,NFL_player_id,conveyed_lamar,manager_lamar_ros_managed,
+                       is_conveyed,manager
+                FROM public.transactions
+            """).fetchone() == (
+                '2026 10th (from Original Owner) (became Correct Bench Player)',
+                'correct-player',0,0,True,'Shared Alias',
+            )
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
 
 
 def _setup_trade_retention_db(tmp_path, db_name: str, draft_type: str):

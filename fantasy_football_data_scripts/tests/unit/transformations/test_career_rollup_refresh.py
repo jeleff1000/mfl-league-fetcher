@@ -323,15 +323,14 @@ def test_homepage_highlight_scope_not_summary_stamp_controls_stale_trade_clear(h
             season_trade_week=4, season_trade_net_lamar=10
         WHERE db_name='test_league'
     """, [highlight_year])
-    if highlight_year != 2025:
-        with pytest.raises(aggregation_utils.HomepageValidationError, match='season_trade_winner'):
-            aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
-    else:
-        aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
-        assert conn.execute("""
-            SELECT data_year,season_trade_winner,season_trade_year,season_trade_net_lamar
-            FROM public.homepage_league_summary WHERE db_name='test_league'
-        """).fetchone() == (2026, None, None, None)
+    # An executed calculation with no qualifying trades is a valid nullable DDL
+    # result, regardless of the previous highlight's stamp. Missing provider
+    # transactions must be rejected at ingestion, not inferred from a highlight.
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("""
+        SELECT data_year,season_trade_winner,season_trade_year,season_trade_net_lamar
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == (2026, None, None, None)
 
 
 def test_homepage_rollover_still_rejects_lost_alltime_highlight(homepage_chain):
@@ -343,6 +342,58 @@ def test_homepage_rollover_still_rejects_lost_alltime_highlight(homepage_chain):
     """)
     with pytest.raises(RuntimeError, match='alltime_best_pickup_player'):
         aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+
+
+@pytest.mark.parametrize('broken_source', [None, 'null_value', 'missing_sent_side', 'different_nfl_id'])
+def test_same_season_trade_clear_requires_complete_valued_bilateral_assets(homepage_chain, broken_source):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name,transaction_id,year,week,transaction_type,trade_direction,
+             manager,franchise_id,source_franchise_id,player,NFL_player_id,trade_asset_lamar)
+        VALUES ('test_league','pick-swap',2026,1,'trade_pick','received',
+                'Shared Alias','f1','f2','Correct Bench Player','p1',0),
+               ('test_league','pick-swap',2026,1,'trade_pick','sent',
+                'Other Alias','f2','f1','Correct Bench Player','p1',0)
+    """)
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET data_year=2026,
+            season_trade_winner='Shared Alias',season_trade_year=2026,
+            season_trade_week=1,season_trade_net_lamar=12.93
+        WHERE db_name='test_league'
+    """)
+    if broken_source == 'null_value':
+        conn.execute("UPDATE public.transactions SET trade_asset_lamar=NULL WHERE db_name='test_league'")
+    elif broken_source == 'missing_sent_side':
+        conn.execute("DELETE FROM public.transactions WHERE db_name='test_league' AND trade_direction='sent'")
+    elif broken_source == 'different_nfl_id':
+        conn.execute("UPDATE public.transactions SET NFL_player_id='unrelated-player' WHERE db_name='test_league' AND trade_direction='sent'")
+    if broken_source:
+        from multi_league.transformations.aggregation.homepage_summary import _compute_best_trade
+
+        with pytest.raises(RuntimeError, match='trade'):
+            _compute_best_trade(conn, 'test_league', year=2026, platform='sleeper')
+        with pytest.raises(RuntimeError, match='trade'):
+            aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+        assert conn.execute("SELECT season_trade_net_lamar FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (12.93,)
+    else:
+        for _ in range(2):
+            aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+            assert conn.execute("""
+                SELECT season_trade_winner,season_trade_year,season_trade_net_lamar,
+                       highest_score_points FROM public.homepage_league_summary
+                WHERE db_name='test_league'
+            """).fetchone() == (None,None,None,140.0)
+
+
+def test_trade_query_failure_is_not_an_empty_highlight(homepage_chain):
+    from multi_league.transformations.aggregation.homepage_summary import _compute_best_trade
+
+    # A real SQL binder failure, including on an initially empty league, must
+    # propagate rather than masquerade as a successful empty calculation.
+    homepage_chain.execute('ALTER TABLE public.transactions DROP COLUMN transaction_id')
+    with pytest.raises(RuntimeError, match='trade'):
+        _compute_best_trade(homepage_chain, 'test_league', year=2026, platform='sleeper')
 
 
 def test_weekly_publication_rebuilds_homepage_on_same_full_chain(merged_chain, tmp_path):

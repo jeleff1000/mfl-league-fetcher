@@ -1321,6 +1321,37 @@ def _compute_best_trade(
     partner_select, partner_filter = _trade_partner_sql(txn_cols)
 
     try:
+        if "trade_asset_lamar" in txn_cols:
+            # The canonical enrichment mirrors each received asset onto its
+            # sent perspective. Validate that existing contract before treating
+            # a zero-net package as a legitimate empty highlight.
+            from multi_league.transformations.transaction.sql_transaction_enrichments import _trade_asset_key_expr
+
+            asset_key = _trade_asset_key_expr(txn_cols, "t")
+            partner_asset_key = _trade_asset_key_expr(txn_cols, "p")
+            invalid = conn.execute(f"""
+                SELECT COUNT(*) FROM {central_table('transactions')} t
+                WHERE {league_db_filter(db_name, 't')} {year_filter}
+                  AND t.transaction_type IN ('trade', 'trade_pick')
+                  AND (
+                    t.trade_asset_lamar IS NULL OR NOT isfinite(t.trade_asset_lamar)
+                    OR t.trade_direction IS NULL OR t.trade_direction NOT IN ('received', 'sent')
+                    OR NOT EXISTS (
+                        SELECT 1 FROM {central_table('transactions')} p
+                        WHERE p.db_name = t.db_name AND p.year = t.year
+                          AND p.transaction_id = t.transaction_id
+                          AND p.transaction_type = t.transaction_type
+                          AND p.franchise_id = t.source_franchise_id
+                          AND p.source_franchise_id = t.franchise_id
+                          AND p.trade_direction = CASE t.trade_direction
+                              WHEN 'received' THEN 'sent' ELSE 'received' END
+                          AND {partner_asset_key} = {asset_key}
+                          AND p.trade_asset_lamar = t.trade_asset_lamar
+                    )
+                  )
+            """).fetchone()[0]
+            if invalid:
+                raise ValueError(f"{invalid} trade assets lack complete mirrored valuations")
         row = conn.execute(f"""
             WITH trade_received AS (
                 SELECT
@@ -1415,9 +1446,16 @@ def _compute_best_trade(
             highlights["year"] = row[1]
             highlights["week"] = row[2]
     except Exception as e:
-        log(f"  [WARN] Failed to compute best trade: {e}")
+        raise RuntimeError(f"Failed to compute best trade for {db_name}: {e}") from e
 
-    return highlights
+    # Explicit nullable DDL fields mean the calculation succeeded with no
+    # qualifying winner. A missing source or failed query must not produce this.
+    from multi_league.core.aggregate_ddl import HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES
+
+    return {
+        **{column: None for column in HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES if column != "db_name"},
+        **highlights,
+    }
 
 
 # ============================================================================

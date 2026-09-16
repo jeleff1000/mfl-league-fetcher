@@ -174,6 +174,7 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
     """
     from multi_league.core.sql_utils import validate_db_name
     from multi_league.transformations.aggregation.homepage_summary import compute_homepage_frames
+    from multi_league.core.aggregate_ddl import HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES
     import pandas as pd
 
     validate_db_name(db_name)
@@ -229,8 +230,20 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
                 if column.startswith("season_") and column.endswith("_year")
                 and pd.notna(value) and pd.notna(new_year) and value < new_year
             )
+            nullable_trade_columns = {
+                f"{scope}_trade_{field}"
+                for scope in ("season", "alltime")
+                for field in HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES
+                if field != "db_name"
+            }
             for column, old_value in previous.iloc[0].items():
                 if column in {"db_name", "last_updated"} or pd.isna(old_value):
+                    continue
+                # The shared trade calculation validates its inputs and raises
+                # query failures. Its explicit nullable DDL result may clear a
+                # previous winner after a score/value correction. Omitted fields
+                # still fail below; do not manufacture or restore old values.
+                if column in summary and column in nullable_trade_columns:
                     continue
                 # Current-season highlights change scope at rollover. An empty
                 # new-season pickup/trade is valid; last year's winner is not

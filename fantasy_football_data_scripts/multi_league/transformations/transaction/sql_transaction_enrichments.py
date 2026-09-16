@@ -75,7 +75,7 @@ def _trade_asset_key_expr(trans_cols: set[str], alias: str) -> str:
         "traded_pick_round",
         "traded_pick_original_owner",
     ]:
-        if col in trans_cols:
+        if col in trans_cols or col.lower() in trans_cols:
             key_parts.append(f"COALESCE(CAST({alias}.{col} AS VARCHAR), '')")
     if not key_parts:
         return "''"
@@ -1730,9 +1730,8 @@ class TransactionEnrichmentsMixin:
         has_trans_player = "player" in trans_cols
 
         # Sleeper encodes original pick roster_id in sleeper_player_id:
-        # pick_{season}_{round}_{roster_id}. For rookie/future drafts that id
-        # maps to draft.draft_slot_roster_id. Startup drafts historically used
-        # draft_slot itself because the startup order is the pick identity.
+        # pick_{season}_{round}_{roster_id}. That is the original roster's id,
+        # not its draft-order slot, including drafts labelled startup.
         has_sleeper_id = "sleeper_player_id" in trans_cols
 
         logger.info(
@@ -1785,32 +1784,7 @@ class TransactionEnrichmentsMixin:
         sleeper_pick_roster_expr = "TRY_CAST(SPLIT_PART(t.sleeper_player_id, '_', 4) AS INTEGER)"
         numeric_original_owner_expr = "TRY_CAST(t.traded_pick_original_owner AS INTEGER)"
 
-        if has_sleeper_id and has_draft_slot_roster_id and has_draft_category and has_draft_slot:
-            owner_condition = f"""
-                AND (
-                    (
-                        LOWER(COALESCE(d.draft_category, '')) = 'startup'
-                        AND d.draft_slot = {sleeper_pick_roster_expr}
-                    )
-                    OR (
-                        LOWER(COALESCE(d.draft_category, '')) <> 'startup'
-                        AND d.draft_slot_roster_id = {sleeper_pick_roster_expr}
-                    )
-                    OR d.draft_slot_roster_id = {numeric_original_owner_expr}
-                )
-            """
-            match_preference = f"""
-                    CASE
-                        WHEN LOWER(COALESCE(d.draft_category, '')) = 'startup'
-                             AND d.draft_slot = {sleeper_pick_roster_expr}
-                            THEN 0
-                        WHEN LOWER(COALESCE(d.draft_category, '')) <> 'startup'
-                             AND d.draft_slot_roster_id = {sleeper_pick_roster_expr}
-                            THEN 0
-                        ELSE 1
-                    END,
-            """
-        elif has_sleeper_id and has_draft_slot_roster_id:
+        if has_sleeper_id and has_draft_slot_roster_id:
             owner_condition = f"""
                 AND (
                     d.draft_slot_roster_id = {sleeper_pick_roster_expr}

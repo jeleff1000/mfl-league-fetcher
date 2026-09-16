@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import duckdb
 from pathlib import Path
+import logging
 
 
 def test_weekly_shared_enrichment_attaches_the_patched_ops_cache_once(tmp_path, monkeypatch):
@@ -49,6 +50,27 @@ def test_weekly_shared_enrichment_attaches_the_patched_ops_cache_once(tmp_path, 
     assert local_pipeline.index("_attach_ops_cache_for_enrichment(local_db)") < local_pipeline.index(
         "enricher = SQLEnrichments("
     )
+
+
+def test_shared_sql_enricher_accepts_an_existing_ops_attachment(tmp_path, monkeypatch, caplog):
+    from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
+
+    ops_path = tmp_path / "weekly_ops.duckdb"
+    with duckdb.connect(str(ops_path)) as ops:
+        ops.execute("CREATE SCHEMA nfl_historical")
+    monkeypatch.setenv("OPS_CACHE_PATH", str(ops_path))
+
+    conn = duckdb.connect()
+    conn.execute("ATTACH ':memory:' AS ___ops")
+    enricher = SQLEnrichmentsBase("league_a", conn=conn)
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert enricher._get_connection() is conn
+        assert "Could not attach local ops cache" not in caplog.text
+        assert "No OPS_CACHE_PATH set" not in caplog.text
+        assert sum(row[1] == "___ops" for row in conn.execute("PRAGMA database_list").fetchall()) == 1
+    finally:
+        conn.close()
 
 
 def test_weekly_aggregates_attach_ops_before_season_and_career_queries(tmp_path, monkeypatch):

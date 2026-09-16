@@ -686,6 +686,14 @@ class SQLEnrichmentsBase:
         import os
         from pathlib import Path
 
+        attached = {
+            str(row[1])
+            for row in conn.execute("PRAGMA database_list").fetchall()
+            if len(row) > 1
+        }
+        if "___ops" in attached:
+            return
+
         ops_cache = os.environ.get("OPS_CACHE_PATH", "")
         if ops_cache and Path(ops_cache).exists():
             try:

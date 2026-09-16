@@ -1544,6 +1544,51 @@ def test_active_snapshot_keeps_keeper_configuration_unscoped(monkeypatch):
     assert "year = 2026" not in keeper_query
 
 
+def test_active_snapshot_drops_legacy_keeper_created_at_metadata():
+    """A legacy Fly timestamp is not part of canonical user keeper settings."""
+    from scripts import refresh_yahoo_active_season
+
+    registry = {
+        "keeper_config": {
+            "columns": {
+                "db_name": "VARCHAR",
+                "year": "INTEGER",
+                "updated_at": "TIMESTAMP",
+                "enabled": "BOOLEAN",
+            }
+        }
+    }
+
+    class Reader:
+        @staticmethod
+        def query(_sql, **_kwargs):
+            return [{
+                "source_table": "keeper_config",
+                "payload": {
+                    "db_name": "kmffl",
+                    "year": 0,
+                    "created_at": "2026-04-20 02:47:12",
+                    "updated_at": "2026-09-15 11:54:40",
+                    "enabled": True,
+                },
+            }]
+
+    frames = refresh_yahoo_active_season._active_source_snapshot_frames(
+        Reader(),
+        registry=registry,
+        db_name="kmffl",
+        active_year=2026,
+        table_names=("keeper_config",),
+    )
+
+    assert frames["keeper_config"].to_dict("records") == [{
+        "db_name": "kmffl",
+        "year": 0,
+        "updated_at": "2026-09-15 11:54:40",
+        "enabled": True,
+    }]
+
+
 def test_yahoo_refresh_uses_the_saved_renewal_chain_before_discovery():
     """Normal weekly runs must not re-walk Yahoo's renewal links every time."""
     from types import SimpleNamespace

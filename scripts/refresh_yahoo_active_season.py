@@ -504,6 +504,14 @@ def _active_source_snapshot_frames(
             payload = json.loads(payload)
         if not isinstance(payload, dict):
             raise RuntimeError(f"Fly active source snapshot returned invalid {table_name} payload")
+        if table_name == "keeper_config":
+            # Older Fly keeper tables retain a server-generated ``created_at``
+            # column from the pre-canonical DDL. Weekly updates never publish
+            # keeper_config, and the canonical shared schema intentionally owns
+            # only ``updated_at`` plus the user's keeper fields. Keep the live
+            # row untouched on Fly while excluding this legacy metadata from
+            # local transformation and preservation witnesses.
+            payload.pop("created_at", None)
         payloads[table_name].append(payload)
 
     return {

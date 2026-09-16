@@ -2427,6 +2427,104 @@ def test_active_transform_split_keeps_history_out_of_transform_input():
     assert transform_input["league_context"].equals(source["league_context"])
 
 
+def test_historical_dynamic_scoring_rules_restore_after_active_transform():
+    """Provider-specific scoring thresholds are historical source facts."""
+    import duckdb
+    import scripts.refresh_yahoo_active_season as worker
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER)"
+    )
+
+    class LocalDB:
+        @staticmethod
+        def table_exists(table_name):
+            return table_name == "league_settings"
+
+        @staticmethod
+        def connect():
+            return conn
+
+        @staticmethod
+        def _insert_into_table(table_name, frame):
+            conn.register("_test_restore_rows", frame)
+            try:
+                target_columns = [
+                    row[0]
+                    for row in conn.execute(
+                        f'DESCRIBE public."{table_name}"'
+                    ).fetchall()
+                ]
+                common = [column for column in frame.columns if column in target_columns]
+                quoted = ", ".join(f'"{column}"' for column in common)
+                conn.execute(
+                    f'INSERT INTO public."{table_name}" ({quoted}) '
+                    f'SELECT {quoted} FROM _test_restore_rows'
+                )
+            finally:
+                conn.unregister("_test_restore_rows")
+
+    try:
+        worker._restore_historical_source_rows(
+            LocalDB(),
+            {
+                "league_settings": pd.DataFrame(
+                    {
+                        "db_name": ["the_league"],
+                        "year": [2025],
+                        "scoring_bonus_pass_yd_325": [3.0],
+                    }
+                )
+            },
+        )
+        columns = {
+            row[0]
+            for row in conn.execute("DESCRIBE public.league_settings").fetchall()
+        }
+        assert "scoring_bonus_pass_yd_325" in columns
+        assert conn.execute(
+            "SELECT scoring_bonus_pass_yd_325 FROM public.league_settings"
+        ).fetchone() == (3.0,)
+    finally:
+        conn.close()
+
+
+def test_historical_restore_rejects_unknown_dynamic_source_columns():
+    """Dynamic allowances stay limited to scoring-rule threshold columns."""
+    import duckdb
+    import scripts.refresh_yahoo_active_season as worker
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER)"
+    )
+
+    class LocalDB:
+        @staticmethod
+        def table_exists(table_name):
+            return table_name == "league_settings"
+
+        @staticmethod
+        def connect():
+            return conn
+
+    try:
+        with pytest.raises(RuntimeError, match="unregistered columns"):
+            worker._restore_historical_source_rows(
+                LocalDB(),
+                {
+                    "league_settings": pd.DataFrame(
+                        {"db_name": ["the_league"], "year": [2025], "bogus": [1]}
+                    )
+                },
+            )
+    finally:
+        conn.close()
+
+
 def test_update_source_snapshot_rejects_concurrent_publication(monkeypatch):
     import scripts.refresh_yahoo_active_season as worker
 

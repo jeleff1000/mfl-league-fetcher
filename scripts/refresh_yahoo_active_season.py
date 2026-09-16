@@ -76,6 +76,13 @@ ACTIVE_REFRESH_SOURCE_TABLES = (
 )
 UPDATE_REFRESH_SOURCE_TABLES = SOURCE_TABLES
 YAHOO_LEAGUE_KEY_RE = re.compile(r"^\d+\.l\.\d+$")
+# Scoring rules are provider-defined and their threshold is deliberately part
+# of the key (for example ``scoring_bonus_pass_yd_325``).  The canonical
+# registry cannot enumerate every valid threshold, but they are still source
+# facts and must survive an active-season transform.
+_DYNAMIC_LEAGUE_SETTINGS_COLUMN_RE = re.compile(
+    r"^(?:bonus|scoring_bonus)_[a-z0-9_]+$"
+)
 
 
 def _sql_literal(value: object) -> str:
@@ -641,7 +648,15 @@ def _restore_historical_source_rows(
         }
         missing_columns = sorted(set(frame.columns) - target_columns)
         allowed_columns = set(registry[table_name]["columns"])
-        unexpected = sorted(set(missing_columns) - allowed_columns)
+        dynamic_settings_columns = {
+            column
+            for column in missing_columns
+            if table_name == "league_settings"
+            and _DYNAMIC_LEAGUE_SETTINGS_COLUMN_RE.fullmatch(column)
+        }
+        unexpected = sorted(
+            set(missing_columns) - allowed_columns - dynamic_settings_columns
+        )
         if unexpected:
             raise RuntimeError(
                 f"historical {table_name} has unregistered columns after active transform: {unexpected}"

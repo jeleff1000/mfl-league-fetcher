@@ -293,6 +293,20 @@ def test_user_configuration_preservation_uses_the_legacy_canonical_comparison(mo
     assert receipt["user_configuration_preserved"] is True
 
 
+def test_small_source_fact_preservation_uses_the_legacy_canonical_comparison(monkeypatch):
+    frame = pd.DataFrame({"db_name": ["league_a"], "year": [2025], "uses_median": [True]})
+
+    def fail_fast_player_fingerprint(*_args, **_kwargs):
+        raise AssertionError("small source tables must retain their legacy comparison")
+
+    monkeypatch.setattr(ownership, "_frame_fingerprint", fail_fast_player_fingerprint)
+    receipt = ownership.assert_refresh_preservation(
+        {"league_settings": frame}, {"league_settings": frame.copy()}, active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_preservation_fingerprint_uses_columnar_serialization_not_cell_mapping(monkeypatch):
     frame = pd.DataFrame({"year": [2025, 2024], "points": [17.0, None]})
 

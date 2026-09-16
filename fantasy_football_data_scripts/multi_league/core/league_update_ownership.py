@@ -104,6 +104,11 @@ _SOURCE_FACT_TABLES = frozenset({
     "transactions",
 })
 
+# Player history is the only wide source witness. The remaining source tables
+# are small but have legacy mixed-object representations, so they keep the
+# established exact fingerprint semantics.
+_FAST_SOURCE_FINGERPRINT_TABLES = frozenset({"player_fantasy"})
+
 _CAREER_IDENTITIES: dict[str, tuple[str, ...]] = {
     "draft_manager_career": ("franchise_id", "manager", "draft_category"),
     "draft_player_career": ("player", "position", "draft_category"),
@@ -373,6 +378,12 @@ def _configuration_frame_fingerprint(frame: pd.DataFrame) -> str:
     return json.dumps(records, sort_keys=True, separators=(",", ":"))
 
 
+def _source_witness_fingerprint(table_name: str, frame: pd.DataFrame) -> str:
+    if table_name in _FAST_SOURCE_FINGERPRINT_TABLES:
+        return _frame_fingerprint(frame)
+    return _configuration_frame_fingerprint(frame)
+
+
 def _identity_columns(
     old: pd.DataFrame,
     new: pd.DataFrame,
@@ -585,7 +596,9 @@ def assert_refresh_preservation(
             raise PreservationError(f"historical source table disappeared: {table_name}")
         old_history = _historical_source_witness(before[table_name], table_name, active_year)
         new_history = _historical_source_witness(after[table_name], table_name, active_year)
-        if _frame_fingerprint(old_history) != _frame_fingerprint(new_history):
+        if _source_witness_fingerprint(table_name, old_history) != _source_witness_fingerprint(
+            table_name, new_history
+        ):
             raise PreservationError(f"historical source rows changed in {table_name}")
         historical_fingerprint_at = perf_counter()
         semantic_optimal_deselections += _assert_derived_values_not_erased(

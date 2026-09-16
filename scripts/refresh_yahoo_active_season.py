@@ -2018,10 +2018,15 @@ def main(argv: list[str] | None = None) -> int:
             receipt["homepage_bundle_id"] = bundle.bundle_id
             receipt["homepage_rows"] = result.get("homepage_rollups", {}).get(args.db, {})
             receipt["homepage_seconds"] = result.get("homepage_seconds", {}).get(args.db)
+            receipt["season_rollups"] = result.get("season_rollups", {}).get(args.db, {})
+            receipt["season_seconds"] = result.get("season_seconds", {}).get(args.db)
             receipt["career_rollups"] = result.get("career_rollups", {}).get(args.db, {})
             receipt["career_seconds"] = result.get("career_seconds", {}).get(args.db)
             receipt["published_tables"] = sorted(
-                set(publish_tables) | set(receipt["career_rollups"]) | set(receipt["homepage_rows"])
+                set(publish_tables)
+                | set(receipt["season_rollups"])
+                | set(receipt["career_rollups"])
+                | set(receipt["homepage_rows"])
             )
             timer.mark("fly_publication")
             receipt["post_publish_counts"] = _scope_counts(

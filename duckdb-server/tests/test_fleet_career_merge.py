@@ -1,4 +1,4 @@
-"""Exercise v2 full-chain aggregation through the real HTTP publication path."""
+"""Exercise full-chain aggregation through the real HTTP publication path."""
 
 import duckdb
 import pytest
@@ -26,10 +26,11 @@ def data_dir(tmp_path, request):
         """)
         conn.execute("""
             INSERT INTO public.matchup
-                (db_name,year,week,manager,franchise_id,team_name,team_points,
+                (db_name,year,week,manager,franchise_id,opponent,opponent_franchise_id,
+                 team_name,team_points,
                  opponent_points,win,loss,tie,is_playoffs,is_consolation,is_bye_week)
-            VALUES ('test_league',2025,1,'Shared Alias','f1','Team',140,100,1,0,0,0,0,0),
-                   ('test_league',2026,1,'Shared Alias','f1','Team',110,120,0,1,0,0,0,0)
+            VALUES ('test_league',2025,1,'Shared Alias','f1','Opponent','f2','Team',140,100,1,0,0,0,0,0),
+                   ('test_league',2026,1,'Shared Alias','f1','Opponent','f2','Team',110,120,0,1,0,0,0,0)
         """)
         if getattr(request, 'param', None) == 'missing_source':
             conn.execute('DROP TABLE public.player_fantasy')
@@ -92,8 +93,10 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     response = _publish(client, bundle)
     assert response.status_code == 200, response.text
     assert response.json()['career_rollups']['test_league']['matchup_career'] == 1
-    assert _query(client, "SELECT games, seasons FROM public.matchup_career WHERE db_name='test_league'") == [{'games': 16, 'seasons': 2}]
+    expected_games = 2 if homepage else 16
+    assert _query(client, "SELECT games, seasons FROM public.matchup_career WHERE db_name='test_league'") == [{'games': expected_games, 'seasons': 2}]
     if homepage:
+        assert response.json()['season_rollups']['test_league']['matchup_season'] == 2
         assert response.json()['homepage_rollups']['test_league']['homepage_manager_rankings'] == 1
         assert _query(client, "SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'") == [{'highest_score_points': 140.0}]
         assert _query(client, "SELECT manager,seasons,wins,losses FROM public.homepage_manager_rankings WHERE db_name='test_league'") == [{'manager':'Shared Alias','seasons':2,'wins':1,'losses':1}]

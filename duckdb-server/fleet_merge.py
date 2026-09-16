@@ -409,6 +409,8 @@ def apply_fleet_merge(
     """
     run = execute or _default_execute
     merged: dict[str, int] = {}
+    season_rollups: dict[str, dict[str, int]] = {}
+    season_seconds: dict[str, float] = {}
     career_rollups: dict[str, dict[str, int]] = {}
     career_seconds: dict[str, float] = {}
     homepage_rollups: dict[str, dict[str, int]] = {}
@@ -560,13 +562,22 @@ def apply_fleet_merge(
             raise FleetValidationError("Published row scope does not match the generation-protected league scope")
 
         if manifest.get("schema_version") in {FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
-            from multi_league.transformations.aggregation.aggregation_utils import aggregate_career_rollups
+            from multi_league.transformations.aggregation.aggregation_utils import (
+                aggregate_career_rollups,
+                aggregate_complete_chain_season_rollups,
+            )
 
             # The source and season partitions are now merged, but still
             # uncommitted. Reuse normal career SQL against this same full
             # history connection. Any error rolls the entire publication back.
             aggregation_conn = _AggregationConnection(conn, run)
             for db_name in sorted(merged_db_names):
+                if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
+                    season_start = time.perf_counter()
+                    season_rollups[db_name] = aggregate_complete_chain_season_rollups(
+                        aggregation_conn, db_name
+                    )
+                    season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
                 career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)
                 career_seconds[db_name] = round(time.perf_counter() - career_start, 4)
@@ -607,6 +618,8 @@ def apply_fleet_merge(
         "bundle_hash": manifest["bundle_hash"],
         "active_year": manifest["active_year"],
         "tables": merged,
+        "season_rollups": season_rollups,
+        "season_seconds": season_seconds,
         "career_rollups": career_rollups,
         "career_seconds": career_seconds,
         "homepage_rollups": homepage_rollups,

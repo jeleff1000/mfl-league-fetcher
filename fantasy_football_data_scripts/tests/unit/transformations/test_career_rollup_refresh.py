@@ -186,6 +186,88 @@ def test_shared_career_rebuild_uses_merged_history_and_retains_aliases(merged_ch
         """).fetchone() == (999.0,)
 
 
+def test_complete_chain_rollups_rebuild_stale_historical_season_dependencies(merged_chain):
+    """Weekly publication must not build careers on stale historical season rows."""
+    conn = merged_chain
+    conn.execute("""
+        INSERT INTO public.league_settings
+            (db_name, year, platform, league_key, num_teams, playoff_start_week, uses_median)
+        VALUES ('test_league', 2025, 'sleeper', 'old', 2, 15, 0),
+               ('test_league', 2026, 'sleeper', 'new', 2, 15, 0)
+    """)
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name, year, week, manager, franchise_id, opponent,
+             opponent_franchise_id, team_points, opponent_points,
+             win, loss, tie, is_playoffs, is_consolation, is_bye_week)
+        VALUES ('test_league', 2025, 1, 'Shared Alias', 'f1', 'Opponent',
+                'f2', 120, 100, 1, 0, 0, 0, 0, 0),
+               ('test_league', 2026, 1, 'Shared Alias', 'f1', 'Opponent',
+                'f2', 130, 110, 1, 0, 0, 0, 0, 0)
+    """)
+    conn.execute("""
+        INSERT INTO public.player_fantasy_season
+            (db_name, NFL_player_id, year, player, fantasy_points,
+             games_started, games_rostered, wins, losses)
+        VALUES ('test_league', 'p1', 2025, 'Player', 20, 1, 1, 99, 99)
+    """)
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name, transaction_id, transaction_sequence, year, week,
+             manager, franchise_id, player, transaction_type,
+             manager_lamar_ros_managed, faab_bid, transaction_grade)
+        VALUES ('test_league', 'txn-1', 1, 2025, 1,
+                'Shared Alias', 'f1', 'Player', 'add', 5.0, 10.0, 'A')
+    """)
+    conn.execute("""
+        INSERT INTO public.transaction_report_card
+            (db_name, franchise_id, manager, year, adds, total_lamar)
+        VALUES ('test_league', 'f1', 'Shared Alias', 2025, 99, 999)
+    """)
+
+    source_witness = conn.execute("""
+        SELECT COUNT(*), bit_xor(hash(t))
+        FROM public.player_fantasy t
+        WHERE db_name='test_league'
+    """).fetchone()
+
+    counts = aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    aggregation_utils.aggregate_career_rollups(conn, 'test_league')
+
+    assert counts['matchup_season'] == 2
+    assert counts['player_fantasy_season'] == 2
+    assert counts['transaction_manager_season'] == 1
+    assert counts['transaction_report_card'] == 1
+    assert conn.execute("""
+        SELECT year, wins, losses
+        FROM public.player_fantasy_season
+        WHERE db_name='test_league' AND NFL_player_id='p1'
+        ORDER BY year
+    """).fetchall() == [(2025, 1, 0), (2026, 1, 0)]
+    assert conn.execute("""
+        SELECT games, wins, losses, seasons
+        FROM public.matchup_career
+        WHERE db_name='test_league' AND franchise_id='f1'
+    """).fetchone() == (2, 2, 0, 2)
+    assert conn.execute("""
+        SELECT wins, losses, years_active
+        FROM public.player_fantasy_career
+        WHERE db_name='test_league' AND NFL_player_id='p1'
+    """).fetchone() == (2, 0, 2)
+    assert conn.execute("""
+        SELECT r.adds, r.total_lamar, s.adds, s.net_lamar
+        FROM public.transaction_report_card r
+        JOIN public.transaction_manager_season s
+          ON r.db_name=s.db_name AND r.franchise_id=s.franchise_id AND r.year=s.year
+        WHERE r.db_name='test_league'
+    """).fetchone() == (1, 5.0, 1, 5.0)
+    assert conn.execute("""
+        SELECT COUNT(*), bit_xor(hash(t))
+        FROM public.player_fantasy t
+        WHERE db_name='test_league'
+    """).fetchone() == source_witness
+
+
 def test_shared_career_rebuild_does_not_commit_the_callers_transaction(merged_chain):
     conn = merged_chain
     conn.execute('BEGIN TRANSACTION')
@@ -215,11 +297,12 @@ def homepage_chain(merged_chain):
     conn = merged_chain
     conn.execute("""
         INSERT INTO public.matchup
-            (db_name,year,week,manager,franchise_id,team_name,platform,team_points,
+            (db_name,year,week,manager,franchise_id,opponent,opponent_franchise_id,
+             team_name,platform,team_points,
              opponent_points,win,loss,tie,is_playoffs,is_consolation,is_bye_week)
-        VALUES ('test_league',2025,1,'Shared Alias','f1','Team','yahoo',140,100,1,0,0,0,0,0),
-               ('test_league',2026,1,'Shared Alias','f1','Team','sleeper',110,120,0,1,0,0,0,0),
-               ('another_league',2026,1,'Other','f9','Other','espn',999,0,1,0,0,0,0,0)
+        VALUES ('test_league',2025,1,'Shared Alias','f1','Opponent','f2','Team','yahoo',140,100,1,0,0,0,0,0),
+               ('test_league',2026,1,'Shared Alias','f1','Opponent','f2','Team','sleeper',110,120,0,1,0,0,0,0),
+               ('another_league',2026,1,'Other','f9','Opponent','f8','Other','espn',999,0,1,0,0,0,0,0)
     """)
     conn.execute("""
         INSERT INTO public.homepage_league_summary (db_name,highest_score_points)
@@ -240,6 +323,53 @@ def test_shared_homepage_rebuild_reads_full_chain_and_joins_callers_transaction(
     assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='another_league'").fetchone() == (999.0,)
     conn.execute('ROLLBACK')
     assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
+
+
+def test_homepage_fleet_merge_rebuilds_complete_chain_season_dependencies(
+    homepage_chain, tmp_path
+):
+    server = _fleet_server()
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.league_settings
+            (db_name, year, platform, league_key, num_teams, playoff_start_week, uses_median)
+        VALUES ('test_league', 2025, 'yahoo', 'old', 2, 15, 0),
+               ('test_league', 2026, 'sleeper', 'new', 2, 15, 0)
+    """)
+    conn.execute("""
+        INSERT INTO public.player_fantasy_season
+            (db_name, NFL_player_id, year, player, fantasy_points,
+             games_started, games_rostered, wins, losses)
+        VALUES ('test_league', 'p1', 2025, 'Player', 20, 1, 1, 99, 99)
+    """)
+    before_source = conn.execute("""
+        SELECT COUNT(*), bit_xor(hash(t))
+        FROM public.player_fantasy t
+        WHERE db_name='test_league'
+    """).fetchone()
+    bundle, extracted = _weekly_bundle(tmp_path, homepage=True)
+
+    receipt = server.apply_fleet_merge(conn, bundle.manifest, extracted)
+
+    assert receipt['season_rollups']['test_league']['matchup_season'] == 2
+    assert receipt['season_rollups']['test_league']['player_fantasy_season'] == 2
+    assert receipt['season_seconds']['test_league'] >= 0
+    assert conn.execute("""
+        SELECT year, wins, losses
+        FROM public.player_fantasy_season
+        WHERE db_name='test_league' AND NFL_player_id='p1'
+        ORDER BY year
+    """).fetchall() == [(2025, 1, 0), (2026, 1, 0)]
+    assert conn.execute("""
+        SELECT wins, losses, years_active
+        FROM public.player_fantasy_career
+        WHERE db_name='test_league' AND NFL_player_id='p1'
+    """).fetchone() == (2, 0, 2)
+    assert conn.execute("""
+        SELECT COUNT(*), bit_xor(hash(t))
+        FROM public.player_fantasy t
+        WHERE db_name='test_league'
+    """).fetchone() == before_source
 
 
 @pytest.mark.parametrize('table', ['homepage_manager_rankings', 'homepage_manager_profiles', 'homepage_current_standings'])

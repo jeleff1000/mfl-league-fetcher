@@ -45,6 +45,72 @@ metadata from the local non-published transform frame and makes existing
 attempt. The focused weekly suite passed 361 tests, workflow/writer boundary
 suite passed 110 tests, and Ruff passed before the successful retry.
 
+### Sleeper current-state UI no-op - 2026-09-16 19:43 UTC
+
+The production NYU page displayed `Update League` even though its observed and
+published source manifests were identical and its last dispatch was healthy.
+The status API reported `probe_stale=true` solely because the successful probe
+was older than five minutes. One actual UI click ran the existing leased
+Sleeper freshness probe and returned `already_current=true`; no worker was
+dispatched, the prior run ID `35130659510`, claim version 5, publication bundle,
+and source fingerprint remained unchanged, and the control hid after 13.061s.
+
+Whole-row before/after fingerprints were identical for all pre-2026 matchup
+(1,596 rows), player_fantasy (61,442), draft (1,452), transactions (9,281),
+league_settings (8), league_context (1), and empty manager_overrides. This is a
+verified no-op, not a Sleeper publication canary. It confirms a frontend
+freshness-state defect: expiring a matching manifest exposes an update control
+that only rediscovers the league is current. The proposed bounded fix is to run
+the already leased/rate-limited probe off-control and expose the action only
+when that probe finds a changed manifest; implementation remains gated on the
+requested design approval.
+
+### Sleeper publication canary and full-chain season dependency defect - 2026-09-16 19:52 UTC
+
+The production UI dispatched exactly one Sleeper run for `the_real_ff_league`:
+`35142909254`, public-main SHA `5909d3abc6e0b3e5db54b628f03b3eca4e74b83e`.
+The persisted renewal chain resolved 2023-2026 and the provider returned ten
+final week-1 team rows, 175 roster rows, 198 draft picks, and 52 transaction
+perspectives. Publication committed generation 8 to bundle
+`fleet-4f868dddc88a163eb681355f021bd205892febe98bf7fa921800da63f0d1bcb5`.
+Worker phases totaled 43.688s, the GitHub job took 94s, and click-to-visible was
+116.118s. Correctness and the strict under-90-second requirement therefore
+remain unaccepted.
+
+Independent Fly witnesses show the source merge itself was scoped correctly.
+All pre-2026 whole-row hashes remained unchanged: matchup 510 /
+18436341627321814689; player_fantasy 23,666 / 14420224626798944037;
+draft 520 / 17283269705718972665; transactions 2,193 /
+4263570373966355587; league_settings 3 / 17032997245871009279. League context
+also remained unchanged at 13167564389908315858. The new 2026 matchup scope has
+10 rows, 10 franchises, zero blank franchise IDs, week 1, and 1,434.64 points.
+Caleb Williams is no longer mislabeled best-ever: his week-1 QB all-time rank is
+216, while Josh Allen is 17.
+
+The full validator then exposed a real dependency-order defect hidden by the
+green workflow. The atomic v3 merge rebuilt career and homepage tables from the
+complete weekly chain but retained historical season aggregate rows made under
+older semantics. Consequently 398 player careers disagreed with season totals;
+the mismatches were confined to win/loss/playoff outcome fields in 2023-2025,
+while fantasy points, player/manager LAMAR, clutch, starts, rostered games, and
+year coverage reconciled. The same stale-boundary issue left eight matchup
+career/homepage win checks and 23 transaction report-card checks inconsistent.
+The direct homepage calculation itself was correct for this H2H+median league;
+the stale `matchup_season` dependency made the career comparison wrong.
+
+A local TDD fix now reuses the existing matchup, fantasy, draft, and transaction
+season aggregators on Fly's already-open complete-chain connection, inside the
+same v3 publication transaction, before career and homepage aggregation. It
+does not refetch provider history or rewrite matchup/player/draft/transaction
+source facts. The publication receipt now records season tables and timing for
+Yahoo OAuth, Sleeper, and ESPN. Regression coverage proves stale historical
+season rows and transaction report cards are corrected, careers then reconcile,
+source hashes are unchanged, and failures remain transactionally rollback-safe.
+Expanded server/worker/receipt/ownership/aggregate suites: 509 passed; Ruff and
+`git diff --check` passed. This fix is local and uncommitted at this checkpoint; deployment and a
+second production canary are still required. Draft warnings, one missing PPG,
+and three historical sacko-placement failures remain independently unclosed.
+
 ## Disk-blocked continuation checkpoint
 
 D: again reports zero free bytes after three consecutive goal turns with this

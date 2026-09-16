@@ -58,6 +58,12 @@ CAREER_ROLLUP_TABLES = (
     "draft_manager_career", "draft_player_career",
     "transaction_manager_career", "transaction_player_career",
 )
+COMPLETE_CHAIN_SEASON_ROLLUP_TABLES = (
+    "matchup_season",
+    "player_fantasy_season", "player_fantasy_season_all",
+    "draft_manager_season",
+    "transaction_manager_season", "transaction_report_card",
+)
 HOMEPAGE_ROLLUP_TABLES = (
     "homepage_league_summary", "homepage_manager_rankings",
     "homepage_current_standings", "homepage_top_rivalries", "homepage_manager_profiles",
@@ -114,6 +120,58 @@ def league_db_filter(db_name: str, alias: str = "") -> str:
     """Return a ``db_name = '...'`` SQL fragment for scoping a single league."""
     prefix = f"{alias}." if alias else ""
     return f"{prefix}db_name = '{db_name}'"
+
+
+def aggregate_complete_chain_season_rollups(conn, db_name: str) -> dict[str, int]:
+    """Rebuild season-derived dependencies from the complete persisted chain.
+
+    Weekly workers publish only changed source partitions.  Career and homepage
+    outputs are then rebuilt inside the same Fly transaction.  Their season
+    dependencies must be rebuilt there as well: retaining an older season
+    aggregate can mix superseded aggregation semantics with a newly rebuilt
+    career row even though the underlying historical source facts are intact.
+
+    This function never fetches provider data and never rewrites source tables.
+    The caller owns the transaction, so any failure rolls the source partition
+    merge and every derived table back together.
+    """
+    from multi_league.core.aggregate_ddl import ensure_aggregate_table
+    from multi_league.core.sql_utils import validate_db_name
+    from multi_league.transformations.aggregation.aggregate_draft_context import (
+        aggregate_draft_manager_season,
+    )
+    from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+        aggregate_fantasy_season, aggregate_fantasy_season_all,
+    )
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_season,
+    )
+    from multi_league.transformations.aggregation.aggregate_transaction_context import (
+        aggregate_transaction_manager_season, aggregate_transaction_report_card,
+    )
+
+    validate_db_name(db_name)
+    if current_catalog(conn) != CENTRAL_DB_NAME:
+        raise RuntimeError(
+            "Complete-chain season publication requires the complete ___leagues connection, "
+            "not worker scratch data"
+        )
+    configure_table_catalog(conn)
+    for source in ("matchup", "league_settings", "player_fantasy", "draft", "transactions"):
+        if not table_exists_in_catalog(conn, source):
+            raise RuntimeError(f"Complete-chain season publication source is missing: {source}")
+    for table in COMPLETE_CHAIN_SEASON_ROLLUP_TABLES:
+        ensure_aggregate_table(conn, get_active_catalog(), table)
+
+    result = {
+        "matchup_season": aggregate_matchup_season(conn, db_name),
+        "player_fantasy_season": aggregate_fantasy_season(conn, db_name),
+        "player_fantasy_season_all": aggregate_fantasy_season_all(conn, db_name),
+        "draft_manager_season": aggregate_draft_manager_season(conn, db_name),
+        "transaction_manager_season": aggregate_transaction_manager_season(conn, db_name),
+    }
+    result["transaction_report_card"] = aggregate_transaction_report_card(conn, db_name)
+    return result
 
 
 def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:

@@ -526,8 +526,18 @@ def _derived_id_rows(
 def assert_refresh_derived_output_health(
     conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
     provider_id_column: str, published_tables: tuple[str, ...] | list[str],
+    publication_schema_version: str = "fleet-partition-v1",
 ) -> dict[str, int]:
-    """Check source-to-career/homepage coverage and bundle ownership before Fly."""
+    """Check derived coverage and ownership under the actual publication contract.
+
+    V2 rebuilds careers on the full Fly connection inside the merge transaction;
+    active-season scratch careers are checked here but must not be uploaded.
+    """
+    from multi_league.core.fleet_publish import FLEET_CAREER_SCHEMA_VERSION, FLEET_SCHEMA_VERSION
+    from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
+
+    if publication_schema_version not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION}:
+        raise IncompleteSourceError("unsupported publication schema for derived validation")
     if provider_id_column not in _ACTIVE_PROVIDER_PLAYER_COLUMNS:
         raise IncompleteSourceError("unsupported provider player identity column")
     selected_weeks = tuple(sorted({int(week) for week in weeks}))
@@ -576,6 +586,10 @@ def assert_refresh_derived_output_health(
         required_publish |= {
             "matchup_career", "homepage_manager_rankings", "homepage_current_standings",
         }
+    if publication_schema_version == FLEET_CAREER_SCHEMA_VERSION:
+        if set(published_tables) & set(CAREER_ROLLUP_TABLES):
+            raise IncompleteSourceError("V2 careers must be rebuilt on Fly, not uploaded from scratch")
+        required_publish -= set(CAREER_ROLLUP_TABLES)
     missing_publish = required_publish - set(published_tables)
     if missing_publish:
         raise IncompleteSourceError(

@@ -131,7 +131,8 @@ def test_post_transform_matchup_scope_pins_late_provider_score_to_published_inpu
         capture_active_final_matchup_scope(conn, db_name="afi_data", year=2026, weeks=(1,))
 
 
-def test_new_scored_provider_players_require_published_career_aggregates():
+@pytest.mark.parametrize("provider_id_column", ["espn_player_id", "yahoo_player_id", "sleeper_player_id"])
+def test_new_scored_provider_players_require_published_career_aggregates(provider_id_column):
     import duckdb
 
     from multi_league.core.league_update_validation import assert_refresh_derived_output_health
@@ -140,7 +141,7 @@ def test_new_scored_provider_players_require_published_career_aggregates():
     conn.execute("CREATE SCHEMA public")
     conn.execute(
         "CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
-        "espn_player_id VARCHAR, NFL_player_id VARCHAR, fantasy_points DOUBLE)"
+        f"{provider_id_column} VARCHAR, NFL_player_id VARCHAR, fantasy_points DOUBLE)"
     )
     conn.execute(
         "INSERT INTO public.player_fantasy VALUES "
@@ -155,25 +156,58 @@ def test_new_scored_provider_players_require_published_career_aggregates():
     with pytest.raises(IncompleteSourceError, match="player_fantasy_career lacks"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
-            provider_id_column="espn_player_id", published_tables=publish,
+            provider_id_column=provider_id_column, published_tables=publish,
         )
     for table in ("player_fantasy_career", "player_fantasy_career_all"):
         conn.execute(f"INSERT INTO public.{table} VALUES ('afi_data','00-rookie',1,14.0)")
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
-        provider_id_column="espn_player_id", published_tables=publish,
+        provider_id_column=provider_id_column, published_tables=publish,
     )["active_scored_career_players"] == 1
     conn.execute("UPDATE public.player_fantasy_career SET games_rostered=0 WHERE NFL_player_id='00-rookie'")
     with pytest.raises(IncompleteSourceError, match="invalid career values"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
-            provider_id_column="espn_player_id", published_tables=publish,
+            provider_id_column=provider_id_column, published_tables=publish,
         )
     conn.execute("UPDATE public.player_fantasy_career SET games_rostered=1 WHERE NFL_player_id='00-rookie'")
+    # V2 publishes careers on Fly, not from the active-season upload. The
+    # preflight still validates the local derived values and homepage output.
+    assert assert_refresh_derived_output_health(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
+        publication_schema_version="fleet-partition-v2",
+    )["active_scored_career_players"] == 1
     with pytest.raises(IncompleteSourceError, match="not in the publication bundle"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
-            provider_id_column="espn_player_id", published_tables=("homepage_league_summary",),
+            provider_id_column=provider_id_column, published_tables=(),
+            publication_schema_version="fleet-partition-v2",
+        )
+    conn.execute("UPDATE public.player_fantasy_career SET games_rostered=0")
+    with pytest.raises(IncompleteSourceError, match="invalid career values"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
+            publication_schema_version="fleet-partition-v2",
+        )
+    conn.execute("UPDATE public.player_fantasy_career SET games_rostered=1")
+    with pytest.raises(IncompleteSourceError, match="careers must be rebuilt on Fly"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column=provider_id_column, published_tables=publish,
+            publication_schema_version="fleet-partition-v2",
+        )
+    with pytest.raises(IncompleteSourceError, match="unsupported publication"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column=provider_id_column, published_tables=publish,
+            publication_schema_version="unknown",
+        )
+    with pytest.raises(IncompleteSourceError, match="not in the publication bundle"):
+        assert_refresh_derived_output_health(
+            conn, db_name="afi_data", year=2026, weeks=(1,),
+            provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
         )
 
 
@@ -218,6 +252,12 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column="espn_player_id", published_tables=publish,
+    )["active_scored_career_franchises"] == 1
+    assert assert_refresh_derived_output_health(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column="espn_player_id",
+        published_tables=("homepage_league_summary", "homepage_manager_rankings", "homepage_current_standings"),
+        publication_schema_version="fleet-partition-v2",
     )["active_scored_career_franchises"] == 1
     conn.execute("DELETE FROM public.homepage_current_standings WHERE db_name='afi_data'")
     with pytest.raises(IncompleteSourceError, match="homepage_current_standings lacks"):

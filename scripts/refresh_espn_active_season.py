@@ -357,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     os.environ["DATABASE_BACKEND"] = "fly"
-    from multi_league.core.fleet_publish import build_fleet_partition_bundle
+    from multi_league.core.fleet_publish import FLEET_CAREER_SCHEMA_VERSION, build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
         active_nfl_player_ids,
         active_platform_player_ids,
@@ -601,6 +601,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="espn_player_id",
                 published_tables=publish_tables,
+                publication_schema_version=FLEET_CAREER_SCHEMA_VERSION,
             )
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 

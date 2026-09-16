@@ -145,3 +145,26 @@ counts/timings in receipts. Enable them only after server deployment succeeds.
 Local worker regression group: 122 passed. Client/merge group: 22 passed.
 The two pre-existing scoring tests above still fail; do not claim a wholly
 green scoring suite or production recovery.
+
+## Deployment and first canary, 2026-09-16
+
+Server revision `e42b94ec8bc290d67ef6dd61e2affbb9fb30f14d` deployed successfully
+via public run `35095334443`. Build context was 7.13 MB. Worker invocation changes
+were activated on public main at `cffa425bf98f61cb918b222e919c1d818732c9a9`.
+
+Yahoo manual canary `35095696367` FAILED before publication. Its preflight still
+required `matchup_career`, `player_fantasy_career`, and `player_fantasy_career_all`
+inside the upload, despite V2 rebuilding them atomically on Fly. No recovery is
+claimed. Worker step took 84 seconds; whole job took 121 seconds, so the latency
+target also remains unmet.
+
+The validator now accepts the explicit fleet schema contract. V1 still requires
+uploaded careers. V2 requires Fly-built careers, prohibits uploading scratch
+careers, and retains source identity, local derived-value, and homepage checks.
+All three callers declare the same V2 contract used by their bundle builder.
+Regression cases reproduced the missing-contract failure before implementation.
+The expanded validation suite passes 46 tests; the preceding six-file worker,
+career, and validator run passed 166 tests before two provider variants were added.
+
+Actual UI verification remains unverified: the browser surface reported no
+connected browsers. Backend/manual canaries do not satisfy the UI criterion.

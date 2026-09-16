@@ -152,6 +152,38 @@ def test_preservation_keeps_legacy_matchups_without_manager_week_identity():
     assert receipt["historical_rows_preserved"] is True
 
 
+def test_preservation_uses_both_franchises_for_head_to_head_careers():
+    """One franchise can have multiple all-time opponents."""
+    careers = pd.DataFrame(
+        [
+            {
+                "db_name": "league_a",
+                "franchise_id": "alpha",
+                "opponent_franchise_id": "bravo",
+                "manager": "Alpha",
+                "opponent": "Bravo",
+                "games": 12,
+            },
+            {
+                "db_name": "league_a",
+                "franchise_id": "alpha",
+                "opponent_franchise_id": "charlie",
+                "manager": "Alpha",
+                "opponent": "Charlie",
+                "games": 9,
+            },
+        ]
+    )
+
+    receipt = assert_refresh_preservation(
+        {"matchup_h2h_career": careers},
+        {"matchup_h2h_career": careers.copy()},
+        active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_preservation_fingerprint_ignores_database_integer_dtype_normalization():
     source = pd.DataFrame(
         {

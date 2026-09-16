@@ -316,7 +316,10 @@ def _identity_columns(
         return []
     first = available[0]
     if first.startswith("franchise_id") and old[first].notna().any():
-        return [column for column in available if column.startswith("franchise_id")]
+        # Head-to-head and rivalry rollups are identified by a *pair* of
+        # franchises.  Keeping only the first ID conflates every opponent of
+        # the same manager and makes a legitimate career table look corrupt.
+        return [column for column in available if "franchise_id" in column]
     return available
 
 

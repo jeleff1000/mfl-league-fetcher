@@ -176,9 +176,10 @@ def normalize_roster_df(df, platform: str, league_id: str | None = None) -> pd.D
 
     preserved_sql_cols: list[str] = []
 
-    # Sleeper team defenses use team abbreviations as player IDs and won't resolve
-    # through player_bio, so synthesize canonical DEF IDs before upload.
-    if (platform or "").lower() == "sleeper":
+    # Team defenses are franchise identities, not individual player_bio rows.
+    # Resolve all supported providers through the existing historical NFL team
+    # registry before canonical player storage discards the API team hint.
+    if (platform or "").lower() in {"sleeper", "yahoo", "espn"}:
         if "NFL_player_id" not in df.columns:
             df["NFL_player_id"] = None
         if all(col in df.columns for col in ["year", "week"]):
@@ -197,7 +198,11 @@ def normalize_roster_df(df, platform: str, league_id: str | None = None) -> pd.D
                     )
 
                 def build_def_id(row):
-                    team = row.get("nfl_team_api") or row.get("sleeper_player_id")
+                    team = row.get("nfl_team_api")
+                    if pd.isna(team) or not str(team).strip():
+                        sleeper_team = str(row.get("sleeper_player_id", "")).strip().upper()
+                        # Numeric provider player IDs are not NFL franchise IDs.
+                        team = sleeper_team if sleeper_team.isalpha() and 2 <= len(sleeper_team) <= 3 else None
                     year_val = row.get("year")
                     if pd.isna(team) or pd.isna(year_val):
                         return None
@@ -210,7 +215,7 @@ def normalize_roster_df(df, platform: str, league_id: str | None = None) -> pd.D
                         df.loc[missing_dst_ids, "NFL_player_id"] = df.loc[missing_dst_ids].apply(build_def_id, axis=1)
 
                     df["player_week"] = df.get("player_week")
-                    missing_player_week = dst_mask & (
+                    missing_player_week = dst_mask & df["NFL_player_id"].notna() & (
                         df["player_week"].isna() | (df["player_week"].astype(str).str.strip() == "")
                     )
                     if missing_player_week.any():

@@ -304,3 +304,47 @@ the change. Twenty-two shared rollup tests and 24 real HTTP/fleet tests pass,
 with existing dataframe fragmentation warnings. Independent read-only review
 also verified nine guard cases including cross-family isolation. Production
 deployment/retry is still required; this entry is not a recovery claim.
+
+Homepage scope fix f77d631de deployed via 35108840941, successful at 14:30:02
+UTC, image deployment-01M2N9YE0G3SFWEW8REWF94DBN. Fly healthy with zero active
+queries/writes/publications before retry. Catalina retry handle 35109099189,
+same public SHA, dispatched 14:31:23 UTC; poll this handle, do not restart it.
+
+## Yahoo defense normalization gap
+
+Fight Club's failing Yahoo ID100008 is Detroit defense. Read-only canonical
+Fly NFL data contains DEF-6_2026_1, Lions DST, DET; player_bio has no100008
+entry. Existing canonical_roster.normalize_roster_df resolved team defenses
+through nfl_data.nfl_franchises.get_def_player_id only for Sleeper. Yahoo and
+ESPN defense team hints were discarded on canonical player storage before
+this mapping could happen. The same normalizer now applies that existing
+franchise registry to all three platforms, using actual position rather than
+lineup slot. No new ID arithmetic, NFL stat calculation, or worker-only mapper.
+Two Yahoo/ESPN tests failed before the change; 101 roster/refresh/ID-resolution
+tests pass afterward. Actual Yahoo publication and score validation remain OPEN.
+
+Review additionally reproduced unresolved defense rows colliding on
+None_2026_1. Three regressions (all platforms) failed first. Keys now require
+successful defense resolution, and numeric Sleeper player IDs cannot become
+made-up NFL franchise IDs. 104 tests pass; independent follow-up review checked
+nullable hints, valid abbreviations, and actual SQL UNMAPPED key separation.
+
+## Catalina published result (not timing closure)
+
+35109099189 COMMITTED and cache finalized on f77d631de. Dispatch14:31:23,
+refresh14:31:49-14:33:42, cache14:33:46 UTC: 143s manual dispatch-to-cache
+(FAIL), 111.556s processing. New split timing isolates player_bio_sync3.562s,
+player_ops_cache57.067s, provider2.162s, transforms8.138s, publication32.452s
+(server careers9.1847s, homepage14.3418s). Cache patching, not shared transforms,
+dominates; exact cache suboperation instrumentation remains needed.
+
+Independent scoped Fly checks after terminal status:
+- All seven pre-2026/config fingerprints match the saved recovery baseline.
+- Rodgers acquisition retains 5.53 LAMAR and12.54 points; homepage pickup agrees.
+- Stale 2025 season trade clears; all-time pickup remains Kyren Williams.
+- 18 manager careers reconcile852games, wins/losses/seasons/latest names to
+  full-chain seasons with zero mismatches. Homepage shows up to six seasons.
+- 1228regular/1230all-games player careers reconcile weekly points, games,
+  manager LAMAR and started clutch with zero mismatches, explicit null checks.
+All-NFL ranking columns, exact within-week acquisition attribution, actual UI
+click-to-visible behavior, and the under90s requirement remain unverified/open.

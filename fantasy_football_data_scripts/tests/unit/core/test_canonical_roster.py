@@ -1,5 +1,6 @@
 import pandas as pd
 import duckdb
+import pytest
 
 from multi_league.core.canonical_roster import get_sql_enrichments, normalize_roster_df
 
@@ -244,3 +245,29 @@ class TestNormalizeRosterDF:
 
         assert player_week.startswith("UNMAPPED_")
         assert player_week.endswith("_2025_17")
+@pytest.mark.parametrize("platform,provider_id", [("yahoo", "100008"), ("espn", "8")])
+def test_normalize_defense_uses_shared_franchise_identity_for_all_providers(platform, provider_id):
+    raw = pd.DataFrame([
+        {"year": 2026, "week": 1, "player": "Detroit", "position": "DEF",
+         "nfl_team": "DET", f"{platform}_player_id": provider_id, "fantasy_position": "BN"},
+        {"year": 2026, "week": 1, "player": "Individual Defender", "position": "LB",
+         "nfl_team": "DET", f"{platform}_player_id": "123", "fantasy_position": "D"},
+    ])
+    result = normalize_roster_df(raw, platform=platform)
+    assert result.iloc[0]["NFL_player_id"] == "DEF-6"
+    assert result.iloc[0]["player_week"] == "DEF-6_2026_1"
+    assert result.iloc[0][f"{platform}_player_id"] == provider_id
+    assert pd.isna(result.iloc[1]["NFL_player_id"])
+
+
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+def test_unresolved_defenses_do_not_get_colliding_none_player_week_keys(platform):
+    raw = pd.DataFrame([
+        {"year": 2026, "week": 1, "player": "Unknown Defense A", "position": "DEF",
+         f"{platform}_player_id": "991", "fantasy_position": "BN"},
+        {"year": 2026, "week": 1, "player": "Unknown Defense B", "position": "DEF",
+         f"{platform}_player_id": "992", "fantasy_position": "DEF"},
+    ])
+    result = normalize_roster_df(raw, platform=platform)
+    assert result["NFL_player_id"].isna().all()
+    assert result["player_week"].isna().all()

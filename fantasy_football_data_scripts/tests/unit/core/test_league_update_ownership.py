@@ -184,6 +184,29 @@ def test_preservation_uses_both_franchises_for_head_to_head_careers():
     assert receipt["historical_rows_preserved"] is True
 
 
+def test_preservation_accepts_structured_non_null_career_values():
+    """Fly can decode a historical JSON field as a Python list."""
+    careers = pd.DataFrame(
+        [
+            {
+                "db_name": "league_a",
+                "franchise_id": "alpha",
+                "manager": "Alpha",
+                "games": 12,
+                "championship_years": [2020, 2021],
+            }
+        ]
+    )
+
+    receipt = assert_refresh_preservation(
+        {"matchup_career": careers},
+        {"matchup_career": careers.copy()},
+        active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def test_preservation_fingerprint_ignores_database_integer_dtype_normalization():
     source = pd.DataFrame(
         {

@@ -323,6 +323,24 @@ def _identity_columns(
     return available
 
 
+def _is_null_preservation_value(value: Any) -> bool:
+    """Treat decoded JSON arrays/objects as present values, not boolean arrays."""
+    if value is None or value is pd.NA:
+        return True
+    if isinstance(value, (dict, list, tuple, set)):
+        return False
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    # ``pd.isna`` returns an array for structured JSON values.  The container
+    # itself is a preserved non-null value; only a scalar missing marker means
+    # this field was erased.
+    if hasattr(missing, "__len__"):
+        return False
+    return bool(missing)
+
+
 def _assert_rows_and_values_preserved(
     table_name: str,
     old: pd.DataFrame,
@@ -358,7 +376,7 @@ def _assert_rows_and_values_preserved(
         for column, old_value in old_row.items():
             if column == "last_updated" or column not in new_row.index:
                 continue
-            if pd.notna(old_value) and pd.isna(new_row[column]):
+            if not _is_null_preservation_value(old_value) and _is_null_preservation_value(new_row[column]):
                 raise PreservationError(f"preserved value became null in {table_name}.{column} for {key}")
 
 

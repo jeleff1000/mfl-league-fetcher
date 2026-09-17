@@ -58,6 +58,8 @@ jobs:
           flyctl status --app "$FLY_APP"
           flyctl machines list --app "$FLY_APP" --json | tee machines.json
           flyctl volumes list --app "$FLY_APP" --json | tee volumes.json
+          echo "Recent Fly application logs"
+          flyctl logs --app "$FLY_APP" --no-tail | tail -n 400 || true
 
           if [ "$CLEANUP_RECOVERY_RESOURCES" = "true" ]; then
             jq -r '.[] | select(.name | startswith("wkupd_")) | [.id, (.attached_machine_id // "")] | @tsv' volumes.json \

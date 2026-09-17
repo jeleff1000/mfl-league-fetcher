@@ -13,8 +13,7 @@ import tarfile
 import tempfile
 import threading
 import time
-from contextlib import asynccontextmanager
-from contextlib import suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -2089,12 +2088,7 @@ def _rename_league_server_side(
     finally:
         ops_conn.close()
 
-    leagues_conn = db.connect_database(
-        leagues_path,
-        data_dir=data_dir,
-        threads=WRITE_DUCKDB_THREADS,
-    )
-    try:
+    with _rename_league_write_connection(data_dir) as leagues_conn:
         data_result = consolidate_canonical_league(
             leagues_conn,
             source_db=source_db,
@@ -2105,8 +2099,6 @@ def _rename_league_server_side(
             rebuild=_rename_rebuild_complete_chain,
         )
         data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
-    finally:
-        leagues_conn.close()
 
     ops_conn = db.connect_database(ops_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
     try:
@@ -2134,6 +2126,28 @@ def _rename_league_server_side(
         "ops_checkpointed": ops_checkpointed,
         "ops_checkpoint_error": ops_checkpoint_error,
     }
+
+
+@contextmanager
+def _rename_league_write_connection(data_dir: Path):
+    """Open the exclusive league writer with the NFL ops catalog available."""
+    leagues_path = data_dir / "___leagues.duckdb"
+    ops_path = data_dir / "___ops.duckdb"
+    conn = db.connect_database(
+        leagues_path,
+        data_dir=data_dir,
+        threads=WRITE_DUCKDB_THREADS,
+    )
+    attached = False
+    try:
+        conn.execute(f'ATTACH {_sql_literal(ops_path)} AS "___ops" (READ_ONLY)')
+        attached = True
+        yield conn
+    finally:
+        if attached:
+            with suppress(Exception):
+                conn.execute('DETACH "___ops"')
+        conn.close()
 
 
 def _reaggregate_damaged_derived_from_sources(

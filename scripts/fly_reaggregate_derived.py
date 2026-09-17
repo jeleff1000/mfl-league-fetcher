@@ -86,6 +86,32 @@ def quarantine_corrupt_targets(conn) -> dict[str, str]:
     return quarantined
 
 
+def _public_table_names(conn) -> set[str]:
+    return {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT table_name FROM duckdb_tables() "
+            "WHERE schema_name = 'public' AND NOT internal"
+        ).fetchall()
+    }
+
+
+def quarantine_or_resume_corrupt_targets(conn) -> dict[str, str]:
+    """Create the exact quarantine once, or resume when all five already exist."""
+    expected = {
+        table: f"__corrupt_recovery_{table}" for table in TARGET_TABLES
+    }
+    present = set(expected.values()) & _public_table_names(conn)
+    if present == set(expected.values()):
+        return expected
+    if present:
+        raise RuntimeError(
+            "partial corrupt-table quarantine is unsafe: "
+            f"found={sorted(present)}, expected={sorted(expected.values())}"
+        )
+    return quarantine_corrupt_targets(conn)
+
+
 def drop_quarantined_targets(conn, quarantined: dict[str, str]) -> None:
     """Drop only the displaced damaged objects, then prove a durable checkpoint."""
     expected = {
@@ -229,7 +255,7 @@ def main() -> int:
         if args.ops:
             _attach_if_present(conn, args.ops.resolve(), "___ops")
         if args.drop_quarantined_targets_only:
-            quarantined = quarantine_corrupt_targets(conn)
+            quarantined = quarantine_or_resume_corrupt_targets(conn)
             drop_quarantined_targets(conn, quarantined)
             result = {"quarantined_and_dropped": quarantined, "checkpointed": True}
         elif args.quarantine_corrupt_targets_only:

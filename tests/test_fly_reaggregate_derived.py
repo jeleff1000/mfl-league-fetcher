@@ -177,3 +177,34 @@ def test_drop_quarantined_targets_removes_only_the_five_old_objects_and_checkpoi
         f'DROP TABLE public."__corrupt_recovery_{table}"'
         for table in repair.TARGET_TABLES
     ]
+
+
+def test_quarantine_or_resume_reuses_complete_existing_quarantine(monkeypatch):
+    conn = _Connection()
+    expected = {
+        table: f"__corrupt_recovery_{table}" for table in repair.TARGET_TABLES
+    }
+    monkeypatch.setattr(repair, "_public_table_names", lambda actual_conn: set(expected.values()))
+    monkeypatch.setattr(
+        repair,
+        "quarantine_corrupt_targets",
+        lambda actual_conn: (_ for _ in ()).throw(AssertionError("must resume")),
+    )
+
+    assert repair.quarantine_or_resume_corrupt_targets(conn) == expected
+
+
+def test_quarantine_or_resume_rejects_partial_existing_quarantine(monkeypatch):
+    conn = _Connection()
+    monkeypatch.setattr(
+        repair,
+        "_public_table_names",
+        lambda actual_conn: {"__corrupt_recovery_homepage_manager_rankings"},
+    )
+
+    try:
+        repair.quarantine_or_resume_corrupt_targets(conn)
+    except RuntimeError as exc:
+        assert "partial corrupt-table quarantine" in str(exc)
+    else:
+        raise AssertionError("partial quarantine must be rejected")

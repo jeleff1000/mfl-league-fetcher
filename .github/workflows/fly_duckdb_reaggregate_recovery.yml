@@ -84,7 +84,7 @@ jobs:
           test -n "$recovery_machine_id"
 
           flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
-            -C "test -f /data/___leagues.clean.duckdb || python /tmp/fly_rebuild_duckdb.py \
+            -C "python /tmp/fly_rebuild_duckdb.py \
               --source /data/___leagues.duckdb \
               --target /data/___leagues.clean.duckdb \
               --empty-table public.homepage_manager_rankings \
@@ -95,7 +95,7 @@ jobs:
               --overwrite" | tee isolated-rebuild-resume.jsonl
 
           flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
-            -C "cd /app && PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py \
+            -C "env PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py \
               --database /data/___leagues.clean.duckdb \
               --ops /data/___ops.duckdb \
               --ops-nfl /data/___ops_nfl.duckdb" | tee five-table-reaggregation.jsonl

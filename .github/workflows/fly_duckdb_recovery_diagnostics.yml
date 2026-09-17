@@ -362,6 +362,12 @@ jobs:
               quoted_db = inspect_db_name.replace("'", "''")
               connection = duckdb.connect(path, read_only=True)
               try:
+                  table_names = {
+                      row[0]
+                      for row in connection.execute(
+                          "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+                      ).fetchall()
+                  }
                   context_columns = {
                       row[0]
                       for row in connection.execute("DESCRIBE public.league_context").fetchall()
@@ -396,10 +402,52 @@ jobs:
                       f"FROM public.matchup WHERE db_name = '{quoted_db}' "
                       f"GROUP BY {group_fields} ORDER BY MIN(year), manager, franchise_id"
                   ).fetchall()
+                  manager_overrides = []
+                  if "manager_overrides" in table_names:
+                      override_columns = {
+                          row[0]
+                          for row in connection.execute(
+                              "DESCRIBE public.manager_overrides"
+                          ).fetchall()
+                      }
+                      override_fields = [
+                          field
+                          for field in ("operation", "from_name", "to_name", "applied_at")
+                          if field in override_columns
+                      ]
+                      rows = connection.execute(
+                          f"SELECT {', '.join(override_fields)} FROM public.manager_overrides "
+                          f"WHERE db_name = '{quoted_db}' ORDER BY applied_at, from_name, to_name"
+                      ).fetchall()
+                      manager_overrides = [dict(zip(override_fields, row)) for row in rows]
+                  homepage_manager_rows = []
+                  if "homepage_manager_rankings" in table_names:
+                      homepage_columns = {
+                          row[0]
+                          for row in connection.execute(
+                              "DESCRIBE public.homepage_manager_rankings"
+                          ).fetchall()
+                      }
+                      homepage_fields = [
+                          field
+                          for field in (
+                              "manager", "franchise_id", "first_year", "last_year",
+                              "seasons", "wins", "losses", "ties",
+                          )
+                          if field in homepage_columns
+                      ]
+                      rows = connection.execute(
+                          f"SELECT {', '.join(homepage_fields)} "
+                          "FROM public.homepage_manager_rankings "
+                          f"WHERE db_name = '{quoted_db}' ORDER BY manager, franchise_id"
+                      ).fetchall()
+                      homepage_manager_rows = [dict(zip(homepage_fields, row)) for row in rows]
                   result["identity_snapshot"] = {
                       "db_name": inspect_db_name,
                       "league_context": [dict(zip(context_fields, row)) for row in context_rows],
+                      "manager_overrides": manager_overrides,
                       "matchup_identities": [dict(zip(identity_names, row)) for row in identity_rows],
+                      "homepage_manager_rankings": homepage_manager_rows,
                   }
               finally:
                   connection.close()

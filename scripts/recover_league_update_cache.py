@@ -71,7 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         f"WHERE d.database_name = {_literal(args.db)} "
         f"{claim_predicate}"
         f"AND d.platform = {_literal(args.platform)} "
-        "AND d.status = 'committed_cache_pending' LIMIT 1",
+        "AND d.status IN ('committed', 'committed_cache_pending') "
+        "AND d.cache_verified_at IS NULL LIMIT 1",
         database="___ops",
     )
     if len(rows) != 1:
@@ -99,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
             "--site-url", "https://www.leaguehistory.app",
             "--mode", "quick", "--strategy", "expire",
             "--jitter-seconds", "0", "--strict", "--verify-hot",
+            "--required-only", "--timeout", "5", "--warm-attempts", "1",
+            "--hot-verify-attempts", "1",
         ],
         check=True,
     )

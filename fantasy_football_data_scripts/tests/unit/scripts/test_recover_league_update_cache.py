@@ -33,9 +33,9 @@ def test_cache_recovery_never_refetches_or_republishes_and_rechecks_generation(
 
         def query(self, sql, *, database):
             assert database == "___ops"
-            assert "committed_cache_pending" in sql
+            assert "d.status IN ('committed', 'committed_cache_pending')" in sql
             assert "original" in sql
-            return [ROW]
+            return [{**ROW, "status": "committed"}]
 
         def query_scalar(self, sql, *, database):
             assert database == "___leagues"
@@ -71,6 +71,10 @@ def test_cache_recovery_never_refetches_or_republishes_and_rechecks_generation(
     assert any("warm_vercel_cache.py" in str(value) for value in warmed[0])
     assert "--strict" in warmed[0]
     assert "--verify-hot" in warmed[0]
+    assert "--required-only" in warmed[0]
+    assert warmed[0][warmed[0].index("--timeout") + 1] == "5"
+    assert warmed[0][warmed[0].index("--warm-attempts") + 1] == "1"
+    assert warmed[0][warmed[0].index("--hot-verify-attempts") + 1] == "1"
 
 
 def test_blank_token_recovers_only_an_exact_committed_manual_attempt(monkeypatch):

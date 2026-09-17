@@ -83,7 +83,7 @@ def build_cache_recovery_receipt(
     row: Mapping[str, Any], *, current_generation: int
 ) -> dict[str, Any]:
     """Rebuild only the durable committed receipt; never fetch or republish data."""
-    if str(row.get("status") or "") != "committed_cache_pending":
+    if str(row.get("status") or "") not in {"committed", "committed_cache_pending"}:
         raise ValueError("League is not eligible for cache recovery")
     base = row.get("base_generation")
     if base in (None, "") or int(current_generation) != int(base) + 1:

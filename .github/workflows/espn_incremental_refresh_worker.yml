@@ -85,6 +85,9 @@ jobs:
             exit 1
           fi
 
+      - name: Set hard update deadline
+        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 105 ))" >> "$GITHUB_ENV"
+
       - name: Checkout application code
         uses: actions/checkout@v5
         with:
@@ -204,7 +207,12 @@ jobs:
           if [ -n "${OBSERVED_MANIFEST_DIGEST}" ]; then
             args+=(--observed-manifest-digest "${OBSERVED_MANIFEST_DIGEST}")
           fi
-          python scripts/refresh_espn_active_season.py "${args[@]}"
+          remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))
+          if [ "${remaining}" -le 0 ]; then
+            echo "::error::Weekly update exhausted its two-minute budget before provider refresh."
+            exit 124
+          fi
+          timeout --foreground --signal=TERM "${remaining}s" python scripts/refresh_espn_active_season.py "${args[@]}"
 
       - name: Classify Fly publication
         id: publication
@@ -322,7 +330,7 @@ jobs:
           else
             args+=(--error "ESPN active-season refresh did not publish")
           fi
-          python scripts/record_league_update_status.py "${args[@]}"
+          timeout --foreground --signal=TERM 8s python scripts/record_league_update_status.py "${args[@]}"
 
       - name: Upload refresh receipt
         id: diagnostic_artifact

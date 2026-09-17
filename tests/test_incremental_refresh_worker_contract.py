@@ -97,6 +97,17 @@ def test_active_updates_use_bounded_ops_and_runtime_dependencies(filename: str):
     assert "hashFiles('requirements.txt')" not in text
 
 
+@pytest.mark.parametrize("filename", WORKFLOWS.values())
+def test_active_updates_reserve_time_to_fail_and_exit_before_two_minutes(filename: str):
+    text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
+    assert "- name: Set hard update deadline" in text
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 105 ))" in text
+    assert 'remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))' in text
+    assert 'timeout --foreground --signal=TERM "${remaining}s" python scripts/refresh_' in text
+    assert 'timeout --foreground --signal=TERM 8s python scripts/record_league_update_status.py' in text
+    assert text.index("- name: Set hard update deadline") < text.index("- name: Checkout")
+
+
 def test_weekly_runtime_requirements_exclude_non_worker_packages():
     text = (ROOT / "requirements-weekly-update.txt").read_text(encoding="utf-8")
     for package in (

@@ -876,12 +876,26 @@ def _last_materialized_week(reader: Any, *, db_name: str, year: int) -> int | No
 
 
 _OPS_KEY_COLUMNS = ("NFL_player_id", "nfl_team", "opponent_nfl_team")
+_OPS_REFRESH_EXCLUDED_COLUMNS = frozenset({"recon_correction_log"})
 _OPS_REVISION_COLUMNS = (
     "NFL_player_id", "nfl_team", "opponent_nfl_team", "passing_yards", "passing_tds",
     "passing_interceptions", "rushing_yards", "rushing_tds", "receptions", "receiving_yards",
     "receiving_tds", "fantasy_points_ppr", "def_sacks", "def_interceptions", "def_tackles_solo",
     "def_tackles_with_assist", "fg_made", "pat_made", "points_allowed",
 )
+
+
+def _ops_refresh_source_projection(
+    columns: list[str],
+    fly_columns: set[str] | dict[str, str],
+) -> str:
+    """Project transform inputs without scanning unused large audit blobs."""
+    return ", ".join(
+        _quoted_identifier(column)
+        if column in fly_columns and column not in _OPS_REFRESH_EXCLUDED_COLUMNS
+        else f"NULL AS {_quoted_identifier(column)}"
+        for column in columns
+    )
 
 
 def _ops_delta_keys(
@@ -995,10 +1009,7 @@ def _patch_research_ops_cache_from_fly(
             for row in cache.execute("DESCRIBE nfl_historical.nfl_player_stats_all").fetchall()
         ]
         select_columns = ", ".join(_quoted_identifier(column) for column in columns)
-        source_select = ", ".join(
-            _quoted_identifier(column) if column in fly_columns else f"NULL AS {_quoted_identifier(column)}"
-            for column in columns
-        )
+        source_select = _ops_refresh_source_projection(columns, fly_columns)
         timer.mark("schema_alignment")
         for week in weeks:
             expected = finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)].copy()

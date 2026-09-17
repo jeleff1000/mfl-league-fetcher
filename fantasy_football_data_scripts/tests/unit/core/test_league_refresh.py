@@ -2242,6 +2242,21 @@ def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(
     assert timing["weeks"] == [1]
 
 
+def test_active_refresh_ops_projection_skips_the_large_unused_correction_log():
+    """The weekly worker must not scan a large audit blob it never consumes."""
+    from scripts.refresh_yahoo_active_season import _ops_refresh_source_projection
+
+    projection = _ops_refresh_source_projection(
+        ["NFL_player_id", "fantasy_points", "recon_correction_log"],
+        {"NFL_player_id", "fantasy_points", "recon_correction_log"},
+    )
+
+    assert projection == (
+        '"NFL_player_id", "fantasy_points", '
+        'NULL AS "recon_correction_log"'
+    )
+
+
 def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monkeypatch):
     """Avoid copying the 739 MB Actions cache before a one-week quick rebuild."""
     from scripts import refresh_yahoo_active_season

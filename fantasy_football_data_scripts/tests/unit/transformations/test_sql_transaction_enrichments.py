@@ -837,3 +837,45 @@ def test_future_conveyed_dynasty_pick_extends_from_conveyed_player_value(tmp_pat
         ("Alpha", "received", 12.0, 12.0),
         ("Beta", "sent", 12.0, -12.0),
     ]
+
+
+def test_trade_pick_mirroring_uses_stable_pick_id_not_stale_conveyed_player(tmp_path):
+    runner = _setup_future_conveyed_pick_trade_db(tmp_path, "txn_stable_pick_mirror")
+    runner.conn.execute("ALTER TABLE public.transactions ADD COLUMN sleeper_player_id VARCHAR")
+    runner.conn.execute("ALTER TABLE public.transactions ADD COLUMN traded_pick_season INTEGER")
+    runner.conn.execute("ALTER TABLE public.transactions ADD COLUMN traded_pick_round INTEGER")
+    runner.conn.execute("ALTER TABLE public.transactions ADD COLUMN traded_pick_original_owner VARCHAR")
+    runner.conn.execute(
+        """
+        INSERT INTO public.transactions
+            (transaction_id, year, cumulative_week, transaction_type, trade_direction,
+             manager, franchise_id, source_franchise_id, player, NFL_player_id,
+             manager_lamar_ros_managed, sleeper_player_id, traded_pick_season,
+             traded_pick_round, traded_pick_original_owner, is_conveyed)
+        VALUES
+            ('pick-swap', 2023, 202301, 'trade_pick', 'received',
+             'Alpha', 'fid_alpha', 'fid_beta', 'Stale Conveyed Player', 'STALE',
+             17, 'pick_2023_1_5', 2023, 1, 'Original Owner', TRUE),
+            ('pick-swap', 2023, 202301, 'trade_pick', 'sent',
+             'Beta', 'fid_beta', 'fid_alpha', 'Correct Conveyed Player', 'CORRECT',
+             0, 'pick_2023_1_5', 2023, 1, 'Original Owner', TRUE)
+        """
+    )
+
+    try:
+        runner._compute_trade_net_lamar()
+        rows = runner.conn.execute(
+            """
+            SELECT trade_direction, trade_asset_lamar, trade_net_lamar
+            FROM public.transactions
+            ORDER BY trade_direction
+            """
+        ).fetchall()
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
+
+    assert rows == [
+        ("received", 17.0, 17.0),
+        ("sent", 17.0, -17.0),
+    ]

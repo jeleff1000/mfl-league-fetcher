@@ -79,7 +79,21 @@ def _trade_asset_key_expr(trans_cols: set[str], alias: str) -> str:
             key_parts.append(f"COALESCE(CAST({alias}.{col} AS VARCHAR), '')")
     if not key_parts:
         return "''"
-    return f"CONCAT_WS('|', {', '.join(key_parts)})"
+    player_key = f"CONCAT_WS('|', {', '.join(key_parts)})"
+
+    # Sleeper can retain a stale conveyed-player mapping on one perspective of
+    # a draft-pick trade.  The pick ID is the asset identity; the player fields
+    # are enrichment and must not prevent the sent/received legs from pairing.
+    if "transaction_type" in trans_cols and "sleeper_player_id" in trans_cols:
+        pick_key = (
+            f"COALESCE(NULLIF(CAST({alias}.sleeper_player_id AS VARCHAR), ''), "
+            f"{player_key})"
+        )
+        return (
+            f"CASE WHEN {alias}.transaction_type = 'trade_pick' "
+            f"THEN CONCAT('pick|', {pick_key}) ELSE CONCAT('player|', {player_key}) END"
+        )
+    return player_key
 
 
 class TransactionEnrichmentsMixin:

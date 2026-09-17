@@ -2270,6 +2270,37 @@ def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monke
     assert captured["in_place"] is True
 
 
+def test_ops_cache_delta_identifies_only_changed_and_removed_rows():
+    from scripts.refresh_yahoo_active_season import _ops_delta_keys
+
+    expected = pd.DataFrame(
+        [
+            {"NFL_player_id": "same", "nfl_team": "NWE", "opponent_nfl_team": "SEA", "source_revision": "1"},
+            {"NFL_player_id": "changed", "nfl_team": "NWE", "opponent_nfl_team": "SEA", "source_revision": "2"},
+            {"NFL_player_id": "new", "nfl_team": "NWE", "opponent_nfl_team": "SEA", "source_revision": "3"},
+        ]
+    )
+    local = pd.DataFrame(
+        [
+            {"NFL_player_id": "same", "nfl_team": "NWE", "opponent_nfl_team": "SEA", "source_revision": "1"},
+            {"NFL_player_id": "changed", "nfl_team": "NWE", "opponent_nfl_team": "SEA", "source_revision": "old"},
+            {"NFL_player_id": "removed", "nfl_team": "NWE", "opponent_nfl_team": "SEA", "source_revision": "4"},
+        ]
+    )
+
+    fetch_keys, delete_keys = _ops_delta_keys(expected, local)
+
+    assert fetch_keys == {
+        ("changed", "NWE", "SEA"),
+        ("new", "NWE", "SEA"),
+    }
+    assert delete_keys == {
+        ("changed", "NWE", "SEA"),
+        ("new", "NWE", "SEA"),
+        ("removed", "NWE", "SEA"),
+    }
+
+
 def test_refresh_aggregate_subprocess_inherits_the_local_package_path(monkeypatch):
     """GitHub invokes refresh_aggregates.py as a child Python process."""
     from scripts import refresh_yahoo_active_season

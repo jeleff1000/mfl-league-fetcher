@@ -127,6 +127,38 @@ class FlyTarget:
 
         return resp.json()
 
+    def rename_league(
+        self,
+        *,
+        source_db: str,
+        target_db: str,
+        display_name: str,
+        operation_id: str,
+    ) -> dict:
+        """Run the server-local, idempotent league identity rename."""
+        payload = {
+            "source_db": source_db,
+            "target_db": target_db,
+            "display_name": display_name,
+            "operation_id": operation_id,
+        }
+        try:
+            response = requests.post(
+                f"{self.url}/rename-league",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=180,
+            )
+        except self.RETRY_EXCEPTIONS as exc:
+            raise RuntimeError(
+                "League rename response was ambiguous; rerun the same operation_id to reconcile"
+            ) from exc
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"League rename failed ({response.status_code}): {response.text[:500]}"
+            )
+        return _response_payload(response)
+
     def merge_ops(self, local_path: Path) -> dict:
         """Replace nfl_historical reference tables in ___ops from a local .duckdb bundle.
 

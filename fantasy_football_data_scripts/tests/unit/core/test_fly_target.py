@@ -86,6 +86,39 @@ def test_merge_league_retries_ssl_eof_then_succeeds(fly_env, tmp_path):
     mock_sleep.assert_called_once_with(10)
 
 
+def test_rename_league_posts_only_identity_metadata(fly_env):
+    target = FlyTarget()
+    with patch(
+        "multi_league.core.targets.fly_target.requests.post",
+        return_value=_resp(
+            200,
+            {
+                "status": "COMMITTED",
+                "source_db": "agustafantasyleague",
+                "target_db": "agusta_fantasy_league",
+            },
+        ),
+    ) as post:
+        result = target.rename_league(
+            source_db="agustafantasyleague",
+            target_db="agusta_fantasy_league",
+            display_name="Agusta Fantasy League",
+            operation_id="rename-agusta",
+        )
+
+    assert result["status"] == "COMMITTED"
+    args, kwargs = post.call_args
+    assert args[0] == "https://fly.test/rename-league"
+    assert kwargs["headers"] == {"Authorization": "Bearer admin-token"}
+    assert kwargs["json"] == {
+        "source_db": "agustafantasyleague",
+        "target_db": "agusta_fantasy_league",
+        "display_name": "Agusta Fantasy League",
+        "operation_id": "rename-agusta",
+    }
+    assert "credential" not in str(kwargs["json"]).lower()
+
+
 def test_merge_fleet_partition_posts_a_scoped_bundle(fly_env, tmp_path):
     bundle_path = tmp_path / "draft-2026.tar.gz"
     bundle_path.write_bytes(b"fleet-bundle")

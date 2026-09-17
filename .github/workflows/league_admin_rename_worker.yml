@@ -1,0 +1,82 @@
+name: League Admin Rename Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      rename_data_b64:
+        description: 'Base64 JSON identity rename payload'
+        required: true
+        type: string
+      operation_id:
+        description: 'Deterministic rename operation identifier'
+        required: true
+        type: string
+      import_lock_key:
+        description: 'Target db_name used by the shared publication queue'
+        required: true
+        type: string
+  repository_dispatch:
+    types: [league_admin_rename]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: league-update-${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  rename-league:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUNBUFFERED: 1
+      DATABASE_BACKEND: fly
+      DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+      DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+      DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
+      FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
+
+    steps:
+      - name: Require canonical public main
+        env:
+          INPUT_WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then
+            echo "::error::League rename must run from canonical public main."
+            exit 1
+          fi
+
+      - name: Validate rename lock and operation
+        env:
+          RENAME_DATA_B64: ${{ github.event.inputs.rename_data_b64 || github.event.client_payload.rename_data_b64 }}
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+          OPERATION_ID: ${{ github.event.inputs.operation_id || github.event.client_payload.operation_id }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re
+          payload = json.loads(base64.b64decode(os.environ['RENAME_DATA_B64'], validate=True))
+          key = os.environ.get('IMPORT_LOCK_KEY', '')
+          operation_id = os.environ.get('OPERATION_ID', '')
+          if not re.fullmatch(r'[a-z0-9][a-z0-9_]{0,62}', key):
+              raise SystemExit('Valid target import_lock_key is required')
+          if payload.get('target_db') != key:
+              raise SystemExit('Target lock does not match target_db')
+          if payload.get('operation_id') != operation_id:
+              raise SystemExit('operation_id does not match payload')
+          PY
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install narrow worker dependencies
+        run: python -m pip install requests
+
+      - name: Rename league identity
+        env:
+          RENAME_DATA_B64: ${{ github.event.inputs.rename_data_b64 || github.event.client_payload.rename_data_b64 }}
+        run: python scripts/rename_league_admin.py

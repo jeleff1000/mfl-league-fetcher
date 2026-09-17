@@ -2010,6 +2010,132 @@ def _rebuild_league_derived_from_sources(
         conn.close()
 
 
+def _rename_rebuild_complete_chain(conn, target_db: str) -> dict[str, Any]:
+    """Run the established complete-chain aggregators inside the rename transaction."""
+    from multi_league.transformations.aggregation.aggregate_standings import (
+        aggregate_standings,
+    )
+    from multi_league.transformations.aggregation.aggregation_utils import (
+        aggregate_career_rollups,
+        aggregate_complete_chain_season_rollups,
+        aggregate_homepage_rollups,
+    )
+
+    required = {}
+    for table in ("matchup", "player_fantasy", "league_settings"):
+        required[table] = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
+                [target_db],
+            ).fetchone()[0]
+            or 0
+        )
+    if any(count <= 0 for count in required.values()):
+        raise ValueError(
+            f"cannot rename {target_db}: required persisted source facts are missing {required}"
+        )
+    years = [
+        int(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT TRY_CAST(year AS INTEGER) FROM public.matchup "
+            "WHERE db_name = ? AND TRY_CAST(year AS INTEGER) IS NOT NULL ORDER BY 1",
+            [target_db],
+        ).fetchall()
+    ]
+    season = aggregate_complete_chain_season_rollups(conn, target_db)
+    career = aggregate_career_rollups(conn, target_db)
+    aggregate_standings(conn, target_db, years)
+    homepage = aggregate_homepage_rollups(conn, target_db)
+    return {
+        "source_counts": required,
+        "years": years,
+        "season": season,
+        "career": career,
+        "homepage": homepage,
+    }
+
+
+def _rename_league_server_side(
+    *,
+    data_dir: Path,
+    source_db: str,
+    target_db: str,
+    display_name: str,
+    operation_id: str,
+) -> dict[str, Any]:
+    """Converge league data and control-plane identity without downloading a snapshot."""
+    from multi_league.core.delta_publish import canonical_table_registry
+    from multi_league.core.league_rename import (
+        consolidate_canonical_league,
+        retarget_league_control_plane,
+        validate_control_plane_rename,
+    )
+
+    leagues_path = data_dir / "___leagues.duckdb"
+    ops_path = data_dir / "___ops.duckdb"
+    if not leagues_path.exists() or not ops_path.exists():
+        raise ValueError("league rename requires both ___leagues and ___ops databases")
+
+    # Collision validation is read-only and must happen before either database
+    # is changed. A partial prior rename is accepted only when inventory already
+    # points both aliases at the same canonical target.
+    ops_conn = db.connect_database(ops_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
+    try:
+        validate_control_plane_rename(
+            ops_conn,
+            source_db=source_db,
+            target_db=target_db,
+        )
+    finally:
+        ops_conn.close()
+
+    leagues_conn = db.connect_database(
+        leagues_path,
+        data_dir=data_dir,
+        threads=WRITE_DUCKDB_THREADS,
+    )
+    try:
+        data_result = consolidate_canonical_league(
+            leagues_conn,
+            source_db=source_db,
+            target_db=target_db,
+            display_name=display_name,
+            operation_id=operation_id,
+            registry=canonical_table_registry(),
+            rebuild=_rename_rebuild_complete_chain,
+        )
+        data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
+    finally:
+        leagues_conn.close()
+
+    ops_conn = db.connect_database(ops_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
+    try:
+        control_result = retarget_league_control_plane(
+            ops_conn,
+            source_db=source_db,
+            target_db=target_db,
+            display_name=display_name,
+            operation_id=operation_id,
+        )
+        ops_checkpointed, ops_checkpoint_error = _checkpoint_result(ops_conn)
+    finally:
+        ops_conn.close()
+
+    return {
+        "status": "COMMITTED",
+        "operation_id": operation_id,
+        "source_db": source_db,
+        "target_db": target_db,
+        "target_years": data_result.get("target_years", []),
+        "data_status": data_result.get("status"),
+        "control_status": control_result.get("status"),
+        "data_checkpointed": data_checkpointed,
+        "data_checkpoint_error": data_checkpoint_error,
+        "ops_checkpointed": ops_checkpointed,
+        "ops_checkpoint_error": ops_checkpoint_error,
+    }
+
+
 def _reaggregate_damaged_derived_from_sources(
     database_path: Path,
     *,
@@ -3168,6 +3294,78 @@ async def replace_canonical_table(
             return result
     finally:
         incoming_path.unlink(missing_ok=True)
+
+
+@app.post("/rename-league")
+async def rename_league(request: Request):
+    """Atomically consolidate one league identity and retarget its registries."""
+    try:
+        validate_admin_token(get_bearer_token(request))
+    except AuthError as exc:
+        track_event("auth_failed", {"endpoint": "/rename-league"})
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="request body must be JSON") from exc
+    source_db = str(body.get("source_db") or "").strip()
+    target_db = str(body.get("target_db") or "").strip()
+    display_name = str(body.get("display_name") or "").strip()
+    operation_id = str(body.get("operation_id") or "").strip()
+    if not _DB_NAME_PATTERN.fullmatch(source_db) or not _DB_NAME_PATTERN.fullmatch(target_db):
+        raise HTTPException(status_code=400, detail="invalid league database name")
+    if source_db == target_db:
+        raise HTTPException(status_code=400, detail="source and target league names must differ")
+    if not display_name or len(display_name) > 100:
+        raise HTTPException(status_code=400, detail="display_name is required and must be at most 100 characters")
+    if not operation_id or len(operation_id) > 200:
+        raise HTTPException(status_code=400, detail="operation_id is required and must be at most 200 characters")
+
+    async with _merge_lock:
+        _state["status"] = "draining"
+        elapsed = 0.0
+        while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+        if db.get_active_count() > 0:
+            await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
+        db.close_pool()
+        _state["status"] = "writing"
+        try:
+            result = await asyncio.to_thread(
+                _rename_league_server_side,
+                data_dir=db.get_data_dir(),
+                source_db=source_db,
+                target_db=target_db,
+                display_name=display_name,
+                operation_id=operation_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error(
+                "League rename failed for %s -> %s: %s",
+                source_db,
+                target_db,
+                exc,
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            await _reopen_pool_after_write(f"league rename {source_db} -> {target_db}")
+            _set_serving_or_ops_writing()
+
+    track_event(
+        "league_renamed",
+        {
+            "source_db": source_db,
+            "target_db": target_db,
+            "operation_id": operation_id,
+            "status": result["status"],
+        },
+    )
+    return result
 
 
 @app.post("/rebuild-league-derived")

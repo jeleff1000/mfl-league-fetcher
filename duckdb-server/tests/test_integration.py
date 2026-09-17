@@ -218,6 +218,82 @@ def test_ready_endpoint_returns_503_until_serving(client):
     assert body["accepting_queries"] is False
 
 
+def test_rename_league_requires_admin_auth(client):
+    response = client.post(
+        "/rename-league",
+        json={
+            "source_db": "old_league",
+            "target_db": "new_league",
+            "display_name": "New League",
+            "operation_id": "rename-new-league",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_rename_league_runs_one_server_side_operation(client, monkeypatch):
+    import main as main_mod
+
+    calls = []
+
+    def fake_rename(*, data_dir, source_db, target_db, display_name, operation_id):
+        calls.append((data_dir, source_db, target_db, display_name, operation_id))
+        return {
+            "status": "COMMITTED",
+            "source_db": source_db,
+            "target_db": target_db,
+            "target_years": [2009, 2026],
+        }
+
+    monkeypatch.setattr(main_mod, "_rename_league_server_side", fake_rename)
+    response = client.post(
+        "/rename-league",
+        headers={"Authorization": "Bearer test-admin"},
+        json={
+            "source_db": "agustafantasyleague",
+            "target_db": "agusta_fantasy_league",
+            "display_name": "Agusta Fantasy League",
+            "operation_id": "rename-agusta",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "COMMITTED",
+        "source_db": "agustafantasyleague",
+        "target_db": "agusta_fantasy_league",
+        "target_years": [2009, 2026],
+    }
+    assert calls == [
+        (
+            main_mod.db.get_data_dir(),
+            "agustafantasyleague",
+            "agusta_fantasy_league",
+            "Agusta Fantasy League",
+            "rename-agusta",
+        )
+    ]
+
+
+def test_rename_league_rejects_invalid_target_before_write(client, monkeypatch):
+    import main as main_mod
+
+    monkeypatch.setattr(main_mod, "_rename_league_server_side", lambda **_: None)
+    response = client.post(
+        "/rename-league",
+        headers={"Authorization": "Bearer test-admin"},
+        json={
+            "source_db": "old_league",
+            "target_db": "Not A Slug",
+            "display_name": "New League",
+            "operation_id": "rename-new-league",
+        },
+    )
+
+    assert response.status_code == 400
+
+
 def test_server_state_exposes_runtime_capacity(client):
     resp = client.get("/internal/server-state")
     assert resp.status_code == 200

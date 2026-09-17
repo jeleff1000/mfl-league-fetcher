@@ -42,6 +42,11 @@ on:
         required: true
         default: false
         type: boolean
+      recover_settings:
+        description: Replace league_settings as part of this recovery
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -86,6 +91,7 @@ jobs:
           EXPECTED_OVERLAY_ROWS: ${{ inputs.expected_overlay_rows }}
           APPLY_RECOVERY: ${{ inputs.apply_recovery }}
           RECOVER_DERIVED_ROLLUPS: ${{ inputs.recover_derived_rollups }}
+          RECOVER_SETTINGS: ${{ inputs.recover_settings }}
         run: |
           set -euo pipefail
           for value in "$SNAPSHOT_ID" "$PRESERVATION_SNAPSHOT_ID"; do
@@ -94,6 +100,7 @@ jobs:
           [[ "$EXPECTED_FINAL_ROWS" = "auto" || "$EXPECTED_FINAL_ROWS" =~ ^[1-9][0-9]*$ ]] || exit 2
           [[ "$EXPECTED_OVERLAY_LEAGUES" =~ ^[0-9]+$ ]] || exit 2
           [[ "$EXPECTED_OVERLAY_ROWS" =~ ^[0-9]+$ ]] || exit 2
+          [ "$RECOVER_SETTINGS" = "true" ] || [ "$RECOVER_DERIVED_ROLLUPS" = "true" ] || exit 2
 
           flyctl machines list --app "$FLY_APP" --json > machines.json
           flyctl volumes list --app "$FLY_APP" --json > volumes.json
@@ -466,22 +473,24 @@ jobs:
             exit 0
           fi
 
-          curl --fail-with-body --silent --show-error \
-            -X POST "${DATABASE_SERVER_URL%/}/replace-canonical-table" \
-            -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
-            -H "X-Db-Name: ___leagues" \
-            -H "X-Table-Name: league_settings" \
-            -H "X-Expected-Rows: ${FINAL_EXPECTED_ROWS}" \
-            -H "X-Content-Sha256: ${bundle_sha256}" \
-            -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
-            -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
-            -H "X-Expected-Overlay-Rows: ${EXPECTED_OVERLAY_ROWS}" \
-            -F "file=@league_settings_snapshot.duckdb;type=application/octet-stream" \
-            | tee recovery-response.json
+          if [ "$RECOVER_SETTINGS" = "true" ]; then
+            curl --fail-with-body --silent --show-error \
+              -X POST "${DATABASE_SERVER_URL%/}/replace-canonical-table" \
+              -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
+              -H "X-Db-Name: ___leagues" \
+              -H "X-Table-Name: league_settings" \
+              -H "X-Expected-Rows: ${FINAL_EXPECTED_ROWS}" \
+              -H "X-Content-Sha256: ${bundle_sha256}" \
+              -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
+              -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
+              -H "X-Expected-Overlay-Rows: ${EXPECTED_OVERLAY_ROWS}" \
+              -F "file=@league_settings_snapshot.duckdb;type=application/octet-stream" \
+              | tee recovery-response.json
 
-          jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
-            '.status == "replaced" and .rows == $rows and .distinct_keys == $rows' \
-            recovery-response.json >/dev/null
+            jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
+              '.status == "replaced" and .rows == $rows and .distinct_keys == $rows' \
+              recovery-response.json >/dev/null
+          fi
 
           if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
             for table in homepage_manager_rankings matchup_h2h_career player_fantasy_season player_fantasy_season_all standings_by_year; do
@@ -525,14 +534,16 @@ jobs:
             done
           fi
 
-          query_body="$(jq -cn '{database:"___leagues",sql:"SELECT COUNT(*) AS rows, COUNT(DISTINCT (db_name, year)) AS distinct_keys, MAX(year) AS max_year FROM public.league_settings"}')"
-          curl --fail-with-body --silent --show-error \
-            -X POST "${DATABASE_SERVER_URL%/}/query" \
-            -H "Authorization: Bearer ${DATABASE_READ_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data "$query_body" | tee recovery-readback.json
-          jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
-            '.[0].rows == $rows and .[0].distinct_keys == $rows' recovery-readback.json >/dev/null
+          if [ "$RECOVER_SETTINGS" = "true" ]; then
+            query_body="$(jq -cn '{database:"___leagues",sql:"SELECT COUNT(*) AS rows, COUNT(DISTINCT (db_name, year)) AS distinct_keys, MAX(year) AS max_year FROM public.league_settings"}')"
+            curl --fail-with-body --silent --show-error \
+              -X POST "${DATABASE_SERVER_URL%/}/query" \
+              -H "Authorization: Bearer ${DATABASE_READ_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$query_body" | tee recovery-readback.json
+            jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
+              '.[0].rows == $rows and .[0].distinct_keys == $rows' recovery-readback.json >/dev/null
+          fi
 
           if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
             cat > verify_recovered_rollups.py <<'PY'

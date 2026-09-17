@@ -420,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
         active_season=active_year,
         expected_observed_digest=args.observed_manifest_digest,
     )
+    if args.execute and persisted_plan is None:
+        raise RuntimeError("executing update requires a captured source manifest")
     refresh_weeks = (
         list(persisted_plan.weeks)
         if persisted_plan is not None

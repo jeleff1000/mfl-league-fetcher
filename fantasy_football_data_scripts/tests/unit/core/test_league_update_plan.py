@@ -335,6 +335,39 @@ def test_persisted_plan_replays_active_week_when_nonzero_offense_is_missing_ppg(
     assert plan.reasons == ("missing_materialized_week",)
 
 
+def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
+    current = manifest(nfl=(resource("nfl", "game", "2026:1:A@B", "one"),))
+    row = {
+        "observed_manifest_json": canonical_manifest_json(current),
+        "observed_manifest_digest": manifest_digest(current),
+        "published_manifest_json": canonical_manifest_json(current),
+        "published_manifest_digest": manifest_digest(current),
+    }
+
+    class CapturingReader(Reader):
+        league_sql = ""
+
+        def query(self, sql, *, database):
+            if database == "___ops":
+                return [row]
+            self.league_sql = sql
+            return [{"year": 2026, "week": 1}]
+
+    reader = CapturingReader(row)
+    load_persisted_refresh_plan(
+        reader,
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=manifest_digest(current),
+    )
+
+    assert "WITH player_weeks AS MATERIALIZED" in reader.league_sql
+    assert "matchup_weeks AS MATERIALIZED" in reader.league_sql
+    assert "schedule_weeks AS MATERIALIZED" in reader.league_sql
+    assert "GROUP BY" in reader.league_sql
+    assert "EXISTS (SELECT" not in reader.league_sql
+
+
 def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():
     assert load_persisted_refresh_plan(
         Reader(None),

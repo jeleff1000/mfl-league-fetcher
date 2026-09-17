@@ -297,7 +297,7 @@ def _build_context(
     """Create the active Sleeper context from Fly registry/context state."""
     from initial_import_v3 import _load_frontend_context_settings
     from multi_league.data_fetchers.sleeper.sleeper_api_client import SleeperAPIClient
-    from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext, discover_league_history
+    from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext
 
     frontend, known_league_ids = _load_persisted_sleeper_chain(
         reader,
@@ -306,23 +306,13 @@ def _build_context(
     )
     client = SleeperAPIClient()
     context_platform = str(frontend.get("platform") or "").strip().lower()
-    has_saved_predecessor = any(
-        str(year).isdigit() and int(year) < int(active_year) and league_id
-        for year, league_id in known_league_ids.items()
-    )
-    if not has_saved_predecessor and context_platform == "sleeper":
-        onboarding_id = str(
-            known_league_ids.get(str(active_year)) or frontend.get("league_id") or ""
-        ).strip()
-        if onboarding_id:
-            # Some original imports persisted only the onboarding ID. Reuse
-            # import discovery for its metadata chain, not historical games.
-            discovered = discover_league_history(client, onboarding_id, skip_empty_seasons=False)
-            saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
-            discovered_active_id = str(discovered.get(str(active_year)) or "").strip()
-            if saved_active_id and discovered_active_id != saved_active_id:
-                raise RuntimeError("Fly and provider have conflicting active Sleeper league IDs")
-            known_league_ids = {**discovered, **known_league_ids}
+    if not known_league_ids and context_platform == "sleeper":
+        saved_active_id = str(frontend.get("league_id") or "").strip()
+        if saved_active_id:
+            # A true first-season import has no predecessor chain. Its saved
+            # onboarding identity is sufficient; weekly updates must not walk
+            # provider history to invent an unimported predecessor.
+            known_league_ids[str(active_year)] = saved_active_id
     if active_league_id:
         saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
         if saved_active_id and saved_active_id != str(active_league_id).strip():
@@ -620,6 +610,8 @@ def main(argv: list[str] | None = None) -> int:
         active_season=active_year,
         expected_observed_digest=args.observed_manifest_digest,
     )
+    if args.execute and persisted_plan is None:
+        raise RuntimeError("executing update requires a captured source manifest")
     refresh_weeks = (
         list(persisted_plan.weeks)
         if persisted_plan is not None

@@ -94,11 +94,13 @@ def test_active_updates_share_the_import_execution_boundary(filename: str):
     assert "queue: max" in text
 
 
-@pytest.mark.parametrize("filename", WORKFLOWS.values())
-def test_active_updates_use_bounded_ops_and_runtime_dependencies(filename: str):
+@pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())
+def test_active_updates_use_bounded_ops_and_runtime_dependencies(platform: str, filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "restore-research-ops-cache" not in text
-    assert "requirements-weekly-update.txt" in text
+    assert f"requirements-weekly-update-{platform}.txt" in text
+    assert "\n            /.github/\n" not in text
+    assert "\n            /requirements.txt\n" not in text
     assert "actions/cache" not in text
     assert "cache-venv" not in text
     assert "hashFiles('requirements.txt')" not in text
@@ -127,6 +129,19 @@ def test_weekly_runtime_requirements_exclude_non_worker_packages():
         "pytest",
     ):
         assert package not in text.lower()
+
+
+def test_weekly_runtime_requirements_do_not_install_other_platforms():
+    common = (ROOT / "requirements-weekly-update.txt").read_text(encoding="utf-8").lower()
+    yahoo = (ROOT / "requirements-weekly-update-yahoo.txt").read_text(encoding="utf-8").lower()
+    espn = (ROOT / "requirements-weekly-update-espn.txt").read_text(encoding="utf-8").lower()
+    sleeper = (ROOT / "requirements-weekly-update-sleeper.txt").read_text(encoding="utf-8").lower()
+
+    assert "yahoo-fantasy-api" not in common
+    assert "espn-api" not in common
+    assert "yahoo-fantasy-api" in yahoo and "espn-api" not in yahoo
+    assert "espn-api" in espn and "yahoo-fantasy-api" not in espn
+    assert "yahoo-fantasy-api" not in sleeper and "espn-api" not in sleeper
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
@@ -219,6 +234,13 @@ def test_manual_execute_captures_the_same_source_manifest_as_the_ui(filename: st
     assert text.index("scripts/probe_league_update_freshness.py") < text.index(
         "scripts/claim_manual_league_update.py"
     )
+
+
+@pytest.mark.parametrize("platform", ("yahoo", "espn", "sleeper"))
+def test_execute_never_falls_back_to_an_uncaptured_week_boundary(platform: str):
+    text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+    assert "if args.execute and persisted_plan is None:" in text
+    assert "executing update requires a captured source manifest" in text
 
 
 @pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())

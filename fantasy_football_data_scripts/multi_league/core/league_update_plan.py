@@ -272,24 +272,30 @@ def load_persisted_refresh_plan(
             affected_seasons.add(year)
     season_sql = ", ".join(str(year) for year in sorted(affected_seasons))
     materialized_rows = reader.query(
-        "SELECT DISTINCT TRY_CAST(p.year AS INTEGER) AS year, TRY_CAST(p.week AS INTEGER) AS week "
-        "FROM public.player_fantasy p "
-        f"WHERE p.db_name = '{safe_db}' AND TRY_CAST(p.year AS INTEGER) IN ({season_sql}) "
-        "AND TRY_CAST(p.week AS INTEGER) > 0 "
-        f"AND (TRY_CAST(p.year AS INTEGER) <> {int(active_season)} OR ("
-        "EXISTS (SELECT 1 FROM public.matchup m "
-        "WHERE m.db_name = p.db_name AND TRY_CAST(m.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
-        "AND TRY_CAST(m.week AS INTEGER) = TRY_CAST(p.week AS INTEGER)) "
-        "AND EXISTS (SELECT 1 FROM public.schedule s "
-        "WHERE s.db_name = p.db_name AND TRY_CAST(s.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
-        "AND TRY_CAST(s.week AS INTEGER) = TRY_CAST(p.week AS INTEGER)) "
-        "AND NOT EXISTS (SELECT 1 FROM public.player_fantasy incomplete "
-        "WHERE incomplete.db_name = p.db_name "
-        "AND TRY_CAST(incomplete.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
-        "AND TRY_CAST(incomplete.week AS INTEGER) = TRY_CAST(p.week AS INTEGER) "
-        "AND UPPER(TRIM(COALESCE(incomplete.position, ''))) IN ('QB', 'RB', 'WR', 'TE', 'K', 'DEF') "
-        "AND ABS(COALESCE(incomplete.fantasy_points, 0)) > 0 "
-        "AND (incomplete.season_ppg IS NULL OR incomplete.alltime_ppg IS NULL))))",
+        "WITH player_weeks AS MATERIALIZED ("
+        "SELECT TRY_CAST(year AS INTEGER) AS year, TRY_CAST(week AS INTEGER) AS week, "
+        "MAX(CASE WHEN UPPER(TRIM(COALESCE(position, ''))) "
+        "IN ('QB', 'RB', 'WR', 'TE', 'K', 'DEF') "
+        "AND ABS(COALESCE(fantasy_points, 0)) > 0 "
+        "AND (season_ppg IS NULL OR alltime_ppg IS NULL) THEN 1 ELSE 0 END) AS has_incomplete "
+        "FROM public.player_fantasy "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) IN ({season_sql}) "
+        "AND TRY_CAST(week AS INTEGER) > 0 GROUP BY 1, 2), "
+        "matchup_weeks AS MATERIALIZED ("
+        "SELECT TRY_CAST(year AS INTEGER) AS year, TRY_CAST(week AS INTEGER) AS week, 1 AS present "
+        "FROM public.matchup "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
+        "AND TRY_CAST(week AS INTEGER) > 0 GROUP BY 1, 2), "
+        "schedule_weeks AS MATERIALIZED ("
+        "SELECT TRY_CAST(year AS INTEGER) AS year, TRY_CAST(week AS INTEGER) AS week, 1 AS present "
+        "FROM public.schedule "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
+        "AND TRY_CAST(week AS INTEGER) > 0 GROUP BY 1, 2) "
+        "SELECT p.year, p.week FROM player_weeks p "
+        "LEFT JOIN matchup_weeks m USING (year, week) "
+        "LEFT JOIN schedule_weeks s USING (year, week) "
+        f"WHERE p.year <> {int(active_season)} OR "
+        "(m.present = 1 AND s.present = 1 AND p.has_incomplete = 0)",
         database="___leagues",
     )
     materialized = {

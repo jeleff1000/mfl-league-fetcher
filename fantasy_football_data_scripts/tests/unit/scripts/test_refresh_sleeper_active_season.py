@@ -31,17 +31,14 @@ class ChainReader:
         raise AssertionError(f"unexpected Fly query: {sql}")
 
 
-@pytest.mark.parametrize('previous', [None, 'old'])
-def test_context_only_onboarding_identity_reuses_import_history_discovery(tmp_path, monkeypatch, previous):
+def test_context_only_first_season_uses_saved_active_identity_without_history_discovery(tmp_path, monkeypatch):
     from refresh_sleeper_active_season import _build_context
     from multi_league.data_fetchers.sleeper import sleeper_api_client
 
     class Provider:
         def get_league(self, league_id):
-            return {
-                'active': {'league_id':'active', 'season':'2026', 'previous_league_id':previous, 'name':'Provider Name'},
-                'old': {'league_id':'old', 'season':'2025', 'previous_league_id':None},
-            }[league_id]
+            assert league_id == 'active'
+            return {'league_id':'active', 'season':'2026', 'previous_league_id':None, 'name':'Provider Name'}
 
         def get_league_users(self, league_id):
             assert league_id == 'active'
@@ -61,12 +58,12 @@ def test_context_only_onboarding_identity_reuses_import_history_discovery(tmp_pa
     assert ctx.league_id == 'active'
     assert ctx.league_name == 'Saved Name'
     assert ctx.manager_name_overrides == {'Owner':'Shared Alias'}
-    assert ctx.league_ids == ({'2026':'active'} if previous is None else {'2026':'active','2025':'old'})
+    assert ctx.league_ids == {'2026':'active'}
     assert league['league_id'] == 'active'
     assert path.is_file()
 
 
-def test_active_only_setting_reuses_import_history_discovery_to_prove_predecessor(tmp_path, monkeypatch):
+def test_active_only_setting_does_not_reconstruct_a_missing_predecessor_chain(tmp_path, monkeypatch):
     from refresh_sleeper_active_season import _build_context
     from multi_league.data_fetchers.sleeper import sleeper_api_client
 
@@ -92,13 +89,14 @@ def test_active_only_setting_reuses_import_history_discovery_to_prove_predecesso
     }
     settings = [{'year': 2026, 'platform': 'sleeper', 'league_key': 'active'}]
 
-    ctx, _, _, league = _build_context(
+    ctx, path, _, league = _build_context(
         reader=ChainReader(context=context, settings=settings),
         db_name='mixed_league', active_year=2026, work_dir=tmp_path,
     )
 
-    assert league['league_id'] == 'active'
-    assert ctx.league_ids == {'2025': 'old', '2026': 'active'}
+    assert ctx is None
+    assert path == Path()
+    assert league is None
 
 
 @pytest.mark.parametrize('broken', ['cycle', 'wrong_identity', 'missing_link', 'duplicate_season'])

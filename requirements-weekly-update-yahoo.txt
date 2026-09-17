@@ -1,0 +1,4 @@
+-r requirements-weekly-update.txt
+cryptography==43.0.3
+yahoo-fantasy-api==2.12.2
+yahoo-oauth==2.1.1

@@ -384,7 +384,7 @@ jobs:
                   }
               finally:
                   connection.close()
-          print(json.dumps(result, sort_keys=True))
+          print(json.dumps(result, default=str, sort_keys=True))
           sys.exit(1 if result["errors"] else 0)
           PY
             recovery_machine_name="wkupd-probe-${GITHUB_RUN_ID}"

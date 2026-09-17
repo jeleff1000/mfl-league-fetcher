@@ -185,6 +185,15 @@ def test_recovery_receipt_requires_durable_matching_publication_and_generation()
         current_generation=4,
     )
     assert recovered["source_manifest_complete"] is False
+    partial.pop("source_manifest_json")
+    recovered = build_cache_recovery_receipt(
+        row | {
+            "publication_receipt_json": json.dumps(partial),
+            "published_manifest_digest": None,
+        },
+        current_generation=4,
+    )
+    assert recovered["source_manifest_complete"] is False
 
 
 def test_partial_commit_cache_recovery_does_not_promote_incomplete_source_current():

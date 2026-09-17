@@ -102,7 +102,8 @@ def build_cache_recovery_receipt(
     if receipt.get("source_manifest_complete") is True \
        and digest != str(row.get("published_manifest_digest") or ""):
         raise ValueError("published manifest does not match the committed receipt")
-    if not receipt.get("source_manifest_json"):
+    if receipt.get("source_manifest_complete") is True \
+       and not receipt.get("source_manifest_json"):
         raise ValueError("Committed publication manifest is missing")
     if str(receipt.get("bundle_id") or "") != str(row.get("bundle_id") or "") \
        or int(receipt.get("source_year") or 0) != int(row.get("source_year") or 0) \

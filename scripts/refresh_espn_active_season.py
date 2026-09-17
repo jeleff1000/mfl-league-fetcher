@@ -378,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     from scripts.refresh_yahoo_active_season import (
         UPDATE_REFRESH_SOURCE_TABLES,
         OPS_DATABASE,
+        _active_year_scoring_info,
         _ensure_active_year_ops_cache,
         _ensure_ops_cache_matches_live,
         _load_active_refresh_inputs,
@@ -527,7 +528,17 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             active_connection = local_db.connect()
-            _ensure_active_year_ops_cache(reader, year=active_year, work_dir=work_dir)
+            active_scoring = _active_year_scoring_info(
+                local_db,
+                db_name=args.db,
+                year=active_year,
+            )
+            _ensure_active_year_ops_cache(
+                reader,
+                year=active_year,
+                work_dir=work_dir,
+                scoring_info=active_scoring,
+            )
             timer.mark("player_ops_seed")
             receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(
                 reader,

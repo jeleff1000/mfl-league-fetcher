@@ -16,6 +16,13 @@ def test_each_worker_fences_provider_player_scope_after_shared_transformations()
         assert source.index("assert_transformed_active_player_scope(") < source.index("stage_refresh_partitions(", source.index("assert_transformed_active_player_scope("))
 
 
+def test_each_worker_builds_the_bounded_ops_cache_for_its_active_scoring_variant():
+    for provider in ("yahoo", "espn", "sleeper"):
+        source = Path(f"scripts/refresh_{provider}_active_season.py").read_text(encoding="utf-8")
+        assert "_active_year_scoring_info(" in source
+        assert "scoring_info=active_scoring" in source
+
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

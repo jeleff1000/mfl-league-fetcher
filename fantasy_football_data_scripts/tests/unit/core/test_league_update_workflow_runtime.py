@@ -18,4 +18,12 @@ def test_weekly_update_workers_skip_virtualenv_and_pip_upgrade(workflow_name: st
     assert "timeout-minutes: 2" in workflow
     assert "python -m venv" not in workflow
     assert "python -m pip install --upgrade pip" not in workflow
-    assert "python -m pip install --disable-pip-version-check --quiet -r requirements-weekly-update.txt" in workflow
+    assert (
+        "python -m pip install --disable-pip-version-check --quiet "
+        "--no-cache-dir --no-compile -r requirements-weekly-update.txt"
+    ) in workflow
+    assert "refresh_live_nfl_ops.py" not in workflow
+    assert "replace_database" not in workflow
+    assert "python scripts/warm_vercel_cache.py" in workflow
+    assert "--strategy expire" in workflow
+    assert "--verify-hot" in workflow

@@ -78,6 +78,31 @@ def test_isolated_rebuild_cannot_mutate_or_promote_the_primary_volume():
     assert "flyctl deploy" not in source
 
 
+def test_isolated_rebuild_can_fork_current_volume_without_snapshot_restore():
+    source = (
+        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "source_mode:" in source
+    assert 'flyctl volumes fork "$source_volume_id"' in source
+    assert '--name "wkupd_rebuild_${GITHUB_RUN_ID}"' in source
+    assert "--vm-cpus 2 --vm-memory 4096" in source
+
+
+def test_isolated_rebuild_installs_clean_file_only_after_validation():
+    source = (
+        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
+    ).read_text(encoding="utf-8")
+
+    validation = source.index("python /tmp/validate_isolated_rebuild.py")
+    install = source.index("python /tmp/install_isolated_rebuild.py")
+    assert validation < install
+    assert 'os.replace(source, backup)' in source
+    assert 'os.replace(clean, source)' in source
+    assert 'duckdb.connect(str(source), read_only=True)' in source
+    assert 'backup.unlink()' in source
+
+
 def test_isolated_reaggregation_is_limited_to_the_retained_recovery_volume():
     source = (
         ROOT / ".github" / "workflows" / "fly_duckdb_reaggregate_recovery.yml"

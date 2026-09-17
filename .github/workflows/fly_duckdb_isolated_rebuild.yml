@@ -7,6 +7,14 @@ on:
         description: Exact preservation snapshot to rebuild on an isolated volume
         required: true
         type: string
+      source_mode:
+        description: Fork the current primary volume or restore the supplied snapshot
+        required: true
+        default: snapshot
+        type: choice
+        options:
+          - snapshot
+          - fork_current
       expected_source_sha:
         description: Exact public main revision containing the rebuild helper
         required: true
@@ -47,16 +55,20 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP: league-history-duckdb
           SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          SOURCE_MODE: ${{ inputs.source_mode }}
           KEEP_RECOVERY_VOLUME: ${{ inputs.keep_recovery_volume }}
         run: |
           set -euo pipefail
           [[ "$SNAPSHOT_ID" =~ ^vs_[A-Za-z0-9]+$ ]] || exit 2
+          [[ "$SOURCE_MODE" = "snapshot" || "$SOURCE_MODE" = "fork_current" ]] || exit 2
 
           flyctl machines list --app "$FLY_APP" --json > machines.json
           flyctl volumes list --app "$FLY_APP" --json > volumes.json
+          source_volume_id="$(jq -r 'map(select(.name == "duckdb_data"))[0].id // empty' volumes.json)"
           source_region="$(jq -r 'map(select(.name == "duckdb_data"))[0].region // empty' volumes.json)"
           source_size_gb="$(jq -r 'map(select(.name == "duckdb_data"))[0].size_gb // empty' volumes.json)"
           image_ref="$(jq -r 'map(select(.state == "started"))[0].config.image // empty' machines.json)"
+          test -n "$source_volume_id"
           test -n "$source_region"
           test -n "$source_size_gb"
           test -n "$image_ref"
@@ -75,10 +87,17 @@ jobs:
           }
           trap cleanup EXIT
 
-          recovery_json="$(flyctl volumes create "wkupd_rebuild_${GITHUB_RUN_ID}" \
-            --app "$FLY_APP" --region "$source_region" --size "$source_size_gb" \
-            --snapshot-id "$SNAPSHOT_ID" --scheduled-snapshots=false \
-            --require-unique-zone=false --yes --json)"
+          if [ "$SOURCE_MODE" = "fork_current" ]; then
+            recovery_json="$(flyctl volumes fork "$source_volume_id" \
+              --app "$FLY_APP" --name "wkupd_rebuild_${GITHUB_RUN_ID}" \
+              --region "$source_region" --require-unique-zone=false \
+              --vm-cpus 2 --vm-memory 4096 --json)"
+          else
+            recovery_json="$(flyctl volumes create "wkupd_rebuild_${GITHUB_RUN_ID}" \
+              --app "$FLY_APP" --region "$source_region" --size "$source_size_gb" \
+              --snapshot-id "$SNAPSHOT_ID" --scheduled-snapshots=false \
+              --require-unique-zone=false --yes --json)"
+          fi
           printf '%s\n' "$recovery_json" | tee recovery-volume.json
           recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
           test -n "$recovery_volume_id"
@@ -97,7 +116,7 @@ jobs:
             --name "$machine_name" --volume "$recovery_volume_id:/data" \
             --entrypoint /bin/sh \
             --file-local "/tmp/fly_rebuild_duckdb.py=scripts/fly_rebuild_duckdb.py" \
-            --restart no --detach --vm-cpus 8 --vm-memory 16384 \
+            --restart no --detach --vm-cpus 2 --vm-memory 4096 \
             -- -lc 'sleep 10800' | tee recovery-machine-run.log
           for _ in $(seq 1 60); do
             recovery_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
@@ -186,6 +205,64 @@ jobs:
           flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
             -C "python /tmp/validate_isolated_rebuild.py" | tee isolated-validation.jsonl
 
+          cat > install_isolated_rebuild.py <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import duckdb
+
+          source = Path("/data/___leagues.duckdb")
+          clean = Path("/data/___leagues.clean.duckdb")
+          backup = Path("/data/___leagues.corrupt.duckdb")
+          source_wal = Path(f"{source}.wal")
+          backup_wal = Path(f"{backup}.wal")
+          if not source.is_file() or not clean.is_file():
+              raise RuntimeError("isolated source or validated clean database is missing")
+          for stale in (backup, backup_wal):
+              if stale.exists():
+                  stale.unlink()
+          os.replace(source, backup)
+          if source_wal.exists():
+              os.replace(source_wal, backup_wal)
+          os.replace(clean, source)
+          directory_fd = os.open(source.parent, os.O_RDONLY)
+          try:
+              os.fsync(directory_fd)
+          finally:
+              os.close(directory_fd)
+
+          conn = duckdb.connect(str(source), read_only=True)
+          try:
+              counts = {
+                  table: int(conn.execute(f'SELECT COUNT(*) FROM public."{table}"').fetchone()[0])
+                  for table in (
+                      "homepage_manager_rankings",
+                      "matchup_h2h_career",
+                      "player_fantasy_season",
+                      "player_fantasy_season_all",
+                      "standings_by_year",
+                  )
+              }
+              if any(counts.values()):
+                  raise RuntimeError(f"installed recovery targets are not empty: {counts}")
+          finally:
+              conn.close()
+          backup.unlink()
+          if backup_wal.exists():
+              backup_wal.unlink()
+          directory_fd = os.open(source.parent, os.O_RDONLY)
+          try:
+              os.fsync(directory_fd)
+          finally:
+              os.close(directory_fd)
+          print(json.dumps({"installed": str(source), "empty_counts": counts}, sort_keys=True))
+          PY
+          flyctl ssh sftp put install_isolated_rebuild.py /tmp/install_isolated_rebuild.py \
+            --app "$FLY_APP" --machine "$recovery_machine_id"
+          flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
+            -C "python /tmp/install_isolated_rebuild.py" | tee isolated-install.jsonl
+
           flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force
           recovery_machine_id=""
           flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json \
@@ -206,5 +283,6 @@ jobs:
             recovery-machine-run.log
             isolated-rebuild.jsonl
             isolated-validation.jsonl
+            isolated-install.jsonl
             validated-recovery-volume.json
           if-no-files-found: warn

@@ -261,6 +261,18 @@ def test_query_success(client):
     assert rows[1]["manager"] == "Bob"
 
 
+def test_query_compresses_large_json_payloads(client):
+    resp = client.post(
+        "/query",
+        json={"sql": "SELECT repeat('x', 5000) AS payload", "database": "___leagues"},
+        headers={"Authorization": "Bearer test-read", "Accept-Encoding": "gzip"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("content-encoding") == "gzip"
+    assert resp.json() == [{"payload": "x" * 5000}]
+
+
 def test_query_returns_retryable_busy_when_primary_writing(client):
     import main as main_mod
 

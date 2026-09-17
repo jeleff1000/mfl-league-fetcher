@@ -21,6 +21,7 @@ from typing import Any
 import duckdb as _duckdb
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Header
 from pydantic import BaseModel
+from starlette.middleware.gzip import GZipMiddleware
 
 try:
     from posthog import Posthog as _Posthog
@@ -630,6 +631,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 _READ_START_PATTERN = re.compile(r"^\s*(SELECT|WITH|DESCRIBE|SHOW|EXPLAIN)\b", re.IGNORECASE)
 _FORBIDDEN_SQL_TOKEN_PATTERN = re.compile(

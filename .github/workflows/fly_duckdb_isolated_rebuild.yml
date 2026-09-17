@@ -15,6 +15,11 @@ on:
         options:
           - snapshot
           - fork_current
+      existing_volume_id:
+        description: Optional retained, unattached wkupd_rebuild volume to reuse
+        required: false
+        default: ""
+        type: string
       expected_source_sha:
         description: Exact public main revision containing the rebuild helper
         required: true
@@ -56,6 +61,7 @@ jobs:
           FLY_APP: league-history-duckdb
           SNAPSHOT_ID: ${{ inputs.snapshot_id }}
           SOURCE_MODE: ${{ inputs.source_mode }}
+          EXISTING_VOLUME_ID: ${{ inputs.existing_volume_id }}
           KEEP_RECOVERY_VOLUME: ${{ inputs.keep_recovery_volume }}
         run: |
           set -euo pipefail
@@ -75,44 +81,64 @@ jobs:
 
           recovery_volume_id=""
           recovery_machine_id=""
+          recovery_region="$source_region"
+          owns_recovery_volume="false"
           cleanup() {
             if [ -n "$recovery_machine_id" ]; then
               flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force || true
               recovery_machine_id=""
             fi
-            if [ -n "$recovery_volume_id" ] && [ "$KEEP_RECOVERY_VOLUME" != "true" ]; then
+            if [ "$owns_recovery_volume" = "true" ] && [ -n "$recovery_volume_id" ] && [ "$KEEP_RECOVERY_VOLUME" != "true" ]; then
               flyctl volumes destroy "$recovery_volume_id" --app "$FLY_APP" --yes || true
               recovery_volume_id=""
             fi
           }
           trap cleanup EXIT
 
-          if [ "$SOURCE_MODE" = "fork_current" ]; then
+          if [ -n "$EXISTING_VOLUME_ID" ]; then
+            [[ "$EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || exit 2
+            existing_name="$(jq -r --arg id "$EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].name // empty' volumes.json)"
+            existing_state="$(jq -r --arg id "$EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].state // empty' volumes.json)"
+            existing_attachment="$(jq -r --arg id "$EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].attached_machine_id' volumes.json)"
+            recovery_region="$(jq -r --arg id "$EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].region // empty' volumes.json)"
+            [[ "$existing_name" == wkupd_rebuild_* ]]
+            test "$existing_state" = "created"
+            test "$existing_attachment" = "null"
+            test -n "$recovery_region"
+            recovery_volume_id="$EXISTING_VOLUME_ID"
+            jq -n --arg id "$recovery_volume_id" --arg name "$existing_name" --arg state "$existing_state" \
+              --arg region "$recovery_region" '{id:$id,name:$name,state:$state,region:$region,reused:true}' \
+              | tee recovery-volume.json
+          elif [ "$SOURCE_MODE" = "fork_current" ]; then
             recovery_json="$(flyctl volumes fork "$source_volume_id" \
               --app "$FLY_APP" --name "wkupd_rebuild_${GITHUB_RUN_ID}" \
               --region "$source_region" --require-unique-zone=false \
               --vm-cpus 2 --vm-memory 4096 --json)"
+            owns_recovery_volume="true"
           else
             recovery_json="$(flyctl volumes create "wkupd_rebuild_${GITHUB_RUN_ID}" \
               --app "$FLY_APP" --region "$source_region" --size "$source_size_gb" \
               --snapshot-id "$SNAPSHOT_ID" --scheduled-snapshots=false \
               --require-unique-zone=false --yes --json)"
+            owns_recovery_volume="true"
           fi
-          printf '%s\n' "$recovery_json" | tee recovery-volume.json
-          recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
-          test -n "$recovery_volume_id"
-          test "$recovery_volume_id" != "null"
+          if [ "$owns_recovery_volume" = "true" ]; then
+            printf '%s\n' "$recovery_json" | tee recovery-volume.json
+            recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
+            test -n "$recovery_volume_id"
+            test "$recovery_volume_id" != "null"
 
-          recovery_state="restoring"
-          for _ in $(seq 1 720); do
-            recovery_state="$(flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json | jq -r '.state')"
-            [ "$recovery_state" = "created" ] && break
-            sleep 5
-          done
-          [ "$recovery_state" = "created" ] || { echo "Snapshot restore timed out" >&2; exit 3; }
+            recovery_state="restoring"
+            for _ in $(seq 1 720); do
+              recovery_state="$(flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json | jq -r '.state')"
+              [ "$recovery_state" = "created" ] && break
+              sleep 5
+            done
+            [ "$recovery_state" = "created" ] || { echo "Snapshot restore timed out" >&2; exit 3; }
+          fi
 
           machine_name="wkupd-rebuild-${GITHUB_RUN_ID}"
-          flyctl machine run "$image_ref" --app "$FLY_APP" --region "$source_region" \
+          flyctl machine run "$image_ref" --app "$FLY_APP" --region "$recovery_region" \
             --name "$machine_name" --volume "$recovery_volume_id:/data" \
             --entrypoint /bin/sh \
             --file-local "/tmp/fly_rebuild_duckdb.py=scripts/fly_rebuild_duckdb.py" \

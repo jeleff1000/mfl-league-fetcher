@@ -29,7 +29,7 @@ def _build_source(path: Path) -> None:
     conn.close()
 
 
-def test_rebuild_copies_healthy_tables_and_preserves_empty_table_schema(tmp_path):
+def test_rebuild_copies_healthy_tables_and_preserves_empty_table_schema(tmp_path, capsys):
     source = tmp_path / "source.duckdb"
     target = tmp_path / "target.duckdb"
     _build_source(source)
@@ -39,6 +39,11 @@ def test_rebuild_copies_healthy_tables_and_preserves_empty_table_schema(tmp_path
         target,
         empty_tables={("public", "damaged")},
     )
+
+    progress = capsys.readouterr().out
+    assert '"table": "merge_admin.generations"' in progress
+    assert '"table": "public.damaged"' in progress
+    assert '"table": "public.healthy"' in progress
 
     assert result["tables"]["public.healthy"]["target_rows"] == 2
     assert result["tables"]["public.damaged"] == {

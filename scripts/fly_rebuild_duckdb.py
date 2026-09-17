@@ -104,6 +104,18 @@ def rebuild_database(
             schema = str(schema_raw)
             table = str(table_raw)
             ddl = str(ddl_raw or "").strip()
+            excluded = (schema, table) in empty_tables
+            print(
+                json.dumps(
+                    {
+                        "event": "copy_table",
+                        "table": f"{schema}.{table}",
+                        "emptied": excluded,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
             if not ddl.upper().startswith("CREATE TABLE"):
                 raise RuntimeError(f"source has no usable DDL for {schema}.{table}")
             conn.execute(ddl)
@@ -111,7 +123,6 @@ def rebuild_database(
             source_ref = (
                 f"source.{_quote_identifier(schema)}.{_quote_identifier(table)}"
             )
-            excluded = (schema, table) in empty_tables
             source_rows = -1
             if not excluded:
                 conn.execute(f"INSERT INTO {target_ref} BY NAME SELECT * FROM {source_ref}")

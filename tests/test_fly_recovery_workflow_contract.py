@@ -89,6 +89,18 @@ def test_isolated_rebuild_can_fork_current_volume_without_snapshot_restore():
     assert "--vm-cpus 2 --vm-memory 4096" in source
 
 
+def test_isolated_rebuild_can_reuse_retained_unattached_volume():
+    source = (
+        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "existing_volume_id:" in source
+    assert '[[ "$EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]' in source
+    assert '[[ "$existing_name" == wkupd_rebuild_* ]]' in source
+    assert 'test "$existing_state" = "created"' in source
+    assert 'test "$existing_attachment" = "null"' in source
+
+
 def test_isolated_rebuild_installs_clean_file_only_after_validation():
     source = (
         ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"

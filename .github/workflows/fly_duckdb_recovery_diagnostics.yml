@@ -90,7 +90,7 @@ jobs:
               -C "/bin/sh -lc 'ls -lah /data/___leagues.duckdb* /data/___ops.duckdb* 2>/dev/null || true'"
           fi
 
-          if [ -n "$INSPECT_EXISTING_VOLUME_ID" ] || [ -n "$INSPECT_DB_NAME" ]; then
+          if [ -n "$INSPECT_EXISTING_VOLUME_ID" ]; then
             [[ "$INSPECT_EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || { echo "Invalid existing volume ID" >&2; exit 2; }
             [[ "$INSPECT_DB_NAME" =~ ^[a-z0-9_]+$ ]] || { echo "Invalid db_name" >&2; exit 2; }
             inspect_name="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].name // empty' volumes.json)"
@@ -298,6 +298,7 @@ jobs:
 
             cat > snapshot_probe.py <<'PY'
           import json
+          import os
           import sys
 
           import duckdb
@@ -337,6 +338,52 @@ jobs:
                       result["errors"][name] = str(exc)
           finally:
               connection.close()
+          inspect_db_name = os.environ.get("INSPECT_DB_NAME", "")
+          if inspect_db_name:
+              quoted_db = inspect_db_name.replace("'", "''")
+              connection = duckdb.connect(path, read_only=True)
+              try:
+                  context_columns = {
+                      row[0]
+                      for row in connection.execute("DESCRIBE public.league_context").fetchall()
+                  }
+                  context_fields = [
+                      field
+                      for field in (
+                          "db_name",
+                          "manager_name_overrides_json",
+                          "franchise_merges_json",
+                          "updated_at",
+                      )
+                      if field in context_columns
+                  ]
+                  context_rows = connection.execute(
+                      f"SELECT {', '.join(context_fields)} FROM public.league_context "
+                      f"WHERE db_name = '{quoted_db}' LIMIT 1"
+                  ).fetchall()
+                  matchup_columns = {
+                      row[0]
+                      for row in connection.execute("DESCRIBE public.matchup").fetchall()
+                  }
+                  identity_fields = [
+                      field
+                      for field in ("manager", "franchise_id", "manager_guid")
+                      if field in matchup_columns
+                  ]
+                  group_fields = ", ".join(identity_fields)
+                  identity_names = identity_fields + ["first_year", "last_year", "rows"]
+                  identity_rows = connection.execute(
+                      f"SELECT {group_fields}, MIN(year), MAX(year), COUNT(*) "
+                      f"FROM public.matchup WHERE db_name = '{quoted_db}' "
+                      f"GROUP BY {group_fields} ORDER BY MIN(year), manager, franchise_id"
+                  ).fetchall()
+                  result["identity_snapshot"] = {
+                      "db_name": inspect_db_name,
+                      "league_context": [dict(zip(context_fields, row)) for row in context_rows],
+                      "matchup_identities": [dict(zip(identity_names, row)) for row in identity_rows],
+                  }
+              finally:
+                  connection.close()
           print(json.dumps(result, sort_keys=True))
           sys.exit(1 if result["errors"] else 0)
           PY
@@ -373,7 +420,8 @@ jobs:
               exit 6
             fi
             flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
-              -C "python /tmp/snapshot_probe.py" | tee snapshot-validation.jsonl
+              -C "/bin/sh -lc \"INSPECT_DB_NAME='$INSPECT_DB_NAME' python /tmp/snapshot_probe.py\"" \
+              | tee snapshot-validation.jsonl
             trap - EXIT
             cleanup
           fi

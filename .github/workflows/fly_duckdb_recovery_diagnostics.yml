@@ -174,10 +174,29 @@ jobs:
                   ).fetchall()
                   identity_names = identity_fields + ["first_year", "last_year", "rows"]
                   identity_rows = [dict(zip(identity_names, row)) for row in identities]
+
+                  homepage_manager_rows = []
+                  if "homepage_manager_rankings" in table_names:
+                      homepage_columns = columns(connection, "homepage_manager_rankings")
+                      homepage_fields = [
+                          field
+                          for field in (
+                              "manager", "franchise_id", "first_year", "last_year",
+                              "seasons", "wins", "losses", "ties",
+                          )
+                          if field in homepage_columns
+                      ]
+                      rows = connection.execute(
+                          f"SELECT {', '.join(homepage_fields)} "
+                          "FROM public.homepage_manager_rankings "
+                          f"WHERE db_name = '{quoted_db}' ORDER BY manager, franchise_id"
+                      ).fetchall()
+                      homepage_manager_rows = [dict(zip(homepage_fields, row)) for row in rows]
                   return {
                       "league_context": context_rows,
                       "manager_overrides": manager_overrides,
                       "matchup_identities": identity_rows,
+                      "homepage_manager_rankings": homepage_manager_rows,
                   }
               finally:
                   connection.close()

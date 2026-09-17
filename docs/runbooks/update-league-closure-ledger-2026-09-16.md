@@ -702,5 +702,49 @@ did not null the clutch aggregate.
 The five damaged original objects remain quarantined under
 `__corrupt_recovery_*`; they were not read, dropped, or treated as fallbacks.
 This closes the live five-table outage only. It does not close the broader
-Update League goal, the open ESPN canary, UI-dispatched verification, or the
-remaining complete-history audit items above.
+Update League goal, UI-dispatched verification, or the remaining
+complete-history audit items above.
+
+## Sequential production canaries after five-table repair
+
+All runs below executed public-worker `main` at exact SHA
+`793ebe8547155fe0710369343234c14f7d21d281`.
+
+- Sleeper `nyu_ffl`: run `35172946763` succeeded in 24 seconds and correctly
+  returned `NO_FINALIZED_WEEKS` without publishing. Source planning took
+  0.273 seconds. The persisted renewal chain remained complete for 2018-2026;
+  rankings retained 108 manager-seasons, standings retained 2018-2026, and
+  player season output retained 1,911 nonzero clutch rows.
+- A deliberately incorrect Yahoo worker dispatch for multiplatform
+  `the_league` (run `35173026092`) failed closed before provider fetch or
+  publication because its active 2026 segment is Sleeper. This confirms the
+  active-segment guard; it must not be bypassed by forcing a historical
+  platform worker.
+- Yahoo OAuth `kmffl`: run `35173145823` succeeded in 41 seconds and correctly
+  returned `NO_FINALIZED_WEEKS` without publishing. Source planning took
+  0.186 seconds. The persisted Yahoo renewal chain remained complete for
+  2015-2026, manager aliases remained present, and the repaired player-season
+  output retained 2,145 nonzero clutch rows.
+- ESPN `tfl_of_extraordinary_gentleman`: run `35173226958` committed week 1
+  and published the refreshed cache. Worker processing was 51.176 seconds:
+  provider fetch 4.614, shared transformations 8.103, full season rollups
+  7.143, homepage outputs 8.570, and atomic Fly publication 20.787 seconds.
+  Cache publication and hot verification took about 1.3 seconds. The workflow
+  job took 95 seconds because setup/claim/cache-restore consumed roughly 39
+  seconds before the 51-second worker; run creation to verified hot cache was
+  about 94 seconds, so the strict under-90-second click-to-visible criterion is
+  not yet closed by this manual canary.
+
+Post-publication validation for the ESPN canary was limited to the five
+repaired derived tables. Every canonical key was unique. Rankings and H2H had
+15/15 and 178/178 rows/keys; regular and all-game player season tables had
+10,043/10,043 and 10,058/10,058; standings had 180/180. Every table spans
+2012-2026. The regular player-season table retains 3,097 nonzero clutch rows.
+The live overview API reports `last_updated=2026-09-17T02:09:17.619718` and
+serves full-history leaders from 2013, 2017, 2019, and 2022 alongside 2026
+week 1, rather than treating the refreshed week as the entire history.
+
+These canaries close the five-table reaggregation defect on all three platform
+paths. They do not yet close actual UI-dispatched verification, the
+multiplatform dispatch canary, full recovery-cohort verification, or the final
+under-90-second click-to-visible requirement.

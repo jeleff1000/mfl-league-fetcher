@@ -488,7 +488,8 @@ jobs:
               | tee recovery-response.json
 
             jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
-              '.status == "replaced" and .rows == $rows and .distinct_keys == $rows' \
+              '.status == "replaced" and .checkpointed == true and .checkpoint_error == null and
+               .rows == $rows and .distinct_keys == $rows' \
               recovery-response.json >/dev/null
           fi
 
@@ -512,7 +513,8 @@ jobs:
               jq -e --arg table "$table" --argjson rows "$table_rows" \
                 --argjson overlay_leagues "$EXPECTED_OVERLAY_LEAGUES" \
                 --argjson overlay_rows "$table_overlay_rows" \
-                '.status == "replaced" and .table == $table and .rows == $rows and
+                '.status == "replaced" and .checkpointed == true and .checkpoint_error == null and
+                 .table == $table and .rows == $rows and
                  .distinct_keys == $rows and .overlay_leagues == $overlay_leagues and
                  .overlay_rows == $overlay_rows' \
                 "recovery-response-${table}.json" >/dev/null

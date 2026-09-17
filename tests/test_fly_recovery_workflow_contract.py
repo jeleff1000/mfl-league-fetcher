@@ -31,6 +31,13 @@ def test_settings_recovery_derives_final_live_count_from_snapshot_and_overlay():
     assert "X-Expected-Rows: ${FINAL_EXPECTED_ROWS}" in source
 
 
+def test_settings_recovery_requires_a_durable_checkpoint():
+    source = WORKFLOWS[1].read_text(encoding="utf-8")
+
+    assert '.checkpointed == true' in source
+    assert '.checkpoint_error == null' in source
+
+
 def test_derived_recovery_preserves_every_post_snapshot_publication_at_swap_time():
     source = WORKFLOWS[1].read_text(encoding="utf-8")
 

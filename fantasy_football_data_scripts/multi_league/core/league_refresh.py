@@ -253,6 +253,67 @@ def active_platform_player_name_hints(
     return hints
 
 
+def resolve_active_player_nfl_ids_from_bio(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    db_name: str,
+    active_year: int,
+    platform: str,
+) -> int:
+    """Resolve current-season provider IDs from the freshly synced bio cache.
+
+    Provider fetchers can load their in-process mapping before the bounded
+    ``player_bio`` sync adds a newly promoted identity.  For the active season,
+    an exact provider ID with one canonical NFL identity is authoritative even
+    when provider and bio display names differ (for example Joshua/Josh Palmer).
+    Ambiguous IDs and historical seasons remain untouched.
+    """
+    normalized_platform = str(platform).strip().lower()
+    if normalized_platform not in _ACTIVE_PLATFORM_ID_SPECS:
+        raise RefreshScopeError(f"unsupported active player mapping platform: {platform!r}")
+    local_columns, bio_column, numeric_ids = _ACTIVE_PLATFORM_ID_SPECS[normalized_platform]
+    table_columns = {
+        str(row[0]) for row in conn.execute("DESCRIBE public.player_fantasy", []).fetchall()
+    }
+    provider_column = next((column for column in local_columns if column in table_columns), None)
+    required = {"db_name", "year", "NFL_player_id"}
+    if provider_column is None or not required <= table_columns:
+        return 0
+
+    local_id = f"TRY_CAST(t.{_qident(provider_column)} AS BIGINT)" if numeric_ids else (
+        f"COALESCE(CAST(TRY_CAST(t.{_qident(provider_column)} AS BIGINT) AS VARCHAR), "
+        f"TRIM(CAST(t.{_qident(provider_column)} AS VARCHAR)))"
+    )
+    bio_id = f"TRY_CAST({_qident(bio_column)} AS BIGINT)" if numeric_ids else (
+        f"COALESCE(CAST(TRY_CAST({_qident(bio_column)} AS BIGINT) AS VARCHAR), "
+        f"TRIM(CAST({_qident(bio_column)} AS VARCHAR)))"
+    )
+    rows = conn.execute(
+        f"""
+        UPDATE public.player_fantasy AS t
+        SET NFL_player_id = mapped.NFL_player_id
+        FROM (
+            SELECT {bio_id} AS provider_id, MIN(NFL_player_id) AS NFL_player_id
+            FROM ___ops.nfl_historical.player_bio
+            WHERE {_qident(bio_column)} IS NOT NULL AND NFL_player_id IS NOT NULL
+            GROUP BY provider_id
+            HAVING provider_id IS NOT NULL AND COUNT(DISTINCT NFL_player_id) = 1
+        ) AS mapped
+        WHERE t.db_name = ? AND t.year = ?
+          AND {local_id} = mapped.provider_id
+          AND (
+              t.NFL_player_id IS NULL OR TRIM(CAST(t.NFL_player_id AS VARCHAR)) = ''
+              OR UPPER(CAST(t.NFL_player_id AS VARCHAR)) LIKE 'SLEEPER-%'
+              OR UPPER(CAST(t.NFL_player_id AS VARCHAR)) LIKE 'YAHOO-%'
+              OR UPPER(CAST(t.NFL_player_id AS VARCHAR)) LIKE 'ESPN-%'
+          )
+        RETURNING 1
+        """,
+        [str(db_name), int(active_year)],
+    ).fetchall()
+    return len(rows)
+
+
 def sync_player_bio_cache_from_fly(
     reader: Any,
     *,

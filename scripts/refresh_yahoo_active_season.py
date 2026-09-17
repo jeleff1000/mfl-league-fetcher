@@ -1550,6 +1550,19 @@ def _run_local_pipeline(
 
     local_db.connect()
     _attach_ops_cache_for_enrichment(local_db)
+    from multi_league.core.league_refresh import resolve_active_player_nfl_ids_from_bio
+
+    resolved_active_ids = resolve_active_player_nfl_ids_from_bio(
+        local_db.connect(),
+        db_name=db_name,
+        active_year=active_year,
+        platform=platform,
+    )
+    if resolved_active_ids:
+        print(
+            f"[player_bio] Resolved {resolved_active_ids} active-season provider IDs after cache sync",
+            flush=True,
+        )
     enricher = SQLEnrichments(
         db_name=db_name,
         data_dir=str(work_dir),

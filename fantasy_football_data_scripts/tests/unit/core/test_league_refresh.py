@@ -385,6 +385,55 @@ def test_active_player_bio_cache_sync_updates_only_fetched_sleeper_identities(tm
         updated.close()
 
 
+def test_active_player_id_resolution_uses_synced_sleeper_id_despite_name_alias():
+    """Current-season provider identity outranks a harmless display-name alias."""
+    import duckdb
+
+    from multi_league.core.league_refresh import resolve_active_player_nfl_ids_from_bio
+
+    league = duckdb.connect()
+    league.execute("CREATE SCHEMA public")
+    league.execute(
+        "CREATE TABLE public.player_fantasy ("
+        "db_name VARCHAR, year INTEGER, sleeper_player_id VARCHAR, "
+        "NFL_player_id VARCHAR, player VARCHAR)"
+    )
+    league.execute(
+        "INSERT INTO public.player_fantasy VALUES "
+        "('franchise_mode_fantasy', 2026, '7670', NULL, 'Joshua Palmer'), "
+        "('franchise_mode_fantasy', 2025, '7670', NULL, 'Joshua Palmer'), "
+        "('franchise_mode_fantasy', 2026, '9999', NULL, 'Reused ID')"
+    )
+    league.execute("ATTACH ':memory:' AS ___ops")
+    league.execute("CREATE SCHEMA ___ops.nfl_historical")
+    league.execute(
+        "CREATE TABLE ___ops.nfl_historical.player_bio ("
+        "NFL_player_id VARCHAR, player VARCHAR, sleeper_player_id DOUBLE)"
+    )
+    league.execute(
+        "INSERT INTO ___ops.nfl_historical.player_bio VALUES "
+        "('00-0036988', 'Josh Palmer', 7670), "
+        "('00-a', 'First Reuse', 9999), ('00-b', 'Second Reuse', 9999)"
+    )
+
+    changed = resolve_active_player_nfl_ids_from_bio(
+        league,
+        db_name="franchise_mode_fantasy",
+        active_year=2026,
+        platform="sleeper",
+    )
+
+    assert changed == 1
+    assert league.execute(
+        "SELECT year, sleeper_player_id, NFL_player_id "
+        "FROM public.player_fantasy ORDER BY year, sleeper_player_id"
+    ).fetchall() == [
+        (2025, "7670", None),
+        (2026, "7670", "00-0036988"),
+        (2026, "9999", None),
+    ]
+
+
 def test_active_player_bio_cache_sync_skips_fly_when_every_provider_id_is_cached(tmp_path):
     """A repeated active refresh must reuse complete local player-bio mappings."""
     import duckdb

@@ -475,6 +475,25 @@ def validate_control_plane_rename(conn, *, source_db: str, target_db: str) -> No
         raise ValueError("rename target belongs to an unrelated league")
 
 
+def _reconcile_inventory_credentials(conn, target_db: str) -> None:
+    """Mark the inventory credential flag when an encrypted credential row exists."""
+    if not _qualified_table_exists(conn, "accounts", "league_inventory"):
+        return
+    if "has_credentials" not in _qualified_columns(conn, "accounts", "league_inventory"):
+        return
+    if not _qualified_table_exists(conn, "main", "league_credentials"):
+        return
+    if not conn.execute(
+        "SELECT 1 FROM main.league_credentials WHERE database_name = ? LIMIT 1",
+        [target_db],
+    ).fetchone():
+        return
+    conn.execute(
+        "UPDATE accounts.league_inventory SET has_credentials = TRUE WHERE database_name = ?",
+        [target_db],
+    )
+
+
 def retarget_league_control_plane(
     conn,
     *,
@@ -518,6 +537,7 @@ def retarget_league_control_plane(
         if str(prior[0]) != source_db or str(prior[1]) != target_db:
             raise ValueError("operation_id already belongs to a different rename")
         if str(prior[2]) == "COMMITTED":
+            _reconcile_inventory_credentials(conn, target_db)
             return {
                 "status": "ALREADY_COMMITTED",
                 "operation_id": operation_id,
@@ -584,6 +604,8 @@ def retarget_league_control_plane(
                 params,
             )
             updated_tables.append(f"{schema}.{table}")
+
+        _reconcile_inventory_credentials(conn, target_db)
 
         conn.execute(
             """

@@ -317,6 +317,23 @@ def test_control_plane_retarget_preserves_credentials_and_paid_entitlement() -> 
     assert result["status"] == "COMMITTED"
     assert "ciphertext" not in str(result)
 
+    conn.execute(
+        "UPDATE accounts.league_inventory SET has_credentials = FALSE "
+        "WHERE database_name = 'agusta_fantasy_league'"
+    )
+    retry = retarget_league_control_plane(
+        conn,
+        source_db="agustafantasyleague",
+        target_db="agusta_fantasy_league",
+        display_name="Agusta Fantasy League",
+        operation_id="rename-agusta",
+    )
+    assert retry["status"] == "ALREADY_COMMITTED"
+    assert conn.execute(
+        "SELECT has_credentials FROM accounts.league_inventory "
+        "WHERE database_name = 'agusta_fantasy_league'"
+    ).fetchone() == (True,)
+
 
 def test_control_plane_retarget_rejects_an_unrelated_existing_target() -> None:
     conn = _ops_connection()

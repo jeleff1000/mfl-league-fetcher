@@ -2040,29 +2040,24 @@ def _rename_league_server_side(
             source_db=source_db,
             target_db=target_db,
         )
-    finally:
-        ops_conn.close()
-
-    leagues_conn = db.connect_database(
-        leagues_path,
-        data_dir=data_dir,
-        threads=WRITE_DUCKDB_THREADS,
-    )
-    try:
-        data_result = consolidate_canonical_league(
-            leagues_conn,
-            source_db=source_db,
-            target_db=target_db,
-            display_name=display_name,
-            operation_id=operation_id,
-            registry=canonical_table_registry(),
+        leagues_conn = db.connect_database(
+            leagues_path,
+            data_dir=data_dir,
+            threads=WRITE_DUCKDB_THREADS,
         )
-        data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
-    finally:
-        leagues_conn.close()
+        try:
+            data_result = consolidate_canonical_league(
+                leagues_conn,
+                source_db=source_db,
+                target_db=target_db,
+                display_name=display_name,
+                operation_id=operation_id,
+                registry=canonical_table_registry(),
+            )
+            data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
+        finally:
+            leagues_conn.close()
 
-    ops_conn = db.connect_database(ops_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
-    try:
         control_result = retarget_league_control_plane(
             ops_conn,
             source_db=source_db,

@@ -306,6 +306,56 @@ def test_rename_league_rejects_invalid_target_before_write(client, monkeypatch):
     assert response.status_code == 400
 
 
+def test_server_side_rename_reuses_one_ops_connection(data_dir, monkeypatch):
+    import main as main_mod
+
+    leagues_path = data_dir / "___leagues.duckdb"
+    leagues = duckdb.connect(str(leagues_path))
+    leagues.execute("ALTER TABLE public.matchup ADD COLUMN db_name VARCHAR")
+    leagues.execute("UPDATE public.matchup SET db_name = 'old_league'")
+    leagues.close()
+
+    ops_path = data_dir / "___ops.duckdb"
+    ops = duckdb.connect(str(ops_path))
+    ops.execute("CREATE SCHEMA IF NOT EXISTS main")
+    ops.execute("CREATE TABLE main.league_credentials(database_name VARCHAR, token VARCHAR)")
+    ops.execute("INSERT INTO main.league_credentials VALUES ('old_league', 'encrypted')")
+    ops.close()
+
+    real_connect = main_mod.db.connect_database
+    ops_opens = 0
+
+    def connect_once(path, **kwargs):
+        nonlocal ops_opens
+        if str(path) == str(ops_path):
+            ops_opens += 1
+            if ops_opens > 1:
+                raise RuntimeError("ops database opened more than once")
+        return real_connect(path, **kwargs)
+
+    monkeypatch.setattr(main_mod.db, "connect_database", connect_once)
+    result = main_mod._rename_league_server_side(
+        data_dir=data_dir,
+        source_db="old_league",
+        target_db="new_league",
+        display_name="New League",
+        operation_id="rename-new-league",
+    )
+
+    assert result["status"] == "COMMITTED"
+    assert ops_opens == 1
+    leagues = duckdb.connect(str(leagues_path), read_only=True)
+    assert leagues.execute(
+        "SELECT DISTINCT db_name FROM public.matchup"
+    ).fetchall() == [("new_league",)]
+    leagues.close()
+    ops = duckdb.connect(str(ops_path), read_only=True)
+    assert ops.execute(
+        "SELECT database_name FROM main.league_credentials"
+    ).fetchall() == [("new_league",)]
+    ops.close()
+
+
 def test_server_state_exposes_runtime_capacity(client):
     resp = client.get("/internal/server-state")
     assert resp.status_code == 200

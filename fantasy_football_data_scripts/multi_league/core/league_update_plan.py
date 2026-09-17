@@ -282,7 +282,14 @@ def load_persisted_refresh_plan(
         "AND TRY_CAST(m.week AS INTEGER) = TRY_CAST(p.week AS INTEGER)) "
         "AND EXISTS (SELECT 1 FROM public.schedule s "
         "WHERE s.db_name = p.db_name AND TRY_CAST(s.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
-        "AND TRY_CAST(s.week AS INTEGER) = TRY_CAST(p.week AS INTEGER))))",
+        "AND TRY_CAST(s.week AS INTEGER) = TRY_CAST(p.week AS INTEGER)) "
+        "AND NOT EXISTS (SELECT 1 FROM public.player_fantasy incomplete "
+        "WHERE incomplete.db_name = p.db_name "
+        "AND TRY_CAST(incomplete.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
+        "AND TRY_CAST(incomplete.week AS INTEGER) = TRY_CAST(p.week AS INTEGER) "
+        "AND UPPER(TRIM(COALESCE(incomplete.position, ''))) IN ('QB', 'RB', 'WR', 'TE', 'K', 'DEF') "
+        "AND ABS(COALESCE(incomplete.fantasy_points, 0)) > 0 "
+        "AND (incomplete.season_ppg IS NULL OR incomplete.alltime_ppg IS NULL))))",
         database="___leagues",
     )
     materialized = {

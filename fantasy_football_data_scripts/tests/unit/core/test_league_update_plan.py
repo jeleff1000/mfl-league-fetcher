@@ -233,10 +233,11 @@ def test_persisted_plan_reads_historical_week_keys_without_other_leagues():
     }
     with duckdb.connect(":memory:") as conn:
         conn.execute("CREATE SCHEMA public")
-        conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER)")
+        conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
+                     "position VARCHAR, fantasy_points DOUBLE, season_ppg DOUBLE, alltime_ppg DOUBLE)")
         conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER)")
         conn.execute("CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER)")
-        conn.execute("INSERT INTO public.player_fantasy VALUES "
+        conn.execute("INSERT INTO public.player_fantasy (db_name, year, week) VALUES "
                      "('league_a', 2024, 3), ('league_a', 2025, 1), ('league_a', 2025, 17), "
                      "('league_a', 2026, 1), ('other', 2025, 99)")
 
@@ -269,10 +270,51 @@ def test_persisted_plan_replays_active_week_when_only_player_rows_exist():
     }
     with duckdb.connect(":memory:") as conn:
         conn.execute("CREATE SCHEMA public")
-        conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER)")
+        conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
+                     "position VARCHAR, fantasy_points DOUBLE, season_ppg DOUBLE, alltime_ppg DOUBLE)")
         conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER)")
         conn.execute("CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER)")
-        conn.execute("INSERT INTO public.player_fantasy VALUES ('league_a', 2026, 1)")
+        conn.execute("INSERT INTO public.player_fantasy (db_name, year, week) VALUES ('league_a', 2026, 1)")
+
+        class ScopedReader:
+            def query(self, sql, *, database):
+                if database == "___ops":
+                    return [row]
+                result = conn.execute(sql)
+                columns = [item[0] for item in result.description]
+                return [dict(zip(columns, values)) for values in result.fetchall()]
+
+        plan = load_persisted_refresh_plan(
+            ScopedReader(),
+            database_name="league_a",
+            active_season=2026,
+            expected_observed_digest=manifest_digest(current),
+        )
+
+    assert plan.weeks == (1,)
+    assert plan.reasons == ("missing_materialized_week",)
+
+
+def test_persisted_plan_replays_active_week_when_nonzero_offense_is_missing_ppg():
+    import duckdb
+
+    current = manifest(nfl=(resource("nfl", "game", "2026:1:A@B", "one"),))
+    row = {
+        "observed_manifest_json": canonical_manifest_json(current),
+        "observed_manifest_digest": manifest_digest(current),
+        "published_manifest_json": canonical_manifest_json(current),
+        "published_manifest_digest": manifest_digest(current),
+    }
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
+                     "position VARCHAR, fantasy_points DOUBLE, season_ppg DOUBLE, alltime_ppg DOUBLE)")
+        conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER)")
+        conn.execute("CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER)")
+        conn.execute("INSERT INTO public.player_fantasy VALUES "
+                     "('league_a', 2026, 1, 'WR', 16.4, NULL, NULL)")
+        conn.execute("INSERT INTO public.matchup VALUES ('league_a', 2026, 1)")
+        conn.execute("INSERT INTO public.schedule VALUES ('league_a', 2026, 1)")
 
         class ScopedReader:
             def query(self, sql, *, database):

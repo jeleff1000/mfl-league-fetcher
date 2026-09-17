@@ -145,19 +145,10 @@ jobs:
           --claim-version "${UPDATE_CLAIM_VERSION}"
           --require-entitled
 
-      - name: Cache Python virtualenv
-        uses: actions/cache@v5
-        id: cache-venv
-        with:
-          path: .venv
-          key: weekly-venv-${{ runner.os }}-py3.11-${{ hashFiles('requirements-weekly-update.txt') }}
-
-      - name: Create virtualenv
-        if: steps.cache-venv.outputs.cache-hit != 'true'
+      - name: Create weekly virtualenv
         run: python -m venv .venv
 
       - name: Install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           source .venv/bin/activate
           python -m pip install --upgrade pip

@@ -1589,7 +1589,7 @@ def test_active_snapshot_keeps_keeper_configuration_unscoped(monkeypatch):
     )
 
     assert "keeper_config" in refresh_yahoo_active_season.ACTIVE_REFRESH_SOURCE_TABLES
-    keeper_query = next(part for part in reader.sql[0].split("UNION ALL") if "keeper_config" in part)
+    keeper_query = next(sql for sql in reader.sql if 'public."keeper_config"' in sql)
     assert "year = 2026" not in keeper_query
 
 
@@ -1612,14 +1612,11 @@ def test_active_snapshot_drops_legacy_keeper_created_at_metadata():
         @staticmethod
         def query(_sql, **_kwargs):
             return [{
-                "source_table": "keeper_config",
-                "payload": {
-                    "db_name": "kmffl",
-                    "year": 0,
-                    "created_at": "2026-04-20 02:47:12",
-                    "updated_at": "2026-09-15 11:54:40",
-                    "enabled": True,
-                },
+                "db_name": ["kmffl"],
+                "year": [0],
+                "created_at": ["2026-04-20 02:47:12"],
+                "updated_at": ["2026-09-15 11:54:40"],
+                "enabled": [True],
             }]
 
     frames = refresh_yahoo_active_season._active_source_snapshot_frames(
@@ -1737,8 +1734,8 @@ def test_yahoo_refresh_persists_only_a_new_renewal_chain_without_losing_user_set
         local.close()
 
 
-def test_yahoo_refresh_reads_active_sources_in_one_tagged_snapshot(monkeypatch):
-    """The weekly worker avoids serial Fly request latency without changing data shape."""
+def test_yahoo_refresh_reads_active_sources_in_parallel_column_packs(monkeypatch):
+    """The weekly worker avoids repeated JSON keys without changing data shape."""
     from multi_league.core import delta_publish
     from scripts import refresh_yahoo_active_season
 
@@ -1755,19 +1752,14 @@ def test_yahoo_refresh_reads_active_sources_in_one_tagged_snapshot(monkeypatch):
 
         def query(self, sql, **_kwargs):
             self.sql.append(sql)
-            return [
-                {
-                    "source_table": "matchup",
-                    "payload": json.dumps({"db_name": "league_a", "year": 2026, "week": 1}),
-                },
-                {
-                    "source_table": "league_context",
-                    "payload": json.dumps({"db_name": "league_a", "platform": "yahoo"}),
-                },
-            ]
+            if 'public."matchup"' in sql:
+                return [{"db_name": ["league_a"], "year": [2026], "week": [1]}]
+            if 'public."league_context"' in sql:
+                return [{"db_name": ["league_a"], "platform": ["yahoo"]}]
+            return [{"db_name": None, "year": None}]
 
         def query_df(self, *_args, **_kwargs):
-            raise AssertionError("active snapshots must use one tagged Fly query")
+            raise AssertionError("active snapshots must use compact column packs")
 
     reader = Reader()
     frames = refresh_yahoo_active_season._source_frames(
@@ -1777,9 +1769,9 @@ def test_yahoo_refresh_reads_active_sources_in_one_tagged_snapshot(monkeypatch):
         tables=("matchup", "player_fantasy", "league_context"),
     )
 
-    assert len(reader.sql) == 1
-    assert "UNION ALL" in reader.sql[0]
-    assert "to_json" in reader.sql[0]
+    assert len(reader.sql) == 3
+    assert all("list(COLUMNS(*))" in sql for sql in reader.sql)
+    assert all("UNION ALL" not in sql and "to_json" not in sql for sql in reader.sql)
     assert frames["matchup"].to_dict("records") == [{"db_name": "league_a", "year": 2026, "week": 1}]
     assert frames["league_context"].to_dict("records") == [{"db_name": "league_a", "platform": "yahoo"}]
     assert frames["player_fantasy"].empty

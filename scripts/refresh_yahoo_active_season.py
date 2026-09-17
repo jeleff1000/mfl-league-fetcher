@@ -450,17 +450,17 @@ def _active_source_snapshot_frames(
     active_year: int,
     table_names: tuple[str, ...],
 ) -> dict[str, pd.DataFrame]:
-    """Read scoped league source rows in one Fly round trip, preserving schemas.
+    """Read scoped league source rows as compact column packs.
 
-    ``FlyReader.query_df`` is intentionally one-table-at-a-time.  The weekly
-    path needs the same raw canonical rows but does not need seven sequential
-    HTTP requests, so serialize each row on the DuckDB side and tag it with
-    its source table.  This changes transport only; the standard quick-import
-    hydration and transforms receive the same per-table frames as before.
+    Fly's JSON endpoint is row-oriented. Serializing a wide active-season table
+    with ``to_json(t)`` repeats every field name for every row. DuckDB's
+    ``list(COLUMNS(*))`` returns the same rows column-wise. Fetch independent
+    tables concurrently, then restore their ordinary DataFrame shape for the
+    unchanged quick-import hydration and transformations.
     """
     safe_db = _sql_literal(db_name)
-    query_parts: list[str] = []
-    for table_name in table_names:
+
+    def fetch_table(table_name: str) -> tuple[str, pd.DataFrame]:
         table_ref = f"public.{_quoted_identifier(table_name)}"
         where_clause = f"db_name = {safe_db}"
         # keeper_config contains the league-wide year=0 default (and possible
@@ -481,29 +481,30 @@ def _active_source_snapshot_frames(
                 )
             elif table_name != "keeper_config" and "year" in registry[table_name]["columns"]:
                 where_clause += f" AND year = {int(active_year)}"
-        query_parts.append(
-            "(SELECT "
-            f"{_sql_literal(table_name)} AS source_table, to_json(t) AS payload "
-            f"FROM {table_ref} AS t WHERE {where_clause}"
-            ")"
+        rows = reader.query(
+            f"SELECT list(COLUMNS(*)) FROM {table_ref} WHERE {where_clause}",
+            database=LEAGUES_DATABASE,
         )
+        if not rows:
+            return table_name, _empty_source_frame()
+        if len(rows) != 1:
+            raise RuntimeError(f"Fly active source snapshot returned multiple packs for {table_name}")
 
-    rows = reader.query(
-        "SELECT source_table, payload FROM ("
-        + " UNION ALL ".join(query_parts)
-        + ") AS active_source_snapshot",
-        database=LEAGUES_DATABASE,
-    )
-    payloads: dict[str, list[dict[str, Any]]] = {table_name: [] for table_name in table_names}
-    for row in rows:
-        table_name = str(row.get("source_table", ""))
-        if table_name not in payloads:
-            raise RuntimeError(f"Fly active source snapshot returned unknown table {table_name!r}")
-        payload = row.get("payload")
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        if not isinstance(payload, dict):
-            raise RuntimeError(f"Fly active source snapshot returned invalid {table_name} payload")
+        columns: dict[str, list[Any]] = {}
+        lengths: set[int] = set()
+        for column, values in rows[0].items():
+            if values is None:
+                values = []
+            if not isinstance(values, list):
+                raise RuntimeError(
+                    f"Fly active source snapshot returned invalid {table_name}.{column} column pack"
+                )
+            columns[str(column)] = values
+            lengths.add(len(values))
+        if len(lengths) > 1:
+            raise RuntimeError(f"Fly active source snapshot returned uneven columns for {table_name}")
+
+        frame = pd.DataFrame(columns)
         if table_name == "keeper_config":
             # Older Fly keeper tables retain a server-generated ``created_at``
             # column from the pre-canonical DDL. Weekly updates never publish
@@ -511,13 +512,18 @@ def _active_source_snapshot_frames(
             # only ``updated_at`` plus the user's keeper fields. Keep the live
             # row untouched on Fly while excluding this legacy metadata from
             # local transformation and preservation witnesses.
-            payload.pop("created_at", None)
-        payloads[table_name].append(payload)
+            frame = frame.drop(columns=["created_at"], errors="ignore")
+        if frame.empty and "db_name" not in frame.columns:
+            return table_name, _empty_source_frame()
+        return table_name, frame
 
-    return {
-        table_name: pd.DataFrame(records) if records else _empty_source_frame()
-        for table_name, records in payloads.items()
-    }
+    frames: dict[str, pd.DataFrame] = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(table_names))) as pool:
+        futures = [pool.submit(fetch_table, table_name) for table_name in table_names]
+        for future in futures:
+            table_name, frame = future.result()
+            frames[table_name] = frame
+    return {table_name: frames[table_name] for table_name in table_names}
 
 
 def _historical_source_snapshot_frames(

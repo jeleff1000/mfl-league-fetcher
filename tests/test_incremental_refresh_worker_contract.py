@@ -92,7 +92,8 @@ def test_active_updates_use_bounded_ops_and_runtime_dependencies(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "restore-research-ops-cache" not in text
     assert "requirements-weekly-update.txt" in text
-    assert "hashFiles('requirements-weekly-update.txt')" in text
+    assert "actions/cache" not in text
+    assert "cache-venv" not in text
     assert "hashFiles('requirements.txt')" not in text
 
 
@@ -195,7 +196,7 @@ def test_paid_manual_execute_uses_the_same_attempt_and_terminal_lifecycle(platfo
     assert "id: manual_claim" in text
     assert "scripts/claim_manual_league_update.py" in text
     assert f"--platform {platform}" in text
-    assert text.index("scripts/claim_manual_league_update.py") < text.index("Cache Python virtualenv")
+    assert text.index("scripts/claim_manual_league_update.py") < text.index("Create weekly virtualenv")
     assert "steps.manual_claim.outputs.token || inputs.dispatch_token" in text
     assert "steps.manual_claim.outputs.attempt_id || inputs.attempt_id" in text
     assert "steps.manual_claim.outputs.claim_version || inputs.claim_version" in text

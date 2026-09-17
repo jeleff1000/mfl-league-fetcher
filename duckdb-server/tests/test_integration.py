@@ -1477,6 +1477,20 @@ def test_checkpoint_failure_is_reported_without_hiding_committed_state(client):
     )
 
 
+def test_scoped_recovery_defers_checkpoint_when_wal_checkpointing_is_disabled(monkeypatch):
+    import main as main_mod
+
+    class MustNotCheckpoint:
+        def execute(self, _sql):
+            raise AssertionError("known-corrupt base must not be checkpointed")
+
+    monkeypatch.setattr(main_mod, "DUCKDB_CHECKPOINT_WAL_MB", 0)
+    assert main_mod._scoped_recovery_checkpoint_result(MustNotCheckpoint()) == (
+        False,
+        "checkpoint deferred while WAL checkpointing is disabled",
+    )
+
+
 def test_post_merge_checkpoint_disarms_merge_kill_timer_first(tmp_path, monkeypatch):
     import main as main_mod
 

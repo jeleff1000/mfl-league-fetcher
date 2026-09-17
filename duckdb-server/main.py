@@ -1668,6 +1668,13 @@ def _checkpoint_result(conn) -> tuple[bool, str | None]:
     return True, None
 
 
+def _scoped_recovery_checkpoint_result(conn) -> tuple[bool, str | None]:
+    """Respect the server's temporary WAL-only mode for a scoped repair."""
+    if DUCKDB_CHECKPOINT_WAL_MB <= 0:
+        return False, "checkpoint deferred while WAL checkpointing is disabled"
+    return _checkpoint_result(conn)
+
+
 def _replace_canonical_table(
     database_path: Path,
     incoming_path: Path,
@@ -2034,7 +2041,7 @@ def _rebuild_league_derived_from_sources(
         # The publication is already committed. Return an explicit durable
         # state instead of converting a post-commit maintenance failure into
         # an ambiguous HTTP 500 that callers might blindly retry.
-        checkpointed, checkpoint_error = _checkpoint_result(conn)
+        checkpointed, checkpoint_error = _scoped_recovery_checkpoint_result(conn)
         return {
             "status": "COMMITTED",
             "db_name": db_name,

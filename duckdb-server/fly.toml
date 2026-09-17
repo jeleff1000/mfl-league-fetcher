@@ -20,16 +20,16 @@ swap_size_mb = 4096
   DUCKDB_THREADS = '1'
   DUCKDB_WRITE_THREADS = '2'
   DUCKDB_MAX_TEMP_DIRECTORY_SIZE = '20GiB'
-  # Keep automatic checkpoints bounded. A 16GiB WAL made later checkpoints
-  # unnecessarily long and vulnerable to machine restarts.
-  DUCKDB_CHECKPOINT_THRESHOLD = '512MB'
+  # Temporary while the preserved base file contains a known bad block:
+  # keep narrow writes in the durable WAL instead of touching that block.
+  DUCKDB_CHECKPOINT_THRESHOLD = '16GiB'
   MERGE_STEP_TIMEOUT_SECONDS = '180'
   MERGE_HARD_EXIT_SECONDS = '360'
   MAX_INFLIGHT_DELTA_PUBLISHES = '1'
   DELTA_ADMISSION_TIMEOUT_SECONDS = '30'
   DELTA_BUSY_RETRY_AFTER_SECONDS = '15'
   ASYNC_DB_STARTUP = '1'
-  DUCKDB_CHECKPOINT_WAL_MB = '512'
+  DUCKDB_CHECKPOINT_WAL_MB = '0'
   DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = '600'
   # Admin-only full database replacements. The current verified ___ops_nfl
   # artifact is larger than the former 5 GiB ceiling; incremental league

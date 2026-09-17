@@ -163,20 +163,8 @@ def test_quarantine_targets_swaps_only_the_five_corrupt_objects():
         )
 
 
-def test_drop_quarantined_targets_removes_only_the_five_old_objects_and_checkpoints():
-    conn = _Connection()
-    quarantined = {
-        table: f"__corrupt_recovery_{table}" for table in repair.TARGET_TABLES
-    }
-
-    repair.drop_quarantined_targets(conn, quarantined)
-
-    assert conn.sql[0] == "BEGIN TRANSACTION"
-    assert conn.sql[-2:] == ["COMMIT", "CHECKPOINT"]
-    assert [sql for sql in conn.sql if sql.startswith("DROP TABLE")] == [
-        f'DROP TABLE public."__corrupt_recovery_{table}"'
-        for table in repair.TARGET_TABLES
-    ]
+def test_recovery_has_no_way_to_drop_quarantined_corrupt_objects():
+    assert not hasattr(repair, "drop_quarantined_targets")
 
 
 def test_quarantine_or_resume_reuses_complete_existing_quarantine(monkeypatch):

@@ -112,26 +112,6 @@ def quarantine_or_resume_corrupt_targets(conn) -> dict[str, str]:
     return quarantine_corrupt_targets(conn)
 
 
-def drop_quarantined_targets(conn, quarantined: dict[str, str]) -> None:
-    """Drop only the displaced damaged objects, then prove a durable checkpoint."""
-    expected = {
-        table: f"__corrupt_recovery_{table}" for table in TARGET_TABLES
-    }
-    if quarantined != expected:
-        raise ValueError("quarantined target map does not match the recovery allowlist")
-    conn.execute("BEGIN TRANSACTION")
-    try:
-        for table in TARGET_TABLES:
-            conn.execute(
-                f"DROP TABLE public.{_quote_identifier(quarantined[table])}"
-            )
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    conn.execute("CHECKPOINT")
-
-
 def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
@@ -242,11 +222,7 @@ def main() -> int:
     parser.add_argument("--ops-nfl", type=Path)
     parser.add_argument("--db-name", action="append", default=[])
     parser.add_argument("--quarantine-corrupt-targets-only", action="store_true")
-    parser.add_argument("--drop-quarantined-targets-only", action="store_true")
     args = parser.parse_args()
-
-    if args.quarantine_corrupt_targets_only and args.drop_quarantined_targets_only:
-        parser.error("quarantine modes are mutually exclusive")
 
     conn = duckdb.connect(str(args.database.resolve()))
     try:
@@ -254,11 +230,7 @@ def main() -> int:
             _attach_if_present(conn, args.ops_nfl.resolve(), "___ops_nfl")
         if args.ops:
             _attach_if_present(conn, args.ops.resolve(), "___ops")
-        if args.drop_quarantined_targets_only:
-            quarantined = quarantine_or_resume_corrupt_targets(conn)
-            drop_quarantined_targets(conn, quarantined)
-            result = {"quarantined_and_dropped": quarantined, "checkpointed": True}
-        elif args.quarantine_corrupt_targets_only:
+        if args.quarantine_corrupt_targets_only:
             result = {"quarantined": quarantine_corrupt_targets(conn)}
         else:
             result = reaggregate_all(conn, db_names=args.db_name or None)

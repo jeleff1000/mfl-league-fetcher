@@ -401,6 +401,46 @@ def test_active_refresh_restores_a_valid_derived_player_value_only_when_rebuild_
         local.close()
 
 
+def test_active_refresh_restores_a_valid_transaction_conveyance_when_rebuild_cannot_rederive_it(tmp_path):
+    """A narrow weekly rebuild must retain a previously resolved draft-pick conveyance."""
+    from multi_league.core.local_db import LocalLeagueDB
+    from multi_league.core.league_update_ownership import restore_active_derived_source_values
+
+    source = pd.DataFrame(
+        [
+            {
+                "db_name": "playing_for_keeps_league",
+                "transaction_id": "1356348567895150592",
+                "transaction_sequence": 2,
+                "year": 2026,
+                "conveyed_player": "Resolved Rookie",
+            }
+        ]
+    )
+    local = LocalLeagueDB(tmp_path, "playing_for_keeps_league")
+    try:
+        local.ensure_table("transactions")
+        local._insert_into_table("transactions", source)
+        local.connect().execute(
+            "UPDATE public.transactions SET conveyed_player = NULL "
+            "WHERE transaction_id = '1356348567895150592' AND transaction_sequence = 2"
+        )
+
+        restored = restore_active_derived_source_values(
+            local,
+            {"transactions": source},
+            active_year=2026,
+        )
+
+        assert restored["transactions"]["conveyed_player"] == 1
+        assert local.connect().execute(
+            "SELECT conveyed_player FROM public.transactions "
+            "WHERE transaction_id = '1356348567895150592' AND transaction_sequence = 2"
+        ).fetchone()[0] == "Resolved Rookie"
+    finally:
+        local.close()
+
+
 def test_new_provider_row_does_not_copy_another_rows_enrichment():
     existing = pd.DataFrame([{
         "db_name": "league_a",

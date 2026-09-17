@@ -51,6 +51,32 @@ def _sleeper_confirmed_no_draft(active_league: dict[str, Any], manifest: pd.Data
     return manifest.empty and not str(active_league.get("draft_id") or "").strip()
 
 
+def _sleeper_draft_manifest_or_hold(
+    draft_fetcher: Any,
+    *,
+    active_year: int,
+    expected_primary_draft_id: str,
+) -> tuple[pd.DataFrame | None, bool]:
+    """Keep an incomplete draft out of a weekly publication without blocking scores."""
+    try:
+        return (
+            draft_fetcher.fetch_draft_manifest_for_year(
+                active_year,
+                expected_primary_draft_id=expected_primary_draft_id,
+            ),
+            False,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if not (
+            message.startswith("Sleeper primary draft ")
+            and message.endswith(" has incomplete picks")
+        ):
+            raise
+        print(f"[Sleeper] {message}; preserving the existing draft partition")
+        return None, True
+
+
 def _active_sleeper_roster_scope(rosters: pd.DataFrame) -> pd.DataFrame:
     """Expose Sleeper's raw ``points`` under the shared refresh score field.
 
@@ -447,19 +473,22 @@ def _merge_active_payloads(
         )
     draft_rows = 0
     draft_fetcher = SleeperDraftFetcher(ctx, client, player_cache)
-    draft_manifest = draft_fetcher.fetch_draft_manifest_for_year(
-        active_year, expected_primary_draft_id=str(active_league.get("draft_id") or "").strip()
+    draft_manifest, draft_held_incomplete = _sleeper_draft_manifest_or_hold(
+        draft_fetcher,
+        active_year=active_year,
+        expected_primary_draft_id=str(active_league.get("draft_id") or "").strip(),
     )
-    draft_rows = refresh_authoritative_draft_partition(
-        local_db,
-        provider_manifest=draft_manifest,
-        key_columns=("draft_id", "pick"),
-        fetch_full=lambda: draft_fetcher.fetch_draft_for_year(active_year),
-        year=active_year,
-        platform="sleeper",
-        league_id=league_id,
-        confirmed_no_draft=_sleeper_confirmed_no_draft(active_league, draft_manifest),
-    )
+    if draft_manifest is not None:
+        draft_rows = refresh_authoritative_draft_partition(
+            local_db,
+            provider_manifest=draft_manifest,
+            key_columns=("draft_id", "pick"),
+            fetch_full=lambda: draft_fetcher.fetch_draft_for_year(active_year),
+            year=active_year,
+            platform="sleeper",
+            league_id=league_id,
+            confirmed_no_draft=_sleeper_confirmed_no_draft(active_league, draft_manifest),
+        )
     from multi_league.core.league_update_validation import (
         IncompleteSourceError,
         validate_tabular_active_scope,
@@ -496,6 +525,7 @@ def _merge_active_payloads(
         "transaction_rows": int(len(transactions)),
         "draft_rows": draft_rows,
         "draft_validated": True,
+        "draft_status": "held_incomplete" if draft_held_incomplete else "refreshed",
         "pending_nfl_teams": sorted(pending_nfl_teams),
         "provider_validation": validation,
     }
@@ -717,6 +747,13 @@ def main(argv: list[str] | None = None) -> int:
                 frontend_configuration_rows=preservation_witnesses,
             )
             timer.mark("shared_transformations")
+            from multi_league.core.league_update_ownership import restore_active_derived_source_values
+
+            receipt["restored_active_derived_values"] = restore_active_derived_source_values(
+                local_db,
+                transform_source_frames,
+                active_year=active_year,
+            )
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="sleeper_player_id",

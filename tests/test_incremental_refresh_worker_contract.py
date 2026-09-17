@@ -159,7 +159,7 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert '--status "${recovery_status}"' in text
     assert 'recovery_status=$(python scripts/league_update_workflow_receipt.py' in text
     assert text.index("scripts/warm_vercel_cache.py") < text.index("--status succeeded")
-    assert "timeout-minutes: 15" in text
+    assert "timeout-minutes: 2" in text
 
 
 @pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())

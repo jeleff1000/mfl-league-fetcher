@@ -559,6 +559,13 @@ def main(argv: list[str] | None = None) -> int:
                 frontend_configuration_rows=preservation_witnesses,
             )
             timer.mark("shared_transformations")
+            from multi_league.core.league_update_ownership import restore_active_derived_source_values
+
+            receipt["restored_active_derived_values"] = restore_active_derived_source_values(
+                local_db,
+                transform_source_frames,
+                active_year=active_year,
+            )
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="espn_player_id",

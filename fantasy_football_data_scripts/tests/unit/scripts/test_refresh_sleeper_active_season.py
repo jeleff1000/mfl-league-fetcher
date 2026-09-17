@@ -215,3 +215,37 @@ def test_active_sleeper_roster_scope_exposes_points_before_finalized_game_gate()
     assert actual["fantasy_points"].tolist() == [21.5]
     assert actual["points"].tolist() == [21.5]
     assert actual["nfl_team"].tolist() == ["CHI"]
+
+
+def test_incomplete_active_sleeper_draft_is_held_out_of_weekly_refresh():
+    from refresh_sleeper_active_season import _sleeper_draft_manifest_or_hold
+
+    class DraftFetcher:
+        def fetch_draft_manifest_for_year(self, year, *, expected_primary_draft_id):
+            assert year == 2026
+            assert expected_primary_draft_id == "draft-2026"
+            raise ValueError("Sleeper primary draft draft-2026 has incomplete picks")
+
+    manifest, held = _sleeper_draft_manifest_or_hold(
+        DraftFetcher(),
+        active_year=2026,
+        expected_primary_draft_id="draft-2026",
+    )
+
+    assert manifest is None
+    assert held is True
+
+
+def test_unrelated_sleeper_draft_error_still_fails_closed():
+    from refresh_sleeper_active_season import _sleeper_draft_manifest_or_hold
+
+    class DraftFetcher:
+        def fetch_draft_manifest_for_year(self, year, *, expected_primary_draft_id):
+            raise ValueError("Sleeper drafts endpoint did not return an array")
+
+    with pytest.raises(ValueError, match="did not return an array"):
+        _sleeper_draft_manifest_or_hold(
+            DraftFetcher(),
+            active_year=2026,
+            expected_primary_draft_id="draft-2026",
+        )

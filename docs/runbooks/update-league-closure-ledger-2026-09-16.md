@@ -611,6 +611,22 @@ transactions; the latest generation timestamp remained 2026-09-16 20:04:35
 UTC. A temporary zero-row repair table was removed and the catalog has no
 `__repair_*` or `__corrupt_*` leftovers. This path must not be retried.
 
+Follow-up evidence narrowed that statement: the failed path attempted to drop
+the damaged objects. Direct reaggregation run `35169976934` proved the first
+canonical calculation completes, then `DELETE FROM player_fantasy_season`
+fails on physical block 90714112 (computed checksum 5168518579405463287,
+stored checksum 18392342689821271652). The fail-fast runner stopped on
+`a_circle_of_jerks` with zero completed leagues; it did not mutate production.
+
+Isolated run `35170289421` then tested a different, non-destructive catalog
+operation against retained recovery volume `vol_4919j2m0wzg0xw5r`: atomically
+rename each of the five damaged objects to `__corrupt_recovery_*` and install
+an empty canonical shell without reading or dropping the damaged block. All
+five swaps committed successfully in 1m33s including Fly machine startup.
+Production remained untouched. This proves the safe fast recovery boundary is
+catalog quarantine followed by the already-built snapshot seed and changed-
+league reaggregation; no full logical database copy is required.
+
 The next recovery stage is isolated and fail-closed: restore the preservation
 snapshot to a new Fly volume, copy every healthy table from its exact catalog
 DDL, and recreate only the five proven-damaged derived tables empty. The helper

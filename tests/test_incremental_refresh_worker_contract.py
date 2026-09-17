@@ -227,7 +227,9 @@ def test_paid_manual_execute_uses_the_same_attempt_and_terminal_lifecycle(platfo
     assert "id: manual_claim" in text
     assert "scripts/claim_manual_league_update.py" in text
     assert f"--platform {platform}" in text
-    assert text.index("scripts/claim_manual_league_update.py") < text.index("Install dependencies")
+    assert text.index("Install dependencies") < text.index("scripts/claim_manual_league_update.py")
+    assert "Install Fly claim dependency" not in text
+    assert "--no-cache-dir --no-compile" in text
     assert "steps.manual_claim.outputs.token || inputs.dispatch_token" in text
     assert "steps.manual_claim.outputs.attempt_id || inputs.attempt_id" in text
     assert "steps.manual_claim.outputs.claim_version || inputs.claim_version" in text

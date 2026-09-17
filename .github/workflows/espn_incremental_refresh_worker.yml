@@ -111,9 +111,8 @@ jobs:
         if: inputs.execute && !inputs.cache_only && inputs.dispatch_token == '' && inputs.observed_manifest_digest == ''
         run: python scripts/probe_league_update_freshness.py --db "${INPUT_DB_NAME}"
 
-      - name: Install Fly claim dependency
-        if: inputs.execute && !inputs.cache_only
-        run: python -m pip install --disable-pip-version-check --quiet requests
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check --quiet --no-cache-dir --no-compile -r requirements-weekly-update.txt
 
       - name: Claim paid manual update
         id: manual_claim
@@ -152,9 +151,6 @@ jobs:
           --attempt-id "${UPDATE_ATTEMPT_ID}"
           --claim-version "${UPDATE_CLAIM_VERSION}"
           --require-entitled
-
-      - name: Install dependencies
-        run: python -m pip install --disable-pip-version-check --quiet -r requirements-weekly-update.txt
 
       - name: Validate cache-only recovery request
         if: inputs.cache_only

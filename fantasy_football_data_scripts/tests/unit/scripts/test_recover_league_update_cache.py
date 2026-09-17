@@ -34,6 +34,7 @@ def test_cache_recovery_never_refetches_or_republishes_and_rechecks_generation(
         def query(self, sql, *, database):
             assert database == "___ops"
             assert "d.status IN ('committed', 'committed_cache_pending')" in sql
+            assert "LEFT JOIN accounts.league_update_manifests" in sql
             assert "original" in sql
             return [{**ROW, "status": "committed"}]
 
@@ -84,6 +85,7 @@ def test_blank_token_recovers_only_an_exact_committed_manual_attempt(monkeypatch
         def query(self, sql, *, database):
             assert database == "___ops"
             assert "manual-%" in sql
+            assert "LEFT JOIN accounts.league_update_manifests" in sql
             return [manual]
 
         def query_scalar(self, sql, *, database):

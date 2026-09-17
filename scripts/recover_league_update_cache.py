@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         "d.publication_receipt_json, "
         "m.published_manifest_digest, m.published_manifest_json "
         "FROM accounts.league_update_dispatches d "
-        "JOIN accounts.league_update_manifests m "
+        "LEFT JOIN accounts.league_update_manifests m "
         "ON m.database_name = d.database_name "
         f"WHERE d.database_name = {_literal(args.db)} "
         f"{claim_predicate}"

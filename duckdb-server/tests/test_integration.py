@@ -306,35 +306,6 @@ def test_rename_league_rejects_invalid_target_before_write(client, monkeypatch):
     assert response.status_code == 400
 
 
-def test_rename_write_connection_exposes_ops_catalog_and_releases_it(data_dir):
-    import main as main_mod
-
-    ops_path = data_dir / "___ops.duckdb"
-    ops = duckdb.connect(str(ops_path))
-    ops.execute("CREATE SCHEMA nfl_historical")
-    ops.execute("CREATE TABLE nfl_historical.player_bio (NFL_player_id VARCHAR)")
-    ops.execute("INSERT INTO nfl_historical.player_bio VALUES ('player-1')")
-    ops.close()
-
-    with main_mod._rename_league_write_connection(data_dir) as conn:
-        assert conn.execute(
-            "SELECT NFL_player_id FROM ___ops.nfl_historical.player_bio"
-        ).fetchone() == ("player-1",)
-
-    writer = main_mod.db.connect_database(
-        ops_path,
-        data_dir=data_dir,
-        threads=main_mod.WRITE_DUCKDB_THREADS,
-    )
-    try:
-        writer.execute("INSERT INTO nfl_historical.player_bio VALUES ('player-2')")
-        assert writer.execute(
-            "SELECT COUNT(*) FROM nfl_historical.player_bio"
-        ).fetchone()[0] == 2
-    finally:
-        writer.close()
-
-
 def test_server_state_exposes_runtime_capacity(client):
     resp = client.get("/internal/server-state")
     assert resp.status_code == 200

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -99,13 +99,12 @@ def consolidate_canonical_league(
     display_name: str,
     operation_id: str,
     registry: Mapping[str, Mapping[str, Any]],
-    rebuild: Callable[[Any, str], Any] | None = None,
 ) -> dict[str, Any]:
     """Move one canonical league identity to ``target_db``.
 
-    Existing target rows win identity conflicts. Source-only identities move to
-    the target, generated rows are cleared for a complete-chain rebuild, and a
-    durable receipt makes an identical retry a no-op.
+    Existing target facts win identity conflicts. Aggregate rows are retargeted
+    with source rows winning only matching identities, preserving target-only
+    current-season rows. A durable receipt makes an identical retry a no-op.
     """
     if not _DB_NAME_RE.fullmatch(source_db) or not _DB_NAME_RE.fullmatch(target_db):
         raise ValueError("invalid league database name")
@@ -135,7 +134,7 @@ def consolidate_canonical_league(
     canonical = [table for table in sorted(registry) if table in existing]
     source_years = _years(conn, source_db, existing)
     target_years_before = _years(conn, target_db, existing)
-    generated_cleared: list[str] = []
+    aggregates_retargeted: list[str] = []
     moved_rows: dict[str, int] = {}
 
     conn.execute("BEGIN TRANSACTION")
@@ -191,11 +190,38 @@ def consolidate_canonical_league(
                 continue
             table_ref = f"public.{_qident(table)}"
             if str(registry[table].get("kind")) == "aggregate":
+                source_count = _count(conn, table, source_db)
+                if source_count <= 0:
+                    continue
+                identity_keys = [
+                    str(key)
+                    for key in registry[table].get("identity_keys", [])
+                    if str(key) != "db_name" and str(key) in columns
+                ]
+                if identity_keys:
+                    identity_match = " AND ".join(
+                        f"t.{_qident(key)} IS NOT DISTINCT FROM s.{_qident(key)}"
+                        for key in identity_keys
+                    )
+                    conn.execute(
+                        f"""
+                        DELETE FROM {table_ref} AS t
+                        WHERE t.db_name = ?
+                          AND EXISTS (
+                            SELECT 1 FROM {table_ref} AS s
+                            WHERE s.db_name = ? AND {identity_match}
+                          )
+                        """,
+                        [target_db, source_db],
+                    )
+                else:
+                    conn.execute(f"DELETE FROM {table_ref} WHERE db_name = ?", [target_db])
                 conn.execute(
-                    f"DELETE FROM {table_ref} WHERE db_name IN (?, ?)",
-                    [source_db, target_db],
+                    f"UPDATE {table_ref} SET db_name = ? WHERE db_name = ?",
+                    [target_db, source_db],
                 )
-                generated_cleared.append(table)
+                moved_rows[table] = source_count
+                aggregates_retargeted.append(table)
                 continue
 
             source_count = _count(conn, table, source_db)
@@ -250,8 +276,6 @@ def consolidate_canonical_league(
                 [normalized_name, target_db],
             )
 
-        rebuild_result = rebuild(conn, target_db) if rebuild is not None else None
-
         source_rows_remaining = sum(_count(conn, table, source_db) for table in canonical)
         if source_rows_remaining:
             raise RuntimeError(
@@ -270,9 +294,8 @@ def consolidate_canonical_league(
             "target_db": target_db,
             "source_rows_remaining": source_rows_remaining,
             "target_years": target_years,
-            "generated_tables_cleared": generated_cleared,
+            "aggregate_tables_retargeted": aggregates_retargeted,
             "moved_rows": moved_rows,
-            "rebuild": rebuild_result,
         }
         result_json = json.dumps(result, sort_keys=True, separators=(",", ":"))
         conn.execute(

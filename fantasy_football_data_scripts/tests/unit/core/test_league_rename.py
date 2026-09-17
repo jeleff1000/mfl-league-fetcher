@@ -65,7 +65,8 @@ def test_partial_rename_consolidates_history_without_losing_target_only_rows() -
     conn.execute(
         "INSERT INTO public.homepage_manager_rankings VALUES "
         "('agustafantasyleague', 'Ashley', 100), "
-        "('agusta_fantasy_league', 'Ashley', 1)"
+        "('agusta_fantasy_league', 'Ashley', 1), "
+        "('agusta_fantasy_league', 'Bob', 2)"
     )
 
     result = consolidate_canonical_league(
@@ -87,11 +88,12 @@ def test_partial_rename_consolidates_history_without_losing_target_only_rows() -
         "SELECT league_name, league_id FROM public.league_context WHERE db_name = 'agusta_fantasy_league'"
     ).fetchall() == [("Agusta Fantasy League", "current")]
     assert conn.execute(
-        "SELECT COUNT(*) FROM public.homepage_manager_rankings WHERE db_name IN ('agustafantasyleague', 'agusta_fantasy_league')"
-    ).fetchone()[0] == 0
+        "SELECT manager, wins FROM public.homepage_manager_rankings "
+        "WHERE db_name = 'agusta_fantasy_league' ORDER BY manager"
+    ).fetchall() == [("Ashley", 100), ("Bob", 2)]
     assert result["source_rows_remaining"] == 0
     assert result["target_years"] == [2009, 2025, 2026]
-    assert result["generated_tables_cleared"] == ["homepage_manager_rankings"]
+    assert result["aggregate_tables_retargeted"] == ["homepage_manager_rankings"]
 
 
 def test_partial_rename_keeps_target_version_of_an_overlapping_identity() -> None:
@@ -163,37 +165,6 @@ def test_rename_never_touches_tables_outside_the_registry() -> None:
 
     assert conn.execute("SELECT * FROM public.__corrupt_recovery_matchup").fetchall() == [
         ("old_league", 2001)
-    ]
-
-
-def test_data_rename_rolls_back_when_derived_rebuild_fails() -> None:
-    conn = _connection()
-    conn.execute("INSERT INTO public.matchup VALUES ('old_league', 2025, '2025_1_a', 91)")
-    conn.execute(
-        "INSERT INTO public.homepage_manager_rankings VALUES ('old_league', 'Ashley', 100)"
-    )
-
-    def fail_rebuild(_conn, _target_db: str) -> None:
-        raise RuntimeError("derived rebuild failed")
-
-    try:
-        consolidate_canonical_league(
-            conn,
-            source_db="old_league",
-            target_db="new_league",
-            display_name="New League",
-            operation_id="rename-rollback",
-            registry=_registry(),
-            rebuild=fail_rebuild,
-        )
-    except RuntimeError as exc:
-        assert str(exc) == "derived rebuild failed"
-    else:  # pragma: no cover
-        raise AssertionError("expected rebuild failure")
-
-    assert conn.execute("SELECT db_name FROM public.matchup").fetchall() == [("old_league",)]
-    assert conn.execute("SELECT db_name FROM public.homepage_manager_rankings").fetchall() == [
-        ("old_league",)
     ]
 
 

@@ -20,7 +20,6 @@ FRANCHISE_MANAGER_COLUMNS = {
     "franchise_id": "manager",
     "opponent_franchise_id": "opponent",
 }
-PLAYER_UNROSTERED_FILTER = "LOWER(TRIM(COALESCE(manager, ''))) NOT IN ('unrostered', 'fa', 'free agent', 'waivers', '')"
 BUSY_READ_ATTEMPTS = 8
 BUSY_READ_MAX_SLEEP_SECONDS = 30
 BUSY_ERROR_MARKERS = (
@@ -1843,9 +1842,6 @@ def _copy_one_merge_source_to_public(
         table_ref = _table_ref(table_name)
         year_filter = f"TRY_CAST(year AS INTEGER) IN ({year_sql})"
         source_filter = f"db_name = {_quote_sql(source_db)} AND {year_filter}"
-        if table_name == "player_fantasy" and "manager" in columns:
-            source_filter += f" AND {PLAYER_UNROSTERED_FILTER}"
-
         _execute_with_busy_retry(
             writer,
             f"""

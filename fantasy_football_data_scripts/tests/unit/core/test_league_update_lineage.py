@@ -5,6 +5,66 @@ from __future__ import annotations
 import pytest
 
 
+class _SplitHistoryReader:
+    def __init__(self, *, aliases, years):
+        self.aliases = aliases
+        self.years = years
+
+    def query(self, sql, database):
+        if database == "___ops":
+            return [{"database_name": alias} for alias in self.aliases]
+        if database == "___leagues":
+            return [
+                {"db_name": db_name, "year": year}
+                for db_name, values in self.years.items()
+                for year in values
+            ]
+        raise AssertionError(database)
+
+
+def test_canonical_history_guard_rejects_years_stranded_under_legacy_slug():
+    from multi_league.core.league_update_lineage import (
+        ActiveUpdateSegmentError,
+        assert_canonical_history_complete,
+    )
+
+    reader = _SplitHistoryReader(
+        aliases=["legacy_slug"],
+        years={"canonical_slug": [2026], "legacy_slug": [2009, 2010, 2025]},
+    )
+
+    with pytest.raises(ActiveUpdateSegmentError, match="legacy_slug.*2009, 2010, 2025"):
+        assert_canonical_history_complete(
+            reader,
+            database_name="canonical_slug",
+            active_season=2026,
+        )
+
+
+def test_canonical_history_guard_accepts_already_copied_legacy_years():
+    from multi_league.core.league_update_lineage import assert_canonical_history_complete
+
+    reader = _SplitHistoryReader(
+        aliases=["legacy_slug"],
+        years={
+            "canonical_slug": [2009, 2010, 2025, 2026],
+            "legacy_slug": [2009, 2010, 2025],
+        },
+    )
+
+    receipt = assert_canonical_history_complete(
+        reader,
+        database_name="canonical_slug",
+        active_season=2026,
+    )
+
+    assert receipt == {
+        "canonical_db": "canonical_slug",
+        "legacy_databases": ["legacy_slug"],
+        "historical_years_verified": [2009, 2010, 2025],
+    }
+
+
 def test_resolve_active_update_segment_uses_only_the_active_platform_leg():
     """A weekly Sleeper leg must retain, not refetch, older Yahoo seasons."""
     from multi_league.core.league_update_lineage import resolve_active_update_segment

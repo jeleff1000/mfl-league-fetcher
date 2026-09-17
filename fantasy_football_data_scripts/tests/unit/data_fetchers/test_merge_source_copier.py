@@ -208,6 +208,7 @@ def test_copy_merge_source_to_public_duplicates_source_rows_server_side():
     assert "FROM ___leagues.public.matchup" in writes
     assert "db_name = 'source_db'" in writes
     assert "TRY_CAST(year AS INTEGER) IN (2019, 2020)" in writes
+    assert "LOWER(TRIM(COALESCE(manager, ''))) NOT IN" not in writes
     assert "WHEN \"manager\" = 'Old Manager' THEN 'New Manager'" in writes
     assert (
         "WHEN LOWER(REGEXP_REPLACE(TRIM(COALESCE(\"manager\", '')), '[^A-Za-z0-9]+', '', 'g')) = 'oldmanager' THEN 'New Manager'"

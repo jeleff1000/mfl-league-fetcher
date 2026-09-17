@@ -18,6 +18,107 @@ class ActiveUpdateSegmentError(RuntimeError):
     """The saved timeline cannot safely select exactly one active provider."""
 
 
+def _sql_literal(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def assert_canonical_history_complete(
+    reader: object,
+    *,
+    database_name: str,
+    active_season: int,
+) -> dict[str, object]:
+    """Reject an update when canonical history is stranded under a prior slug.
+
+    League renames retain ``league_db`` as the canonical pointer in inventory.
+    If a partial rename leaves old seasons under the former ``database_name``,
+    an active-only refresh would otherwise rebuild all-time rollups from only
+    the current season. This small manifest check runs before provider fetch
+    or publication and fails closed until the existing server-side league
+    merge repairs the split.
+    """
+
+    canonical = str(database_name).strip()
+    if not canonical:
+        raise ActiveUpdateSegmentError("canonical database name is missing")
+    canonical_sql = _sql_literal(canonical)
+    alias_rows = reader.query(
+        f"""
+        WITH target AS (
+            SELECT platform, league_id
+            FROM accounts.league_inventory
+            WHERE database_name = {canonical_sql}
+            ORDER BY updated_at DESC NULLS LAST
+            LIMIT 1
+        )
+        SELECT DISTINCT inventory.database_name
+        FROM accounts.league_inventory AS inventory
+        JOIN target
+          ON COALESCE(NULLIF(TRIM(inventory.platform), ''), '__missing__') =
+             COALESCE(NULLIF(TRIM(target.platform), ''), '__missing__')
+         AND COALESCE(NULLIF(TRIM(CAST(inventory.league_id AS VARCHAR)), ''), '__missing__') =
+             COALESCE(NULLIF(TRIM(CAST(target.league_id AS VARCHAR)), ''), '__missing__')
+        WHERE inventory.database_name <> {canonical_sql}
+          AND inventory.league_db = {canonical_sql}
+        ORDER BY inventory.database_name
+        """,
+        database="___ops",
+    )
+    aliases = sorted(
+        {
+            str(row.get("database_name") or "").strip()
+            for row in alias_rows
+            if str(row.get("database_name") or "").strip()
+        }
+    )
+    if not aliases:
+        return {
+            "canonical_db": canonical,
+            "legacy_databases": [],
+            "historical_years_verified": [],
+        }
+
+    databases = [canonical, *aliases]
+    db_list_sql = ", ".join(_sql_literal(value) for value in databases)
+    year_rows = reader.query(
+        "SELECT db_name, TRY_CAST(year AS INTEGER) AS year "
+        "FROM ___leagues.public.matchup "
+        f"WHERE db_name IN ({db_list_sql}) AND TRY_CAST(year AS INTEGER) < {int(active_season)} "
+        "GROUP BY db_name, TRY_CAST(year AS INTEGER) "
+        "ORDER BY db_name, year",
+        database="___leagues",
+    )
+    years_by_db: dict[str, set[int]] = {value: set() for value in databases}
+    for row in year_rows:
+        db_name = str(row.get("db_name") or "").strip()
+        year = row.get("year")
+        if db_name in years_by_db and year is not None:
+            years_by_db[db_name].add(int(year))
+
+    canonical_years = years_by_db[canonical]
+    missing_by_alias = {
+        alias: sorted(years_by_db[alias] - canonical_years)
+        for alias in aliases
+        if years_by_db[alias] - canonical_years
+    }
+    if missing_by_alias:
+        details = "; ".join(
+            f"{alias}: {', '.join(str(year) for year in years)}"
+            for alias, years in sorted(missing_by_alias.items())
+        )
+        raise ActiveUpdateSegmentError(
+            f"canonical league history is split before {active_season}; "
+            f"repair the server-side league merge before updating ({details})"
+        )
+
+    verified = sorted(set().union(*(years_by_db[alias] for alias in aliases)))
+    return {
+        "canonical_db": canonical,
+        "legacy_databases": aliases,
+        "historical_years_verified": verified,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ActiveUpdateSegment:
     """The active provider leg and its persisted renewal chain."""

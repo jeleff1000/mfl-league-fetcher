@@ -2032,6 +2032,13 @@ def main(argv: list[str] | None = None) -> int:
         active_year = int(
             reader.query_scalar("SELECT MAX(year) FROM nfl_historical.nfl_player_stats_all", database=OPS_DATABASE)
         )
+    from multi_league.core.league_update_lineage import assert_canonical_history_complete
+
+    canonical_history = assert_canonical_history_complete(
+        reader,
+        database_name=args.db,
+        active_season=active_year,
+    )
     finalized_ops, last_materialized_week = _load_active_refresh_inputs(
         reader,
         db_name=args.db,
@@ -2055,7 +2062,13 @@ def main(argv: list[str] | None = None) -> int:
             last_materialized_week=last_materialized_week,
         )
     )
-    receipt: dict[str, Any] = {"db_name": args.db, "year": active_year, "refresh_weeks": refresh_weeks, "executed": bool(args.execute)}
+    receipt: dict[str, Any] = {
+        "db_name": args.db,
+        "year": active_year,
+        "refresh_weeks": refresh_weeks,
+        "executed": bool(args.execute),
+        "canonical_history": canonical_history,
+    }
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))
     timer.mark("source_plan")
     if persisted_plan is not None:

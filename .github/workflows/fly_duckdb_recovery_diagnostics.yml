@@ -13,6 +13,16 @@ on:
         required: false
         default: ""
         type: string
+      inspect_existing_volume_id:
+        description: Optional unattached wkupd_rebuild volume to inspect read-only without restoring another snapshot
+        required: false
+        default: ""
+        type: string
+      inspect_db_name:
+        description: League db_name whose saved manager identity mapping should be compared with live Fly
+        required: false
+        default: ""
+        type: string
       cleanup_recovery_resources:
         description: Remove only temporary wkupd_* validation machines and volumes
         required: false
@@ -36,8 +46,12 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP: league-history-duckdb
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
           PRESERVE_CURRENT_VOLUME: ${{ inputs.preserve_current_volume }}
           VALIDATE_SNAPSHOT_ID: ${{ inputs.validate_snapshot_id }}
+          INSPECT_EXISTING_VOLUME_ID: ${{ inputs.inspect_existing_volume_id }}
+          INSPECT_DB_NAME: ${{ inputs.inspect_db_name }}
           CLEANUP_RECOVERY_RESOURCES: ${{ inputs.cleanup_recovery_resources }}
         run: |
           set -euo pipefail
@@ -74,6 +88,164 @@ jobs:
           if [ -n "$machine_id" ]; then
             flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
               -C "/bin/sh -lc 'ls -lah /data/___leagues.duckdb* /data/___ops.duckdb* 2>/dev/null || true'"
+          fi
+
+          if [ -n "$INSPECT_EXISTING_VOLUME_ID" ] || [ -n "$INSPECT_DB_NAME" ]; then
+            [[ "$INSPECT_EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || { echo "Invalid existing volume ID" >&2; exit 2; }
+            [[ "$INSPECT_DB_NAME" =~ ^[a-z0-9_]+$ ]] || { echo "Invalid db_name" >&2; exit 2; }
+            inspect_name="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].name // empty' volumes.json)"
+            inspect_region="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].region // empty' volumes.json)"
+            inspect_state="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].state // empty' volumes.json)"
+            inspect_attachment="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].attached_machine_id' volumes.json)"
+            [[ "$inspect_name" == wkupd_rebuild_* ]]
+            [ "$inspect_state" = "created" ]
+            [ "$inspect_attachment" = "null" ]
+
+            cat > identity_snapshot_probe.py <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          import duckdb
+
+          db_name = os.environ["INSPECT_DB_NAME"]
+          quoted_db = db_name.replace("'", "''")
+          path = "/data/___leagues.duckdb"
+
+          def columns(connection, table):
+              return {
+                  row[0]
+                  for row in connection.execute(f'DESCRIBE public."{table}"').fetchall()
+              }
+
+          def snapshot_payload():
+              connection = duckdb.connect(path, read_only=True)
+              try:
+                  context_columns = columns(connection, "league_context")
+                  context_fields = [
+                      field
+                      for field in (
+                          "db_name",
+                          "manager_name_overrides_json",
+                          "franchise_merges_json",
+                          "updated_at",
+                      )
+                      if field in context_columns
+                  ]
+                  context = connection.execute(
+                      f"SELECT {', '.join(context_fields)} FROM public.league_context "
+                      f"WHERE db_name = '{quoted_db}' LIMIT 1"
+                  ).fetchall()
+                  context_rows = [dict(zip(context_fields, row)) for row in context]
+
+                  manager_overrides = []
+                  table_names = {
+                      row[0]
+                      for row in connection.execute(
+                          "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+                      ).fetchall()
+                  }
+                  if "manager_overrides" in table_names:
+                      override_columns = columns(connection, "manager_overrides")
+                      select_fields = [
+                          field
+                          for field in (
+                              "operation", "from_name", "to_name", "applied_at"
+                          )
+                          if field in override_columns
+                      ]
+                      rows = connection.execute(
+                          f"SELECT {', '.join(select_fields)} FROM public.manager_overrides "
+                          f"WHERE db_name = '{quoted_db}' ORDER BY applied_at, from_name, to_name"
+                      ).fetchall()
+                      manager_overrides = [dict(zip(select_fields, row)) for row in rows]
+
+                  matchup_columns = columns(connection, "matchup")
+                  identity_fields = [
+                      field
+                      for field in ("manager", "franchise_id", "manager_guid")
+                      if field in matchup_columns
+                  ]
+                  group_fields = ", ".join(identity_fields)
+                  identities = connection.execute(
+                      f"SELECT {group_fields}, MIN(year) AS first_year, MAX(year) AS last_year, "
+                      f"COUNT(*) AS rows FROM public.matchup WHERE db_name = '{quoted_db}' "
+                      f"GROUP BY {group_fields} ORDER BY first_year, manager, franchise_id"
+                  ).fetchall()
+                  identity_names = identity_fields + ["first_year", "last_year", "rows"]
+                  identity_rows = [dict(zip(identity_names, row)) for row in identities]
+                  return {
+                      "league_context": context_rows,
+                      "manager_overrides": manager_overrides,
+                      "matchup_identities": identity_rows,
+                  }
+              finally:
+                  connection.close()
+
+          def live_query(sql):
+              request = urllib.request.Request(
+                  os.environ["DATABASE_SERVER_URL"].rstrip("/") + "/query",
+                  data=json.dumps({"database": "___leagues", "sql": sql}).encode(),
+                  headers={
+                      "Authorization": "Bearer " + os.environ["DATABASE_READ_TOKEN"],
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+
+          live = {
+              "league_context": live_query(
+                  "SELECT manager_name_overrides_json, franchise_merges_json, updated_at "
+                  "FROM public.league_context "
+                  f"WHERE db_name = '{quoted_db}' LIMIT 1"
+              ),
+              "matchup_identities": live_query(
+                  "SELECT manager, franchise_id, manager_guid, MIN(year) AS first_year, "
+                  "MAX(year) AS last_year, COUNT(*) AS rows FROM public.matchup "
+                  f"WHERE db_name = '{quoted_db}' "
+                  "GROUP BY manager, franchise_id, manager_guid "
+                  "ORDER BY first_year, manager, franchise_id"
+              ),
+          }
+          print(json.dumps({"db_name": db_name, "snapshot": snapshot_payload(), "live": live}, default=str, sort_keys=True))
+          PY
+
+            inspect_machine_name="wkupd-identity-probe-${GITHUB_RUN_ID}"
+            inspect_machine_id=""
+            cleanup_inspect_machine() {
+              if [ -n "$inspect_machine_id" ]; then
+                flyctl machine destroy "$inspect_machine_id" --app "$FLY_APP" --force || true
+              fi
+            }
+            trap cleanup_inspect_machine EXIT
+            image_ref="$(jq -r 'map(select(.state == "started"))[0].config.image // empty' machines.json)"
+            flyctl machine run "$image_ref" --app "$FLY_APP" --region "$inspect_region" \
+              --name "$inspect_machine_name" --volume "$INSPECT_EXISTING_VOLUME_ID:/data" \
+              --entrypoint /bin/sh --file-local "/tmp/identity_snapshot_probe.py=identity_snapshot_probe.py" \
+              --restart no --detach --vm-cpus 1 --vm-memory 2048 -- -lc 'sleep 900' \
+              | tee identity-probe-machine.log
+            for _ in $(seq 1 30); do
+              inspect_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
+                | jq -r --arg name "$inspect_machine_name" 'map(select(.name == $name))[0].id // empty')"
+              [ -n "$inspect_machine_id" ] && break
+              sleep 2
+            done
+            [ -n "$inspect_machine_id" ]
+            for _ in $(seq 1 60); do
+              inspect_machine_state="$(flyctl machines list --app "$FLY_APP" --json \
+                | jq -r --arg id "$inspect_machine_id" '.[] | select(.id == $id) | .state')"
+              [ "$inspect_machine_state" = "started" ] && break
+              sleep 2
+            done
+            [ "${inspect_machine_state:-}" = "started" ]
+            flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
+              -C "INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py" \
+              | tee identity-snapshot-probe.jsonl
+            cleanup_inspect_machine
+            inspect_machine_id=""
+            trap - EXIT
           fi
 
           if [ -n "$VALIDATE_SNAPSHOT_ID" ]; then
@@ -222,5 +394,7 @@ jobs:
             recovery-machine.json
             recovery-machine-run.log
             snapshot-validation.jsonl
+            identity-probe-machine.log
+            identity-snapshot-probe.jsonl
           if-no-files-found: warn
           retention-days: 7

@@ -2,6 +2,59 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Current checkpoint - 2026-09-17 09:02 UTC
+
+The stale/unknown-freshness control defect is fixed and live. App main
+`48ef0a5db66a16758841c8bd1c20455459cb80d7` makes the existing Update League
+component run the guarded, leased production probe before rendering an update
+action. It renders no action when the resulting manifest matches publication
+and still exposes the action when a real delta exists. The focused real-browser
+suite passed 4/4, including both outcomes. Production deployment
+`dpl_6HGtAzA3QLUmR4szC73se1fXwMYi` reached Ready and owns the
+`leaguehistory.app` aliases. A production browser check now reports no Update
+League control for current `agusta_fantasy_league`.
+
+Direct workflow executions now capture the same production source manifest as
+UI dispatches instead of publishing without a freshness record. Public worker
+main `dd4aec32e58b743b6a339277b39849b643796ca7` adds one stdlib helper and one
+pre-claim step shared by Yahoo OAuth, ESPN, and Sleeper; app mirror
+`2ac5fcdf6464aec7e3ead2200ae8710995db624d` contains byte-identical copies.
+The focused workflow/helper suite passed 69 tests and all three YAML documents
+parsed.
+
+Actual production UI canary `35202162447` used the exact public SHA above. It
+probed, dispatched, refreshed Sleeper week 1, committed generation 6, warmed
+the required cache endpoints, promoted the exact manifest, and reached
+`succeeded:hidden`. The receipt reports complete provider validation,
+historical/configuration preservation, and all required homepage/season/career
+outputs. Worker processing was 43.207s, but click-to-visible was 98.772s, so the
+strict under-90-second requirement FAILED for this run.
+
+The overage was isolated to setup: a redundant 4-second `requests` install plus
+a 23-second full dependency install. Public main
+`71503619fdbaf362fa3c166b68c5daf7b4a6e2ad` now installs once, before claim
+handling, with no ephemeral pip cache or bytecode compilation; app mirror is
+`b56f18396ec0c8eba52ee72a07129fefe3b4ca54`. Regression tests remain 69/69.
+Production no-change/manual canary `35202656669` finished in 43s, captured the
+same digest as the UI, made no publication, and reduced dependency setup to
+13s--a measured 14-second setup saving. A full changed-data click is therefore
+expected under 90 seconds, but that exact post-optimization case is not yet
+production-verified and remains open.
+
+Also live on public main: active-week rank materialization repair `961b5c904`,
+active-only Sleeper lineage proof `a30cb92bc`, and incremental authoritative
+player-position correction `5437dce24`. Augusta's prior recovery run
+`35199008631` remains the validated five-aggregate/historical-preservation
+witness. The player-position code is shipped but the canonical NFL weekly
+source has not yet naturally republished that correction; no large NFL rebuild
+was launched.
+
+Still open before completion: post-optimization changed-data UI canaries for
+Yahoo OAuth, ESPN, Sleeper, and multiplatform; the credential-blocked leagues
+`league_of_snakes`, `the_chulent_bowl`, and `pass_interferance`; and publication
+of the pending canonical NFL position correction. No claim of full completion
+is made.
+
 ## Current checkpoint - 2026-09-16 19:27 UTC
 
 Yahoo Update League is OAuth-only. The production caller maps Yahoo to

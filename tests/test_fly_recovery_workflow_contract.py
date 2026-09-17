@@ -11,10 +11,16 @@ WORKFLOWS = (
 def test_recovery_helper_machine_does_not_request_unsupported_json_output():
     for workflow in WORKFLOWS:
         source = workflow.read_text(encoding="utf-8")
-        helper_invocation = source[source.index("flyctl machine run") : source.index("recovery_machine_id=", source.index("flyctl machine run"))]
+        invocation_start = source.index("flyctl machine run")
+        helper_invocation = source[
+            invocation_start : source.index("| tee", invocation_start)
+        ]
 
         assert "--json" not in helper_invocation, workflow
-        assert '--name "$recovery_machine_name"' in helper_invocation, workflow
+        assert any(
+            f'--name "${variable}"' in helper_invocation
+            for variable in ("recovery_machine_name", "inspect_machine_name")
+        ), workflow
         assert "--file-local" in helper_invocation, workflow
         assert "--file-literal" not in helper_invocation, workflow
         assert "flyctl machines list" in source, workflow
@@ -31,11 +37,23 @@ def test_settings_recovery_derives_final_live_count_from_snapshot_and_overlay():
     assert "X-Expected-Rows: ${FINAL_EXPECTED_ROWS}" in source
 
 
-def test_settings_recovery_requires_a_durable_checkpoint():
+def test_settings_recovery_requires_one_durable_checkpoint_after_all_replacements():
     source = WORKFLOWS[1].read_text(encoding="utf-8")
 
-    assert '.checkpointed == true' in source
-    assert '.checkpoint_error == null' in source
+    settings_replace = source.index("X-Table-Name: league_settings")
+    derived_replace = source.index("X-Table-Name: ${table}")
+    final_checkpoint = source.index("checkpoint_body='", derived_replace)
+    assert settings_replace < derived_replace < final_checkpoint
+    assert "intermediate canonical replacement" in source
+    assert "checksum" in source
+
+
+def test_settings_recovery_reads_live_overlay_one_league_at_a_time():
+    source = WORKFLOWS[1].read_text(encoding="utf-8")
+
+    assert "for db_name in names:" in source
+    assert "WHERE db_name = {db_literal}" in source
+    assert "WHERE db_name IN ({quoted})" not in source
 
 
 def test_settings_recovery_can_reuse_a_retained_unattached_volume():

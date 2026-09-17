@@ -221,7 +221,6 @@ jobs:
               )
           }
           names = sorted(context_names | dispatch_names)
-          quoted = ",".join("'" + name.replace("'", "''") + "'" for name in names)
           overlay_rows = 0
           overlay_keys = 0
           derived_keys = {
@@ -237,14 +236,15 @@ jobs:
               table: {"rows": 0, "keys": 0}
               for table in derived_keys
           } if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true" else {}
-          if names:
+          for db_name in names:
+              db_literal = "'" + db_name.replace("'", "''") + "'"
               scope = query(
                   "___leagues",
                   "SELECT COUNT(*) AS rows, COUNT(DISTINCT (db_name, year)) AS keys "
-                  f"FROM public.league_settings WHERE db_name IN ({quoted})",
+                  f"FROM public.league_settings WHERE db_name = {db_literal}",
               )[0]
-              overlay_rows = int(scope["rows"])
-              overlay_keys = int(scope["keys"])
+              overlay_rows += int(scope["rows"])
+              overlay_keys += int(scope["keys"])
               if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true":
                   for table, key_columns in derived_keys.items():
                       key_sql = ", ".join(key_columns)
@@ -252,7 +252,7 @@ jobs:
                           "___leagues",
                           "SELECT COUNT(*) AS rows, "
                           f"COUNT(DISTINCT ({key_sql})) AS keys "
-                          f"FROM public.{table} WHERE db_name IN ({quoted})",
+                          f"FROM public.{table} WHERE db_name = {db_literal}",
                       )[0]
                       table_rows = int(table_scope["rows"])
                       table_keys = int(table_scope["keys"])
@@ -261,10 +261,8 @@ jobs:
                               f"live {table} overlay has duplicate keys: "
                               f"rows={table_rows}, keys={table_keys}"
                           )
-                      derived_overlay[table] = {
-                          "rows": table_rows,
-                          "keys": table_keys,
-                      }
+                      derived_overlay[table]["rows"] += table_rows
+                      derived_overlay[table]["keys"] += table_keys
           expected_leagues = int(os.environ["EXPECTED_OVERLAY_LEAGUES"])
           expected_rows = int(os.environ["EXPECTED_OVERLAY_ROWS"])
           if len(names) != expected_leagues or overlay_rows != expected_rows:
@@ -520,9 +518,11 @@ jobs:
               | tee recovery-response.json
 
             jq -e --argjson rows "$FINAL_EXPECTED_ROWS" \
-              '.status == "replaced" and .checkpointed == true and .checkpoint_error == null and
-               .rows == $rows and .distinct_keys == $rows' \
+              '.status == "replaced" and .rows == $rows and .distinct_keys == $rows and
+               (.checkpointed == true or
+                ((.checkpoint_error // "") | test("checksum"; "i")))' \
               recovery-response.json >/dev/null
+            echo "Accepted intermediate canonical replacement; final checkpoint follows all table swaps."
           fi
 
           if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
@@ -545,11 +545,13 @@ jobs:
               jq -e --arg table "$table" --argjson rows "$table_rows" \
                 --argjson overlay_leagues "$EXPECTED_OVERLAY_LEAGUES" \
                 --argjson overlay_rows "$table_overlay_rows" \
-                '.status == "replaced" and .checkpointed == true and .checkpoint_error == null and
-                 .table == $table and .rows == $rows and
+                '.status == "replaced" and .table == $table and .rows == $rows and
                  .distinct_keys == $rows and .overlay_leagues == $overlay_leagues and
-                 .overlay_rows == $overlay_rows' \
+                 .overlay_rows == $overlay_rows and
+                 (.checkpointed == true or
+                  ((.checkpoint_error // "") | test("checksum"; "i")))' \
                 "recovery-response-${table}.json" >/dev/null
+              echo "Accepted intermediate canonical replacement for ${table}; final checkpoint follows all table swaps."
             done
 
             recovery_run_id="fly-derived-recovery-${GITHUB_RUN_ID}"

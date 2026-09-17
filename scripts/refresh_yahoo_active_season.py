@@ -1002,18 +1002,11 @@ def _patch_research_ops_cache_from_fly(
         missing_fly = sorted(required - set(fly_columns))
         if missing_fly:
             raise RuntimeError("Fly ops table is missing required weekly columns: " + ", ".join(missing_fly))
-        # Keep the historic cache's legacy aliases, then add new authoritative
-        # Fly columns to the copy.  This preserves prior-season enrichment
-        # compatibility while making current fields available immediately.
-        for column_name, column_type in fly_columns.items():
-            if column_name not in cache_columns:
-                cache.execute(
-                    f"ALTER TABLE {target} ADD COLUMN {_quoted_identifier(column_name)} {column_type}"
-                )
-        columns = [
-            str(row[0])
-            for row in cache.execute("DESCRIBE nfl_historical.nfl_player_stats_all").fetchall()
-        ]
+        # The cache was just built from the active league's bounded scoring
+        # projection.  Patch only that schema; expanding it back to every Fly
+        # column would recreate the wide 1,100-column download this worker is
+        # specifically designed to avoid.
+        columns = cache_columns
         select_columns = ", ".join(_quoted_identifier(column) for column in columns)
         source_select = _ops_refresh_source_projection(columns, fly_columns)
         timer.mark("schema_alignment")
@@ -1132,7 +1125,88 @@ def _patch_research_ops_cache_from_fly(
     return output
 
 
-def _build_active_year_ops_cache(reader: Any, *, output: Path, year: int) -> Path:
+_ACTIVE_YEAR_OPS_IDENTITY_COLUMNS = {
+    "NFL_player_id",
+    "game_date",
+    "headshot_url",
+    "nfl_position",
+    "nfl_team",
+    "opponent_nfl_team",
+    "player",
+    "player_week",
+    "position",
+    "season_type",
+    "week",
+    "year",
+}
+
+
+def _active_year_ops_projection_columns(
+    schema_columns: list[str],
+    scoring_info: dict[str, Any],
+) -> list[str]:
+    """Return the bounded super-table projection used by one weekly update."""
+    from multi_league.core.league_update_manifest import resolve_nfl_scoring_input_columns
+    from multi_league.transformations.player.modules.ppg_precompute import (
+        get_ppg_columns_for_scoring,
+    )
+
+    available = set(schema_columns)
+    selected = set(resolve_nfl_scoring_input_columns(schema_columns))
+    selected.update(_ACTIVE_YEAR_OPS_IDENTITY_COLUMNS)
+
+    fpts_column = str(scoring_info.get("fpts_col") or "")
+    if fpts_column in available:
+        selected.add(fpts_column)
+    elif "fpts_4pt_half" in available:
+        selected.add("fpts_4pt_half")
+
+    rolling_total = str(scoring_info.get("rolling_total_col") or "")
+    if rolling_total:
+        selected.add(rolling_total)
+
+    rank_columns = {
+        str(column)
+        for column in (scoring_info.get("rank_cols") or {}).values()
+        if column
+    }
+    selected.update(rank_columns)
+    selected.update(
+        "rank_alltime_" + column.removeprefix("rank_")
+        for column in rank_columns
+        if column.startswith("rank_")
+        and not column.startswith(("rank_alltime_", "rank_season_"))
+    )
+
+    td_key = str(scoring_info.get("td_key") or "4pt")
+    pass_td_points = int(td_key.removesuffix("pt"))
+    ppr = float(scoring_info.get("ppr", 0.5))
+    selected.update(get_ppg_columns_for_scoring(ppr, pass_td_points).values())
+
+    # Preserve source schema order so cache construction remains deterministic.
+    return [column for column in schema_columns if column in selected]
+
+
+def _active_year_scoring_info(local_db: Any, *, db_name: str, year: int) -> dict[str, Any]:
+    """Resolve the active league's existing scoring variant without NFL reads."""
+    from multi_league.transformations.sql_enrichments import SQLEnrichments
+
+    planner = SQLEnrichments(
+        db_name=db_name,
+        quick=True,
+        conn=local_db.connect(),
+    )
+    planner.load_settings_from_db()
+    return planner._get_scoring_for_year(year)
+
+
+def _build_active_year_ops_cache(
+    reader: Any,
+    *,
+    output: Path,
+    year: int,
+    scoring_info: dict[str, Any],
+) -> Path:
     """Build the weekly SQL cache from one active NFL season only.
 
     The weekly transform database is active-season scoped.  Pulling the
@@ -1160,8 +1234,13 @@ def _build_active_year_ops_cache(reader: Any, *, output: Path, year: int) -> Pat
             raise RuntimeError(f"Fly returned no schema for {table}")
         return result
 
-    stats_schema = schema(stats_target, omit={"recon_correction_log"})
-    stats_columns = [name for name, _type in stats_schema]
+    full_stats_schema = schema(stats_target, omit={"recon_correction_log"})
+    full_stats_types = dict(full_stats_schema)
+    stats_columns = _active_year_ops_projection_columns(
+        [name for name, _type in full_stats_schema],
+        scoring_info,
+    )
+    stats_schema = [(name, full_stats_types[name]) for name in stats_columns]
     missing = sorted(required - set(stats_columns))
     if missing:
         raise RuntimeError("active-year ops schema is missing required columns: " + ", ".join(missing))
@@ -1226,12 +1305,23 @@ def _build_active_year_ops_cache(reader: Any, *, output: Path, year: int) -> Pat
     return output
 
 
-def _ensure_active_year_ops_cache(reader: Any, *, year: int, work_dir: Path) -> Path:
+def _ensure_active_year_ops_cache(
+    reader: Any,
+    *,
+    year: int,
+    work_dir: Path,
+    scoring_info: dict[str, Any],
+) -> Path:
     """Return an existing disposable cache or create the bounded weekly one."""
     configured = str(os.environ.get("OPS_CACHE_PATH", "")).strip()
     output = Path(configured).resolve() if configured else work_dir / "ops_cache.duckdb"
     if not output.is_file():
-        _build_active_year_ops_cache(reader, output=output, year=year)
+        _build_active_year_ops_cache(
+            reader,
+            output=output,
+            year=year,
+            scoring_info=scoring_info,
+        )
     os.environ["OPS_CACHE_PATH"] = str(output)
     return output
 
@@ -2099,7 +2189,17 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             active_connection = local_db.connect()
-            _ensure_active_year_ops_cache(reader, year=active_year, work_dir=work_dir)
+            active_scoring = _active_year_scoring_info(
+                local_db,
+                db_name=args.db,
+                year=active_year,
+            )
+            _ensure_active_year_ops_cache(
+                reader,
+                year=active_year,
+                work_dir=work_dir,
+                scoring_info=active_scoring,
+            )
             timer.mark("player_ops_seed")
             receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(
                 reader,

@@ -2166,6 +2166,7 @@ def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(
                 "nfl_team": "NWE",
                 "opponent_nfl_team": "SEA",
                 "fantasy_points": 18.25,
+                "unused_research_blob": "do-not-download",
             }
         ]
     )
@@ -2211,11 +2212,18 @@ def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(
 
     assert output != base
     assert all("SELECT *" not in sql.upper() for sql in reader.sql)
+    assert all("unused_research_blob" not in sql for sql in reader.sql)
     verified = duckdb.connect(str(output), read_only=True)
     try:
         assert verified.execute(
             "SELECT NFL_player_id, fantasy_points FROM nfl_historical.nfl_player_stats_all ORDER BY NFL_player_id"
         ).fetchall() == [("ne_player", 18.25), ("unplayed_player", 0.0)]
+        assert "unused_research_blob" not in {
+            row[0]
+            for row in verified.execute(
+                "DESCRIBE nfl_historical.nfl_player_stats_all"
+            ).fetchall()
+        }
     finally:
         verified.close()
 
@@ -2264,7 +2272,7 @@ def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
                 "season_type": "REG",
                 "nfl_team": "NWE",
                 "opponent_nfl_team": "SEA",
-                "fantasy_points": 18.25,
+                "passing_yards": 275.0,
             }
         ]
     )
@@ -2284,7 +2292,7 @@ def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
                         "column_name": column,
                         "column_type": (
                             "INTEGER" if column in {"year", "week"}
-                            else "DOUBLE" if column == "fantasy_points"
+                            else "DOUBLE" if column == "passing_yards"
                             else "VARCHAR"
                         ),
                     }
@@ -2304,7 +2312,18 @@ def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
 
     reader = _Reader()
     output = tmp_path / "ops_cache.duckdb"
-    actual = _build_active_year_ops_cache(reader, output=output, year=2026)
+    actual = _build_active_year_ops_cache(
+        reader,
+        output=output,
+        year=2026,
+        scoring_info={
+            "ppr": 0.5,
+            "td_key": "4pt",
+            "fpts_col": "fpts_4pt_half",
+            "rolling_total_col": "rolling_total_4pt_half",
+            "rank_cols": {},
+        },
+    )
 
     assert actual == output
     assert len(reader.parquet_sql) == 2
@@ -2315,14 +2334,77 @@ def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
     verified = duckdb.connect(str(output), read_only=True)
     try:
         assert verified.execute(
-            "SELECT NFL_player_id, year, week, fantasy_points "
+            "SELECT NFL_player_id, year, week, passing_yards "
             "FROM nfl_historical.nfl_player_stats_all"
-        ).fetchall() == [("00-001", 2026, 1, 18.25)]
+        ).fetchall() == [("00-001", 2026, 1, 275.0)]
         assert verified.execute(
             "SELECT NFL_player_id, player FROM nfl_historical.player_bio"
         ).fetchall() == [("00-001", "Example Player")]
     finally:
         verified.close()
+
+
+def test_weekly_ops_projection_keeps_only_active_scoring_inputs_and_ranks():
+    """The weekly seed must not download every wide super-table column."""
+    from scripts.refresh_yahoo_active_season import _active_year_ops_projection_columns
+
+    schema_columns = [
+        "NFL_player_id",
+        "player_week",
+        "player",
+        "year",
+        "week",
+        "season_type",
+        "nfl_team",
+        "opponent_nfl_team",
+        "position",
+        "nfl_position",
+        "passing_yards",
+        "pts_k_std",
+        "bonus_pass_yd_300",
+        "fpts_4pt_half",
+        "rolling_total_4pt_half",
+        "ppg_season_4pt_half",
+        "ppg_alltime_4pt_half",
+        "rank_qb_4pt",
+        "rank_alltime_qb_4pt",
+        "rank_flex_half",
+        "rank_season_flex_half",
+        "rank_alltime_flex_half",
+        "rank_qb_6pt",
+        "rank_alltime_qb_6pt",
+        "unused_research_blob",
+    ]
+    scoring = {
+        "ppr": 0.5,
+        "td_key": "4pt",
+        "fpts_col": "fpts_4pt_half",
+        "rolling_total_col": "rolling_total_4pt_half",
+        "rank_cols": {
+            "QB": "rank_qb_4pt",
+            "FLEX": "rank_flex_half",
+            "season_FLEX": "rank_season_flex_half",
+            "alltime_FLEX": "rank_alltime_flex_half",
+        },
+    }
+
+    selected = _active_year_ops_projection_columns(schema_columns, scoring)
+
+    assert "passing_yards" in selected
+    assert "pts_k_std" in selected
+    assert "bonus_pass_yd_300" in selected
+    assert "fpts_4pt_half" in selected
+    assert "rolling_total_4pt_half" in selected
+    assert "ppg_season_4pt_half" in selected
+    assert "ppg_alltime_4pt_half" in selected
+    assert "rank_qb_4pt" in selected
+    assert "rank_alltime_qb_4pt" in selected
+    assert "rank_flex_half" in selected
+    assert "rank_season_flex_half" in selected
+    assert "rank_alltime_flex_half" in selected
+    assert "rank_qb_6pt" not in selected
+    assert "rank_alltime_qb_6pt" not in selected
+    assert "unused_research_blob" not in selected
 
 
 def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monkeypatch):

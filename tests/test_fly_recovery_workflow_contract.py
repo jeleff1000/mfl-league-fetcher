@@ -57,3 +57,19 @@ def test_isolated_rebuild_cannot_mutate_or_promote_the_primary_volume():
     assert "flyctl machine clone" not in source
     assert "/replace-db" not in source
     assert "flyctl deploy" not in source
+
+
+def test_isolated_reaggregation_is_limited_to_the_retained_recovery_volume():
+    source = (
+        ROOT / ".github" / "workflows" / "fly_duckdb_reaggregate_recovery.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "scripts/fly_reaggregate_derived.py" in source
+    assert "--database /data/___leagues.clean.duckdb" in source
+    assert "--ops /data/___ops.duckdb" in source
+    assert "--ops-nfl /data/___ops_nfl.duckdb" in source
+    assert "wkupd_rebuild_" in source
+    assert "flyctl machine stop" not in source
+    assert "flyctl machine clone" not in source
+    assert "/replace-db" not in source
+    assert "flyctl deploy" not in source

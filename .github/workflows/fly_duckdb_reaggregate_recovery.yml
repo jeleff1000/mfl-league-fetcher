@@ -1,0 +1,107 @@
+name: Fly DuckDB Reaggregate Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_volume_id:
+        description: Retained wkupd_rebuild volume containing ___leagues.clean.duckdb
+        required: true
+        type: string
+      expected_source_sha:
+        description: Exact public main revision containing the five-table repair runner
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-duckdb-storage-recovery
+  cancel-in-progress: false
+
+jobs:
+  reaggregate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact public main
+        uses: actions/checkout@v5
+
+      - name: Verify requested source revision
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Reaggregate only the five damaged tables
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP: league-history-duckdb
+          RECOVERY_VOLUME_ID: ${{ inputs.recovery_volume_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || exit 2
+
+          flyctl machines list --app "$FLY_APP" --json > machines.json
+          flyctl volumes list --app "$FLY_APP" --json > volumes.json
+          recovery_name="$(jq -r --arg id "$RECOVERY_VOLUME_ID" \
+            'map(select(.id == $id))[0].name // empty' volumes.json)"
+          recovery_region="$(jq -r --arg id "$RECOVERY_VOLUME_ID" \
+            'map(select(.id == $id))[0].region // empty' volumes.json)"
+          primary_id="$(jq -r 'map(select(.name == "duckdb_data"))[0].id // empty' volumes.json)"
+          image_ref="$(jq -r 'map(select(.state == "started"))[0].config.image // empty' machines.json)"
+          [[ "$recovery_name" == wkupd_rebuild_* ]]
+          test -n "$recovery_region"
+          test -n "$image_ref"
+          test "$RECOVERY_VOLUME_ID" != "$primary_id"
+
+          recovery_machine_id=""
+          cleanup() {
+            if [ -n "$recovery_machine_id" ]; then
+              flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force || true
+            fi
+          }
+          trap cleanup EXIT
+
+          machine_name="wkupd-reaggregate-${GITHUB_RUN_ID}"
+          flyctl machine run "$image_ref" --app "$FLY_APP" --region "$recovery_region" \
+            --name "$machine_name" --volume "$RECOVERY_VOLUME_ID:/data" \
+            --entrypoint /bin/sh \
+            --file-local "/tmp/fly_reaggregate_derived.py=scripts/fly_reaggregate_derived.py" \
+            --restart no --detach --vm-cpus 8 --vm-memory 16384 \
+            -- -lc 'sleep 10800' | tee recovery-machine-run.log
+          for _ in $(seq 1 60); do
+            recovery_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
+              | jq -r --arg name "$machine_name" 'map(select(.name == $name))[0].id // empty')"
+            [ -n "$recovery_machine_id" ] && break
+            sleep 2
+          done
+          test -n "$recovery_machine_id"
+
+          flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
+            -C "cd /app && PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py \
+              --database /data/___leagues.clean.duckdb \
+              --ops /data/___ops.duckdb \
+              --ops-nfl /data/___ops_nfl.duckdb" | tee five-table-reaggregation.jsonl
+
+          flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force
+          recovery_machine_id=""
+          flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json \
+            | tee reaggregated-recovery-volume.json
+
+      - name: Upload five-table recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fly-duckdb-five-table-reaggregation-${{ github.run_id }}
+          path: |
+            machines.json
+            volumes.json
+            recovery-machine-run.log
+            five-table-reaggregation.jsonl
+            reaggregated-recovery-volume.json
+          if-no-files-found: warn

@@ -1956,7 +1956,7 @@ def _reaggregate_damaged_derived_from_sources(
     mode: str,
 ) -> dict[str, Any]:
     """Rebuild only the five damaged aggregate tables from persisted facts."""
-    from fly_reaggregate_derived import quarantine_corrupt_targets, reaggregate_all
+    from fly_reaggregate_derived import _attach_if_present, quarantine_corrupt_targets, reaggregate_all
 
     conn = db.connect_database(
         database_path,
@@ -1964,6 +1964,9 @@ def _reaggregate_damaged_derived_from_sources(
         threads=WRITE_DUCKDB_THREADS,
     )
     try:
+        data_dir = db.get_data_dir()
+        _attach_if_present(conn, data_dir / "___ops_nfl.duckdb", "___ops_nfl")
+        _attach_if_present(conn, data_dir / "___ops.duckdb", "___ops")
         quarantined: dict[str, str] = {}
         if mode == "quarantine_and_rebuild":
             quarantined = quarantine_corrupt_targets(conn)

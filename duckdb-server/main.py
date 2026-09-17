@@ -484,6 +484,18 @@ def _checkpoint_connection_if_wal_large(conn, db_path: Path, *, reason: str, for
     return True
 
 
+def _checkpoint_after_merge(conn, db_path: Path, *, reason: str, hard_exit_timer: threading.Timer) -> bool:
+    """Checkpoint after commit without leaving the merge kill timer armed.
+
+    The merge timer protects transaction work.  Checkpointing has its own
+    interrupt timer and may legitimately outlive the merge budget on the
+    shared database.  Killing the process during CHECKPOINT can damage the
+    database file that the WAL is being folded into.
+    """
+    hard_exit_timer.cancel()
+    return _checkpoint_connection_if_wal_large(conn, db_path, reason=reason)
+
+
 def _checkpoint_database_if_wal_large(db_path: Path, *, data_dir: Path, reason: str) -> bool:
     if not db_path.exists():
         return False
@@ -1179,6 +1191,12 @@ def _execute_ops_query_parquet(sql: str) -> bytes:
             timer.cancel()
 
 
+def _sql_requests_checkpoint(sql: str) -> bool:
+    """Identify admin scripts whose work includes a DuckDB checkpoint."""
+    scrubbed = _strip_sql_literals_and_comments(sql, strip_double_quoted_identifiers=False)
+    return re.search(r"\b(?:FORCE\s+)?CHECKPOINT\b", scrubbed, flags=re.IGNORECASE) is not None
+
+
 def _execute_ops_query_rw(sql: str) -> list[dict]:
     """Execute an admin write against ___ops without draining ___leagues reads."""
     import db as _db
@@ -1196,9 +1214,12 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
         )
         os._exit(1)
 
-    hard_timer = threading.Timer(RW_HARD_EXIT_SECONDS, hard_exit)
-    hard_timer.daemon = True
-    hard_timer.start()
+    checkpoint_sql = _sql_requests_checkpoint(sql)
+    hard_timer = None
+    if not checkpoint_sql:
+        hard_timer = threading.Timer(RW_HARD_EXIT_SECONDS, hard_exit)
+        hard_timer.daemon = True
+        hard_timer.start()
     try:
         with _db._ops_lock:
             _begin_ops_write_state()
@@ -1234,8 +1255,20 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
                 if conn is None:
                     raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
                 _db._attach_ops_nfl(conn)  # so admin writes (e.g. the one-time view cutover) can bind ___ops_nfl
-                result = _execute_script_with_timeout(conn, sql, ADMIN_QUERY_TIMEOUT)
-                _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
+                result = _execute_script_with_timeout(
+                    conn,
+                    sql,
+                    DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
+                )
+                if hard_timer is None:
+                    _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
+                else:
+                    _checkpoint_after_merge(
+                        conn,
+                        ops_path,
+                        reason="___ops write",
+                        hard_exit_timer=hard_timer,
+                    )
                 return result
             finally:
                 cleanup_error: Exception | None = None
@@ -1262,7 +1295,8 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
                 finally:
                     _end_ops_write_state()
     finally:
-        hard_timer.cancel()
+        if hard_timer is not None:
+            hard_timer.cancel()
 
 
 def _execute_ops_query_rw_serialized(sql: str) -> list[dict]:
@@ -1495,19 +1529,27 @@ def _execute_query_rw(sql: str, database: str = "___leagues") -> list[dict]:
         )
         os._exit(1)
 
-    hard_timer = threading.Timer(RW_HARD_EXIT_SECONDS, hard_exit)
-    hard_timer.daemon = True
-    hard_timer.start()
+    checkpoint_sql = _sql_requests_checkpoint(sql)
+    hard_timer = None
+    if not checkpoint_sql:
+        hard_timer = threading.Timer(RW_HARD_EXIT_SECONDS, hard_exit)
+        hard_timer.daemon = True
+        hard_timer.start()
     try:
         # This endpoint can run while the public pool is open. Use the same
         # DuckDB connection config as the pool so concurrent connections to
         # ___leagues.duckdb are compatible.
         conn = db.connect_database(db_path, data_dir=data_dir)
         conn.execute("CREATE SCHEMA IF NOT EXISTS public")
-        result = _execute_script_with_timeout(conn, sql, ADMIN_QUERY_TIMEOUT)
+        result = _execute_script_with_timeout(
+            conn,
+            sql,
+            DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
+        )
         return result
     finally:
-        hard_timer.cancel()
+        if hard_timer is not None:
+            hard_timer.cancel()
         if conn is not None:
             conn.close()
 
@@ -2865,7 +2907,12 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             _delta_upsert_state(conn, manifest, "COMMITTED", result=result)
             _interrupting_execute(conn, "COMMIT", step=f"commit delta {db_name}")
             in_transaction = False
-            _checkpoint_connection_if_wal_large(conn, leagues_path, reason=f"delta merge {db_name}")
+            _checkpoint_after_merge(
+                conn,
+                leagues_path,
+                reason=f"delta merge {db_name}",
+                hard_exit_timer=hard_exit_timer,
+            )
             return result
         except Exception as exc:
             if in_transaction:
@@ -2963,7 +3010,12 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             _delta_upsert_state(conn, manifest, "COMMITTED", result=result)
             _interrupting_execute(conn, "COMMIT", step="commit fleet partition")
             in_transaction = False
-            _checkpoint_connection_if_wal_large(conn, leagues_path, reason="fleet partition merge")
+            _checkpoint_after_merge(
+                conn,
+                leagues_path,
+                reason="fleet partition merge",
+                hard_exit_timer=hard_exit_timer,
+            )
             return result
         except Exception as exc:
             if in_transaction:
@@ -4172,7 +4224,12 @@ def _merge_league_tables(leagues_path: Path, league_path: Path, db_name: str, sk
             finish_merge_state("failed", f"{type(exc).__name__}: {exc}")
             raise
 
-        _checkpoint_connection_if_wal_large(conn, leagues_path, reason=f"legacy merge {db_name}")
+        _checkpoint_after_merge(
+            conn,
+            leagues_path,
+            reason=f"legacy merge {db_name}",
+            hard_exit_timer=hard_exit_timer,
+        )
         finish_merge_state("complete")
 
     finally:

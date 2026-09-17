@@ -1465,6 +1465,39 @@ def test_checkpoint_failure_is_reported_without_hiding_committed_state(client):
     )
 
 
+def test_post_merge_checkpoint_disarms_merge_kill_timer_first(tmp_path, monkeypatch):
+    import main as main_mod
+
+    events = []
+
+    class FakeTimer:
+        def cancel(self):
+            events.append("timer_cancelled")
+
+    def fake_checkpoint(conn, db_path, *, reason, force=False):
+        assert events == ["timer_cancelled"]
+        events.append("checkpoint")
+        return True
+
+    monkeypatch.setattr(main_mod, "_checkpoint_connection_if_wal_large", fake_checkpoint)
+
+    assert main_mod._checkpoint_after_merge(
+        object(),
+        tmp_path / "___leagues.duckdb",
+        reason="delta merge test_league",
+        hard_exit_timer=FakeTimer(),
+    ) is True
+    assert events == ["timer_cancelled", "checkpoint"]
+
+
+def test_checkpoint_admin_sql_is_not_subject_to_process_kill_watchdog():
+    import main as main_mod
+
+    assert main_mod._sql_requests_checkpoint("CHECKPOINT") is True
+    assert main_mod._sql_requests_checkpoint("force checkpoint; select 1") is True
+    assert main_mod._sql_requests_checkpoint("SELECT 'checkpoint' AS label") is False
+
+
 @pytest.mark.parametrize(
     ("bundle_options", "expected_detail"),
     [

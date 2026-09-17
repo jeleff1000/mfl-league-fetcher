@@ -3,6 +3,12 @@
 from types import SimpleNamespace
 
 
+def test_default_checkpoint_threshold_is_bounded_for_shared_database():
+    import db as db_mod
+
+    assert db_mod.DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD == "512MB"
+
+
 def test_temp_limit_is_fixed_for_connections_to_same_database(tmp_path, monkeypatch):
     import db as db_mod
 

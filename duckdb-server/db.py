@@ -17,7 +17,7 @@ POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "5"))
 DEFAULT_DUCKDB_THREADS = int(os.environ.get("DUCKDB_THREADS", "2"))
 DEFAULT_DUCKDB_MEMORY_FRACTION = float(os.environ.get("DUCKDB_MEMORY_FRACTION", "0.38"))
 DEFAULT_DUCKDB_TEMP_LIMIT_GIB = int(os.environ.get("DUCKDB_DEFAULT_TEMP_LIMIT_GIB", "20"))
-DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD = os.environ.get("DUCKDB_CHECKPOINT_THRESHOLD", "16GiB")
+DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD = os.environ.get("DUCKDB_CHECKPOINT_THRESHOLD", "512MB")
 
 _data_dir: Path | None = None
 _pool: queue.Queue[duckdb.DuckDBPyConnection] = queue.Queue()

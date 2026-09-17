@@ -20,6 +20,9 @@ swap_size_mb = 4096
   DUCKDB_THREADS = '1'
   DUCKDB_WRITE_THREADS = '2'
   DUCKDB_MAX_TEMP_DIRECTORY_SIZE = '20GiB'
+  # Keep automatic checkpoints bounded. A 16GiB WAL made later checkpoints
+  # unnecessarily long and vulnerable to machine restarts.
+  DUCKDB_CHECKPOINT_THRESHOLD = '512MB'
   MERGE_STEP_TIMEOUT_SECONDS = '180'
   MERGE_HARD_EXIT_SECONDS = '360'
   MAX_INFLIGHT_DELTA_PUBLISHES = '1'

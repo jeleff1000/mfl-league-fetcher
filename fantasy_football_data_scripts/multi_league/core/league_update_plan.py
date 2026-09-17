@@ -272,10 +272,17 @@ def load_persisted_refresh_plan(
             affected_seasons.add(year)
     season_sql = ", ".join(str(year) for year in sorted(affected_seasons))
     materialized_rows = reader.query(
-        "SELECT DISTINCT TRY_CAST(year AS INTEGER) AS year, TRY_CAST(week AS INTEGER) AS week "
-        "FROM public.player_fantasy "
-        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) IN ({season_sql}) "
-        "AND TRY_CAST(week AS INTEGER) > 0",
+        "SELECT DISTINCT TRY_CAST(p.year AS INTEGER) AS year, TRY_CAST(p.week AS INTEGER) AS week "
+        "FROM public.player_fantasy p "
+        f"WHERE p.db_name = '{safe_db}' AND TRY_CAST(p.year AS INTEGER) IN ({season_sql}) "
+        "AND TRY_CAST(p.week AS INTEGER) > 0 "
+        f"AND (TRY_CAST(p.year AS INTEGER) <> {int(active_season)} OR ("
+        "EXISTS (SELECT 1 FROM public.matchup m "
+        "WHERE m.db_name = p.db_name AND TRY_CAST(m.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
+        "AND TRY_CAST(m.week AS INTEGER) = TRY_CAST(p.week AS INTEGER)) "
+        "AND EXISTS (SELECT 1 FROM public.schedule s "
+        "WHERE s.db_name = p.db_name AND TRY_CAST(s.year AS INTEGER) = TRY_CAST(p.year AS INTEGER) "
+        "AND TRY_CAST(s.week AS INTEGER) = TRY_CAST(p.week AS INTEGER))))",
         database="___leagues",
     )
     materialized = {

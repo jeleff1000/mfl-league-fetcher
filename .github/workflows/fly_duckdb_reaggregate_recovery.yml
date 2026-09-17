@@ -71,8 +71,9 @@ jobs:
           flyctl machine run "$image_ref" --app "$FLY_APP" --region "$recovery_region" \
             --name "$machine_name" --volume "$RECOVERY_VOLUME_ID:/data" \
             --entrypoint /bin/sh \
+            --file-local "/tmp/fly_rebuild_duckdb.py=scripts/fly_rebuild_duckdb.py" \
             --file-local "/tmp/fly_reaggregate_derived.py=scripts/fly_reaggregate_derived.py" \
-            --restart no --detach --vm-cpus 8 --vm-memory 16384 \
+            --restart no --detach --vm-cpus 4 --vm-memory 8192 \
             -- -lc 'sleep 10800' | tee recovery-machine-run.log
           for _ in $(seq 1 60); do
             recovery_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
@@ -81,6 +82,17 @@ jobs:
             sleep 2
           done
           test -n "$recovery_machine_id"
+
+          flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
+            -C "test -f /data/___leagues.clean.duckdb || python /tmp/fly_rebuild_duckdb.py \
+              --source /data/___leagues.duckdb \
+              --target /data/___leagues.clean.duckdb \
+              --empty-table public.homepage_manager_rankings \
+              --empty-table public.matchup_h2h_career \
+              --empty-table public.player_fantasy_season \
+              --empty-table public.player_fantasy_season_all \
+              --empty-table public.standings_by_year \
+              --overwrite" | tee isolated-rebuild-resume.jsonl
 
           flyctl ssh console --app "$FLY_APP" --machine "$recovery_machine_id" \
             -C "cd /app && PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py \
@@ -102,6 +114,7 @@ jobs:
             machines.json
             volumes.json
             recovery-machine-run.log
+            isolated-rebuild-resume.jsonl
             five-table-reaggregation.jsonl
             reaggregated-recovery-volume.json
           if-no-files-found: warn

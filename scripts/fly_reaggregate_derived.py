@@ -123,7 +123,6 @@ def validate_targets(conn) -> dict[str, dict[str, int]]:
 def reaggregate_all(conn, *, db_names: list[str] | None = None) -> dict:
     """Reaggregate the five targets for all leagues, one transaction at a time."""
     leagues = sorted(set(db_names or discover_leagues(conn)))
-    failures: dict[str, str] = {}
     completed = 0
     for db_name in leagues:
         conn.execute("BEGIN TRANSACTION")
@@ -133,9 +132,12 @@ def reaggregate_all(conn, *, db_names: list[str] | None = None) -> dict:
             completed += 1
         except Exception as exc:
             conn.execute("ROLLBACK")
-            failures[db_name] = str(exc)
-    if failures:
-        raise RuntimeError(json.dumps({"completed": completed, "failures": failures}, sort_keys=True))
+            raise RuntimeError(
+                json.dumps(
+                    {"completed": completed, "failed_db_name": db_name, "error": str(exc)},
+                    sort_keys=True,
+                )
+            ) from exc
     targets = validate_targets(conn)
     conn.execute("CHECKPOINT")
     return {"leagues": completed, "targets": targets}

@@ -112,3 +112,25 @@ def test_discover_leagues_is_deterministic_and_deduplicated():
     conn = _Connection()
 
     assert repair.discover_leagues(conn) == ["alpha", "beta"]
+
+
+def test_reaggregate_all_fails_fast_instead_of_repeating_storage_error(monkeypatch):
+    conn = _Connection()
+    calls: list[str] = []
+
+    def fail_first(_conn, db_name):
+        calls.append(db_name)
+        raise RuntimeError("checksum mismatch")
+
+    monkeypatch.setattr(repair, "reaggregate_one_league", fail_first)
+
+    try:
+        repair.reaggregate_all(conn, db_names=["alpha", "beta"])
+    except RuntimeError as exc:
+        assert "alpha" in str(exc)
+        assert "checksum mismatch" in str(exc)
+    else:
+        raise AssertionError("storage failure should abort recovery")
+
+    assert calls == ["alpha"]
+    assert conn.sql[-1] == "ROLLBACK"

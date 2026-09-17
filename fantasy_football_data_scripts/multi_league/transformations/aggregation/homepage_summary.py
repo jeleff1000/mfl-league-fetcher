@@ -1182,11 +1182,11 @@ def _compute_transaction_highlights(
     # Priority: manager_lamar_ros_managed > player_lamar_ros_total > total_points_ros_total
     lamar_parts = []
     if "manager_lamar_ros_managed" in txn_cols:
-        lamar_parts.append("t.manager_lamar_ros_managed")
+        lamar_parts.append("NULLIF(t.manager_lamar_ros_managed, 0)")
     if "player_lamar_ros_total" in txn_cols:
-        lamar_parts.append("t.player_lamar_ros_total")
+        lamar_parts.append("NULLIF(t.player_lamar_ros_total, 0)")
     if "total_points_ros_total" in txn_cols:
-        lamar_parts.append("t.total_points_ros_total")
+        lamar_parts.append("NULLIF(t.total_points_ros_total, 0)")
     lamar_parts.append("0")
     lamar_expr = f"COALESCE({', '.join(lamar_parts)})"
     # Build drop regret expression with fallbacks

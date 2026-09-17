@@ -268,6 +268,56 @@ def test_complete_chain_rollups_rebuild_stale_historical_season_dependencies(mer
     """).fetchone() == source_witness
 
 
+def test_complete_chain_rollups_reapply_saved_manager_merges_before_aggregation(merged_chain):
+    """A weekly rollup must not split identities already merged in Settings."""
+    conn = merged_chain
+    conn.execute("""
+        INSERT INTO public.league_context
+            (db_name, league_name, manager_name_overrides_json, franchise_merges_json)
+        VALUES (
+            'test_league',
+            'Test League',
+            '{"Old Owner":"Preferred","Current Owner":"Preferred"}',
+            '[{"display_name":"Current Owner","owner_ids":["new-id","old-id"],'
+            '"from_franchise_id":"old-id","into_franchise_id":"new-id"}]'
+        )
+    """)
+    conn.execute("""
+        INSERT INTO public.league_settings
+            (db_name, year, platform, league_key, num_teams, playoff_start_week, uses_median)
+        VALUES ('test_league', 2025, 'espn', 'old', 2, 15, 0),
+               ('test_league', 2026, 'espn', 'new', 2, 15, 0)
+    """)
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name, year, week, manager, franchise_id, opponent,
+             opponent_franchise_id, team_points, opponent_points,
+             win, loss, tie, is_playoffs, is_consolation, is_bye_week)
+        VALUES ('test_league', 2025, 1, 'Old Owner', 'old-id', 'Opponent',
+                'opponent-id', 120, 100, 1, 0, 0, 0, 0, 0),
+               ('test_league', 2026, 1, 'Current Owner', 'new-id', 'Opponent',
+                'opponent-id', 130, 110, 1, 0, 0, 0, 0, 0)
+    """)
+
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+
+    assert conn.execute("""
+        SELECT DISTINCT manager, franchise_id
+        FROM public.matchup
+        WHERE db_name='test_league'
+        ORDER BY manager, franchise_id
+    """).fetchall() == [('Preferred', 'new-id')]
+    assert conn.execute("""
+        SELECT year, manager, franchise_id, wins
+        FROM public.matchup_season
+        WHERE db_name='test_league'
+        ORDER BY year
+    """).fetchall() == [
+        (2025, 'Preferred', 'new-id', 1),
+        (2026, 'Preferred', 'new-id', 1),
+    ]
+
+
 def test_shared_career_rebuild_does_not_commit_the_callers_transaction(merged_chain):
     conn = merged_chain
     conn.execute('BEGIN TRANSACTION')

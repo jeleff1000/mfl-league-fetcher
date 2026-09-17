@@ -122,6 +122,50 @@ def league_db_filter(db_name: str, alias: str = "") -> str:
     return f"{prefix}db_name = '{db_name}'"
 
 
+def reapply_persisted_manager_identities(conn, db_name: str) -> int:
+    """Reapply saved aliases and franchise merges before rebuilding rollups."""
+    if not table_exists_in_catalog(conn, "league_context"):
+        return 0
+    columns = get_available_columns(conn, "league_context")
+    required = {"db_name", "manager_name_overrides_json", "franchise_merges_json"}
+    if not required.issubset(columns):
+        return 0
+
+    rows = conn.execute(
+        f"SELECT manager_name_overrides_json, franchise_merges_json "
+        f"FROM {central_table('league_context')} WHERE db_name = ?",
+        [db_name],
+    ).fetchall()
+    if not rows:
+        return 0
+    if len(rows) != 1:
+        raise RuntimeError(f"Expected one league_context row for {db_name}, found {len(rows)}")
+
+    try:
+        manager_name_overrides = json.loads(rows[0][0]) if rows[0][0] else {}
+        franchise_merges = json.loads(rows[0][1]) if rows[0][1] else []
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Invalid saved manager identity settings for {db_name}") from error
+    if not isinstance(manager_name_overrides, dict) or not isinstance(franchise_merges, list):
+        raise RuntimeError(f"Invalid saved manager identity settings for {db_name}")
+    if not manager_name_overrides and not franchise_merges:
+        return 0
+
+    from multi_league.transformations.sql_enrichments import SQLEnrichments
+
+    enricher = SQLEnrichments(
+        db_name=db_name,
+        quick=True,
+        conn=conn,
+        manager_name_overrides=manager_name_overrides,
+        franchise_merges=franchise_merges,
+    )
+    try:
+        return enricher.reapply_saved_identity_settings()
+    finally:
+        enricher.close()
+
+
 def aggregate_complete_chain_season_rollups(conn, db_name: str) -> dict[str, int]:
     """Rebuild season-derived dependencies from the complete persisted chain.
 
@@ -160,6 +204,7 @@ def aggregate_complete_chain_season_rollups(conn, db_name: str) -> dict[str, int
     for source in ("matchup", "league_settings", "player_fantasy", "draft", "transactions"):
         if not table_exists_in_catalog(conn, source):
             raise RuntimeError(f"Complete-chain season publication source is missing: {source}")
+    reapply_persisted_manager_identities(conn, db_name)
     for table in COMPLETE_CHAIN_SEASON_ROLLUP_TABLES:
         ensure_aggregate_table(conn, get_active_catalog(), table)
 

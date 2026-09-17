@@ -340,6 +340,29 @@ def test_merge_league_does_not_retry_client_errors(fly_env, tmp_path):
     mock_sleep.assert_not_called()
 
 
+def test_merge_league_does_not_retry_corrupt_database_response(fly_env, tmp_path):
+    db_path = tmp_path / "league.duckdb"
+    db_path.write_bytes(b"duckdb")
+    target = FlyTarget()
+    response = _resp(
+        500,
+        text=(
+            '{"detail":"IO Error: Corrupt database file: computed checksum '
+            'does not match stored checksum"}'
+        ),
+    )
+
+    with (
+        patch("multi_league.core.targets.fly_target.requests.post", return_value=response) as mock_post,
+        patch("multi_league.core.targets.fly_target.time.sleep") as mock_sleep,
+    ):
+        with pytest.raises(RuntimeError, match="500"):
+            target.merge_league("td_s_beer", db_path)
+
+    assert mock_post.call_count == 1
+    mock_sleep.assert_not_called()
+
+
 def test_merge_league_delta_recovers_committed_status_after_transport_failure(fly_env, tmp_path):
     bundle = tmp_path / "bundle.tar.gz"
     bundle.write_bytes(b"delta")

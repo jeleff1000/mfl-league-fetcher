@@ -449,7 +449,7 @@ class FlyTarget:
                     continue
                 raise RuntimeError(f"{endpoint} upload failed after {self.max_upload_retries} attempts: {exc}") from exc
 
-            if resp.status_code in self.RETRY_STATUS and attempt < self.max_upload_retries - 1:
+            if self._is_retryable_upload_response(resp) and attempt < self.max_upload_retries - 1:
                 self._sleep_before_retry(
                     endpoint,
                     attempt,
@@ -460,6 +460,19 @@ class FlyTarget:
             return resp
 
         raise RuntimeError(f"{endpoint} upload exhausted retries")
+
+    def _is_retryable_upload_response(self, resp: requests.Response) -> bool:
+        if resp.status_code not in self.RETRY_STATUS:
+            return False
+        detail = (resp.text or "").lower()
+        # A checksum mismatch is persistent storage corruption, not a
+        # transient proxy/server failure. Retrying only consumes the weekly
+        # update deadline and cannot change the result.
+        if "corrupt database file" in detail or (
+            "computed checksum" in detail and "stored checksum" in detail
+        ):
+            return False
+        return True
 
     def _sleep_before_retry(self, endpoint: str, attempt: int, reason: object) -> None:
         delay = self._retry_delay(attempt, reason if isinstance(reason, requests.Response) else None)

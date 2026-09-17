@@ -2407,6 +2407,36 @@ def test_weekly_ops_projection_keeps_only_active_scoring_inputs_and_ranks():
     assert "unused_research_blob" not in selected
 
 
+def test_weekly_ops_projection_uses_the_hydrated_active_league_scoring(tmp_path, monkeypatch):
+    import duckdb
+
+    from scripts.refresh_yahoo_active_season import _active_year_scoring_info
+
+    monkeypatch.delenv("OPS_CACHE_PATH", raising=False)
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.league_settings "
+        "(db_name VARCHAR, year INTEGER, scoring_rec DOUBLE, scoring_pass_td DOUBLE)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('league_a', 2026, 1.0, 4.0)")
+
+    class _LocalDB:
+        data_dir = tmp_path
+
+        @staticmethod
+        def connect():
+            return conn
+
+    scoring = _active_year_scoring_info(_LocalDB(), db_name="league_a", year=2026)
+
+    assert scoring["ppr"] == 1.0
+    assert scoring["td_key"] == "4pt"
+    assert scoring["rank_cols"]["QB"] == "rank_qb_4pt"
+    assert scoring["rank_cols"]["RB"] == "rank_rb_ppr"
+    conn.close()
+
+
 def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monkeypatch):
     """Avoid copying the 739 MB Actions cache before a one-week quick rebuild."""
     from scripts import refresh_yahoo_active_season

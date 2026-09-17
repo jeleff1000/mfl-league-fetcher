@@ -1194,6 +1194,7 @@ def _active_year_scoring_info(local_db: Any, *, db_name: str, year: int) -> dict
     planner = SQLEnrichments(
         db_name=db_name,
         quick=True,
+        data_dir=str(local_db.data_dir),
         conn=local_db.connect(),
     )
     planner.load_settings_from_db()

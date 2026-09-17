@@ -604,6 +604,22 @@ contract tests, YAML parse, Ruff, compileall, and diff checks pass. Production
 recovery has not yet run. The live source tables remain intact, but the five
 derived tables still require the guarded recovery before update canaries resume.
 
+The attempted in-place empty-shell repair was rejected by DuckDB at commit and
+rolled back. Live source counts remained unchanged afterward: 6,255 settings,
+1,769 contexts, 1,015,510 matchups, 911,103 draft rows, and 3,867,484
+transactions; the latest generation timestamp remained 2026-09-16 20:04:35
+UTC. A temporary zero-row repair table was removed and the catalog has no
+`__repair_*` or `__corrupt_*` leftovers. This path must not be retried.
+
+The next recovery stage is isolated and fail-closed: restore the preservation
+snapshot to a new Fly volume, copy every healthy table from its exact catalog
+DDL, and recreate only the five proven-damaged derived tables empty. The helper
+rejects unknown catalog-object types, absent exclusions, row-count mismatches,
+or a retained WAL. It cannot stop, clone, deploy, replace, or otherwise mutate
+the primary machine. Local helper/contract evidence: 7/7 tests, YAML parse,
+Ruff, compileall, and diff checks pass. Isolated production-volume evidence is
+still pending and no cutover is authorized yet.
+
 ## Shared historical PPG and rank-applicability corrections
 
 Regression evidence: with a single hydrated week scoring 18.76, the old shared

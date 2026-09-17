@@ -41,3 +41,19 @@ def test_derived_recovery_preserves_every_post_snapshot_publication_at_swap_time
     assert "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" in source
     assert "X-Expected-Overlay-Rows: ${table_overlay_rows}" in source
     assert ".overlay_rows == $overlay_rows" in source
+
+
+def test_isolated_rebuild_cannot_mutate_or_promote_the_primary_volume():
+    source = (
+        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
+    ).read_text(encoding="utf-8")
+
+    assert '--snapshot-id "$SNAPSHOT_ID"' in source
+    assert '"wkupd_rebuild_${GITHUB_RUN_ID}"' in source
+    assert "--target /data/___leagues.clean.duckdb" in source
+    assert "--empty-table public.homepage_manager_rankings" in source
+    assert "--empty-table public.standings_by_year" in source
+    assert "flyctl machine stop" not in source
+    assert "flyctl machine clone" not in source
+    assert "/replace-db" not in source
+    assert "flyctl deploy" not in source

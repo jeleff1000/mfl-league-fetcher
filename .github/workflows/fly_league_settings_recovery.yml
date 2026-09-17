@@ -7,6 +7,11 @@ on:
         description: Validated Fly volume snapshot to source league_settings from
         required: true
         type: string
+      existing_volume_id:
+        description: Optional retained, restored wkupd_rebuild volume to reuse instead of restoring snapshot_id
+        required: false
+        default: ''
+        type: string
       snapshot_created_at:
         description: UTC cutoff used to preserve every later import/update settings row
         required: true
@@ -84,6 +89,7 @@ jobs:
           DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
           FLY_APP: league-history-duckdb
           SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          EXISTING_VOLUME_ID: ${{ inputs.existing_volume_id }}
           SNAPSHOT_CREATED_AT: ${{ inputs.snapshot_created_at }}
           PRESERVATION_SNAPSHOT_ID: ${{ inputs.preservation_snapshot_id }}
           EXPECTED_FINAL_ROWS: ${{ inputs.expected_final_rows }}
@@ -97,6 +103,9 @@ jobs:
           for value in "$SNAPSHOT_ID" "$PRESERVATION_SNAPSHOT_ID"; do
             [[ "$value" =~ ^vs_[A-Za-z0-9]+$ ]] || { echo "Invalid snapshot ID" >&2; exit 2; }
           done
+          if [ -n "$EXISTING_VOLUME_ID" ]; then
+            [[ "$EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || exit 2
+          fi
           [[ "$EXPECTED_FINAL_ROWS" = "auto" || "$EXPECTED_FINAL_ROWS" =~ ^[1-9][0-9]*$ ]] || exit 2
           [[ "$EXPECTED_OVERLAY_LEAGUES" =~ ^[0-9]+$ ]] || exit 2
           [[ "$EXPECTED_OVERLAY_ROWS" =~ ^[0-9]+$ ]] || exit 2
@@ -113,6 +122,23 @@ jobs:
           test -n "$source_size_gb"
           test -n "$image_ref"
 
+          if [ -n "$EXISTING_VOLUME_ID" ]; then
+            existing_name="$(jq -r --arg id "$EXISTING_VOLUME_ID" \
+              'map(select(.id == $id))[0].name // empty' volumes.json)"
+            existing_region="$(jq -r --arg id "$EXISTING_VOLUME_ID" \
+              'map(select(.id == $id))[0].region // empty' volumes.json)"
+            existing_state="$(jq -r --arg id "$EXISTING_VOLUME_ID" \
+              'map(select(.id == $id))[0].state // empty' volumes.json)"
+            existing_attached_machine="$(jq -r --arg id "$EXISTING_VOLUME_ID" \
+              'map(select(.id == $id))[0].attached_machine_id' volumes.json)"
+            [[ "$existing_name" == wkupd_rebuild_* ]]
+            test -n "$existing_region"
+            test "$existing_state" = "created"
+            test "$existing_attached_machine" = "null"
+            test "$EXISTING_VOLUME_ID" != "$source_volume_id"
+            source_region="$existing_region"
+          fi
+
           snapshots_json="$(flyctl volumes snapshots list "$source_volume_id" --app "$FLY_APP" --json)"
           printf '%s' "$snapshots_json" | jq -e --arg id "$SNAPSHOT_ID" \
             '.[] | select(.id == $id and .status == "created")' >/dev/null
@@ -121,30 +147,36 @@ jobs:
 
           recovery_volume_id=""
           recovery_machine_id=""
+          owns_recovery_volume="false"
           cleanup() {
             if [ -n "$recovery_machine_id" ]; then
               flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force || true
             fi
-            if [ -n "$recovery_volume_id" ]; then
+            if [ "$owns_recovery_volume" = "true" ] && [ -n "$recovery_volume_id" ]; then
               flyctl volumes destroy "$recovery_volume_id" --app "$FLY_APP" --yes || true
             fi
           }
           trap cleanup EXIT
 
-          recovery_json="$(flyctl volumes create "wkupd_${GITHUB_RUN_ID}" --app "$FLY_APP" \
-            --region "$source_region" --size "$source_size_gb" --snapshot-id "$SNAPSHOT_ID" \
-            --scheduled-snapshots=false --require-unique-zone=false --yes --json)"
-          recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
-          test -n "$recovery_volume_id"
-          test "$recovery_volume_id" != "null"
+          if [ -n "$EXISTING_VOLUME_ID" ]; then
+            recovery_volume_id="$EXISTING_VOLUME_ID"
+          else
+            recovery_json="$(flyctl volumes create "wkupd_${GITHUB_RUN_ID}" --app "$FLY_APP" \
+              --region "$source_region" --size "$source_size_gb" --snapshot-id "$SNAPSHOT_ID" \
+              --scheduled-snapshots=false --require-unique-zone=false --yes --json)"
+            recovery_volume_id="$(printf '%s' "$recovery_json" | jq -r '.id')"
+            test -n "$recovery_volume_id"
+            test "$recovery_volume_id" != "null"
+            owns_recovery_volume="true"
 
-          recovery_state="restoring"
-          for _ in $(seq 1 720); do
-            recovery_state="$(flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json | jq -r '.state')"
-            [ "$recovery_state" = "created" ] && break
-            sleep 5
-          done
-          [ "$recovery_state" = "created" ] || { echo "Snapshot restore timed out" >&2; exit 3; }
+            recovery_state="restoring"
+            for _ in $(seq 1 720); do
+              recovery_state="$(flyctl volumes show "$recovery_volume_id" --app "$FLY_APP" --json | jq -r '.state')"
+              [ "$recovery_state" = "created" ] && break
+              sleep 5
+            done
+            [ "$recovery_state" = "created" ] || { echo "Snapshot restore timed out" >&2; exit 3; }
+          fi
 
           cat > build_recovery_overlay_manifest.py <<'PY'
           import datetime as dt

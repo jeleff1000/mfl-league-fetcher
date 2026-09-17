@@ -38,6 +38,16 @@ def test_settings_recovery_requires_a_durable_checkpoint():
     assert '.checkpoint_error == null' in source
 
 
+def test_settings_recovery_can_reuse_a_retained_unattached_volume():
+    source = WORKFLOWS[1].read_text(encoding="utf-8")
+
+    assert "existing_volume_id:" in source
+    assert '[[ "$EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]' in source
+    assert 'test "$existing_attached_machine" = "null"' in source
+    assert '[[ "$existing_name" == wkupd_rebuild_* ]]' in source
+    assert 'if [ "$owns_recovery_volume" = "true" ]' in source
+
+
 def test_derived_recovery_preserves_every_post_snapshot_publication_at_swap_time():
     source = WORKFLOWS[1].read_text(encoding="utf-8")
 

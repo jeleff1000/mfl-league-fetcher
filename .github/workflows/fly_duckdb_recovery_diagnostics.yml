@@ -28,6 +28,11 @@ on:
         required: false
         default: false
         type: boolean
+      restart_primary:
+        description: Restart the one existing primary machine without changing its volume
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -53,6 +58,7 @@ jobs:
           INSPECT_EXISTING_VOLUME_ID: ${{ inputs.inspect_existing_volume_id }}
           INSPECT_DB_NAME: ${{ inputs.inspect_db_name }}
           CLEANUP_RECOVERY_RESOURCES: ${{ inputs.cleanup_recovery_resources }}
+          RESTART_PRIMARY: ${{ inputs.restart_primary }}
         run: |
           set -euo pipefail
           flyctl status --app "$FLY_APP"
@@ -60,6 +66,14 @@ jobs:
           flyctl volumes list --app "$FLY_APP" --json | tee volumes.json
           echo "Recent Fly application logs"
           flyctl logs --app "$FLY_APP" --no-tail | tail -n 400 || true
+
+          if [ "$RESTART_PRIMARY" = "true" ]; then
+            machine_count="$(jq 'length' machines.json)"
+            [ "$machine_count" = "1" ]
+            machine_id="$(jq -r '.[0].id' machines.json)"
+            [ "$machine_id" = "1781e011b69068" ]
+            flyctl machine restart "$machine_id" --app "$FLY_APP"
+          fi
 
           if [ "$CLEANUP_RECOVERY_RESOURCES" = "true" ]; then
             jq -r '.[] | select(.name | startswith("wkupd_")) | [.id, (.attached_machine_id // "")] | @tsv' volumes.json \

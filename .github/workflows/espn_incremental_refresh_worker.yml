@@ -148,17 +148,8 @@ jobs:
           --claim-version "${UPDATE_CLAIM_VERSION}"
           --require-entitled
 
-      - name: Create weekly virtualenv
-        run: python -m venv .venv
-
       - name: Install dependencies
-        run: |
-          source .venv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-weekly-update.txt
-
-      - name: Activate virtualenv
-        run: echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"
+        run: python -m pip install --disable-pip-version-check --quiet -r requirements-weekly-update.txt
 
       - name: Validate cache-only recovery request
         if: inputs.cache_only

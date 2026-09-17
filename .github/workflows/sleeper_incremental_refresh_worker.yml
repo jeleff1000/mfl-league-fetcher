@@ -98,6 +98,7 @@ jobs:
             /fantasy_football_data_scripts/
             /scripts/
             /requirements.txt
+            /requirements-weekly-update.txt
             /pyproject.toml
 
       - name: Setup Python
@@ -147,23 +148,12 @@ jobs:
           --claim-version "${UPDATE_CLAIM_VERSION}"
           --require-entitled
 
-      - name: Restore canonical research ops cache
-        if: ${{ !inputs.cache_only }}
-        uses: ./.github/actions/restore-research-ops-cache
-        with:
-          cache-key: research-public-lake-v5-Linux-2000-plus-player-bio
-          release-tag: ops-cache-v6-2000-plus-player-bio
-
-      - name: Verify ops cache
-        if: ${{ !inputs.cache_only }}
-        run: test -s "${OPS_CACHE_PATH}"
-
       - name: Cache Python virtualenv
         uses: actions/cache@v5
         id: cache-venv
         with:
           path: .venv
-          key: venv-${{ runner.os }}-py3.11-${{ hashFiles('requirements.txt') }}
+          key: weekly-venv-${{ runner.os }}-py3.11-${{ hashFiles('requirements-weekly-update.txt') }}
 
       - name: Create virtualenv
         if: steps.cache-venv.outputs.cache-hit != 'true'
@@ -174,7 +164,7 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-weekly-update.txt
 
       - name: Activate virtualenv
         run: echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"

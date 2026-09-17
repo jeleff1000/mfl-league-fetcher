@@ -1,0 +1,16 @@
+# Runtime-only dependencies for the three active-season Update League workers.
+# Keep analytics UI, notebook, plotting, optimization, and test packages out of
+# this environment: the weekly worker executes the shared SQL/aggregate path.
+duckdb==1.5.1
+pandas==2.2.3
+pyarrow==15.0.2
+requests==2.32.3
+numpy==1.26.4
+polars==1.35.2
+lxml==5.3.0
+yahoo-fantasy-api==2.12.2
+yahoo-oauth==2.1.1
+espn-api>=0.45.0
+python-dotenv==1.0.1
+cryptography==43.0.3
+pyyaml==6.0.2

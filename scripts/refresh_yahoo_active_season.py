@@ -1126,6 +1126,110 @@ def _patch_research_ops_cache_from_fly(
     return output
 
 
+def _build_active_year_ops_cache(reader: Any, *, output: Path, year: int) -> Path:
+    """Build the weekly SQL cache from one active NFL season only.
+
+    The weekly transform database is active-season scoped.  Pulling the
+    all-years Actions cache wastes hundreds of megabytes without adding an
+    input that this rebuild can publish.  The wide table still carries its
+    precomputed all-time rank columns, so the active rows retain the canonical
+    historical comparison values.
+    """
+    stats_target = "nfl_historical.nfl_player_stats_all"
+    bio_target = "nfl_historical.player_bio"
+    required = {
+        "NFL_player_id", "year", "week", "season_type", "nfl_team", "opponent_nfl_team",
+    }
+
+    def schema(table: str, *, omit: set[str] | None = None) -> list[tuple[str, str]]:
+        omitted = omit or set()
+        rows = reader.query(f"DESCRIBE {table}", database=OPS_DATABASE)
+        result = [
+            (str(row["column_name"]), str(row["column_type"]))
+            for row in rows
+            if row.get("column_name") and row.get("column_type")
+            and str(row["column_name"]) not in omitted
+        ]
+        if not result:
+            raise RuntimeError(f"Fly returned no schema for {table}")
+        return result
+
+    stats_schema = schema(stats_target, omit={"recon_correction_log"})
+    stats_columns = [name for name, _type in stats_schema]
+    missing = sorted(required - set(stats_columns))
+    if missing:
+        raise RuntimeError("active-year ops schema is missing required columns: " + ", ".join(missing))
+    stats_projection = ", ".join(_quoted_identifier(name) for name in stats_columns)
+    stats = reader.query_df_parquet(
+        f"SELECT {stats_projection} FROM {stats_target} WHERE year = {int(year)}",
+        database=OPS_DATABASE,
+    )
+    if stats.empty:
+        raise RuntimeError(f"Fly returned no NFL ops rows for active year {year}")
+    actual_years = {int(value) for value in stats["year"].dropna().tolist()}
+    if actual_years != {int(year)}:
+        raise RuntimeError(f"active-year ops cache escaped requested year {year}: {sorted(actual_years)}")
+
+    bio_schema = schema(bio_target)
+    bio_columns = [name for name, _type in bio_schema]
+    if "NFL_player_id" not in bio_columns:
+        raise RuntimeError("Fly player_bio schema is missing NFL_player_id")
+    bio_projection = ", ".join(_quoted_identifier(name) for name in bio_columns)
+    bios = reader.query_df_parquet(
+        f"SELECT {bio_projection} FROM {bio_target} "
+        f"WHERE NFL_player_id IN (SELECT DISTINCT NFL_player_id FROM {stats_target} "
+        f"WHERE year = {int(year)})",
+        database=OPS_DATABASE,
+    )
+    if bios.empty:
+        raise RuntimeError(f"Fly returned no player_bio rows for active year {year}")
+    if bios["NFL_player_id"].isna().any() or bios["NFL_player_id"].astype(str).duplicated().any():
+        raise RuntimeError("active-year player_bio rows have missing or duplicate NFL_player_id values")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    building = output.with_suffix(output.suffix + ".building")
+    if building.exists():
+        building.unlink()
+    cache = duckdb.connect(str(building))
+    try:
+        cache.execute("CREATE SCHEMA nfl_historical")
+        for target, table_schema, frame, registration in (
+            (stats_target, stats_schema, stats, "__active_stats"),
+            (bio_target, bio_schema, bios, "__active_bios"),
+        ):
+            definitions = ", ".join(
+                f"{_quoted_identifier(name)} {column_type}" for name, column_type in table_schema
+            )
+            columns = ", ".join(_quoted_identifier(name) for name, _type in table_schema)
+            cache.execute(f"CREATE TABLE {target} ({definitions})")
+            cache.register(registration, frame)
+            try:
+                cache.execute(
+                    f"INSERT INTO {target} ({columns}) SELECT {columns} FROM {registration}"
+                )
+            finally:
+                cache.unregister(registration)
+    except Exception:
+        cache.close()
+        if building.exists():
+            building.unlink()
+        raise
+    else:
+        cache.close()
+    building.replace(output)
+    return output
+
+
+def _ensure_active_year_ops_cache(reader: Any, *, year: int, work_dir: Path) -> Path:
+    """Return an existing disposable cache or create the bounded weekly one."""
+    configured = str(os.environ.get("OPS_CACHE_PATH", "")).strip()
+    output = Path(configured).resolve() if configured else work_dir / "ops_cache.duckdb"
+    if not output.is_file():
+        _build_active_year_ops_cache(reader, output=output, year=year)
+    os.environ["OPS_CACHE_PATH"] = str(output)
+    return output
+
+
 def _ensure_ops_cache_matches_live(
     reader: Any,
     finalized_ops: pd.DataFrame,
@@ -1989,6 +2093,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             active_connection = local_db.connect()
+            _ensure_active_year_ops_cache(reader, year=active_year, work_dir=work_dir)
+            timer.mark("player_ops_seed")
             receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(
                 reader,
                 ops_cache=Path(os.environ.get("OPS_CACHE_PATH", "")),

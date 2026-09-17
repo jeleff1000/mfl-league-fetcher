@@ -2257,6 +2257,82 @@ def test_active_refresh_ops_projection_skips_the_large_unused_correction_log():
     )
 
 
+def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
+    """Weekly refreshes must not restore the all-years NFL cache."""
+    import duckdb
+
+    from scripts.refresh_yahoo_active_season import _build_active_year_ops_cache
+
+    stats = pd.DataFrame(
+        [
+            {
+                "NFL_player_id": "00-001",
+                "year": 2026,
+                "week": 1,
+                "season_type": "REG",
+                "nfl_team": "NWE",
+                "opponent_nfl_team": "SEA",
+                "fantasy_points": 18.25,
+            }
+        ]
+    )
+    bios = pd.DataFrame(
+        [{"NFL_player_id": "00-001", "player": "Example Player", "sleeper_player_id": "101"}]
+    )
+
+    class _Reader:
+        def __init__(self):
+            self.parquet_sql: list[str] = []
+
+        def query(self, sql, *, database):
+            assert database == "___ops"
+            if sql == "DESCRIBE nfl_historical.nfl_player_stats_all":
+                return [
+                    {
+                        "column_name": column,
+                        "column_type": (
+                            "INTEGER" if column in {"year", "week"}
+                            else "DOUBLE" if column == "fantasy_points"
+                            else "VARCHAR"
+                        ),
+                    }
+                    for column in stats.columns
+                ]
+            if sql == "DESCRIBE nfl_historical.player_bio":
+                return [
+                    {"column_name": column, "column_type": "VARCHAR"}
+                    for column in bios.columns
+                ]
+            raise AssertionError(sql)
+
+        def query_df_parquet(self, sql, *, database):
+            assert database == "___ops"
+            self.parquet_sql.append(sql)
+            return bios.copy() if "player_bio" in sql else stats.copy()
+
+    reader = _Reader()
+    output = tmp_path / "ops_cache.duckdb"
+    actual = _build_active_year_ops_cache(reader, output=output, year=2026)
+
+    assert actual == output
+    assert len(reader.parquet_sql) == 2
+    assert all("SELECT *" not in sql.upper() for sql in reader.parquet_sql)
+    assert "WHERE year = 2026" in reader.parquet_sql[0]
+    assert "WHERE year = 2026" in reader.parquet_sql[1]
+
+    verified = duckdb.connect(str(output), read_only=True)
+    try:
+        assert verified.execute(
+            "SELECT NFL_player_id, year, week, fantasy_points "
+            "FROM nfl_historical.nfl_player_stats_all"
+        ).fetchall() == [("00-001", 2026, 1, 18.25)]
+        assert verified.execute(
+            "SELECT NFL_player_id, player FROM nfl_historical.player_bio"
+        ).fetchall() == [("00-001", "Example Player")]
+    finally:
+        verified.close()
+
+
 def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monkeypatch):
     """Avoid copying the 739 MB Actions cache before a one-week quick rebuild."""
     from scripts import refresh_yahoo_active_season

@@ -42,6 +42,20 @@ def data_dir(tmp_path, request):
                     (db_name, data_year, season_best_pickup_player)
                 VALUES ('test_league', 2026, 'Missing Pickup')
             """)
+        if getattr(request, 'param', None) == 'legacy_trade_mirror':
+            conn.execute("""
+                INSERT INTO public.transactions
+                    (db_name, transaction_id, year, week, transaction_type, trade_direction,
+                     manager, franchise_id, source_franchise_id, player, NFL_player_id,
+                     sleeper_player_id, trade_asset_lamar)
+                VALUES
+                    ('test_league', 'pick-swap', 2025, 1, 'trade_pick', 'received',
+                     'Shared Alias', 'f1', 'f2', 'Stale Player', 'STALE',
+                     'pick_2025_1_1', 17),
+                    ('test_league', 'pick-swap', 2025, 1, 'trade_pick', 'sent',
+                     'Opponent', 'f2', 'f1', 'Correct Player', 'CORRECT',
+                     'pick_2025_1_1', NULL)
+            """)
     if getattr(request, 'param', None) == 'missing_ops':
         return tmp_path
     with duckdb.connect(str(tmp_path / '___ops.duckdb')) as conn:
@@ -104,6 +118,21 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     assert replay.status_code == 200, replay.text
     assert replay.json()['idempotent_replay'] is True
     assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 1}]
+
+
+@pytest.mark.parametrize('data_dir', ['legacy_trade_mirror'], indirect=True)
+def test_http_weekly_merge_repairs_legacy_null_sent_pick_mirror(client, tmp_path):  # noqa: F811
+    response = _publish(client, _bundle(tmp_path, homepage=True))
+
+    assert response.status_code == 200, response.text
+    assert _query(
+        client,
+        "SELECT trade_direction,trade_asset_lamar FROM public.transactions "
+        "WHERE db_name='test_league' ORDER BY trade_direction",
+    ) == [
+        {'trade_direction': 'received', 'trade_asset_lamar': 17.0},
+        {'trade_direction': 'sent', 'trade_asset_lamar': 17.0},
+    ]
 
 
 @pytest.mark.parametrize('data_dir', ['missing_source', 'missing_ops'], indirect=True)

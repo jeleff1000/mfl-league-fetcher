@@ -393,6 +393,54 @@ class _AggregationConnection:
         return getattr(self._conn, name)
 
 
+def _repair_legacy_null_trade_pick_mirrors(conn, db_name: str, run: Callable) -> None:
+    """Fill only legacy NULL sent values from an exact received pick mirror."""
+    try:
+        columns = {str(row[0]).lower() for row in conn.execute("DESCRIBE public.transactions").fetchall()}
+    except Exception:
+        return
+    required = {
+        "db_name", "transaction_id", "year", "transaction_type", "trade_direction",
+        "franchise_id", "source_franchise_id", "sleeper_player_id", "trade_asset_lamar",
+    }
+    if not required.issubset(columns):
+        return
+
+    run(
+        conn,
+        """
+        WITH received AS (
+            SELECT transaction_id, year,
+                   franchise_id AS receiving_franchise_id,
+                   source_franchise_id AS sending_franchise_id,
+                   sleeper_player_id,
+                   MAX(trade_asset_lamar) AS asset_lamar
+            FROM public.transactions
+            WHERE db_name = ?
+              AND transaction_type = 'trade_pick'
+              AND trade_direction = 'received'
+              AND sleeper_player_id IS NOT NULL
+              AND trade_asset_lamar IS NOT NULL
+            GROUP BY transaction_id, year, franchise_id, source_franchise_id, sleeper_player_id
+        )
+        UPDATE public.transactions AS sent
+        SET trade_asset_lamar = received.asset_lamar
+        FROM received
+        WHERE sent.db_name = ?
+          AND sent.transaction_type = 'trade_pick'
+          AND sent.trade_direction = 'sent'
+          AND sent.trade_asset_lamar IS NULL
+          AND sent.transaction_id = received.transaction_id
+          AND sent.year = received.year
+          AND sent.franchise_id = received.sending_franchise_id
+          AND COALESCE(sent.source_franchise_id, '') = COALESCE(received.receiving_franchise_id, '')
+          AND sent.sleeper_player_id = received.sleeper_player_id
+        """,
+        [db_name, db_name],
+        step="repair legacy null trade-pick mirror",
+    )
+
+
 def apply_fleet_merge(
     conn: duckdb.DuckDBPyConnection,
     manifest: dict,
@@ -588,6 +636,7 @@ def apply_fleet_merge(
 
                     homepage_start = time.perf_counter()
                     try:
+                        _repair_legacy_null_trade_pick_mirrors(conn, db_name, run)
                         homepage_rollups[db_name] = aggregate_homepage_rollups(aggregation_conn, db_name)
                     except HomepageValidationError as exc:
                         raise FleetValidationError(str(exc)) from exc

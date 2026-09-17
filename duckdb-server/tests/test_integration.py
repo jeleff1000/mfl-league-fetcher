@@ -236,6 +236,15 @@ def test_rename_league_runs_one_server_side_operation(client, monkeypatch):
     import main as main_mod
 
     calls = []
+    handoff = []
+    real_close_all = main_mod.db.close_all
+
+    def drain_ops():
+        handoff.append("drain_ops")
+
+    def close_all():
+        handoff.append("close_all")
+        real_close_all()
 
     def fake_rename(*, data_dir, source_db, target_db, display_name, operation_id):
         calls.append((data_dir, source_db, target_db, display_name, operation_id))
@@ -247,6 +256,8 @@ def test_rename_league_runs_one_server_side_operation(client, monkeypatch):
         }
 
     monkeypatch.setattr(main_mod, "_rename_league_server_side", fake_rename)
+    monkeypatch.setattr(main_mod, "_drain_ops_attachments_for_snapshot", drain_ops)
+    monkeypatch.setattr(main_mod.db, "close_all", close_all)
     response = client.post(
         "/rename-league",
         headers={"Authorization": "Bearer test-admin"},
@@ -274,6 +285,7 @@ def test_rename_league_runs_one_server_side_operation(client, monkeypatch):
             "rename-agusta",
         )
     ]
+    assert handoff[:2] == ["drain_ops", "close_all"]
 
 
 def test_rename_league_rejects_invalid_target_before_write(client, monkeypatch):

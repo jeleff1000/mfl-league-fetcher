@@ -3330,7 +3330,8 @@ async def rename_league(request: Request):
             elapsed += 0.5
         if db.get_active_count() > 0:
             await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
-        db.close_pool()
+        _drain_ops_attachments_for_snapshot()
+        db.close_all()
         _state["status"] = "writing"
         try:
             result = await asyncio.to_thread(

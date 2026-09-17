@@ -654,6 +654,13 @@ _MERGE_STATE_TABLE = "league_merge_state"
 _DELTA_STATE_TABLE = "league_delta_merge_state"
 _DELTA_MANIFEST_VERSION = 1
 _DELTA_SCHEMA_VERSION = "league-delta-v1"
+_DAMAGED_DERIVED_TARGETS = (
+    "homepage_manager_rankings",
+    "matchup_h2h_career",
+    "player_fantasy_season",
+    "player_fantasy_season_all",
+    "standings_by_year",
+)
 _DELTA_MAX_UPLOAD_BYTES = int(os.environ.get("MAX_DELTA_UPLOAD_BYTES", str(1024 * 1024 * 1024)))
 _DELTA_ALLOWED_TABLES = {
     "all_play",
@@ -1943,6 +1950,40 @@ def _rebuild_league_derived_from_sources(
         conn.close()
 
 
+def _reaggregate_damaged_derived_from_sources(
+    database_path: Path,
+    *,
+    mode: str,
+) -> dict[str, Any]:
+    """Rebuild only the five damaged aggregate tables from persisted facts."""
+    from fly_reaggregate_derived import quarantine_corrupt_targets, reaggregate_all
+
+    conn = db.connect_database(
+        database_path,
+        data_dir=db.get_data_dir(),
+        threads=WRITE_DUCKDB_THREADS,
+    )
+    try:
+        quarantined: dict[str, str] = {}
+        if mode == "quarantine_and_rebuild":
+            quarantined = quarantine_corrupt_targets(conn)
+        elif mode != "resume_rebuild":
+            raise ValueError("mode must be quarantine_and_rebuild or resume_rebuild")
+
+        result = reaggregate_all(conn)
+        result.update(
+            {
+                "status": "COMMITTED",
+                "mode": mode,
+                "quarantined": quarantined,
+                "targets": list(_DAMAGED_DERIVED_TARGETS),
+            }
+        )
+        return result
+    finally:
+        conn.close()
+
+
 class DeltaValidationError(ValueError):
     """Client-supplied delta bundle is invalid and must not be retried as-is."""
 
@@ -3122,6 +3163,59 @@ async def rebuild_league_derived(request: Request):
             "generation": result["generation"],
             "checkpointed": result["checkpointed"],
         },
+    )
+    return result
+
+
+@app.post("/reaggregate-damaged-derived")
+async def reaggregate_damaged_derived(request: Request):
+    """Quarantine and rebuild exactly the five known damaged aggregates."""
+    try:
+        validate_admin_token(get_bearer_token(request))
+    except AuthError as exc:
+        track_event("auth_failed", {"endpoint": "/reaggregate-damaged-derived"})
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="request body must be JSON") from exc
+    mode = str(body.get("mode") or "").strip()
+    confirmed_targets = body.get("confirm_targets")
+    if confirmed_targets != list(_DAMAGED_DERIVED_TARGETS):
+        raise HTTPException(status_code=400, detail="confirm_targets must exactly match the recovery allowlist")
+    if mode not in {"quarantine_and_rebuild", "resume_rebuild"}:
+        raise HTTPException(status_code=400, detail="invalid recovery mode")
+
+    database_path = db.get_data_dir() / "___leagues.duckdb"
+    async with _merge_lock:
+        _state["status"] = "draining"
+        elapsed = 0.0
+        while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
+            await asyncio.sleep(0.5)
+            elapsed += 0.5
+        if db.get_active_count() > 0:
+            await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
+        db.close_pool()
+        _state["status"] = "writing"
+        try:
+            result = await asyncio.to_thread(
+                _reaggregate_damaged_derived_from_sources,
+                database_path,
+                mode=mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("Five-table derived recovery failed: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            await _reopen_pool_after_write("five-table derived recovery")
+            _set_serving_or_ops_writing()
+
+    track_event(
+        "damaged_derived_reaggregated",
+        {"mode": mode, "leagues": result["leagues"], "targets": len(_DAMAGED_DERIVED_TARGETS)},
     )
     return result
 

@@ -5,6 +5,7 @@ COPY duckdb-server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY duckdb-server/*.py .
+COPY scripts/fly_reaggregate_derived.py .
 # The merge endpoint calls the same canonical aggregations as imports. The
 # Dockerfile-specific allowlist admits Python source only, never league/NFL data.
 COPY fantasy_football_data_scripts/multi_league ./multi_league

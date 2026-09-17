@@ -6,6 +6,8 @@
 !fantasy_football_data_scripts/multi_league/
 !fantasy_football_data_scripts/multi_league/**/
 !fantasy_football_data_scripts/multi_league/**/*.py
+!scripts/
+!scripts/fly_reaggregate_derived.py
 **/__pycache__/
 **/tests/
 **/test_*.py

@@ -2054,7 +2054,10 @@ def _rename_league_server_side(
                 operation_id=operation_id,
                 registry=canonical_table_registry(),
             )
-            data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
+            if data_result.get("status") == "ALREADY_CONSOLIDATED":
+                data_checkpointed, data_checkpoint_error = False, None
+            else:
+                data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
         finally:
             leagues_conn.close()
 
@@ -2065,7 +2068,10 @@ def _rename_league_server_side(
             display_name=display_name,
             operation_id=operation_id,
         )
-        ops_checkpointed, ops_checkpoint_error = _checkpoint_result(ops_conn)
+        if control_result.get("status") == "ALREADY_COMMITTED":
+            ops_checkpointed, ops_checkpoint_error = False, None
+        else:
+            ops_checkpointed, ops_checkpoint_error = _checkpoint_result(ops_conn)
     finally:
         ops_conn.close()
 

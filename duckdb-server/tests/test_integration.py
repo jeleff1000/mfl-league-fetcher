@@ -5,6 +5,7 @@ import json
 import tarfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from threading import Event
 from unittest.mock import patch
 
@@ -271,6 +272,22 @@ def test_query_compresses_large_json_payloads(client):
     assert resp.status_code == 200
     assert resp.headers.get("content-encoding") == "gzip"
     assert resp.json() == [{"payload": "x" * 5000}]
+
+
+def test_ops_query_parquet_returns_the_same_rows_without_json_materialization(client):
+    import pandas as pd
+
+    resp = client.post(
+        "/query-parquet",
+        json={"sql": "SELECT 2026 AS year, 'player-1' AS NFL_player_id", "database": "___ops"},
+        headers={"Authorization": "Bearer test-read"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/vnd.apache.parquet"
+    assert pd.read_parquet(BytesIO(resp.content)).to_dict("records") == [
+        {"year": 2026, "NFL_player_id": "player-1"}
+    ]
 
 
 def test_query_returns_retryable_busy_when_primary_writing(client):

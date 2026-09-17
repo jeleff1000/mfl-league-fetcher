@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 import requests
@@ -146,6 +147,40 @@ class FlyReader:
 
         rows = self._post(sql, self._require_db(database))
         return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def query_df_parquet(self, sql: str, database: str) -> pd.DataFrame:
+        """Read a wide result without materializing every value through JSON."""
+        import pandas as pd
+
+        database = self._require_db(database)
+        last_error: str | None = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                resp = requests.post(
+                    f"{self.url}/query-parquet",
+                    json={"sql": sql, "database": database},
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=self.TIMEOUT_SECONDS,
+                )
+            except self.RETRY_EXCEPTIONS as exc:
+                last_error = f"Network error: {exc}"
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(self._retry_delay(attempt))
+                    continue
+                raise FlyReaderNetworkError(
+                    f"{last_error} after {attempt + 1}/{self.MAX_RETRIES} attempts"
+                ) from exc
+            if resp.status_code in self.RETRY_STATUS and attempt < self.MAX_RETRIES - 1:
+                last_error = f"Parquet query failed ({resp.status_code}): {resp.text}"
+                time.sleep(self._retry_delay(attempt, resp))
+                continue
+            if resp.status_code != 200:
+                raise FlyReaderError(
+                    f"Parquet query failed ({resp.status_code}): {resp.text} "
+                    f"[database={database}; sql={self._sql_preview(sql)}]"
+                )
+            return pd.read_parquet(BytesIO(resp.content))
+        raise FlyReaderError(f"Parquet query exhausted retries: {last_error or 'unknown error'}")
 
     def query_scalar(self, sql: str, database: str) -> object:
         rows = self._post(sql, self._require_db(database))

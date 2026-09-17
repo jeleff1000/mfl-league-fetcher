@@ -1037,13 +1037,18 @@ def _patch_research_ops_cache_from_fly(
                     "(" + ", ".join(_sql_literal(value) for value in key) + ")"
                     for key in sorted(fetch_keys)
                 )
-                source = reader.query_df(
+                source_sql = (
                     f"SELECT {source_select} FROM {target} "
                     f"WHERE year = {int(year)} AND week = {int(week)} "
                     "AND COALESCE(season_type, 'REG') = 'REG' "
                     "AND (NFL_player_id, nfl_team, opponent_nfl_team) "
-                    f"IN (VALUES {values})",
-                    database=OPS_DATABASE,
+                    f"IN (VALUES {values})"
+                )
+                parquet_query = getattr(reader, "query_df_parquet", None)
+                source = (
+                    parquet_query(source_sql, database=OPS_DATABASE)
+                    if parquet_query is not None
+                    else reader.query_df(source_sql, database=OPS_DATABASE)
                 )
             else:
                 source = pd.DataFrame(columns=columns)

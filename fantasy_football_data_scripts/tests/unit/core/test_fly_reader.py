@@ -7,6 +7,7 @@ doesn't exhaust retries within a few seconds.
 """
 
 from unittest.mock import Mock, patch
+from io import BytesIO
 
 import pytest
 import requests
@@ -47,6 +48,22 @@ def test_post_succeeds_on_200(fly_env):
     with patch("multi_league.core.readers.fly_reader.requests.post", return_value=_resp(200, [{"x": 1}])):
         rows = reader.query("SELECT 1", database="___leagues")
     assert rows == [{"x": 1}]
+
+
+def test_query_df_parquet_decodes_binary_response(fly_env):
+    import pandas as pd
+
+    payload = BytesIO()
+    pd.DataFrame([{"NFL_player_id": "player-1", "year": 2026}]).to_parquet(payload, index=False)
+    response = _resp(200)
+    response.content = payload.getvalue()
+    reader = FlyReader()
+
+    with patch("multi_league.core.readers.fly_reader.requests.post", return_value=response) as post:
+        frame = reader.query_df_parquet("SELECT 1", database="___ops")
+
+    assert frame.to_dict("records") == [{"NFL_player_id": "player-1", "year": 2026}]
+    assert post.call_args.args[0] == "https://fly.test/query-parquet"
 
 
 def test_post_retries_503_then_succeeds(fly_env):

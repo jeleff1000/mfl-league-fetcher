@@ -956,6 +956,40 @@ async def query_endpoint(req: QueryRequest, request: Request):
         _query_semaphore.release()
 
 
+@app.post("/query-parquet")
+async def query_parquet_endpoint(req: QueryRequest, request: Request):
+    """Return a read-only ___ops query as compact Parquet bytes."""
+    try:
+        validate_read_token(get_bearer_token(request))
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+    if req.database != "___ops":
+        raise HTTPException(status_code=400, detail="Parquet query transport is limited to ___ops")
+    if not is_read_only_sql(req.sql):
+        raise HTTPException(status_code=403, detail="Write operations not allowed")
+    if _state["status"] == "starting":
+        return _query_busy_response(reason="starting")
+    try:
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(_execute_ops_query_parquet, req.sql),
+            timeout=PUBLIC_QUERY_TIMEOUT + 5,
+        )
+        return Response(
+            content=payload,
+            media_type="application/vnd.apache.parquet",
+            headers={"Content-Encoding": "identity"},
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Query timed out") from exc
+    except _duckdb.CatalogException as exc:
+        raise HTTPException(status_code=500, detail=f"Catalog Error: {exc}") from exc
+    except _duckdb.BinderException as exc:
+        raise HTTPException(status_code=500, detail=f"Binder Error: {exc}") from exc
+    except Exception as exc:
+        logger.error("___ops Parquet query failed: %s", req.sql[:500], exc_info=True)
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+
+
 @app.post("/query-rw")
 async def query_rw_endpoint(req: QueryRequest, request: Request):
     try:
@@ -1120,6 +1154,30 @@ def _execute_ops_query(sql: str) -> list[dict]:
         if conn is None:
             raise RuntimeError("___ops connection is unavailable")
         return _execute_with_timeout(conn, sql, PUBLIC_QUERY_TIMEOUT)
+
+
+def _execute_ops_query_parquet(sql: str) -> bytes:
+    """Execute one ___ops query and serialize it in Arrow/Parquet, not Python rows."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    import db as _db
+
+    with _db._ops_lock:
+        conn = _db.get_ops_connection() or _db.reopen_ops_connection()
+        if conn is None:
+            raise RuntimeError("___ops connection is unavailable")
+        timer = threading.Timer(PUBLIC_QUERY_TIMEOUT, conn.interrupt)
+        timer.start()
+        try:
+            table = conn.execute(sql).to_arrow_table()
+            sink = pa.BufferOutputStream()
+            pq.write_table(table, sink, compression="zstd")
+            return sink.getvalue().to_pybytes()
+        except _duckdb.InterruptException as exc:
+            raise TimeoutError(f"Query exceeded {PUBLIC_QUERY_TIMEOUT}s wall-clock limit") from exc
+        finally:
+            timer.cancel()
 
 
 def _execute_ops_query_rw(sql: str) -> list[dict]:

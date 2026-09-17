@@ -547,6 +547,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Repeat the warm URLs and verify cache-required routes are hot enough.",
     )
+    parser.add_argument(
+        "--required-only",
+        action="store_true",
+        help="Warm only cache-required API routes, skipping optional rendered pages.",
+    )
     parser.add_argument("--min-hot-ratio", type=float, default=0.95)
     parser.add_argument("--max-p95-ms", type=int, default=1500)
     parser.add_argument("--hot-verify-attempts", type=int, default=6)
@@ -589,6 +594,8 @@ def main() -> int:
         return 1 if args.strict else 0
 
     targets = list(iter_warm_targets(site_url, db, args.mode, args.manifest or None))
+    if args.required_only:
+        targets = [target for target in targets if target.cache_class == "cache_required"]
     if not targets:
         print("Warm mode is none; revalidation complete")
         return 0

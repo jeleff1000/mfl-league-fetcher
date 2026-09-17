@@ -312,6 +312,35 @@ def test_strict_warm_failures_still_fail_without_soft_mode(monkeypatch):
     assert code == 1
 
 
+def test_required_only_skips_optional_page_warms(monkeypatch):
+    warmer = _load_warmer()
+    targets = [
+        warmer.WarmTarget("https://example.test/speed_test", "/{db}", "cache_expected"),
+        warmer.WarmTarget(
+            "https://example.test/api/league/speed_test/overview",
+            "/api/league/{db}/overview",
+            "cache_required",
+        ),
+    ]
+    warmed: list[str] = []
+    monkeypatch.setattr(warmer, "iter_warm_targets", lambda *a, **k: targets)
+
+    def fake_warm_one(url, timeout, attempts=1):
+        warmed.append(url)
+        return warmer.WarmResult(url, 200, 10, "HIT", 2)
+
+    monkeypatch.setattr(warmer, "warm_one", fake_warm_one)
+
+    code = _run_main_with_fake_successful_setup(
+        monkeypatch,
+        warmer,
+        ["--db", "speed_test", "--secret", "secret", "--strict", "--required-only"],
+    )
+
+    assert code == 0
+    assert warmed == ["https://example.test/api/league/speed_test/overview"]
+
+
 def test_soft_warm_failures_cover_hot_verification_failures(monkeypatch, capsys):
     warmer = _load_warmer()
     target = warmer.WarmTarget(

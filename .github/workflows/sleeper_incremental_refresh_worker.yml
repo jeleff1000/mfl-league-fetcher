@@ -290,6 +290,10 @@ jobs:
           --jitter-seconds 0
           --strict
           --verify-hot
+          --required-only
+          --timeout 5
+          --warm-attempts 1
+          --hot-verify-attempts 1
 
       - name: Complete league update
         if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'

@@ -146,6 +146,30 @@ def test_manifest_aware_commit_promotes_only_the_exact_observed_snapshot():
     assert "published_at = NOW()" in writer.sql
 
 
+def test_incomplete_publication_cache_success_does_not_require_manifest_row():
+    writer = Writer()
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="succeeded",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+        receipt={
+            "status": "COMMITTED",
+            "executed": True,
+            "source_year": 2026,
+            "source_week": 1,
+            "source_manifest_digest": "partial-digest",
+            "source_manifest_complete": False,
+            "bundle_id": "bundle",
+            "base_generation": 3,
+        },
+        cache_verified=True,
+    )
+    assert "WHERE EXISTS (SELECT 1 FROM accounts.league_update_manifests m" not in writer.sql
+
+
 def test_recovery_receipt_requires_durable_matching_publication_and_generation():
     from multi_league.core.league_update_status import build_cache_recovery_receipt
 

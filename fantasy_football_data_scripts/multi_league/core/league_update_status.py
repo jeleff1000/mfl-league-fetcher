@@ -226,7 +226,7 @@ def record_league_update_status(
         f"WHERE m.database_name = {_literal(database_name)} "
         f"AND m.observed_manifest_digest = {_literal(source_fingerprint)} "
         "AND m.observed_manifest_json IS NOT NULL)"
-        if manifest_aware_publication and captured_manifest_json is None
+        if can_promote_manifest and captured_manifest_json is None
         else "TRUE"
     )
     published_guard = (

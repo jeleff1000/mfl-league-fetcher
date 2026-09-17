@@ -20,7 +20,10 @@ if str(_PIPELINE_ROOT) not in sys.path:
 
 import duckdb
 
-from multi_league.core.aggregate_ddl import AGGREGATE_TABLE_SPECS
+from multi_league.core.aggregate_ddl import (
+    AGGREGATE_TABLE_SPECS,
+    create_named_aggregate_table_sql,
+)
 from multi_league.transformations.aggregation.aggregate_fantasy_context import (
     aggregate_fantasy_season,
     aggregate_fantasy_season_all,
@@ -46,6 +49,41 @@ TARGET_TABLES = (
     "player_fantasy_season_all",
     "standings_by_year",
 )
+
+
+def quarantine_corrupt_targets(conn) -> dict[str, str]:
+    """Atomically move damaged targets aside and install clean canonical shells.
+
+    The quarantined objects are deliberately retained: dropping them would read
+    the damaged storage block. This helper is only for an isolated recovery
+    volume and never runs as part of a normal league update.
+    """
+    quarantined = {
+        table: f"__corrupt_recovery_{table}" for table in TARGET_TABLES
+    }
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        for table in TARGET_TABLES:
+            replacement = f"__repair_recovery_{table}"
+            quarantine = quarantined[table]
+            conn.execute(
+                create_named_aggregate_table_sql(
+                    "___leagues", table, replacement
+                )
+            )
+            conn.execute(
+                f'ALTER TABLE public.{_quote_identifier(table)} '
+                f'RENAME TO {_quote_identifier(quarantine)}'
+            )
+            conn.execute(
+                f'ALTER TABLE public.{_quote_identifier(replacement)} '
+                f'RENAME TO {_quote_identifier(table)}'
+            )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return quarantined
 
 
 def _quote_identifier(value: str) -> str:
@@ -157,6 +195,7 @@ def main() -> int:
     parser.add_argument("--ops", type=Path)
     parser.add_argument("--ops-nfl", type=Path)
     parser.add_argument("--db-name", action="append", default=[])
+    parser.add_argument("--quarantine-corrupt-targets-only", action="store_true")
     args = parser.parse_args()
 
     conn = duckdb.connect(str(args.database.resolve()))
@@ -165,7 +204,10 @@ def main() -> int:
             _attach_if_present(conn, args.ops_nfl.resolve(), "___ops_nfl")
         if args.ops:
             _attach_if_present(conn, args.ops.resolve(), "___ops")
-        result = reaggregate_all(conn, db_names=args.db_name or None)
+        if args.quarantine_corrupt_targets_only:
+            result = {"quarantined": quarantine_corrupt_targets(conn)}
+        else:
+            result = reaggregate_all(conn, db_names=args.db_name or None)
     finally:
         conn.close()
     print(json.dumps(result, sort_keys=True))

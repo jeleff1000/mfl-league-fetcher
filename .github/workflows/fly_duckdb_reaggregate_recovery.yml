@@ -86,7 +86,8 @@ jobs:
             -C "env PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py \
               --database /data/___leagues.duckdb \
               --ops /data/___ops.duckdb \
-              --ops-nfl /data/___ops_nfl.duckdb" | tee five-table-reaggregation.jsonl
+              --ops-nfl /data/___ops_nfl.duckdb \
+              --quarantine-corrupt-targets-only" | tee five-table-reaggregation.jsonl
 
           flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force
           recovery_machine_id=""

@@ -134,3 +134,30 @@ def test_reaggregate_all_fails_fast_instead_of_repeating_storage_error(monkeypat
 
     assert calls == ["alpha"]
     assert conn.sql[-1] == "ROLLBACK"
+
+
+def test_quarantine_targets_swaps_only_the_five_corrupt_objects():
+    conn = _Connection()
+
+    result = repair.quarantine_corrupt_targets(conn)
+
+    assert result == {
+        table: f"__corrupt_recovery_{table}" for table in repair.TARGET_TABLES
+    }
+    sql = conn.sql
+    assert sql[0] == "BEGIN TRANSACTION"
+    assert sql[-1] == "COMMIT"
+    assert not any(statement.startswith("DROP TABLE") for statement in sql)
+    for table in repair.TARGET_TABLES:
+        replacement = f"__repair_recovery_{table}"
+        quarantine = f"__corrupt_recovery_{table}"
+        assert any(
+            f'CREATE TABLE "___leagues".public.{replacement}' in statement
+            for statement in sql
+        )
+        assert (
+            f'ALTER TABLE public."{table}" RENAME TO "{quarantine}"' in sql
+        )
+        assert (
+            f'ALTER TABLE public."{replacement}" RENAME TO "{table}"' in sql
+        )

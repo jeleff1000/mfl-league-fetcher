@@ -914,9 +914,10 @@ def maintain_primary_position(
     This is the weekly, incremental equivalent of
     ``scripts/sota_recon/build_primary_position_v26`` (the one-time full pass):
 
-      - a player already in the base sidecar keeps their stored primary_position
-        (a new week must never re-shift it — otherwise career ranks churn every
-        Tuesday; bio corrections ship as an explicit full rebuild, not weekly drift);
+      - an authoritative player-bio position corrects the stored value for that
+        player across the base sidecar, so a real position change reaches career
+        ranks without a full rebuild;
+      - without a bio value, an existing player keeps their stored position;
       - a genuinely new player (rookie / first appearance) gets
         ``COALESCE(bio.nfl_position, MODE(position) over their new-week rows)`` —
         the exact one-time rule.
@@ -957,12 +958,25 @@ def maintain_primary_position(
             SELECT "NFL_player_id" AS nfl_id, NULLIF(nfl_position, '') AS bpos FROM {bio_ref}
         )
         SELECT i.nfl_id AS "NFL_player_id",
-               COALESCE(e.pp, b.bpos, d.dompos) AS primary_position,
+               COALESCE(b.bpos, e.pp, d.dompos) AS primary_position,
                CASE WHEN e.pp IS NOT NULL THEN 1 ELSE 0 END AS _is_existing
         FROM ids i
         LEFT JOIN existing e ON e.nfl_id = i.nfl_id
         LEFT JOIN bio b ON b.nfl_id = i.nfl_id
         LEFT JOIN dom d ON d.nfl_id = i.nfl_id
+        """
+    )
+
+    # Keep the per-player attribute constant across existing and incoming rows.
+    # This touches only player IDs present in the new weekly source.
+    conn.execute(
+        f"""
+        UPDATE {base} AS target
+        SET primary_position = resolved.primary_position
+        FROM _pp_resolved AS resolved
+        WHERE target."NFL_player_id" = resolved."NFL_player_id"
+          AND resolved.primary_position IS NOT NULL
+          AND target.primary_position IS DISTINCT FROM resolved.primary_position
         """
     )
 

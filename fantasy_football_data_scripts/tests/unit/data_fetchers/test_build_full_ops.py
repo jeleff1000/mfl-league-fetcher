@@ -459,16 +459,15 @@ def _new_week_source_without_primary_position(conn, base):
                "player": "'Rookie11'", "position": "'TE'", "nfl_position": "'TE'"})
         + f" {tmpl}"
     )
-    # bio: nfl_10 has an authoritative position; nfl_0 disagrees with the stored value
-    # (existing must still win); nfl_11 is absent (dominant-weekly fallback).
+    # bio: nfl_10 has an authoritative position; nfl_0 corrects the stored value;
+    # nfl_11 is absent (dominant-weekly fallback).
     conn.execute('CREATE TABLE biotbl ("NFL_player_id" VARCHAR, nfl_position VARCHAR)')
     conn.execute("INSERT INTO biotbl VALUES ('nfl_10', 'WR'), ('nfl_0', 'RB')")
     return fact_cols
 
 
-def test_maintain_primary_position_existing_stable_new_from_bio_and_dom():
-    """Existing players keep their stored primary_position (a new week never
-    reshifts it); rookies get COALESCE(bio.nfl_position, dominant weekly position)."""
+def test_maintain_primary_position_applies_bio_correction_and_new_player_fallbacks():
+    """Bio corrections update existing rows; rookies use bio then weekly position."""
     conn = duckdb.connect(":memory:")
     try:
         _make_facts_wide(conn, weeks_by_year={2024: [1, 2, 3]})
@@ -479,10 +478,14 @@ def test_maintain_primary_position_existing_stable_new_from_bio_and_dom():
         stats = maintain_primary_position(conn, "_nw", bio_ref="biotbl", out_ref="_out")
 
         rows = dict(conn.execute('SELECT "NFL_player_id", primary_position FROM _out').fetchall())
-        assert rows["nfl_0"] == "QB"   # existing: stable, ignores flipped week AND bio 'RB'
+        assert rows["nfl_0"] == "RB"   # authoritative bio corrects the stored position
         assert rows["nfl_10"] == "WR"  # rookie: bio wins over weekly position 'RB'
         assert rows["nfl_11"] == "TE"  # rookie: dominant-weekly fallback (no bio)
         assert stats == {"players": 3, "existing": 1, "new": 2, "null_primary": 0}
+        assert conn.execute(
+            f"SELECT COUNT(*) FROM {base} WHERE \"NFL_player_id\" = 'nfl_0' "
+            "AND primary_position = 'RB'"
+        ).fetchone()[0] == 3
 
         # The maintained source is now acceptable to stage_new_week (cols == fact cols).
         out_cols = sorted(r[0] for r in conn.execute("DESCRIBE _out").fetchall())
@@ -512,7 +515,7 @@ def test_apply_weekly_update_bio_ref_stamps_rookie_primary_position():
                 "WHERE week = '4' ORDER BY \"NFL_player_id\""
             ).fetchall()
         )
-        assert stamped == {"nfl_0": "QB", "nfl_10": "WR", "nfl_11": "TE"}
+        assert stamped == {"nfl_0": "RB", "nfl_10": "WR", "nfl_11": "TE"}
 
         # No row that has a weekly position is left without a primary_position.
         assert conn.execute(

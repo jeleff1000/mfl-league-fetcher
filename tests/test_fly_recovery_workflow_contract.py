@@ -71,7 +71,7 @@ def test_isolated_reaggregation_is_limited_to_the_retained_recovery_volume():
     assert "--ops /data/___ops.duckdb" in source
     assert "--ops-nfl /data/___ops_nfl.duckdb" in source
     assert "wkupd_rebuild_" in source
-    assert "--vm-cpus 4 --vm-memory 8192" in source
+    assert "--vm-cpus 2 --vm-memory 4096" in source
     assert '-C "env PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py' in source
     assert "flyctl machine stop" not in source
     assert "flyctl machine clone" not in source

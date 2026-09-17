@@ -72,7 +72,7 @@ jobs:
             --name "$machine_name" --volume "$RECOVERY_VOLUME_ID:/data" \
             --entrypoint /bin/sh \
             --file-local "/tmp/fly_reaggregate_derived.py=scripts/fly_reaggregate_derived.py" \
-            --restart no --detach --vm-cpus 4 --vm-memory 8192 \
+            --restart no --detach --vm-cpus 2 --vm-memory 4096 \
             -- -lc 'sleep 10800' | tee recovery-machine-run.log
           for _ in $(seq 1 60); do
             recovery_machine_id="$(flyctl machines list --app "$FLY_APP" --json \

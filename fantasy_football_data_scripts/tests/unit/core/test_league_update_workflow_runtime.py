@@ -18,10 +18,11 @@ def test_weekly_update_workers_skip_virtualenv_and_pip_upgrade(platform: str, wo
     assert "timeout-minutes: 2" in workflow
     assert "python -m venv" not in workflow
     assert "python -m pip install --upgrade pip" not in workflow
-    assert (
-        "python -m pip install --disable-pip-version-check --quiet "
-        f"--no-cache-dir --no-compile -r requirements-weekly-update-{platform}.txt"
-    ) in workflow
+    assert "uses: astral-sh/setup-uv@v5" in workflow
+    assert "enable-cache: true" in workflow
+    assert f'cache-dependency-glob: "requirements-weekly-update-{platform}.txt"' in workflow
+    assert f"uv pip install --system --quiet -r requirements-weekly-update-{platform}.txt" in workflow
+    assert "--no-cache-dir" not in workflow
     assert "refresh_live_nfl_ops.py" not in workflow
     assert "replace_database" not in workflow
     assert "python scripts/warm_vercel_cache.py" in workflow

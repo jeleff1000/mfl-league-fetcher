@@ -251,7 +251,11 @@ def test_paid_manual_execute_uses_the_same_attempt_and_terminal_lifecycle(platfo
     assert f"--platform {platform}" in text
     assert text.index("Install dependencies") < text.index("scripts/claim_manual_league_update.py")
     assert "Install Fly claim dependency" not in text
-    assert "--no-cache-dir --no-compile" in text
+    assert "uses: astral-sh/setup-uv@v5" in text
+    assert "enable-cache: true" in text
+    assert f'cache-dependency-glob: "requirements-weekly-update-{platform}.txt"' in text
+    assert f"uv pip install --system --quiet -r requirements-weekly-update-{platform}.txt" in text
+    assert "--no-cache-dir" not in text
     assert "steps.manual_claim.outputs.token || inputs.dispatch_token" in text
     assert "steps.manual_claim.outputs.attempt_id || inputs.attempt_id" in text
     assert "steps.manual_claim.outputs.claim_version || inputs.claim_version" in text

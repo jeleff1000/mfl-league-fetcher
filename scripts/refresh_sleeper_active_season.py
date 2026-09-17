@@ -305,12 +305,24 @@ def _build_context(
         active_year=active_year,
     )
     client = SleeperAPIClient()
-    if not known_league_ids and str(frontend.get("platform") or "").strip().lower() == "sleeper":
-        onboarding_id = str(frontend.get("league_id") or "").strip()
+    context_platform = str(frontend.get("platform") or "").strip().lower()
+    has_saved_predecessor = any(
+        str(year).isdigit() and int(year) < int(active_year) and league_id
+        for year, league_id in known_league_ids.items()
+    )
+    if not has_saved_predecessor and context_platform == "sleeper":
+        onboarding_id = str(
+            known_league_ids.get(str(active_year)) or frontend.get("league_id") or ""
+        ).strip()
         if onboarding_id:
             # Some original imports persisted only the onboarding ID. Reuse
             # import discovery for its metadata chain, not historical games.
-            known_league_ids = discover_league_history(client, onboarding_id, skip_empty_seasons=False)
+            discovered = discover_league_history(client, onboarding_id, skip_empty_seasons=False)
+            saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
+            discovered_active_id = str(discovered.get(str(active_year)) or "").strip()
+            if saved_active_id and discovered_active_id != saved_active_id:
+                raise RuntimeError("Fly and provider have conflicting active Sleeper league IDs")
+            known_league_ids = {**discovered, **known_league_ids}
     if active_league_id:
         saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()
         if saved_active_id and saved_active_id != str(active_league_id).strip():

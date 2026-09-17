@@ -66,6 +66,41 @@ def test_context_only_onboarding_identity_reuses_import_history_discovery(tmp_pa
     assert path.is_file()
 
 
+def test_active_only_setting_reuses_import_history_discovery_to_prove_predecessor(tmp_path, monkeypatch):
+    from refresh_sleeper_active_season import _build_context
+    from multi_league.data_fetchers.sleeper import sleeper_api_client
+
+    class Provider:
+        def get_league(self, league_id):
+            return {
+                'active': {'league_id': 'active', 'season': '2026', 'previous_league_id': 'old', 'name': 'Saved'},
+                'old': {'league_id': 'old', 'season': '2025', 'previous_league_id': None},
+            }[league_id]
+
+        def get_league_users(self, league_id):
+            assert league_id == 'active'
+            return [{'user_id': 'u1', 'display_name': 'Owner', 'metadata': {}}]
+
+        def get_league_rosters(self, league_id):
+            assert league_id == 'active'
+            return [{'roster_id': 1, 'owner_id': 'u1', 'players': [], 'settings': {}}]
+
+    monkeypatch.setattr(sleeper_api_client, 'SleeperAPIClient', Provider)
+    context = {
+        'platform': 'sleeper', 'league_id': 'active', 'league_ids_json': None,
+        'league_name': 'Saved', 'manager_name_overrides_json': None,
+    }
+    settings = [{'year': 2026, 'platform': 'sleeper', 'league_key': 'active'}]
+
+    ctx, _, _, league = _build_context(
+        reader=ChainReader(context=context, settings=settings),
+        db_name='mixed_league', active_year=2026, work_dir=tmp_path,
+    )
+
+    assert league['league_id'] == 'active'
+    assert ctx.league_ids == {'2025': 'old', '2026': 'active'}
+
+
 @pytest.mark.parametrize('broken', ['cycle', 'wrong_identity', 'missing_link', 'duplicate_season'])
 def test_shared_import_discovery_rejects_unprovable_chain(broken):
     from multi_league.data_fetchers.sleeper.sleeper_context import discover_league_history

@@ -1417,9 +1417,17 @@ def test_replace_derived_table_preserves_leagues_published_after_snapshot(data_d
     ]
 
 
-def test_derived_recovery_retry_is_idempotent(data_dir, client):
+def test_derived_recovery_retry_is_idempotent(data_dir, client, monkeypatch):
     import db as db_mod
+    import fly_reaggregate_derived as recovery_helper
     import main as main_mod
+
+    attached = []
+    monkeypatch.setattr(
+        recovery_helper,
+        "_attach_if_present",
+        lambda _conn, path, catalog: attached.append((path.name, catalog)),
+    )
 
     db_mod.close_all()
     database_path = data_dir / "___leagues.duckdb"
@@ -1449,6 +1457,10 @@ def test_derived_recovery_retry_is_idempotent(data_dir, client):
         "run_id": "repair-run",
         "checkpointed": True,
     }
+    assert attached == [
+        ("___ops_nfl.duckdb", "___ops_nfl"),
+        ("___ops.duckdb", "___ops"),
+    ]
 
 
 def test_checkpoint_failure_is_reported_without_hiding_committed_state(client):

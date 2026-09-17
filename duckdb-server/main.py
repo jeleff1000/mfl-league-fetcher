@@ -1932,6 +1932,8 @@ def _rebuild_league_derived_from_sources(
     if not run_id or len(run_id) > 200:
         raise ValueError("run_id is required and must be at most 200 characters")
 
+    from fly_reaggregate_derived import _attach_if_present
+
     conn = db.connect_database(
         database_path,
         data_dir=db.get_data_dir(),
@@ -1939,6 +1941,9 @@ def _rebuild_league_derived_from_sources(
     )
     committed = False
     try:
+        data_dir = db.get_data_dir()
+        _attach_if_present(conn, data_dir / "___ops_nfl.duckdb", "___ops_nfl")
+        _attach_if_present(conn, data_dir / "___ops.duckdb", "___ops")
         fleet_merge.ensure_generation_tables(conn)
         prior = conn.execute(
             "SELECT generation, lane, run_id FROM merge_admin.league_publish_generations "

@@ -241,7 +241,7 @@ jobs:
             done
             [ "${inspect_machine_state:-}" = "started" ]
             flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
-              -C "INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py" \
+              -C "/bin/sh -lc \"INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py\"" \
               | tee identity-snapshot-probe.jsonl
             cleanup_inspect_machine
             inspect_machine_id=""

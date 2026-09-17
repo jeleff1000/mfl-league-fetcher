@@ -2815,6 +2815,9 @@ def test_shared_refresh_watermark_tracks_played_fantasy_matchups_not_nfl_player_
             assert "FROM public.matchup" in sql
             assert "db_name = 'kmffl'" in sql
             assert "year = 2025" in sql
+            assert "MAX(" not in sql
+            assert "ORDER BY TRY_CAST(week AS INTEGER) DESC" in sql
+            assert "LIMIT 1" in sql
             return 17
 
     assert _last_materialized_week(Reader(), db_name="kmffl", year=2025) == 17

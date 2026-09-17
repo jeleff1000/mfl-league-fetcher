@@ -874,8 +874,10 @@ def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.Da
 
 def _last_materialized_week(reader: Any, *, db_name: str, year: int) -> int | None:
     value = reader.query_scalar(
-        "SELECT MAX(TRY_CAST(week AS INTEGER)) FROM public.matchup "
-        f"WHERE db_name = {_sql_literal(db_name)} AND year = {int(year)}",
+        "SELECT TRY_CAST(week AS INTEGER) FROM public.matchup "
+        f"WHERE db_name = {_sql_literal(db_name)} AND year = {int(year)} "
+        "AND TRY_CAST(week AS INTEGER) IS NOT NULL "
+        "ORDER BY TRY_CAST(week AS INTEGER) DESC LIMIT 1",
         database=LEAGUES_DATABASE,
     )
     return int(value) if value is not None else None

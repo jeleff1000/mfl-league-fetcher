@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,12 +30,17 @@ def test_weekly_snapshot_reads_each_franchise_identity_row_once():
     class LocalReader:
         def __init__(self, conn):
             self.conn = conn
+            self.lock = threading.Lock()
 
         def query(self, sql, *, database):
             assert database == "___leagues"
-            result = self.conn.execute(sql)
-            columns = [item[0] for item in result.description]
-            return [dict(zip(columns, row)) for row in result.fetchall()]
+            # DuckDB connections are not safe for concurrent execute/fetch
+            # sequences. Production uses independent Fly HTTP requests; keep
+            # this in-memory adapter deterministic while exercising that fanout.
+            with self.lock:
+                result = self.conn.execute(sql)
+                columns = [item[0] for item in result.description]
+                return [dict(zip(columns, row)) for row in result.fetchall()]
 
     conn = duckdb.connect(":memory:")
     try:

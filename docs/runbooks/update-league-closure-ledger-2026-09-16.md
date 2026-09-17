@@ -658,3 +658,49 @@ Tests exercise the real shared rank function and the preservation gate.
 Eight applicability regressions failed before implementation.
 Combined worker/validation/rank suite: 185 passed; focused preservation/rank
 group: 53 passed. Ruff passes. No production result for these new changes yet.
+
+## Five-table production reaggregation
+
+The snapshot-derived recovery was not used. Run `35171039263` waited 17m22s
+for Fly snapshot infrastructure and then failed closed before any production
+write because the live overlay advanced from the prepared 33 leagues / 215
+settings rows to 35 leagues / 239 rows. That proved the stale-overlay gate,
+but also proved this was the wrong-granularity mechanism for five derived
+tables. It was not a 17-minute SQL validation.
+
+Production was instead repaired directly from intact persisted facts and
+healthy intermediate aggregates in one atomic transaction. The transaction
+rebuilt exactly `homepage_manager_rankings`, `matchup_h2h_career`,
+`player_fantasy_season`, `player_fantasy_season_all`, and
+`standings_by_year`; it did not fetch provider data, replace settings, rewrite
+source facts, copy the database, or use MotherDuck. End-to-end database work
+took 122.98 seconds, dominated by the two required scans of 50,785,407 weekly
+player rows.
+
+Production result and canonical-key validation (6.46 seconds total):
+
+- `homepage_manager_rankings`: 21,856 rows / 21,856 distinct
+  `(db_name, franchise_id)` keys.
+- `matchup_h2h_career`: 248,797 rows / 248,797 distinct
+  `(db_name, franchise_id, opponent_franchise_id)` keys.
+- `player_fantasy_season`: 4,372,442 rows / 4,372,442 distinct
+  `(db_name, NFL_player_id, year)` keys.
+- `player_fantasy_season_all`: 4,380,213 rows / 4,380,213 distinct
+  `(db_name, NFL_player_id, year)` keys.
+- `standings_by_year`: 62,041 rows / 62,041 distinct
+  `(db_name, franchise_id, year)` keys.
+
+Source reconciliation across Yahoo `the_league`, Sleeper `nyu_ffl`, ESPN
+`tfl_of_extraordinary_gentleman`, and `kmffl` found zero manager-ranking
+mismatches, zero player points/games mismatches, and zero standings
+wins/losses/points mismatches. The `the_league` projection counts matched the
+pre-write witness exactly: rankings 37, H2H 298, regular player seasons 16,020,
+all-games player seasons 16,043, and standings 192. KMFFL has 2,145 rebuilt
+season-player rows with nonzero clutch equity across 2015-2026, so the repair
+did not null the clutch aggregate.
+
+The five damaged original objects remain quarantined under
+`__corrupt_recovery_*`; they were not read, dropped, or treated as fallbacks.
+This closes the live five-table outage only. It does not close the broader
+Update League goal, the open ESPN canary, UI-dispatched verification, or the
+remaining complete-history audit items above.

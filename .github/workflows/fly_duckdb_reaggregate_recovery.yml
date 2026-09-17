@@ -11,6 +11,14 @@ on:
         description: Exact public main revision containing the five-table repair runner
         required: true
         type: string
+      recovery_mode:
+        description: Isolated operation to run on the retained recovery volume
+        required: true
+        default: quarantine_drop
+        type: choice
+        options:
+          - quarantine_drop
+          - reaggregate
 
 permissions:
   contents: read
@@ -42,6 +50,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_APP: league-history-duckdb
           RECOVERY_VOLUME_ID: ${{ inputs.recovery_volume_id }}
+          RECOVERY_MODE: ${{ inputs.recovery_mode }}
         run: |
           set -euo pipefail
           [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || exit 2
@@ -58,6 +67,11 @@ jobs:
           test -n "$recovery_region"
           test -n "$image_ref"
           test "$RECOVERY_VOLUME_ID" != "$primary_id"
+          case "$RECOVERY_MODE" in
+            quarantine_drop) recovery_args="--drop-quarantined-targets-only" ;;
+            reaggregate) recovery_args="" ;;
+            *) exit 2 ;;
+          esac
 
           recovery_machine_id=""
           cleanup() {
@@ -87,7 +101,7 @@ jobs:
               --database /data/___leagues.duckdb \
               --ops /data/___ops.duckdb \
               --ops-nfl /data/___ops_nfl.duckdb \
-              --quarantine-corrupt-targets-only" | tee five-table-reaggregation.jsonl
+              $recovery_args" | tee five-table-reaggregation.jsonl
 
           flyctl machine destroy "$recovery_machine_id" --app "$FLY_APP" --force
           recovery_machine_id=""

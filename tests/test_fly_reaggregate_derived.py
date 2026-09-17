@@ -161,3 +161,19 @@ def test_quarantine_targets_swaps_only_the_five_corrupt_objects():
         assert (
             f'ALTER TABLE public."{replacement}" RENAME TO "{table}"' in sql
         )
+
+
+def test_drop_quarantined_targets_removes_only_the_five_old_objects_and_checkpoints():
+    conn = _Connection()
+    quarantined = {
+        table: f"__corrupt_recovery_{table}" for table in repair.TARGET_TABLES
+    }
+
+    repair.drop_quarantined_targets(conn, quarantined)
+
+    assert conn.sql[0] == "BEGIN TRANSACTION"
+    assert conn.sql[-2:] == ["COMMIT", "CHECKPOINT"]
+    assert [sql for sql in conn.sql if sql.startswith("DROP TABLE")] == [
+        f'DROP TABLE public."__corrupt_recovery_{table}"'
+        for table in repair.TARGET_TABLES
+    ]

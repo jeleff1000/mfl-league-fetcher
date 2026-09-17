@@ -92,7 +92,8 @@ def test_isolated_reaggregation_is_limited_to_the_retained_recovery_volume():
     assert "wkupd_rebuild_" in source
     assert "--vm-cpus 2 --vm-memory 4096" in source
     assert '-C "env PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py' in source
-    assert "--quarantine-corrupt-targets-only" in source
+    assert "--drop-quarantined-targets-only" in source
+    assert 'RECOVERY_MODE: ${{ inputs.recovery_mode }}' in source
     assert "flyctl machine stop" not in source
     assert "flyctl machine clone" not in source
     assert "/replace-db" not in source

@@ -260,3 +260,36 @@ def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():
         active_season=2026,
         expected_observed_digest=None,
     ) is None
+
+
+def test_manual_run_with_a_blank_legacy_manifest_can_use_the_legacy_boundary():
+    reader = Reader({
+        "observed_manifest_json": "",
+        "observed_manifest_digest": None,
+        "published_manifest_json": None,
+        "published_manifest_digest": None,
+    })
+
+    assert load_persisted_refresh_plan(
+        reader,
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=None,
+    ) is None
+
+
+def test_ui_run_rejects_a_blank_legacy_manifest():
+    reader = Reader({
+        "observed_manifest_json": "",
+        "observed_manifest_digest": None,
+        "published_manifest_json": None,
+        "published_manifest_digest": None,
+    })
+
+    with pytest.raises(PersistedManifestError, match="unavailable"):
+        load_persisted_refresh_plan(
+            reader,
+            database_name="league_a",
+            active_season=2026,
+            expected_observed_digest="claimed-by-ui",
+        )

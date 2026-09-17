@@ -231,7 +231,12 @@ def load_persisted_refresh_plan(
         return None
 
     row = rows[0]
-    observed = _parse_manifest(row.get("observed_manifest_json"), label="observed")
+    raw_observed = row.get("observed_manifest_json")
+    if not str(raw_observed or "").strip():
+        if expected_observed_digest:
+            raise PersistedManifestError("dispatched source manifest is unavailable")
+        return None
+    observed = _parse_manifest(raw_observed, label="observed")
     observed_digest = manifest_digest(observed)
     stored_observed_digest = str(row.get("observed_manifest_digest") or "").strip()
     if not stored_observed_digest or stored_observed_digest != observed_digest:

@@ -2256,6 +2256,7 @@ def _reaggregate_damaged_derived_from_sources(
     database_path: Path,
     *,
     mode: str,
+    db_name: str | None = None,
 ) -> dict[str, Any]:
     """Rebuild only the five damaged aggregate tables from persisted facts."""
     from fly_reaggregate_derived import (
@@ -2264,13 +2265,81 @@ def _reaggregate_damaged_derived_from_sources(
         discover_leagues,
         drop_complete_quarantine,
         quarantine_corrupt_targets,
+        reaggregate_one_league,
         reaggregate_parallel,
         validate_targets,
     )
+    from multi_league.core.aggregate_ddl import AGGREGATE_TABLE_SPECS
 
     data_dir = db.get_data_dir()
     ops_nfl_path = data_dir / "___ops_nfl.duckdb"
     ops_path = data_dir / "___ops.duckdb"
+    if mode == "scoped_rebuild":
+        if not db_name or not _DB_NAME_PATTERN.fullmatch(db_name):
+            raise ValueError("scoped_rebuild requires a valid db_name")
+        conn = db.connect_database(
+            database_path,
+            data_dir=db.get_data_dir(),
+            threads=WRITE_DUCKDB_THREADS,
+        )
+        started = time.monotonic()
+        try:
+            _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
+            _attach_if_present(conn, ops_path, "___ops")
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                target_counts = reaggregate_one_league(
+                    conn,
+                    db_name,
+                    progress_callback=_update_derived_recovery_progress,
+                )
+                for table, row_count in target_counts.items():
+                    if row_count <= 0:
+                        raise RuntimeError(
+                            f"{table} is empty after scoped reaggregation for {db_name}"
+                        )
+                    keys = ("db_name", *AGGREGATE_TABLE_SPECS[table].primary_key)
+                    key_sql = ", ".join(_quote_identifier(key) for key in keys)
+                    distinct_keys = int(
+                        conn.execute(
+                            f"SELECT COUNT(*) FROM (SELECT {key_sql} "
+                            f"FROM public.{_quote_identifier(table)} WHERE db_name = ? "
+                            f"GROUP BY {key_sql})",
+                            [db_name],
+                        ).fetchone()[0]
+                    )
+                    if distinct_keys != row_count:
+                        raise RuntimeError(
+                            f"{table} has duplicate scoped keys for {db_name}: "
+                            f"rows={row_count}, distinct={distinct_keys}"
+                        )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        finally:
+            conn.close()
+        elapsed_seconds = round(time.monotonic() - started, 3)
+        _update_derived_recovery_progress(
+            {
+                "stage": "complete",
+                "completed": 1,
+                "total": 1,
+                "current_db_name": None,
+                "current_table": None,
+            }
+        )
+        return {
+            "status": "COMMITTED",
+            "mode": mode,
+            "db_name": db_name,
+            "leagues": 1,
+            "targets": list(_DAMAGED_DERIVED_TARGETS),
+            "target_counts": target_counts,
+            "elapsed_seconds": elapsed_seconds,
+            "checkpointed": False,
+        }
+
     conn = db.connect_database(
         database_path,
         data_dir=db.get_data_dir(),
@@ -3610,14 +3679,20 @@ async def reaggregate_damaged_derived(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=400, detail="request body must be JSON") from exc
     mode = str(body.get("mode") or "").strip()
+    scoped_db_name = str(body.get("db_name") or "").strip() or None
     confirmed_targets = body.get("confirm_targets")
     if confirmed_targets != list(_DAMAGED_DERIVED_TARGETS):
         raise HTTPException(status_code=400, detail="confirm_targets must exactly match the recovery allowlist")
-    if mode not in {"quarantine_and_rebuild", "resume_rebuild"}:
+    if mode not in {"quarantine_and_rebuild", "resume_rebuild", "scoped_rebuild"}:
         raise HTTPException(status_code=400, detail="invalid recovery mode")
+    if mode == "scoped_rebuild" and (
+        not scoped_db_name or not _DB_NAME_PATTERN.fullmatch(scoped_db_name)
+    ):
+        raise HTTPException(status_code=400, detail="scoped_rebuild requires a valid db_name")
 
     database_path = db.get_data_dir() / "___leagues.duckdb"
     async with _merge_lock:
+        _start_derived_recovery_progress()
         _state["status"] = "draining"
         elapsed = 0.0
         while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
@@ -3632,6 +3707,7 @@ async def reaggregate_damaged_derived(request: Request):
                 _reaggregate_damaged_derived_from_sources,
                 database_path,
                 mode=mode,
+                db_name=scoped_db_name,
             )
         except ValueError as exc:
             _fail_derived_recovery_progress(exc)
@@ -3646,7 +3722,12 @@ async def reaggregate_damaged_derived(request: Request):
 
     track_event(
         "damaged_derived_reaggregated",
-        {"mode": mode, "leagues": result["leagues"], "targets": len(_DAMAGED_DERIVED_TARGETS)},
+        {
+            "mode": mode,
+            "db_name": scoped_db_name,
+            "leagues": result["leagues"],
+            "targets": len(_DAMAGED_DERIVED_TARGETS),
+        },
     )
     return result
 

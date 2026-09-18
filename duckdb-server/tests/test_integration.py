@@ -1206,8 +1206,8 @@ def test_reaggregate_damaged_derived_uses_exact_allowlist(client, monkeypatch):
 
     calls = []
 
-    def fake_reaggregate(database_path, *, mode):
-        calls.append((database_path, mode))
+    def fake_reaggregate(database_path, *, mode, db_name=None):
+        calls.append((database_path, mode, db_name))
         return {
             "status": "COMMITTED",
             "mode": mode,
@@ -1229,6 +1229,60 @@ def test_reaggregate_damaged_derived_uses_exact_allowlist(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["targets"] == list(main_mod._DAMAGED_DERIVED_TARGETS)
     assert calls and calls[0][1] == "quarantine_and_rebuild"
+
+
+def test_reaggregate_damaged_derived_supports_one_league_scope(client, monkeypatch):
+    import main as main_mod
+
+    calls = []
+
+    def fake_reaggregate(database_path, *, mode, db_name=None):
+        calls.append((database_path, mode, db_name))
+        return {
+            "status": "COMMITTED",
+            "mode": mode,
+            "db_name": db_name,
+            "leagues": 1,
+            "targets": list(main_mod._DAMAGED_DERIVED_TARGETS),
+            "checkpointed": False,
+        }
+
+    monkeypatch.setattr(main_mod, "_reaggregate_damaged_derived_from_sources", fake_reaggregate)
+    resp = client.post(
+        "/reaggregate-damaged-derived",
+        json={
+            "mode": "scoped_rebuild",
+            "db_name": "northern_league_xxx",
+            "confirm_targets": list(main_mod._DAMAGED_DERIVED_TARGETS),
+        },
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["db_name"] == "northern_league_xxx"
+    assert calls == [
+        (
+            main_mod.db.get_data_dir() / "___leagues.duckdb",
+            "scoped_rebuild",
+            "northern_league_xxx",
+        )
+    ]
+
+
+def test_reaggregate_damaged_derived_scoped_mode_requires_valid_db_name(client):
+    import main as main_mod
+
+    resp = client.post(
+        "/reaggregate-damaged-derived",
+        json={
+            "mode": "scoped_rebuild",
+            "db_name": "not/valid",
+            "confirm_targets": list(main_mod._DAMAGED_DERIVED_TARGETS),
+        },
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 400
 
 
 def test_reaggregate_damaged_derived_rejects_broader_target_set(client):

@@ -10,7 +10,10 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
+import stat
 import subprocess
+import threading
 import time
 
 CANONICAL = ("homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_season",
@@ -27,18 +30,50 @@ def run_stage(stage, command, *, deadline, env=None):
     if remaining <= 0:
         return {"stage": stage, "outcome": "NOT_STARTED", "exit_code": 124, "elapsed_s": 0}
     print(json.dumps({"stage": stage, "event": "start", "limit_s": remaining}), flush=True)
+    child = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             start_new_session=os.name == "posix")
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    limited = threading.Event()
+
+    def stop_child():
+        try:
+            if os.name == "posix":
+                os.killpg(child.pid, signal.SIGKILL)
+            else:
+                child.kill()
+        except ProcessLookupError:
+            pass
+
+    def drain(name, pipe):
+        with pipe:
+            while chunk := pipe.read1(4096):
+                free = 65536 - len(captured[name])
+                captured[name].extend(chunk[:free])
+                if len(chunk) > free:
+                    limited.set()
+                    stop_child()
+                    return
+
+    readers = [threading.Thread(target=drain, args=(name, getattr(child, name)), daemon=True)
+               for name in captured]
+    for reader in readers:
+        reader.start()
     try:
-        child = subprocess.run(command, env=env, capture_output=True, text=True, timeout=remaining)
-        code, stdout, stderr = child.returncode, child.stdout, child.stderr
-        outcome = "PASS" if code == 0 else ("UNKNOWN" if stage in {"remove", "verify"} else "FAILED")
+        code = child.wait(timeout=max(0.001, remaining - (time.monotonic() - started)))
     except subprocess.TimeoutExpired:
-        # subprocess.run kills and waits for its direct child before returning.
-        # Recovery children must not spawn grandchildren that hold a DB open.
-        code, stdout, stderr = 124, "", "stage deadline exceeded"
-        outcome = "UNKNOWN" if stage in {"remove", "verify"} else "FAILED"
+        stop_child()
+        child.wait(timeout=1)
+        code = 124
+    finally:
+        for reader in readers:
+            reader.join(timeout=1)
+    if limited.is_set():
+        code = 125
+    stdout, stderr = (captured[name].decode("utf-8", errors="replace") for name in ("stdout", "stderr"))
+    outcome = "PASS" if code == 0 else ("UNKNOWN" if stage in {"remove", "verify"} else "FAILED")
     result = {"stage": stage, "outcome": outcome, "exit_code": code,
               "elapsed_s": round(time.monotonic() - started, 3),
-              "stdout": stdout[-8192:], "stderr": stderr[-2048:]}
+              "stdout": stdout, "stderr": stderr, "output_limited": limited.is_set()}
     print(json.dumps({"event": "end", **result}), flush=True)
     return result
 
@@ -63,13 +98,32 @@ def validate_inventory(machine, volume, runtime_machine_id, path):
         raise ValueError("isolated volume mount mismatch")
 
 
+def validate_file_binding(path, mountpoint):
+    path, mountpoint = Path(path), Path(mountpoint)
+    if (path.name != "___leagues.duckdb" or path.parent != mountpoint
+            or path.is_symlink() or path.resolve() != path.absolute()
+            or not mountpoint.is_mount()):
+        raise ValueError("database is not the direct file on the approved mount")
+    file_stat, mount_stat = path.stat(), mountpoint.stat()
+    if (not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1
+            or file_stat.st_dev != mount_stat.st_dev):
+        raise ValueError("database inode/device does not belong to the approved mount")
+    return {"device": file_stat.st_dev, "inode": file_stat.st_ino,
+            "size": file_stat.st_size, "mtime_ns": file_stat.st_mtime_ns}
+
+
 def preserve_wal(source, destination, *, max_bytes=64 * 1024 * 1024):
     """Retain only the bounded WAL, never the database; never replace evidence."""
     source, destination = Path(source), Path(destination)
     if source.is_symlink() or destination.is_symlink():
         raise ValueError("WAL evidence cannot use symlinks")
+    named_before = source.lstat()
+    if not stat.S_ISREG(named_before.st_mode) or not 0 < max_bytes <= 64 * 1024 * 1024:
+        raise ValueError("WAL requires a regular file and bounded preservation ceiling")
     with source.open("rb") as original:
         before = os.fstat(original.fileno())
+        if (before.st_dev, before.st_ino) != (named_before.st_dev, named_before.st_ino):
+            raise ValueError("WAL pathname changed before preservation")
         if before.st_nlink != 1 or not 0 < before.st_size <= max_bytes:
             raise ValueError("WAL exceeds preservation ceiling or is not a unique regular file")
         digest = hashlib.sha256()
@@ -84,7 +138,12 @@ def preserve_wal(source, destination, *, max_bytes=64 * 1024 * 1024):
             retained.flush()
             os.fsync(retained.fileno())
         after = os.fstat(original.fileno())
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or copied != before.st_size:
+    named_after = source.lstat()
+    if ((named_after.st_dev, named_after.st_ino) != (before.st_dev, before.st_ino)
+            or not stat.S_ISREG(named_after.st_mode)
+            or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns)
+            or (named_after.st_size, named_after.st_mtime_ns) != (after.st_size, after.st_mtime_ns)
+            or copied != before.st_size):
         raise ValueError("WAL changed during preservation; do not open database for writing")
     if os.name == "posix":
         fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)

@@ -1248,6 +1248,11 @@ def test_reaggregate_damaged_derived_supports_one_league_scope(client, monkeypat
         }
 
     monkeypatch.setattr(main_mod, "_reaggregate_damaged_derived_from_sources", fake_reaggregate)
+    monkeypatch.setattr(
+        main_mod.db,
+        "close_pool",
+        lambda: (_ for _ in ()).throw(AssertionError("scoped rebuild must not drain the pool")),
+    )
     resp = client.post(
         "/reaggregate-damaged-derived",
         json={

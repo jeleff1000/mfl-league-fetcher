@@ -11,6 +11,11 @@
     "preferences": "md5(COALESCE(manager_name_overrides_json,'') || '|' || COALESCE(franchise_merges_json,''))"
   },
   "before_read_seconds": 7.796,
-  "after": null,
-  "status": "not_yet_published"
+  "after": {
+    "north_reading": {"generation": 2, "publication_seconds": 34.886, "unchanged_matchup_hash": true, "unchanged_player_hash": true, "unchanged_preferences_hash": true, "homepage_rankings": 10, "season_players": 152, "season_players_all": 152, "standings": 10, "ready_accepting_samples": 13, "concurrent_other_league_read_seconds": 1.162, "same_run_retry": "ALREADY_COMMITTED", "same_run_retry_seconds": 2.617, "cache_required_hot_ratio": 1.0, "cache_repeat_p95_ms": 396},
+    "stk": {"generation": 6, "publication_seconds": 20.636, "unchanged_matchup_hash": true, "unchanged_player_hash": true, "unchanged_preferences_hash": true, "ranked_game_rows_checked": 90288, "game_rank_mismatches": 0, "rank_validation_seconds": 1.147, "homepage_rankings": 19, "season_players": 7735, "season_players_all": 7747, "standings": 96, "cache_required_hot_ratio": 1.0, "cache_repeat_p95_ms": 147},
+    "demo_league": {"generation": 2, "status": "COMMITTED_VERIFIED_AFTER_HTTP_TIMEOUT", "run_id": "cohort-20260918-demo-acc2", "http_timeout_seconds": 39, "homepage_rankings": 10, "source_hashes_verified": false, "cache_required_hot_ratio": 1.0, "cache_repeat_p95_ms": 334}
+  },
+  "status": "two_verified_pilots_plus_committed_demo_pending_source_hash_verification",
+  "remaining": ["Demo request response exceeded39s while a concurrent OPS metadata writer gated public reads; durable generation proves publication succeeded. Do not replay data.", "These checks do not establish full99-league acceptance, original intended history for NorthReading, or2026week1 forDemo."]
 }

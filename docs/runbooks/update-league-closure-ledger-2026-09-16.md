@@ -83,6 +83,33 @@ chunks. This does not resolve the separate game-rank semantic defect.
 
 ## Live continuation - 2026-09-18 21:25 UTC
 
+### Production continuation - September18 23:06 UTC
+
+- Deployed `acc2d384df71fe1e247ef77114f6567f53198a59` via35403743234:
+  true game ranks plus online bounded derived recovery. No storage/capacity change.
+- NorthReading aggregate-only publication COMMITTED34.886s; all13readiness
+  samples accepted queries, concurrentKMFFLread1.162s. Source-value/identity
+  hashes and preferences unchanged;10homepage rankings restored. Same-runretry
+  ALREADY_COMMITTED2.617s,generation2unchanged. Cache6routes verifiedhot,p95396ms.
+- STK complete-chain reaggregation COMMITTED20.636s,generation6. All1416matchup
+  and90478player source value/identity hashes unchanged; savedpreferences unchanged.
+  Full-chain game-rank check90288eligible rows,zero mismatches,1.147s.
+  Homepage19canonicalfranchises; cache6routesverifiedhot,p95147ms.
+- Demo HTTPresponse timedout39s, but durablegeneration2/sameoperationprovesCOMMIT;
+ 10homepage rankingsrestored, cache6routeshot,p95334ms. Do not replay publication.
+  Concurrent DFBclaim keptOPSmetadatawriter pending37s andreadystateops_writing;
+  investigate metadata admission/cleanup ratherthan claimallreadsremainedonline.
+- DFB35404189142 failed BEFOREpublication: one scoredprovider player lacksNFL
+  mapping. Sharedtransformations9.010s; generation4unchanged. Exactplayer pending.
+- Found Agusta's full2009-2025facts underlegacy `agustafantasyleague`; current
+  `agusta_fantasy_league` has2026only. They are not deleted. Existingrename/
+  consolidation path is underreview; preserve CURRENT759Baliases/3685Bmerges.
+  No history reimport or manualfactDML performed.
+- Sleeper providercheck25leagues/288rosterIDs:21leagues exact,10scoredifferences
+  acrossBirdville6,FranchiseMode2,Mawhinney1,NYU1. Custom_points precedence honored.
+  These require provider refresh, not aggregate-only repair.18targetswithout
+  storedweek1remainseparate. Receiptinupdate-league-week1-source-parity-2026-09-18.json.
+
 ### Expanded cohort evidence - September18 22:35 UTC
 
 True game-rank fix is reviewed: shared original ranking windows run against

@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "audit": "Sleeper census-cohort 2026 week 1 provider score parity",
+  "started_at_utc": "2026-09-18T22:55:14.294397+00:00",
+  "completed_at_utc": "2026-09-18T22:55:32.124139+00:00",
+  "census_path": "docs/runbooks/update-league-all-attempts-2026-09-14-18.json",
+  "census_updated_at": "2026-09-18T22:49:53Z",
+  "scope": {
+    "year": 2026,
+    "week": 1,
+    "cohort_sleeper_leagues": 43,
+    "existing_week1_leagues": 25,
+    "eligible_current_sleeper_leagues": 25,
+    "historical_expected_scope_verified": false,
+    "rankings_verified": false,
+    "franchise_alias_semantics_verified": false,
+    "production_writes": false,
+    "dispatches": false,
+    "saved_aliases_or_merges_changed": false,
+    "existing_week1_absence_means": "Excluded from this parity comparison, not proof of intended-history completeness or recovery failure.",
+    "mawhinney_recovery_hold": "Read-only roster/score comparison only; prior alias-conflict hold remains unchanged."
+  },
+  "method": {
+    "stable_join": "Sleeper roster_id = Fly matchup.team_key, canonical numeric string; never display names",
+    "provider_score": "custom_points when non-null, otherwise points",
+    "score_precision": "Two decimal places using Decimal ROUND_HALF_EVEN; matches stored score precision",
+    "fly_projection": "db_name, team_key, franchise_id, team_name, team_points; year=2026 and week=1; explicit db_name IN filters",
+    "current_league_id": "2026 league_settings.league_key and/or league_context.league_ids_json[2026]; disagreements block API request; no seed-ID guessing",
+    "provider_endpoint_template": "https://api.sleeper.app/v1/league/{league_id}/matchups/1",
+    "max_parallel_provider_requests": 4,
+    "provider_request_timeout_seconds": 10,
+    "max_provider_requests_per_league": 1,
+    "max_batch_leagues": 40,
+    "retry_count": 0,
+    "stop_on_http_429": true,
+    "fly_read_timeout_seconds": 10,
+    "scope_note": "Only existing stored 2026 week-one team scores and roster-ID coverage; does not establish historical completeness, intended import scope, ranks, homepage coverage, or aliases.",
+    "provider_requests_authenticated": false,
+    "identity_matching_uses_display_names": false,
+    "census_selection": "Distinct db_name from census leagues whose platforms contains sleeper, as captured at census_updated_at; current 2026 provider ownership and season ID checked against Fly before provider fetch.",
+    "provider_requested_fields": "The matchups endpoint has no field projection; response kept in memory, only roster_id/custom_points/points used. Player lists and player-point maps were neither reported nor saved."
+  },
+  "summary": {
+    "status_counts": {
+      "excluded_no_stored_week1": 18,
+      "pass": 21,
+      "mismatch": 4
+    },
+    "provider_request_count": 25,
+    "provider_team_count": 288,
+    "matched_score_count": 278,
+    "score_mismatch_count": 10,
+    "rate_limit_stop": false,
+    "total_read_elapsed_seconds": 17.832,
+    "checked_fly_team_count": 288,
+    "roster_id_coverage_mismatches": 0,
+    "duplicate_roster_id_count": 0,
+    "mismatch_leagues": [
+      "birdville_gang",
+      "franchise_mode_fantasy",
+      "mawhinney_s_vixens",
+      "nyu_ffl"
+    ]
+  },
+  "fly_read_batches": [
+    {
+      "batch": 1,
+      "league_count": 40,
+      "elapsed_seconds": 2.59
+    },
+    {
+      "batch": 2,
+      "league_count": 3,
+      "elapsed_seconds": 3.585
+    }
+  ],
+  "provider_batches": [
+    {
+      "batch": 1,
+      "eligible_leagues": 25,
+      "completed": 25,
+      "elapsed_seconds": 11.655
+    }
+  ],
+  "read_errors": [],
+  "fly_queries": [
+    "SELECT db_name,platform,league_id,league_ids_json FROM public.league_context WHERE db_name IN ('a_game_of_inches','a_good_day_to_dynasty','aaron_rodgers_hates_his_family','agusta_fantasy_league','alcoholics_anonymous_96e8','allarsburgh_dynasty_league_s4','average_flo_s','bchs_fantasy_2k26','bffl','birdville_gang','choccy_championship','clemson_fantasy_league','cmon_man','crosswater_pigskins','diddy_party','dynasty_849e','dynasty_league_4d36','fanball_3e8d','fantasy_elite','fantasy_sabiondo','fortnite_league','franchise_mode_fantasy','group_chat_foosball','handegg_dynasty_league','ifl_dynasty','league_of_dynasties','league_of_throws','legacy','mawhinney_s_vixens','mirabeau_fantasy_football','months_dynasty','nfl_cancon_fantasy','nyu_ffl','otf','playing_for_keeps_league','rva_d_league_770f','stk','the_champions_fantasy_football_leage','the_degenerates','the_dfb_league_ii')",
+    "SELECT db_name,platform,league_key FROM public.league_settings WHERE db_name IN ('a_game_of_inches','a_good_day_to_dynasty','aaron_rodgers_hates_his_family','agusta_fantasy_league','alcoholics_anonymous_96e8','allarsburgh_dynasty_league_s4','average_flo_s','bchs_fantasy_2k26','bffl','birdville_gang','choccy_championship','clemson_fantasy_league','cmon_man','crosswater_pigskins','diddy_party','dynasty_849e','dynasty_league_4d36','fanball_3e8d','fantasy_elite','fantasy_sabiondo','fortnite_league','franchise_mode_fantasy','group_chat_foosball','handegg_dynasty_league','ifl_dynasty','league_of_dynasties','league_of_throws','legacy','mawhinney_s_vixens','mirabeau_fantasy_football','months_dynasty','nfl_cancon_fantasy','nyu_ffl','otf','playing_for_keeps_league','rva_d_league_770f','stk','the_champions_fantasy_football_leage','the_degenerates','the_dfb_league_ii') AND year=2026",
+    "SELECT db_name,team_key,franchise_id,team_name,team_points FROM public.matchup WHERE db_name IN ('a_game_of_inches','a_good_day_to_dynasty','aaron_rodgers_hates_his_family','agusta_fantasy_league','alcoholics_anonymous_96e8','allarsburgh_dynasty_league_s4','average_flo_s','bchs_fantasy_2k26','bffl','birdville_gang','choccy_championship','clemson_fantasy_league','cmon_man','crosswater_pigskins','diddy_party','dynasty_849e','dynasty_league_4d36','fanball_3e8d','fantasy_elite','fantasy_sabiondo','fortnite_league','franchise_mode_fantasy','group_chat_foosball','handegg_dynasty_league','ifl_dynasty','league_of_dynasties','league_of_throws','legacy','mawhinney_s_vixens','mirabeau_fantasy_football','months_dynasty','nfl_cancon_fantasy','nyu_ffl','otf','playing_for_keeps_league','rva_d_league_770f','stk','the_champions_fantasy_football_leage','the_degenerates','the_dfb_league_ii') AND year=2026 AND week=1",
+    "SELECT db_name,platform,league_id,league_ids_json FROM public.league_context WHERE db_name IN ('the_fucking_catalina_wine_mixer','the_real_ff_league','your_team_probably_sucks')",
+    "SELECT db_name,platform,league_key FROM public.league_settings WHERE db_name IN ('the_fucking_catalina_wine_mixer','the_real_ff_league','your_team_probably_sucks') AND year=2026",
+    "SELECT db_name,team_key,franchise_id,team_name,team_points FROM public.matchup WHERE db_name IN ('the_fucking_catalina_wine_mixer','the_real_ff_league','your_team_probably_sucks') AND year=2026 AND week=1"
+  ],
+  "limitations": [
+    "One point-in-time 2026 week-one provider read per checked league; later provider corrections can change scores.",
+    "Historical expected scope, history preservation, ranks, player facts, derived tables, homepage coverage, franchise identity semantics, and alias correctness were not verified.",
+    "18 census Sleeper leagues had no stored 2026 week-one matchup rows and were excluded without provider requests.",
+    "25 providers returned HTTP 200; no HTTP 429, retries, dispatches, production writes, or credential output occurred.",
+    "Mismatch causes were not investigated or inferred; provider official custom_points takes precedence when non-null.",
+    "The shared census changed during earlier discovery; this artifact uses the single captured census selection and census_updated_at shown here, not an independently fixed recovery closure ledger."
+  ],
+  "leagues": [
+    {"db_name":"a_game_of_inches","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"a_good_day_to_dynasty","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"aaron_rodgers_hates_his_family","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"agusta_fantasy_league","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1389378435998052352","league_id_source":"2026 league_settings","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.646},
+    {"db_name":"alcoholics_anonymous_96e8","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1373439243124236288","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.646},
+    {"db_name":"allarsburgh_dynasty_league_s4","fly_row_count":8,"fly_team_count":8,"provider_request_count":1,"league_id":"1313949582551453696","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":8,"provider_row_count":8,"matched_score_count":8,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.657},
+    {"db_name":"average_flo_s","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"bchs_fantasy_2k26","fly_row_count":10,"fly_team_count":10,"provider_request_count":1,"league_id":"1388005937792438272","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":10,"provider_row_count":10,"matched_score_count":10,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.622},
+    {"db_name":"bffl","fly_row_count":10,"fly_team_count":10,"provider_request_count":1,"league_id":"1312007268086067200","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":10,"provider_row_count":10,"matched_score_count":10,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.575},
+    {"db_name":"birdville_gang","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1312094740778328064","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":6,"score_mismatch_count":6,"mismatches":[{"roster_id":"1","team_name":"Young Guns","franchise_id":"986370573083246592","provider_points":"167.82","fly_points":"133.72","delta_fly_minus_provider":"-34.10"},{"roster_id":"2","team_name":"Trust The Process ","franchise_id":"986110700718186496","provider_points":"146.94","fly_points":"143.34","delta_fly_minus_provider":"-3.60"},{"roster_id":"3","team_name":"Double Doinks","franchise_id":"986374572138110976","provider_points":"100.90","fly_points":"97.80","delta_fly_minus_provider":"-3.10"},{"roster_id":"4","team_name":"Guangzhou Loong Lions","franchise_id":"986377102683348992","provider_points":"163.36","fly_points":"162.16","delta_fly_minus_provider":"-1.20"},{"roster_id":"7","team_name":"BallerBrooks","franchise_id":"862793875759177728","provider_points":"87.46","fly_points":"77.56","delta_fly_minus_provider":"-9.90"},{"roster_id":"8","team_name":"POP SMOKE IN THE ROVA","franchise_id":"986430254992371712","provider_points":"115.30","fly_points":"111.30","delta_fly_minus_provider":"-4.00"}],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"mismatch","provider_read_elapsed_seconds":1.571},
+    {"db_name":"choccy_championship","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"clemson_fantasy_league","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"cmon_man","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"crosswater_pigskins","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1394125003326234624","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.527},
+    {"db_name":"diddy_party","fly_row_count":10,"fly_team_count":10,"provider_request_count":1,"league_id":"1389374001511436289","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":10,"provider_row_count":10,"matched_score_count":10,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.574},
+    {"db_name":"dynasty_849e","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"dynasty_league_4d36","fly_row_count":10,"fly_team_count":10,"provider_request_count":1,"league_id":"1312108242695901184","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":10,"provider_row_count":10,"matched_score_count":10,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.636},
+    {"db_name":"fanball_3e8d","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"fantasy_elite","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1312124522580672512","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.645},
+    {"db_name":"fantasy_sabiondo","fly_row_count":8,"fly_team_count":8,"provider_request_count":1,"league_id":"1384772866297315328","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":8,"provider_row_count":8,"matched_score_count":8,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.635},
+    {"db_name":"fortnite_league","fly_row_count":14,"fly_team_count":14,"provider_request_count":1,"league_id":"1312527026233548800","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":14,"provider_row_count":14,"matched_score_count":14,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.645},
+    {"db_name":"franchise_mode_fantasy","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1312079215952154624","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":10,"score_mismatch_count":2,"mismatches":[{"roster_id":"3","team_name":"The Trouble Makers","franchise_id":"640606075103547392","provider_points":"208.74","fly_points":"203.54","delta_fly_minus_provider":"-5.20"},{"roster_id":"5","team_name":"Funcrusher","franchise_id":"458274603299500032","provider_points":"132.64","fly_points":"123.51","delta_fly_minus_provider":"-9.13"}],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"mismatch","provider_read_elapsed_seconds":1.687},
+    {"db_name":"group_chat_foosball","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"handegg_dynasty_league","fly_row_count":14,"fly_team_count":14,"provider_request_count":1,"league_id":"1313995799029362688","league_id_source":"2026 league_settings","http_status":200,"provider_team_count":14,"provider_row_count":14,"matched_score_count":14,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.724},
+    {"db_name":"ifl_dynasty","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1312102873777074176","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.68},
+    {"db_name":"league_of_dynasties","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1317960380995100672","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.701},
+    {"db_name":"league_of_throws","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"legacy","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1381877571095896064","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.83},
+    {"db_name":"mawhinney_s_vixens","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1389710321509232641","league_id_source":"2026 league_settings","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":11,"score_mismatch_count":1,"mismatches":[{"roster_id":"5","team_name":"Kolandaivelu’s Kamikazes","franchise_id":"yh-nick-joseph","provider_points":"121.66","fly_points":"121.41","delta_fly_minus_provider":"-0.25"}],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"mismatch","provider_read_elapsed_seconds":1.887},
+    {"db_name":"mirabeau_fantasy_football","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"months_dynasty","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"nfl_cancon_fantasy","fly_row_count":14,"fly_team_count":14,"provider_request_count":1,"league_id":"1399660658135465984","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":14,"provider_row_count":14,"matched_score_count":14,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.876},
+    {"db_name":"nyu_ffl","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1381502304666025984","league_id_source":"2026 league_settings","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":11,"score_mismatch_count":1,"mismatches":[{"roster_id":"5","team_name":"Mike Zedong","franchise_id":"327149646881243136","provider_points":"90.06","fly_points":"89.81","delta_fly_minus_provider":"-0.25"}],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"mismatch","provider_read_elapsed_seconds":1.823},
+    {"db_name":"otf","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"playing_for_keeps_league","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"rva_d_league_770f","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"stk","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1389738445240303616","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.787},
+    {"db_name":"the_champions_fantasy_football_leage","fly_row_count":10,"fly_team_count":10,"provider_request_count":1,"league_id":"1312655123121459200","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":10,"provider_row_count":10,"matched_score_count":10,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.806},
+    {"db_name":"the_degenerates","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1362825707796828160","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.827},
+    {"db_name":"the_dfb_league_ii","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"the_fucking_catalina_wine_mixer","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1352102370921705472","league_id_source":"2026 league_settings","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.818},
+    {"db_name":"the_real_ff_league","fly_row_count":0,"fly_team_count":0,"provider_request_count":0,"status":"excluded_no_stored_week1"},
+    {"db_name":"your_team_probably_sucks","fly_row_count":12,"fly_team_count":12,"provider_request_count":1,"league_id":"1350898716860510208","league_id_source":"2026 league_settings and 2026 league_context","http_status":200,"provider_team_count":12,"provider_row_count":12,"matched_score_count":12,"score_mismatch_count":0,"mismatches":[],"missing_in_fly":[],"missing_in_provider":[],"duplicate_provider_roster_ids":[],"duplicate_fly_team_ids":[],"invalid_provider_roster_ids":0,"invalid_fly_team_ids":0,"provider_null_scores":0,"fly_null_scores":0,"provider_custom_score_count":0,"fly_missing_franchise_count":0,"status":"pass","provider_read_elapsed_seconds":1.313}
+  ]
+}

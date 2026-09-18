@@ -153,6 +153,29 @@ def test_http_missing_historical_franchise_rejects_publication_without_advancing
     assert _query(client, "SELECT COUNT(*) n FROM public.matchup_career WHERE db_name='test_league'") == [{'n': 0}]
 
 
+def test_error_after_fleet_commit_preserves_receipt_and_does_not_republish(client, tmp_path, monkeypatch):  # noqa: F811
+    import main
+
+    execute = main._interrupting_execute
+
+    def checkpoint_error_after_commit(conn, sql, *args, **kwargs):
+        result = execute(conn, sql, *args, **kwargs)
+        if kwargs.get('step') == 'commit fleet partition':
+            raise OSError('checkpoint failed after transaction committed')
+        return result
+
+    monkeypatch.setattr(main, '_interrupting_execute', checkpoint_error_after_commit)
+    bundle = _bundle(tmp_path)
+    response = _publish(client, bundle)
+    assert response.status_code == 500
+    assert _query(client, "SELECT status FROM merge_admin.league_delta_merge_state WHERE db_name='___fleet'") == [{'status': 'COMMITTED'}]
+    assert _query(client, "SELECT games,seasons FROM public.matchup_career WHERE db_name='test_league'") == [{'games':16, 'seasons':2}]
+    replay = _publish(client, bundle)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()['idempotent_replay'] is True
+    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation':1}]
+
+
 @pytest.mark.parametrize('data_dir', ['legacy_trade_mirror'], indirect=True)
 def test_http_weekly_merge_repairs_legacy_null_sent_pick_mirror(client, tmp_path):  # noqa: F811
     response = _publish(client, _bundle(tmp_path, homepage=True))

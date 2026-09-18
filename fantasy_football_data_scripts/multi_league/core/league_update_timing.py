@@ -21,6 +21,15 @@ class PhaseTimer:
             raise ValueError("Timing clock moved backward")
         self._phases[phase] = round(now - self._last, 3)
         self._last = now
+        try:
+            print(
+                f"[weekly-refresh] phase={phase} seconds={self._phases[phase]:.3f} "
+                f"elapsed_seconds={now - self._start:.3f}",
+                flush=True,
+            )
+        except (OSError, ValueError):
+            # Diagnostic sink failure must not turn a publication into a failure.
+            pass
 
     def finish(self) -> dict[str, float]:
         now = self._clock()

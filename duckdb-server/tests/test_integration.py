@@ -2099,6 +2099,40 @@ def test_merge_league_delta_commits_and_replays(data_dir, client):
     assert resp.json()[0] == {"cnt": 2}
 
 
+def test_error_after_delta_commit_preserves_receipt_and_replay(data_dir, client, monkeypatch):
+    import main as main_mod
+
+    execute = main_mod._interrupting_execute
+
+    def checkpoint_error_after_commit(conn, sql, *args, **kwargs):
+        result = execute(conn, sql, *args, **kwargs)
+        if kwargs.get('step') == 'commit delta test_league':
+            raise OSError('checkpoint failed after transaction committed')
+        return result
+
+    monkeypatch.setattr(main_mod, '_interrupting_execute', checkpoint_error_after_commit)
+    archive_path, manifest = _make_delta_bundle(data_dir, main_mod)
+    headers = {
+        'Authorization': 'Bearer test-admin', 'x-db-name': 'test_league',
+        'x-bundle-id': manifest['bundle_id'], 'x-bundle-hash': manifest['bundle_hash'],
+    }
+    with open(archive_path, 'rb') as fh:
+        response = client.post('/merge-league-delta', headers=headers,
+            files={'file': (archive_path.name, fh, 'application/gzip')})
+    assert response.status_code == 500
+    status = client.get('/merge-league-delta/status', headers=headers,
+        params={'db_name': 'test_league', 'bundle_id': manifest['bundle_id']})
+    assert status.json()['status'] == 'COMMITTED'
+    with open(archive_path, 'rb') as fh:
+        replay = client.post('/merge-league-delta', headers=headers,
+            files={'file': (archive_path.name, fh, 'application/gzip')})
+    assert replay.status_code == 200, replay.text
+    assert replay.json()['idempotent_replay'] is True
+    rows = client.post('/query', headers={'Authorization': 'Bearer test-read'},
+        json={'sql': "SELECT COUNT(*) cnt FROM public.matchup WHERE db_name='test_league'"})
+    assert rows.json() == [{'cnt': 2}]
+
+
 def test_merge_league_delta_uses_pool_compatible_connection_config(data_dir, client, monkeypatch):
     import main as main_mod
 

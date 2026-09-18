@@ -2494,6 +2494,14 @@ def _delta_upsert_state(
     error_type: str | None = None,
     error_message: str | None = None,
 ) -> None:
+    if status in {"FAILED_MERGE", "CONFLICT"}:
+        # COMMIT can succeed before its automatic checkpoint reports an error.
+        # Keep its atomic receipt so the existing retry/status path can reconcile
+        # publication instead of overwriting success with a later failure.
+        existing = _delta_state_row(conn, manifest["db_name"], manifest["bundle_id"])
+        if existing is not None and existing.get("status") == "COMMITTED":
+            logger.warning("Preserving committed receipt after %s for %s", status, manifest["db_name"])
+            return
     conn.execute(
         f"DELETE FROM {_delta_state_ref()} WHERE db_name = ? AND bundle_id = ?",
         [manifest["db_name"], manifest["bundle_id"]],

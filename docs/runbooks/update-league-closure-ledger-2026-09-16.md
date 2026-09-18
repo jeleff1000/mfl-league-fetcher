@@ -2,6 +2,65 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 05:00 UTC
+
+Byte-only pilots `35308583724` and `35308584901` each took 11s including
+disposable-machine startup. Each read 274,432 bytes from a different existing
+recovery volume, without opening DuckDB. Both contain the same damaged block;
+neither is a usable replacement witness. Their disposable machines were removed;
+volumes were retained. No snapshot restore, copy, rebuild or production mutation.
+
+Read-only locate pilot `35308750221` on the oldest existing recovery volume
+reached `connect_start` but not catalog inspection before its absolute deadline.
+The remote process exited and owned machine `48ee5d1ced9538` was destroyed.
+This is a bounded failure, not successful SQL-level localization/removal. Do not
+repeat it unchanged. Physical recovery remains open.
+
+Fresh readiness is HTTP 200 / serving, with zero active queries, OPS writes or
+delta publications. The 480.4 MiB WAL headroom stop remains in effect. Current
+main's stricter startup checkpoint behavior has NOT been deployed over this
+known checkpoint failure; doing so could prevent service startup.
+
+Worker regression verification: 143 focused Yahoo/ESPN/Sleeper, preservation,
+writer-boundary and claim tests passed in 14.69s. This is local regression
+evidence, not a new live provider-refresh result.
+
+The existing shared PhaseTimer previously withheld stage timings until the final
+receipt. A regression failed on absent immediate output. The five-line change
+flushes each completed phase and its elapsed time immediately, retaining the
+same receipt and adding no queries, dependency, pipeline or retry. Timing plus
+worker-contract tests: 72 passed in 0.39s. Review identified closed-output errors
+escaping the timer; three regressions reproduced this, then passed with a guard
+around only the diagnostic print. Timing validation still raises. Nine focused
+timing/projection tests passed in 7.23s; the actual cache-patch caller's three
+success/failure-output cases passed in 1.25s.
+
+Forty local integration/delta/lineage tests passed in 20.28s. Two live-data,
+non-publishing worker pilots had 38s subprocess kill deadlines and no installs:
+NYU Sleeper returned NO_FINALIZED_WEEKS in 5.828s (no provider fetch exercised);
+TFL ESPN returned DRY_RUN_READY in 29.828s, validating 12 teams, 192 roster rows,
+12 finalized matchup rows and 12 transaction rows. These are NOT publication
+canaries. No credentials were displayed and neither pilot wrote league data.
+
+Existing Yahoo run `35297219552` separates a 72.006s processing path into 3.782s
+provider fetch, 11.574s shared transformations and 33.393s Fly publication.
+The latter includes 9.8669s seasons, 4.808s careers and 15.3293s homepage work.
+These measured costs are not a new performance improvement claim.
+
+A second concrete defect was reproduced through both real HTTP publication
+paths: commit the transaction, then inject a checkpoint/reporting exception.
+Both paths overwrote the committed receipt with FAILED_MERGE despite the data
+being committed. The shared state helper now checks for an existing COMMITTED
+receipt only on FAILED_MERGE/CONFLICT transitions and preserves it. There is no
+extra successful-path query and no new retry path. Existing status/idempotent
+replay can now recover the commit. Ten HTTP tests passed in 28.44s, covering
+these two cases, genuine rollback, full-history aggregation and repeat receipts;
+23 existing DataFrame-fragmentation warnings remain. Independent review found
+no remaining blockers in the logging and receipt guards. Final timing/worker
+contracts: 75 passed in 0.37s. These scoped fixes are being pushed to public
+main; the server change is NOT deployed. Fresh production readiness after all
+checks remains serving / zero active reads or writes / unchanged league hash.
+
 ## Scoped aggregate recovery works - 2026-09-18
 
 This evidence supersedes the earlier assumption that physical-block removal must

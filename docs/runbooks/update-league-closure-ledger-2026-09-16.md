@@ -1,8 +1,82 @@
 # September Update League closure ledger
 
-State: synthetic removal and guard tests passed; real-volume WAL replay now completes within 10s with temporary shared-4-CPU capacity. The next preservation gate found empty canonical replacement tables in the old isolated fixture. No real-file removal or production recovery has been performed. This ledger is for league updates, not SuperTable SOTA work.
+State: isolated real-file removal COMMIT returned for all five objects; checkpoint exited at the unchanged 128-new-block ceiling. Outcome remains UNKNOWN until retained-WAL reconciliation and stock verification. A selective allocator fix is under synthetic verification. Production has not been changed. This ledger is for league updates, not SuperTable SOTA work.
 
 ## Current bounded-recovery receipts - 2026-09-18
+
+- Actual isolated run `35368369603` on `5b7a8d2ed`: export twenty genuine rows
+  in about 0.66s; guarded retained-WAL replay 9.739s; fixture type/value and
+  preservation checks passed. Five-object removal COMMIT returned in about
+  8ms. Checkpoint processing exited 97 at the 128-new-block allocation ceiling,
+  adapter elapsed 16.509s. No completed checkpoint marker or stock proof;
+  outcome UNKNOWN, never called durable success. Fixture 5927 bytes, SHA256
+  `373b43909b047303815798e581b1d3c861562fbcbd3a3f2cf064de09949df4f6`.
+  Machine `7812613c007168` was destroyed at 16:26:06Z.
+- No-engine reconciliation `35368541439` took 0.034s: header/active iteration
+  12126 and known bad-block SHA remain unchanged, main size 15555375104 and
+  inode 14 unchanged, main mtime now 1789748756148253909. WAL is now 45522023
+  bytes, mtime 1789748753472137934, inode 64. Preserve CURRENT main/WAL plus
+  original evidence under `recovery_five_35368369603_1`; do not restore only
+  the old WAL or blindly reseed/drop. Machine `d8d0795b99d468` removed.
+  This inspection did not yet include `.wal.recovery`; a later bounded check
+  includes all exact sidecars and hashes, with no engine open.
+- Root cause reproduced in a 3.94MB synthetic catalog, `35368965152` on
+  `c95cc042e`: global `PeekNextBlockId=-1` allocated a full 256KiB block for
+  each 4KiB handle, exhausting the cap even for a healthy dense catalog.
+  `204d30403` restores stock packing and reserves only the exact damaged
+  block's free subslots, using the engine's in-memory FreeBlocksFromInteger
+  call; checksums/live references remain untouched. Independent source review
+  confirms normal all-unreferenced retirement precedes that mask call.
+- `35369387456` proves internal Read interception, five-block dense checkpoints,
+  stock reopen/write, crash-after-commit/flush and repeat recovery for the
+  dense fixture. Matrix overall remains FAILED: old tests demanded fresh
+  allocation even when stock packing reused healthy blocks, and an unrelated
+  DROP test incorrectly demanded interception for an already retired block.
+  `901c45b43` corrects those test preconditions and makes the cap test force
+  real physical allocations with a bounded dense catalog. Local result:
+  55 passed, three Linux-only skipped, two old donor tests deselected, 9.57s.
+  Full follow-up matrix `35369788137` passed all six jobs; no second real-file
+  mutation has been attempted. The real file still requires reconciliation
+  using its post-commit WAL, not a fresh removal attempt.
+- No-engine sidecar reconciliation `35369876519` on `901c45b43` completed in
+  0.917s. Main and WAL inode/size/mtime match `35368541439`; neither
+  `.wal.checkpoint` nor `.wal.recovery` exists. Current 45522023-byte WAL SHA256:
+  `b330657077bb40250e0e1977309d917810f6c9856eb9bc4cef9dc1d9b0dc1213`.
+  Machine `2870549b442968` was destroyed at 16:41:03Z. This is the exact current
+  recovery baseline, with original WAL/evidence also retained separately.
+  Production `/ready` remained serving/accepting with no active query/write
+  activity, league fingerprint `sha256:935b1b973ff578d5`. Its startup timestamp
+  changed externally to 16:35:16Z; this work made no production changes.
+- Still required: prove mask interception through MarkBlocksAsModified with a
+  retained live reference, complete exact post-commit reconciliation/resume
+  without duplicate inserts/drops, durable stock-engine verification on the
+  real isolated file, then controlled exclusive production procedure and
+  actual import/refresh canaries. Fresh-allocation cap is not a claim that all
+  ordinary engine metadata writes total <=32MiB; WAL/normal writes are separate.
+
+- `ffc2f9026` adds an isolated fixture of genuine current aggregate values,
+  capped at four rows per named replacement / twenty total / 64 KiB. Its two
+  read-only Fly requests took 1.344s for 5447 bytes locally. Export runs under a
+  5s external ceiling inside the same 40s pilot; the child's preservation cap
+  is reduced to 5s so total preservation cannot exceed the approved 10s.
+  Fixture rows enter only empty selected-league scopes on the exact isolated
+  volume, in the SAME transaction as the five drops. Existing rows, other
+  leagues, facts and configuration cannot be overwritten. Failure rolls back
+  fixture inserts and drops together. Exact inputs and value hashes are kept
+  in create-only receipts. This is test setup, not a production data restore.
+- Seven fixture regressions failed before implementation and passed afterward.
+  Live `/query` rejects parenthesis-leading SQL; a failing test now covers that
+  boundary. A second red test limits export to two network requests; the first
+  ten-request draft exceeded the 5s ceiling and was not used on a pilot.
+  Local combined tests: 52 passed, three Linux-only skipped, two old donor tests
+  deselected, 8.88s. Linux matrix `35368007952` passed all six jobs including
+  37 adapter tests in 3.67s. No removal dispatch with this fixture was made.
+- Independent review identified possible silent value coercion before the
+  preservation baseline. `5b7a8d2ed` rejects mismatched DuckDB source/target
+  types AND compares actual inserted JSON values with exported values before
+  baseline capture. Both rounding/type regressions failed before the fix.
+  Local combined result: 54 passed, three Linux-only skipped, two donor tests
+  deselected, 9.62s. Follow-up Linux matrix pending before physical dispatch.
 
 - Latest physical pilot revision: `1269396af`; preceding Linux matrix
   `35365345651` passed. The user explicitly authorized temporary capacity

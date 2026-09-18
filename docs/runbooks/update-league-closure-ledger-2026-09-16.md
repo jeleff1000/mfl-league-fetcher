@@ -4,6 +4,25 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Real resume35378792853 on3e7e573df: startup4.46s (previous7.60s).
+  WAL replay9.747s, preservation reconciliation passed, new_drops0 and
+  new_fixture_rows0. First checkpoint exceeded15s; no stock proof. Observed
+  read throughput during replay~32MiB/s; peakRSS2024476KiB. No full DB copy.
+  Machine080d6e0b226138 destroyed18:13:09Z. Actual outcome UNKNOWN: a delayed
+  wait after SIGKILL incorrectly escaped as FAILED; regression reproduced it,
+  and stop/reap now retains UNKNOWN plus termination_unconfirmed.
+- No-engine inspection35378960124:3258-byte complete trace recovered;
+  fingerprinting0.825s. Header/bad-block SHA unchanged. Mainmtime
+  1789755176638185818; WAL45522288bytes,mtime1789755164142675724,SHA
+  81f5df9726e7a1e4009e3de53e8ee9d13e6c9369ae52618b6d75e3666f991af3.
+  Inspector683e3d6c447de8 destroyed18:14:18Z. New exact baseline bound in
+  adapter/test. Local78passed,3Linuxskipped,2legacyexcluded in16.61s.
+- Next isolated capacity trial:performance2/4GiB, same volume and3GiB engine
+  ceiling. Fly documents64MiB/s vs shared4's32MiB/s; measured I/O supports
+  testing this, NOT a claim it will finish. User authorized temporary capacity.
+  No retries/fallback tier, deadline increase, production resize or copy.
+  Production remains serving/accepting, no active queries/writes.
+
 - Public main 2b676c1a3: bounded trace/inspection changes published. Linux
   matrix35378176034: adapter58tests5.71s; real_scope6.416s, five individual
   durable steps1.067s. Shared test's compiler hit its5s limit on attempt1;

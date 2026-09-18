@@ -214,6 +214,18 @@ def run_stage(stage, command, *, deadline, env=None, transitions=(), trace=None)
         except ProcessLookupError:
             pass
 
+    termination_unconfirmed = False
+
+    def stop_and_reap():
+        nonlocal termination_unconfirmed
+        stop_child()
+        try:
+            child.wait(timeout=max(0, min(1, deadline-time.time())))
+        except subprocess.TimeoutExpired:
+            # SIGKILL can remain pending during kernel I/O. Never turn that
+            # ambiguous mutable outcome into a preflight FAILED exception.
+            termination_unconfirmed = True
+
     def drain(name, pipe):
         pending = b''
         with pipe:
@@ -263,16 +275,13 @@ def run_stage(stage, command, *, deadline, env=None, transitions=(), trace=None)
                 continue
         code = child.returncode
     except subprocess.TimeoutExpired:
-        stop_child()
-        child.wait(timeout=1)
+        stop_and_reap()
         code = 124
     except (OSError, ValueError):
-        stop_child()
-        child.wait(timeout=1)
+        stop_and_reap()
         code = 125
     except BaseException:
-        stop_child()
-        child.wait(timeout=1)
+        stop_and_reap()
         if trace_writer is not None:
             try:
                 trace_queue.put_nowait(None)
@@ -306,6 +315,7 @@ def run_stage(stage, command, *, deadline, env=None, transitions=(), trace=None)
     result = {"stage": stage, "outcome": outcome, "exit_code": code,
               "elapsed_s": round(time.monotonic() - started, 3),
               "stdout": stdout, "stderr": stderr, "output_limited": limited.is_set(),
+              "termination_unconfirmed": termination_unconfirmed,
               "last_phase": phase['name'], "protocol_error": protocol_error.is_set()}
     try:
         emit_event({"event": "end", **result})
@@ -618,8 +628,8 @@ def remove_quarantined(conn, *, prepare=None, target=None, prior_removed=()):
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
     """Two observed isolated states only; never infer permission from a timestamp."""
     main_mtime, wal_size, wal_mtime, wal_sha = (
-        (1789753408168174644, 45522235, 1789753395532165342,
-         '37130c73a403e3a951bd7ea978d226456f77b2ffbfa68272f39c500f7a60f5d3') if resume else
+        (1789755176638185818, 45522288, 1789755164142675724,
+         '81f5df9726e7a1e4009e3de53e8ee9d13e6c9369ae52618b6d75e3666f991af3') if resume else
         (1789662410048242836, 45516621, 1789662378556231033,
          'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
     if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime

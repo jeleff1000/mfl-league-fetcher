@@ -248,6 +248,39 @@ def test_timeout_retains_bounded_stage_trace_on_disk(tmp_path):
     assert result['exit_code'] == 124
 
 
+def test_delayed_exit_after_kill_still_reports_unknown(monkeypatch):
+    import subprocess
+    a = adapter()
+    a.STAGE_LIMITS['verify'] = .05
+    original = a.subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = original(*args, **kwargs)
+        actual_wait = child.wait
+        children.append((child, actual_wait))
+
+        def delayed_reap(timeout=None):
+            if timeout == 1:
+                raise subprocess.TimeoutExpired(child.args, timeout)
+            return actual_wait(timeout=timeout)
+
+        child.wait = delayed_reap
+        return child
+
+    monkeypatch.setattr(a.subprocess, 'Popen', spawn)
+    try:
+        result = a.run_stage('verify', [sys.executable, '-c', 'import time; time.sleep(20)'],
+                             deadline=time.time()+4)
+    finally:
+        for child, actual_wait in children:
+            child.kill()
+            actual_wait(timeout=2)
+    assert result['outcome'] == 'UNKNOWN'
+    assert result['exit_code'] == 124
+    assert result['termination_unconfirmed'] is True
+
+
 @pytest.mark.parametrize('stage,transitions', [('verify', ('verify',)), ('preserve', ('replay',))])
 def test_trace_failure_terminates_mutable_child_and_returns_unknown(tmp_path, monkeypatch, stage, transitions):
     a = adapter()
@@ -582,10 +615,10 @@ def test_repeated_phase_cannot_reset_its_budget():
 
 def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
     a = adapter()
-    binding = {'size': 15555375104, 'mtime_ns': 1789753408168174644, 'inode': 14}
-    files = {'.wal': {'size': 45522235, 'mtime_ns': 1789753395532165342, 'inode': 64}}
+    binding = {'size': 15555375104, 'mtime_ns': 1789755176638185818, 'inode': 14}
+    files = {'.wal': {'size': 45522288, 'mtime_ns': 1789755164142675724, 'inode': 64}}
     header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
-    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '37130c73a403e3a951bd7ea978d226456f77b2ffbfa68272f39c500f7a60f5d3'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '81f5df9726e7a1e4009e3de53e8ee9d13e6c9369ae52618b6d75e3666f991af3'
     with pytest.raises(ValueError):
         a.validate_recovery_baseline(binding, files, header, resume=False)
     for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):

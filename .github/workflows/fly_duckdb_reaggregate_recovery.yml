@@ -192,11 +192,13 @@ jobs:
           fi
           if [ "$PILOT_ACTION" = engine_resume ]; then
             recovery_args="--resume-receipt 35368369603_1"
-            # Shared4/4GiB was refused before opening the DB. Measured process
-            # peak was 1.86GiB: reserve 3.5GiB (same 3GiB engine ceiling plus
-            # headroom), keeping the same CPU/I/O tier. One smaller attempt,
-            # not an automatic retry ladder; never move/copy the volume.
-            vm_memory=3584
+            # Real receipt35378792853: replay saturated shared4's32MiB/s.
+            # One authorized temporary performance2/4GiB trial gives64MiB/s.
+            # Same volume,3GiB engine ceiling and deadlines; never copy/move.
+            # Cleanup destroys this VM. No automatic capacity retry ladder.
+            vm_cpu_kind=performance
+            vm_cpus=2
+            vm_memory=4096
           fi
           if [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
             wait "$compiler_pid"

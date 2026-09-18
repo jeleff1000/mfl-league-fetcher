@@ -120,6 +120,9 @@ MERGE_HARD_EXIT_SECONDS = _env_float("MERGE_HARD_EXIT_SECONDS", 360.0, min_value
 # they get their own (larger) budgets than single-league delta merges.
 FLEET_MERGE_STEP_TIMEOUT_SECONDS = _env_float("FLEET_MERGE_STEP_TIMEOUT_SECONDS", 300.0, min_value=10.0)
 FLEET_MERGE_HARD_EXIT_SECONDS = _env_float("FLEET_MERGE_HARD_EXIT_SECONDS", 900.0, min_value=60.0)
+# Reserve headroom inside the 40s pilot for admission, receipt reconciliation,
+# rollback/cleanup and transport. Never kill the process at this SQL deadline.
+DERIVED_REBUILD_TIMEOUT_SECONDS = 35.0
 # /merge-ops replaces whole ___ops reference tables (the ~1.2M x 820 super table takes minutes to
 # CREATE OR REPLACE), so it needs its own generous ceilings independent of the 120s admin default.
 OPS_MERGE_TIMEOUT = _env_float("OPS_MERGE_TIMEOUT", 900.0, min_value=120.0)  # per-table statement
@@ -1947,22 +1950,56 @@ def _rebuild_league_derived_from_sources(
     alternate import path. It calls the same complete-chain aggregators used by
     fleet publication and never fetches provider data or rewrites source facts.
     ``run_id`` is persisted in the normal generation ledger so a retry after an
-    ambiguous HTTP response is idempotent.
+    ambiguous HTTP response is idempotent while that generation is still latest.
+    After an intervening publication, the same run_id rebuilds the current facts.
     """
     if not _DB_NAME_PATTERN.fullmatch(db_name):
         raise ValueError("invalid league database name")
     if not run_id or len(run_id) > 200:
         raise ValueError("run_id is required and must be at most 200 characters")
 
-    from fly_reaggregate_derived import _attach_if_present
-
-    conn = db.connect_database(
+    deadline = time.monotonic() + DERIVED_REBUILD_TIMEOUT_SECONDS
+    raw_conn = db.connect_database(
         database_path,
         data_dir=db.get_data_dir(),
         threads=WRITE_DUCKDB_THREADS,
     )
     committed = False
+    commit_started = False
+    ops_attached = False
     completed_stages = 0
+    expired = threading.Event()
+
+    def interrupt_deadline():
+        expired.set()
+        try:
+            raw_conn.interrupt()
+        except Exception:
+            logger.exception("Failed to interrupt derived rebuild for %s", db_name)
+
+    timer = threading.Timer(max(0.0, deadline - time.monotonic()), interrupt_deadline)
+    timer.daemon = True
+    timer.start()
+
+    def stop_timer():
+        timer.cancel()
+        timer.join()  # No late interrupt may race rollback, detach, or close.
+
+    def remaining_budget():
+        remaining = deadline - time.monotonic()
+        if expired.is_set() or remaining <= 0:
+            raise TimeoutError(f"Derived rebuild exceeded {DERIVED_REBUILD_TIMEOUT_SECONDS:g}s SQL deadline")
+        return remaining
+
+    def execute_step(step_conn, sql, params=None, *, step=""):
+        budget = min(MERGE_STEP_TIMEOUT_SECONDS, remaining_budget())
+        try:
+            return _interrupting_execute(step_conn, sql, params, step=step, timeout_seconds=budget)
+        except TimeoutError:
+            expired.set()  # Shared helpers must not swallow a timeout and then commit.
+            raise
+
+    conn = fleet_merge._AggregationConnection(raw_conn, execute_step)
 
     def run_stage(stage: str, operation):
         nonlocal completed_stages
@@ -1982,8 +2019,13 @@ def _rebuild_league_derived_from_sources(
             stage,
         )
         try:
+            remaining_budget()
             result = operation()
+            remaining_budget()
+        except TimeoutError:
+            raise
         except Exception as exc:
+            remaining_budget()
             logger.exception(
                 "league_derived_rebuild league=%s stage=%s status=failed elapsed_seconds=%.3f",
                 db_name,
@@ -2003,9 +2045,6 @@ def _rebuild_league_derived_from_sources(
         return result
 
     try:
-        data_dir = db.get_data_dir()
-        _attach_if_present(conn, data_dir / "___ops_nfl.duckdb", "___ops_nfl")
-        _attach_if_present(conn, data_dir / "___ops.duckdb", "___ops")
         fleet_merge.ensure_generation_tables(conn)
         prior = conn.execute(
             "SELECT generation, lane, run_id FROM merge_admin.league_publish_generations "
@@ -2018,8 +2057,16 @@ def _rebuild_league_derived_from_sources(
                 "db_name": db_name,
                 "generation": int(prior[0]),
                 "run_id": run_id,
-                "checkpointed": True,
+                "checkpointed": False,
             }
+
+        if fleet_merge.fleet_publish_locked(conn):
+            raise DeltaConflictError("Fleet publish window is locked; retry derived rebuild later")
+        # Reuse the pool's permanent, idempotent NFL attachment (also supports
+        # direct/offline helper calls). OPS is reference-counted across readers.
+        db._attach_ops_nfl(conn)
+        _acquire_ops_attachment(conn)
+        ops_attached = True
 
         from multi_league.transformations.aggregation.aggregate_standings import (
             aggregate_standings,
@@ -2105,23 +2152,46 @@ def _rebuild_league_derived_from_sources(
                 run_id=run_id,
             )
             generation = fleet_merge.current_generations(conn, [db_name])[db_name]
+            commit_started = True
             conn.execute("COMMIT")
             committed = True
         except Exception:
-            conn.execute("ROLLBACK")
-            raise
+            stop_timer()
+            try:
+                raw_conn.execute("ROLLBACK")
+            except Exception:
+                logger.exception("Derived rebuild rollback failed for %s", db_name)
+            if commit_started:
+                # COMMIT may have durably finished before an interrupt surfaces
+                # (including during automatic checkpointing). Read the existing
+                # receipt only AFTER rollback so uncommitted rows cannot qualify.
+                try:
+                    witness = db.connect_database(database_path, data_dir=db.get_data_dir())
+                    try:
+                        receipt = _interrupting_execute(
+                            witness,
+                            "SELECT generation, lane, run_id FROM merge_admin.league_publish_generations "
+                            "WHERE db_name = ?",
+                            [db_name], step="reconcile derived rebuild commit", timeout_seconds=2.0,
+                        ).fetchone()
+                        committed = receipt == (generation, "derived_recovery", run_id)
+                    finally:
+                        witness.close()
+                except Exception:
+                    logger.exception("Could not reconcile derived rebuild commit for %s", db_name)
+            if not committed:
+                raise
 
         # The publication is already committed. Return an explicit durable
         # state instead of converting a post-commit maintenance failure into
         # an ambiguous HTTP 500 that callers might blindly retry.
-        checkpointed, checkpoint_error = _scoped_recovery_checkpoint_result(conn)
         return {
             "status": "COMMITTED",
             "db_name": db_name,
             "run_id": run_id,
             "generation": generation,
-            "checkpointed": checkpointed,
-            "checkpoint_error": checkpoint_error,
+            "checkpointed": False,
+            "checkpoint_error": "checkpoint deferred for online derived rebuild; committed to WAL",
             "source_counts": source_counts,
             "target_counts": target_counts,
             "season_rollups": season_rollups,
@@ -2133,7 +2203,17 @@ def _rebuild_league_derived_from_sources(
             logger.exception("Post-commit derived recovery failure for %s", db_name)
         raise
     finally:
-        conn.close()
+        stop_timer()
+        try:
+            if ops_attached:
+                _release_ops_attachment(raw_conn)
+        except Exception:
+            logger.exception("Derived rebuild OPS cleanup failed for %s (committed=%s)", db_name, committed)
+        finally:
+            try:
+                raw_conn.close()
+            except Exception:
+                logger.exception("Derived rebuild connection cleanup failed for %s (committed=%s)", db_name, committed)
 
 
 def _rename_league_server_side(
@@ -3615,32 +3695,56 @@ async def rebuild_league_derived(request: Request):
         raise HTTPException(status_code=400, detail="run_id is required and must be at most 200 characters")
 
     database_path = db.get_data_dir() / "___leagues.duckdb"
-    async with _merge_lock:
-        _start_derived_recovery_progress()
-        _state["status"] = "draining"
-        elapsed = 0.0
-        while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
-            await asyncio.sleep(0.5)
-            elapsed += 0.5
-        if db.get_active_count() > 0:
-            await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
-        db.close_pool()
-        _state["status"] = "writing"
+    publish_token = await _acquire_delta_publish_slot(db_name, run_id)
+    lock_acquired = False
+    try:
+        _update_delta_publish_slot(publish_token, "waiting_merge_lock")
         try:
-            result = await asyncio.to_thread(
+            await asyncio.wait_for(_merge_lock.acquire(), timeout=DELTA_ADMISSION_TIMEOUT_SECONDS)
+            lock_acquired = True
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=429, detail="Delta publish server busy; retry later",
+                headers={"Retry-After": str(int(math.ceil(DELTA_BUSY_RETRY_AFTER_SECONDS))),
+                         "Cache-Control": "no-store"},
+            ) from exc
+        _start_derived_recovery_progress()
+        _update_delta_publish_slot(publish_token, "merging")
+        try:
+            worker = asyncio.create_task(asyncio.to_thread(
                 _rebuild_league_derived_from_sources,
                 database_path,
                 db_name=db_name,
                 run_id=run_id,
-            )
+            ))
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Cancelling to_thread does not stop SQL. Retain admission and
+                # the merge lock until the server-side deadline/cleanup finishes.
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not worker.cancelled():
+                    worker.exception()
+                raise
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DeltaConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
         except Exception as exc:
             logger.error("Derived recovery failed for %s: %s", db_name, exc, exc_info=True)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            await _reopen_pool_after_write(f"{db_name} derived recovery")
-            _set_serving_or_ops_writing()
+    finally:
+        if lock_acquired:
+            _merge_lock.release()
+        _release_delta_publish_slot(publish_token)
 
     track_event(
         "league_derived_recovered",

@@ -1,0 +1,16 @@
+{
+  "purpose": "Small aggregate-only recovery witnesses; no source rows or database snapshot",
+  "before": {
+    "north_reading": {"generation": 1, "matchup_rows": 10, "matchup_hash": "96475846018606768047", "player_rows": 161, "player_hash": "1447325516211428102659", "preferences_hash": "ae4e7772e3b4c805db33ee2490759812"},
+    "stk": {"generation": 5, "matchup_rows": 1416, "matchup_hash": "13094261832659183951149", "player_rows": 90478, "player_hash": "833458963565803850499175", "preferences_hash": "6d08b486ccaffc6cbcf9c94d5999780b"},
+    "demo_league": {"generation": 1, "matchup_rows": 1810, "matchup_hash": "16713616318812938265876", "player_rows": 92795, "player_hash": "855476473555569053319473", "preferences_hash": "db0d46c7f59fd54a3379a5022b344e9a"}
+  },
+  "hash_fields": {
+    "matchup": ["year", "week", "franchise_id", "manager", "team_points", "opponent_points", "win", "loss", "tie"],
+    "player_fantasy": ["player_week", "year", "week", "franchise_id", "manager", "fantasy_points"],
+    "preferences": "md5(COALESCE(manager_name_overrides_json,'') || '|' || COALESCE(franchise_merges_json,''))"
+  },
+  "before_read_seconds": 7.796,
+  "after": null,
+  "status": "not_yet_published"
+}

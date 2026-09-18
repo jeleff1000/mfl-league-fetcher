@@ -125,6 +125,21 @@ ready probe reports serving/accepting, zero active queries/OPS writes/publicatio
   entire read pool. Do not use it for cohort repairs until it reuses normal
   online writer admission and has an actual bounded rollback deadline.
 
+Online derived recovery fix reviewed September18: the existing endpoint now
+keeps the read pool open, uses shared writer admission/OPS attachment lifetime,
+and has a35s SQL deadline (no process kill). Timeout/cancellation retains the
+writer slot until rollback; ambiguous COMMIT is reconciled against the durable
+generation, and cleanup failures do not hide a commit. No full DB copy or forced
+checkpoint. Developer22tests passed; main7passed12.37s; independent13endpoint
+tests plus a real concurrent reader-timeout test passed, all commands under40s.
+Production pilot remains pending. Same-run deduplication applies while its
+generation remains latest; after another publication it recomputes current facts.
+
+Additional live score parity: I95 restored2019week1 has12exactteamIDs andzero
+scoremismatches(10.94s); AlwaysSunny2026week1 has12exactteamIDs andzero score
+mismatches(2.83s). NorthReading andDemo liveoverviewbothHTTP200butzero rankings;
+this confirms missing derived rows are visible to users, not just audit metadata.
+
 - Post-repair live data, not historical green status, is the recovery authority.
   DFB's OPS status says succeeded35190161742, but current league generation4
   still names34909713792 and matchup contains2025only. Original2KBartifact

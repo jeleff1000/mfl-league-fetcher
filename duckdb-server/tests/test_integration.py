@@ -1647,17 +1647,9 @@ def test_replace_derived_table_preserves_leagues_published_after_snapshot(data_d
     ]
 
 
-def test_derived_recovery_retry_is_idempotent(data_dir, client, monkeypatch):
+def test_derived_recovery_retry_is_idempotent(data_dir, client):
     import db as db_mod
-    import fly_reaggregate_derived as recovery_helper
     import main as main_mod
-
-    attached = []
-    monkeypatch.setattr(
-        recovery_helper,
-        "_attach_if_present",
-        lambda _conn, path, catalog: attached.append((path.name, catalog)),
-    )
 
     db_mod.close_all()
     database_path = data_dir / "___leagues.duckdb"
@@ -1685,12 +1677,373 @@ def test_derived_recovery_retry_is_idempotent(data_dir, client, monkeypatch):
         "db_name": "alpha",
         "generation": 7,
         "run_id": "repair-run",
-        "checkpointed": True,
+        "checkpointed": False,
     }
-    assert attached == [
-        ("___ops_nfl.duckdb", "___ops_nfl"),
-        ("___ops.duckdb", "___ops"),
+    assert main_mod._ops_attachment_users == 0
+
+
+@pytest.fixture
+def derived_rebuild(data_dir, client, monkeypatch):
+    """Tiny persisted facts; replace expensive rollups, not transaction/HTTP plumbing."""
+    import db as db_mod
+    import main as main_mod
+    from multi_league.transformations.aggregation import aggregation_utils, aggregate_standings
+
+    db_mod.close_ops_connection()
+    ops = db_mod.connect_database(data_dir / "___ops.duckdb")
+    ops.execute("CREATE TABLE attachment_canary AS SELECT 7 AS value")
+    ops.close()
+    db_mod.reopen_ops_connection()
+    conn = db_mod.connect_database(data_dir / "___leagues.duckdb")
+    conn.execute("ALTER TABLE public.matchup ADD COLUMN db_name VARCHAR DEFAULT 'alpha'")
+    conn.execute("CREATE TABLE public.player_fantasy (db_name VARCHAR, position_season_rank INT)")
+    conn.execute("INSERT INTO public.player_fantasy VALUES ('alpha', 9), ('beta', 8)")
+    conn.execute("CREATE TABLE public.league_settings AS SELECT 'alpha' AS db_name")
+    for table in ("homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_season",
+                  "player_fantasy_season_all", "standings_by_year"):
+        conn.execute(f"CREATE TABLE public.{table} AS SELECT 'alpha' AS db_name")
+    main_mod.fleet_merge.ensure_generation_tables(conn)
+    conn.close()
+
+    def season(conn, db_name):
+        conn.execute("UPDATE public.player_fantasy SET position_season_rank=1 WHERE db_name=?", [db_name])
+        return {"seasons": [2024]}
+
+    monkeypatch.setattr(aggregation_utils, "aggregate_complete_chain_season_rollups", season)
+    monkeypatch.setattr(aggregation_utils, "aggregate_career_rollups", lambda conn, name: {})
+    monkeypatch.setattr(aggregation_utils, "aggregate_homepage_rollups", lambda conn, name: {})
+    monkeypatch.setattr(aggregate_standings, "aggregate_standings", lambda conn, name, years: {})
+    return main_mod, aggregation_utils, season
+
+
+def _request_derived_rebuild(client, run_id="online-repair"):
+    return client.post("/rebuild-league-derived", headers={"Authorization": "Bearer test-admin"},
+                       json={"db_name": "alpha", "run_id": run_id})
+
+
+def _derived_rebuild_rows(client):
+    response = client.post("/query", headers={"Authorization": "Bearer test-read"},
+                           json={"sql": "SELECT db_name, position_season_rank FROM public.player_fantasy "
+                                        "WHERE db_name IN ('alpha', 'beta') ORDER BY db_name"})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_derived_rebuild_keeps_reads_online_and_commits_once(client, data_dir, derived_rebuild, monkeypatch):
+    main_mod, aggregation, season = derived_rebuild
+    entered, release = Event(), Event()
+
+    def held_season(conn, name):
+        result = season(conn, name)
+        entered.set()
+        assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(aggregation, "aggregate_complete_chain_season_rollups", held_season)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_request_derived_rebuild, client)
+        try:
+            assert entered.wait(3)
+            assert client.get("/health").json()["state"] == "serving"
+            assert client.get("/ready").json()["accepting_queries"] is True
+            assert _derived_rebuild_rows(client) == [
+                {"db_name": "alpha", "position_season_rank": 9},
+                {"db_name": "beta", "position_season_rank": 8},
+            ]
+            assert main_mod._ops_attachment_users == 1
+            # A simultaneous OPS reader must outlive writer cleanup without DETACH.
+            reader = main_mod.db.connect_database(data_dir / "___leagues.duckdb")
+            main_mod._acquire_ops_attachment(reader)
+        finally:
+            release.set()
+        response = future.result(timeout=3)
+    try:
+        assert response.status_code == 200, response.text
+        assert response.json()["generation"] == 1
+        assert response.json()["checkpointed"] is False
+        assert main_mod._ops_attachment_users == 1
+        assert reader.execute("SELECT value FROM ___ops.main.attachment_canary").fetchone() == (7,)
+    finally:
+        main_mod._release_ops_attachment(reader)
+        reader.close()
+    assert _derived_rebuild_rows(client) == [
+        {"db_name": "alpha", "position_season_rank": 1},
+        {"db_name": "beta", "position_season_rank": 8},
     ]
+    retry = _request_derived_rebuild(client)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "ALREADY_COMMITTED"
+    assert retry.json()["generation"] == 1
+    assert main_mod._delta_publish_inflight == 0
+    assert main_mod._ops_attachment_users == 0
+
+
+@pytest.mark.parametrize("timeout_stage", ["career", "generation", "swallowed"])
+def test_derived_rebuild_deadline_rolls_back_before_releasing_writer(
+        client, data_dir, derived_rebuild, monkeypatch, timeout_stage):
+    main_mod, aggregation, _ = derived_rebuild
+    monkeypatch.setattr(main_mod, "DERIVED_REBUILD_TIMEOUT_SECONDS", 0.15, raising=False)
+
+    def expensive(conn, *args):
+        conn.execute("SELECT SUM(i) FROM range(1000000000000) t(i)").fetchone()
+
+    if timeout_stage == "generation":
+        monkeypatch.setattr(main_mod.fleet_merge, "current_generations", expensive)
+    elif timeout_stage == "swallowed":
+        def swallowed(conn, name):
+            # Several individually short steps must not reset the total deadline.
+            started = time.monotonic()
+            while time.monotonic() - started < 0.3:
+                try:
+                    conn.execute("SELECT 1").fetchone()
+                except TimeoutError:
+                    return {}
+            return {}
+        monkeypatch.setattr(aggregation, "aggregate_career_rollups", swallowed)
+    else:
+        monkeypatch.setattr(aggregation, "aggregate_career_rollups", expensive)
+    # A safety watchdog bounds the RED test too; it is not the application deadline.
+    import threading
+    if timeout_stage != "swallowed":
+        real_expensive = expensive
+        def bounded_expensive(conn, *args):
+            timer = threading.Timer(1, conn.interrupt)
+            timer.start()
+            try:
+                return real_expensive(conn, *args)
+            finally:
+                timer.cancel()
+        if timeout_stage == "generation":
+            monkeypatch.setattr(main_mod.fleet_merge, "current_generations", bounded_expensive)
+        else:
+            monkeypatch.setattr(aggregation, "aggregate_career_rollups", bounded_expensive)
+    started = time.monotonic()
+    response = _request_derived_rebuild(client)
+    assert response.status_code == 504, response.text
+    assert time.monotonic() - started < 0.9
+    assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+    conn = main_mod.db.connect_database(data_dir / "___leagues.duckdb")
+    assert conn.execute("SELECT COUNT(*) FROM merge_admin.league_publish_generations").fetchone() == (0,)
+    conn.close()
+    assert client.get("/ready").json()["accepting_queries"] is True
+    assert main_mod._delta_publish_inflight == 0
+    assert main_mod._ops_attachment_users == 0
+
+
+def test_derived_rebuild_uses_shared_admission(client, derived_rebuild, monkeypatch):
+    main_mod, _, _ = derived_rebuild
+    monkeypatch.setattr(main_mod, "DELTA_ADMISSION_TIMEOUT_SECONDS", 0.03)
+    token = client.portal.call(main_mod._acquire_delta_publish_slot, "other_league", "held")
+    try:
+        response = _request_derived_rebuild(client)
+        assert response.status_code == 429, response.text
+        assert response.headers["Retry-After"]
+        assert main_mod._delta_publish_inflight == 1
+        assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+    finally:
+        client.portal.call(main_mod._release_delta_publish_slot, token)
+
+
+def test_derived_rebuild_respects_fleet_publish_window(client, data_dir, derived_rebuild):
+    main_mod, _, _ = derived_rebuild
+    conn = main_mod.db.connect_database(data_dir / "___leagues.duckdb")
+    main_mod.fleet_merge.set_fleet_publish_lock(conn, True, run_id="fleet")
+    conn.close()
+    response = _request_derived_rebuild(client)
+    assert response.status_code == 409, response.text
+    assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+    assert main_mod._delta_publish_inflight == 0
+    assert main_mod._ops_attachment_users == 0
+
+
+@pytest.mark.parametrize("failure", ["commit_interrupt", "commit_not_durable", "cleanup"])
+def test_derived_rebuild_durable_commit_is_not_reported_failed(
+        client, derived_rebuild, monkeypatch, failure):
+    main_mod, _, _ = derived_rebuild
+    if failure in {"commit_interrupt", "commit_not_durable"}:
+        connect = main_mod.db.connect_database
+
+        class LateInterrupt:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+            def execute(self, sql, *args):
+                if failure == "commit_not_durable" and sql in {"COMMIT", "ROLLBACK"}:
+                    raise duckdb.InterruptException("transaction still uncommitted")
+                result = self.conn.execute(sql, *args)
+                if sql == "COMMIT":
+                    raise duckdb.InterruptException("late interrupt after durable commit")
+                return result
+
+        monkeypatch.setattr(main_mod.db, "connect_database", lambda *a, **kw: LateInterrupt(connect(*a, **kw)))
+    else:
+        release = main_mod._release_ops_attachment
+
+        def cleanup(conn):
+            release(conn)
+            raise RuntimeError("cleanup failed after durable commit")
+
+        monkeypatch.setattr(main_mod, "_release_ops_attachment", cleanup)
+    response = _request_derived_rebuild(client)
+    if failure == "commit_not_durable":
+        assert response.status_code == 504, response.text
+        assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+        assert main_mod._delta_publish_inflight == 0
+        assert main_mod._ops_attachment_users == 0
+        return
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMMITTED"
+    assert response.json()["generation"] == 1
+    assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 1
+    retry = _request_derived_rebuild(client)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "ALREADY_COMMITTED"
+    assert main_mod._delta_publish_inflight == 0
+
+
+def test_derived_rebuild_merge_lock_wait_is_bounded(client, derived_rebuild, monkeypatch):
+    main_mod, _, _ = derived_rebuild
+    monkeypatch.setattr(main_mod, "DELTA_ADMISSION_TIMEOUT_SECONDS", 0.03)
+    client.portal.call(main_mod._merge_lock.acquire)
+    try:
+        response = _request_derived_rebuild(client)
+        assert response.status_code == 429, response.text
+        assert main_mod._delta_publish_inflight == 0
+        assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+    finally:
+        client.portal.call(main_mod._merge_lock.release)
+    assert _request_derived_rebuild(client).status_code == 200
+
+
+@pytest.mark.parametrize("missing", ["source", "target"])
+def test_derived_rebuild_validation_failure_does_not_publish(
+        client, data_dir, derived_rebuild, missing):
+    main_mod, _, _ = derived_rebuild
+    conn = main_mod.db.connect_database(data_dir / "___leagues.duckdb")
+    table = "league_settings" if missing == "source" else "homepage_manager_rankings"
+    conn.execute(f"DELETE FROM public.{table} WHERE db_name='alpha'")
+    conn.close()
+    response = _request_derived_rebuild(client)
+    assert response.status_code == (400 if missing == "source" else 500), response.text
+    assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+    assert main_mod._delta_publish_inflight == 0
+    assert main_mod._ops_attachment_users == 0
+    assert client.get("/ready").json()["accepting_queries"] is True
+
+
+def test_derived_rebuild_cancelled_request_holds_writer_until_sql_rollback(
+        client, derived_rebuild, monkeypatch):
+    import asyncio
+    from starlette.requests import Request
+
+    main_mod, aggregation, _ = derived_rebuild
+    entered = Event()
+    monkeypatch.setattr(main_mod, "DERIVED_REBUILD_TIMEOUT_SECONDS", 0.3)
+
+    def expensive(conn, name):
+        entered.set()
+        conn.execute("SELECT SUM(i) FROM range(1000000000000) t(i)").fetchone()
+
+    monkeypatch.setattr(aggregation, "aggregate_career_rollups", expensive)
+
+    async def exercise():
+        async def receive():
+            return {"type": "http.request", "body": b'{"db_name":"alpha","run_id":"cancelled"}'}
+        request = Request({"type": "http", "headers": [(b"authorization", b"Bearer test-admin")]}, receive)
+        task = asyncio.create_task(main_mod.rebuild_league_derived(request))
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert main_mod._merge_lock.locked()
+        assert main_mod._delta_publish_inflight == 1
+        task.cancel()  # Repeated cancellation must not orphan the writer either.
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    client.portal.call(exercise)
+    assert _derived_rebuild_rows(client)[0]["position_season_rank"] == 9
+    assert main_mod._delta_publish_inflight == 0
+    assert main_mod._ops_attachment_users == 0
+
+
+@pytest.fixture
+def full_derived_data(data_dir):
+    """Empty derived rows, complete two-season facts, and the real split OPS view."""
+    from multi_league.core.aggregate_ddl import AGGREGATE_TABLE_SPECS, create_aggregate_table_sql
+    from multi_league.core.delta_publish import canonical_table_registry
+
+    conn = duckdb.connect(str(data_dir / "___leagues.duckdb"))
+    conn.execute("DROP TABLE public.matchup")
+    for table, spec in canonical_table_registry().items():
+        if table in AGGREGATE_TABLE_SPECS:
+            conn.execute(create_aggregate_table_sql("___leagues", table))
+        else:
+            columns = ', '.join(f'"{name}" {dtype}' for name, dtype in spec['columns'].items())
+            conn.execute(f'CREATE TABLE public."{table}" ({columns})')
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name, year, week, manager, franchise_id, opponent, opponent_franchise_id,
+             team_name, platform, team_points, opponent_points, win, loss, tie,
+             is_playoffs, is_consolation, is_bye_week)
+        VALUES ('alpha',2025,1,'Alice','f1','Bob','f2','Team','yahoo',140,100,1,0,0,0,0,0),
+               ('alpha',2026,1,'Alice','f1','Bob','f2','Team','yahoo',110,120,0,1,0,0,0,0)
+    """)
+    conn.execute("""
+        INSERT INTO public.league_settings
+            (db_name, year, platform, league_key, num_teams, playoff_start_week, uses_median)
+        VALUES ('alpha',2025,'yahoo','old',2,15,0), ('alpha',2026,'yahoo','new',2,15,0)
+    """)
+    conn.execute("""
+        INSERT INTO public.player_fantasy
+            (db_name, NFL_player_id, player_week, player, year, week, manager, franchise_id,
+             position, fantasy_position, fantasy_points, player_lamar, manager_lamar, is_started,
+             clutch_equity, win, loss)
+        VALUES ('alpha','p1','p1_2025_1','Player',2025,1,'Alice','f1','QB','QB',20,5,5,1,0.2,1,0),
+               ('alpha','p1','p1_2026_1','Player',2026,1,'Alice','f1','QB','QB',30,8,8,1,0.3,0,1)
+    """)
+    conn.close()
+    nfl = duckdb.connect(str(data_dir / "___ops_nfl.duckdb"))
+    nfl.execute("CREATE SCHEMA nfl_historical")
+    nfl.execute("""CREATE TABLE nfl_historical.nfl_player_stats_all (
+        player_week VARCHAR, NFL_player_id VARCHAR, player VARCHAR, nfl_team VARCHAR,
+        year INTEGER, week INTEGER, headshot_url VARCHAR)""")
+    nfl.execute("INSERT INTO nfl_historical.nfl_player_stats_all VALUES ('p1_2025_1','p1','Player','NYG',2025,1,NULL)")
+    nfl.close()
+    ops = duckdb.connect(str(data_dir / "___ops.duckdb"))
+    ops.execute("CREATE SCHEMA nfl_historical")
+    ops.execute(f"ATTACH '{(data_dir / '___ops_nfl.duckdb').as_posix()}' AS ___ops_nfl (READ_ONLY)")
+    ops.execute("CREATE VIEW nfl_historical.nfl_player_stats_all AS "
+                "SELECT player_week, NFL_player_id, player, nfl_team, year, week, headshot_url "
+                "FROM ___ops_nfl.nfl_historical.nfl_player_stats_all")
+    ops.execute("""CREATE TABLE nfl_historical.player_bio (
+        NFL_player_id VARCHAR, player VARCHAR, headshot_url VARCHAR,
+        yahoo_player_id VARCHAR, sleeper_player_id VARCHAR, espn_id VARCHAR)""")
+    ops.close()
+
+
+def test_derived_rebuild_real_full_history_refills_all_five_outputs(full_derived_data, client):
+    response = _request_derived_rebuild(client)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "COMMITTED"
+    assert len(body["target_counts"]) == 5
+    assert all(count > 0 for count in body["target_counts"].values())
+    for sql, expected in [
+        ("SELECT year, fantasy_points FROM public.player_fantasy_season WHERE db_name='alpha' ORDER BY year",
+         [{"year": 2025, "fantasy_points": 20.0}, {"year": 2026, "fantasy_points": 30.0}]),
+        ("SELECT seasons, wins, losses FROM public.homepage_manager_rankings WHERE db_name='alpha'",
+         [{"seasons": 2, "wins": 1, "losses": 1}]),
+        ("SELECT year, position_alltime_rank FROM public.player_fantasy WHERE db_name='alpha' ORDER BY year",
+         [{"year": 2025, "position_alltime_rank": 2}, {"year": 2026, "position_alltime_rank": 1}]),
+        ("SELECT COUNT(*) AS n FROM ___ops.nfl_historical.nfl_player_stats_all", [{"n": 1}]),
+    ]:
+        result = client.post("/query", headers={"Authorization": "Bearer test-read"}, json={"sql": sql})
+        assert result.status_code == 200, result.text
+        assert result.json() == expected
+    assert client.get("/ready").json()["accepting_queries"] is True
 
 
 def test_checkpoint_failure_is_reported_without_hiding_committed_state(client):

@@ -83,6 +83,22 @@ void lh_metadata_flush(void *manager) {
     }
 }
 
+int64_t lh_metadata_next(void *manager)
+    __asm__("_ZNK6duckdb15MetadataManager14GetNextBlockIdEv");
+
+int64_t lh_metadata_next(void *manager) {
+    auto original = reinterpret_cast<int64_t (*)(void *)>(dlsym(RTLD_NEXT,
+        "_ZNK6duckdb15MetadataManager14GetNextBlockIdEv"));
+    if (!original) { _exit(98); }
+    // Bound actual fresh block allocation, including the empty-free-list path
+    // that does not call PeekNextBlockId at all.
+    if (atomic_load(&fresh_metadata) &&
+        atomic_fetch_add(&fresh_allocations, 1) >= atomic_load(&allocation_limit)) {
+        _exit(97);
+    }
+    return original(manager);
+}
+
 int64_t lh_metadata_peek(void *manager)
     __asm__("_ZNK6duckdb15MetadataManager15PeekNextBlockIdEv");
 
@@ -90,9 +106,6 @@ int64_t lh_metadata_peek(void *manager) {
     if (atomic_load(&fresh_metadata)) {
         /* AllocateHandle must allocate a new metadata block, not pin an old
          * partially free one. Normal allocation and checksums stay intact. */
-        if (atomic_fetch_add(&fresh_allocations, 1) >= atomic_load(&allocation_limit)) {
-            _exit(97); // before the next metadata block is allocated
-        }
         return -1;
     }
     auto original = reinterpret_cast<int64_t (*)(void *)>(dlsym(RTLD_NEXT,

@@ -1997,6 +1997,46 @@ def _rebuild_league_derived_from_sources(
         threads=WRITE_DUCKDB_THREADS,
     )
     committed = False
+    completed_stages = 0
+
+    def run_stage(stage: str, operation):
+        nonlocal completed_stages
+        started = time.monotonic()
+        _update_derived_recovery_progress(
+            {
+                "stage": "reaggregating",
+                "completed": completed_stages,
+                "total": 6,
+                "current_db_name": db_name,
+                "current_table": stage,
+            }
+        )
+        logger.info(
+            "league_derived_rebuild league=%s stage=%s status=started",
+            db_name,
+            stage,
+        )
+        try:
+            result = operation()
+        except Exception as exc:
+            logger.exception(
+                "league_derived_rebuild league=%s stage=%s status=failed elapsed_seconds=%.3f",
+                db_name,
+                stage,
+                time.monotonic() - started,
+            )
+            raise RuntimeError(
+                f"{stage} failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        completed_stages += 1
+        logger.info(
+            "league_derived_rebuild league=%s stage=%s status=completed elapsed_seconds=%.3f",
+            db_name,
+            stage,
+            time.monotonic() - started,
+        )
+        return result
+
     try:
         data_dir = db.get_data_dir()
         _attach_if_present(conn, data_dir / "___ops_nfl.duckdb", "___ops_nfl")
@@ -2025,15 +2065,18 @@ def _rebuild_league_derived_from_sources(
             aggregate_homepage_rollups,
         )
 
-        source_counts = {
-            table: int(
-                conn.execute(
-                    f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
-                    [db_name],
-                ).fetchone()[0]
-            )
-            for table in ("matchup", "player_fantasy", "league_settings")
-        }
+        source_counts = run_stage(
+            "source_validation",
+            lambda: {
+                table: int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
+                        [db_name],
+                    ).fetchone()[0]
+                )
+                for table in ("matchup", "player_fantasy", "league_settings")
+            },
+        )
         if any(source_counts[table] <= 0 for table in source_counts):
             raise ValueError(
                 f"cannot rebuild {db_name}: required persisted source facts are missing {source_counts}"
@@ -2051,25 +2094,40 @@ def _rebuild_league_derived_from_sources(
 
         conn.execute("BEGIN TRANSACTION")
         try:
-            season_rollups = aggregate_complete_chain_season_rollups(conn, db_name)
-            career_rollups = aggregate_career_rollups(conn, db_name)
-            aggregate_standings(conn, db_name, years)
-            homepage_rollups = aggregate_homepage_rollups(conn, db_name)
-            target_counts = {
-                table: int(
-                    conn.execute(
-                        f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
-                        [db_name],
-                    ).fetchone()[0]
-                )
-                for table in (
-                    "homepage_manager_rankings",
-                    "matchup_h2h_career",
-                    "player_fantasy_season",
-                    "player_fantasy_season_all",
-                    "standings_by_year",
-                )
-            }
+            season_rollups = run_stage(
+                "season_rollups",
+                lambda: aggregate_complete_chain_season_rollups(conn, db_name),
+            )
+            career_rollups = run_stage(
+                "career_rollups",
+                lambda: aggregate_career_rollups(conn, db_name),
+            )
+            run_stage(
+                "standings_by_year",
+                lambda: aggregate_standings(conn, db_name, years),
+            )
+            homepage_rollups = run_stage(
+                "homepage_rollups",
+                lambda: aggregate_homepage_rollups(conn, db_name),
+            )
+            target_counts = run_stage(
+                "target_validation",
+                lambda: {
+                    table: int(
+                        conn.execute(
+                            f"SELECT COUNT(*) FROM public.{_quote_identifier(table)} WHERE db_name = ?",
+                            [db_name],
+                        ).fetchone()[0]
+                    )
+                    for table in (
+                        "homepage_manager_rankings",
+                        "matchup_h2h_career",
+                        "player_fantasy_season",
+                        "player_fantasy_season_all",
+                        "standings_by_year",
+                    )
+                },
+            )
             empty_targets = sorted(table for table, count in target_counts.items() if count <= 0)
             if empty_targets:
                 raise RuntimeError(

@@ -296,14 +296,28 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
     if len(frames["homepage_league_summary"]) != 1:
         raise HomepageValidationError("Homepage builder must return exactly one league summary")
     for table in ("homepage_manager_rankings", "homepage_manager_profiles", "homepage_current_standings"):
-        year_scope = (
-            " AND year = (SELECT MAX(year) FROM public.matchup WHERE db_name = ?)"
-            if table == "homepage_current_standings" else ""
+        # Match the homepage builders' played-game scope. Historical imports
+        # can contain placeholder/bye-only franchise rows used to preserve an
+        # identity without inventing scores; those identities must not force a
+        # zero-game ranking row. Current standings also use the latest season
+        # containing a positive score, not a future placeholder season.
+        played_scope = (
+            " AND team_points IS NOT NULL "
+            "AND COALESCE(CAST(is_bye_week AS INTEGER), 0) = 0"
         )
+        year_scope = ""
+        params = [db_name]
+        if table == "homepage_current_standings":
+            year_scope = (
+                " AND TRY_CAST(year AS INTEGER) = ("
+                "SELECT MAX(TRY_CAST(year AS INTEGER)) FROM public.matchup "
+                "WHERE db_name = ? AND team_points > 0)"
+            )
+            params.append(db_name)
         expected = {str(row[0]) for row in conn.execute(
             "SELECT DISTINCT franchise_id FROM public.matchup WHERE db_name = ? "
-            "AND franchise_id IS NOT NULL" + year_scope,
-            [db_name, db_name] if year_scope else [db_name],
+            "AND franchise_id IS NOT NULL" + played_scope + year_scope,
+            params,
         ).fetchall()}
         frame = frames[table]
         if "franchise_id" not in frame:

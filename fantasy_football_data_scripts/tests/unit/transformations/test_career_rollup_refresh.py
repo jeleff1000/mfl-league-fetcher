@@ -375,6 +375,25 @@ def test_shared_homepage_rebuild_reads_full_chain_and_joins_callers_transaction(
     assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
 
 
+def test_homepage_coverage_ignores_historical_placeholder_franchises(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name,year,week,manager,franchise_id,team_name,platform,team_points,
+             is_playoffs,is_consolation,is_bye_week)
+        VALUES ('test_league',1994,1,'Archive Only','historical-placeholder',
+                'Archive Only','sleeper',NULL,0,0,1)
+    """)
+
+    counts = aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+
+    assert counts['homepage_manager_rankings'] == 1
+    assert conn.execute("""
+        SELECT franchise_id FROM public.homepage_manager_rankings
+        WHERE db_name='test_league'
+    """).fetchall() == [('f1',)]
+
+
 def test_homepage_fleet_merge_rebuilds_complete_chain_season_dependencies(
     homepage_chain, tmp_path
 ):

@@ -6,6 +6,7 @@ The caller also enforces an OS deadline (including provisioning) of 40 seconds.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -54,14 +55,27 @@ def validate_target(action, table, db_name, machine, volume, path=DATABASE_PATH)
         raise ValueError("donor volume is not the existing September 15 witness")
     if action == "retained_headers" and volume not in {"vol_vp26dp2g9x3167j4", "vol_4919j2m0wzg0xw5r"}:
         raise ValueError("donor volume is not an allowlisted existing witness")
-    if action == "engine_inventory" and volume != "vol_4919j2m0wzg0xw5r":
+    if action in {"engine_inventory", "engine_identity"} and volume != "vol_4919j2m0wzg0xw5r":
         raise ValueError("isolated engine inventory requires its exact existing volume")
-    if action not in {"inspect", "locate", "remove", "donor_headers", "retained_headers", "engine_inventory"} or table not in TARGETS:
+    if action not in {"inspect", "locate", "remove", "donor_headers", "retained_headers", "engine_inventory", "engine_identity"} or table not in TARGETS:
         raise ValueError("target table/action is not allowlisted")
     if not re.fullmatch(r"[a-z0-9_]+", db_name):
         raise ValueError("invalid witness league")
     if path != DATABASE_PATH:
         raise ValueError("database path is not allowlisted")
+
+
+def engine_identity():
+    """Fingerprint the deployed engine artifact without opening any database."""
+    import duckdb
+    import _duckdb
+    binary = Path(_duckdb.__file__)
+    with binary.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    return {"duckdb": duckdb.__version__, "engine_revision": duckdb.__git_revision__,
+            "engine_sha256": digest, "engine_bytes": binary.stat().st_size,
+            "python": platform.python_version(), "libc": platform.libc_ver(),
+            "architecture": platform.machine(), "database_opened": False}
 
 
 def engine_inventory(path):
@@ -211,6 +225,9 @@ def run(args):
             return 0
         if block["file_changed_during_read"] or block["block_sha256"] != "7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186":
             raise ValueError("target is not the exact previously observed damaged block")
+        if args.action == "engine_identity":
+            emit("engine_identity", **engine_identity())
+            return 0
         if args.action == "engine_inventory":
             engine_inventory(DATABASE_PATH)
             return 0
@@ -270,7 +287,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers", "retained_headers", "engine_inventory"])
+    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers", "retained_headers", "engine_inventory", "engine_identity"])
     parser.add_argument("--target-table", required=True)
     parser.add_argument("--db-name", required=True)
     parser.add_argument("--machine-id", required=True)

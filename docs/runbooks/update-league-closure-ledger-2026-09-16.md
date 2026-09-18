@@ -2,6 +2,38 @@
 
 State: synthetic recovery tests passed; real-volume verification is awaiting Fly host capacity. Production physical recovery and update completion remain unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Real-file adapter continuation - 2026-09-18
+
+The preceding goal-statement turn made no implementation progress. This resumed
+turn verified public main at e079bb67d and added a real-catalog five-object
+regression. Run 35357407714 (a50ae723a) correctly failed: all five exact
+`___leagues.public` identities reached CommitDrop, but zero matched the old
+synthetic-only guard. Main 023e6b5a1 adds a separately compiled five-name guard
+and refuses unexpected armed removals with exit 99. Real-file use is NOT yet
+enabled. The follow-up run 35357592441 hit the 5s compiler deadline on real_scope;
+the other four scenarios passed. Optimization was removed from this tiny helper
+instead of increasing the deadline. Updated Linux proof remains pending.
+
+New adapter primitives have behavioral tests for actual runtime/mount identity,
+bounded create-only WAL preservation, exact quarantined/replacement object sets,
+sampled score/alias/aggregate value preservation, externally terminated stages,
+and UNKNOWN outcome on removal timeout. Twenty-six local tests passed in 5.04s
+(one existing hard-link test excluded on this filesystem). This is not an
+end-to-end real-file adapter or a production recovery receipt.
+
+A no-database-open engine_identity probe now fingerprints the actual extension
+binary/revision/ABI for binding. It does not retry the earlier database-open/OOM
+operation. Runtime capacity and deployed fingerprint are still to be measured.
+
+Read-only maintenance audit found that existing close_pool drains queued
+connections but cannot close borrowed connections, and its routes reopen the
+pool automatically. The in-process merge lock and fleet repair-lane lock do not
+fence all external writers. Production therefore needs a controlled full server
+process shutdown and verified exclusive ownership, not helper injection. No
+production shutdown or mutation has been performed. Startup WAL handling differs
+between the two local trees; deployed-image verification is mandatory. No claim
+of zero downtime is supported.
+
 ## Approved isolated engine-removal investigation - 2026-09-18
 
 User explicitly approved isolated database-engine recovery/removal pilots,

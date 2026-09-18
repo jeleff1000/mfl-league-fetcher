@@ -260,7 +260,7 @@ def main():
             emit("fixture_built", bytes=baseline.stat().st_size, metadata_blocks=old_blocks)
             library = folder / "drop_spike.so"
             if not args.fixture_only:
-                subprocess.run(["c++", "-shared", "-fPIC", "-O2", "-Wall", "-Werror",
+                subprocess.run(["c++", "-shared", "-fPIC", "-O0", "-Wall", "-Werror",
                                 *(["-DLH_REAL_FILE"] if args.scenario == "real_scope" else []),
                                 str(Path(__file__).with_suffix(".cpp")), "-ldl", "-o", str(library)],
                                check=True, timeout=5)

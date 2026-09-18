@@ -1,0 +1,141 @@
+"""Guarded primitives for offline five-object recovery; no production CLI.
+
+All mutation orchestration must first bind these checks to the isolated volume,
+exact engine artifact, retained WAL and an externally enforced deadline.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+
+CANONICAL = ("homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_season",
+             "player_fantasy_season_all", "standings_by_year")
+QUARANTINED = tuple("__corrupt_recovery_" + name for name in CANONICAL)
+RECOVERY_VOLUME = "vol_4919j2m0wzg0xw5r"
+STAGE_LIMITS = {"inspect": 5, "preserve": 10, "remove": 5, "verify": 15}
+
+
+def run_stage(stage, command, *, deadline, env=None):
+    """Parent-enforced stage cap; timeout never implies transaction rollback."""
+    started = time.monotonic()
+    remaining = min(STAGE_LIMITS[stage], deadline - time.time())
+    if remaining <= 0:
+        return {"stage": stage, "outcome": "NOT_STARTED", "exit_code": 124, "elapsed_s": 0}
+    print(json.dumps({"stage": stage, "event": "start", "limit_s": remaining}), flush=True)
+    try:
+        child = subprocess.run(command, env=env, capture_output=True, text=True, timeout=remaining)
+        code, stdout, stderr = child.returncode, child.stdout, child.stderr
+        outcome = "PASS" if code == 0 else ("UNKNOWN" if stage in {"remove", "verify"} else "FAILED")
+    except subprocess.TimeoutExpired:
+        # subprocess.run kills and waits for its direct child before returning.
+        # Recovery children must not spawn grandchildren that hold a DB open.
+        code, stdout, stderr = 124, "", "stage deadline exceeded"
+        outcome = "UNKNOWN" if stage in {"remove", "verify"} else "FAILED"
+    result = {"stage": stage, "outcome": outcome, "exit_code": code,
+              "elapsed_s": round(time.monotonic() - started, 3),
+              "stdout": stdout[-8192:], "stderr": stderr[-2048:]}
+    print(json.dumps({"event": "end", **result}), flush=True)
+    return result
+
+
+def validate_inventory(machine, volume, runtime_machine_id, path):
+    """Bind API inventory to the machine actually executing the pilot."""
+    if (machine.get("id") == "1781e011b69068"
+            or volume.get("id") == "vol_rkg7mmd17llez224"):
+        raise ValueError("production target forbidden in pilot")
+    if (not re.fullmatch(r"[0-9a-f]{14}", runtime_machine_id)
+            or machine.get("id") != runtime_machine_id
+            or machine.get("state") != "started"
+            or not machine.get("name", "").startswith("wkupd-table-pilot-")):
+        raise ValueError("machine is not this running isolated pilot")
+    if (volume.get("id") != RECOVERY_VOLUME
+            or volume.get("name") != "wkupd_rebuild_35166181636"
+            or volume.get("attached_machine_id") != runtime_machine_id
+            or str(path) != "/data/___leagues.duckdb"):
+        raise ValueError("volume or database identity mismatch")
+    mounts = machine.get("config", {}).get("mounts", [])
+    if len(mounts) != 1 or mounts[0].get("volume") != RECOVERY_VOLUME or mounts[0].get("path") != "/data":
+        raise ValueError("isolated volume mount mismatch")
+
+
+def preserve_wal(source, destination, *, max_bytes=64 * 1024 * 1024):
+    """Retain only the bounded WAL, never the database; never replace evidence."""
+    source, destination = Path(source), Path(destination)
+    if source.is_symlink() or destination.is_symlink():
+        raise ValueError("WAL evidence cannot use symlinks")
+    with source.open("rb") as original:
+        before = os.fstat(original.fileno())
+        if before.st_nlink != 1 or not 0 < before.st_size <= max_bytes:
+            raise ValueError("WAL exceeds preservation ceiling or is not a unique regular file")
+        digest = hashlib.sha256()
+        copied = 0
+        with destination.open("xb") as retained:
+            while chunk := original.read(min(1024 * 1024, max_bytes - copied + 1)):
+                copied += len(chunk)
+                if copied > max_bytes:
+                    raise ValueError("WAL grew beyond preservation ceiling")
+                retained.write(chunk)
+                digest.update(chunk)
+            retained.flush()
+            os.fsync(retained.fileno())
+        after = os.fstat(original.fileno())
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or copied != before.st_size:
+        raise ValueError("WAL changed during preservation; do not open database for writing")
+    if os.name == "posix":
+        fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    return {"bytes": copied, "sha256": digest.hexdigest()}
+
+
+def validate_objects(rows):
+    """Require both exact sets in the actual persistent catalog, no aliases."""
+    expected = {("___leagues", "public", name) for name in CANONICAL + QUARANTINED}
+    identities = [tuple(row[:3]) for row in rows]
+    if len(identities) != len(expected) or set(identities) != expected:
+        raise ValueError("exact quarantined objects and all healthy replacements are required")
+
+
+def _quote(name):
+    return '"' + name.replace('"', '""') + '"'
+
+
+def capture_witness(conn, db_name):
+    """Small deterministic value receipts; league-filtered, explicit columns.
+
+    Inspect both ordered ends, so current and historical matchup values enter
+    the receipt. This is a sampled preservation witness, not a fleet audit.
+    No raw values or credential material are logged by this function.
+    """
+    if not re.fullmatch(r"[a-z0-9_]+", db_name):
+        raise ValueError("invalid witness league")
+    result = {}
+    for table in ("matchup",) + CANONICAL:
+        columns = conn.execute("""SELECT column_name, data_type FROM duckdb_columns()
+            WHERE database_name=current_database() AND schema_name='public' AND table_name=?
+            ORDER BY column_index""", [table]).fetchall()
+        if "db_name" not in {row[0] for row in columns}:
+            raise ValueError(f"witness {table} is missing its league identity")
+        names = ", ".join(_quote(row[0]) for row in columns)
+        samples = set()
+        for direction in ("ASC", "DESC"):
+            rows = conn.execute(f'SELECT {names} FROM public.{_quote(table)} WHERE db_name=? ORDER BY ALL {direction} NULLS LAST LIMIT 8', [db_name]).fetchall()
+            samples.update(json.dumps(row, default=str, separators=(",", ":"), ensure_ascii=True) for row in rows)
+        if not samples:
+            raise ValueError(f"witness {table} has no rows for the selected league")
+        payload = json.dumps({"schema": columns, "values": sorted(samples)}, separators=(",", ":"))
+        result[table] = {"rows": len(samples), "sha256": hashlib.sha256(payload.encode()).hexdigest()}
+    return result
+
+
+def compare_witness(before, after):
+    if before != after:
+        changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+        raise ValueError("preservation witness changed: " + ", ".join(changed))

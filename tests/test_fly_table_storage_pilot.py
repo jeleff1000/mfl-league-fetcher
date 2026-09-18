@@ -196,6 +196,19 @@ def test_engine_inventory_requires_exact_existing_isolated_volume():
         validate_target("engine_inventory", "player_fantasy_season", "nyu_ffl", "isolated", "vol_other")
 
 
+def test_engine_identity_inspection_never_opens_database(monkeypatch):
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: pytest.fail("identity inspection opened database"))
+    identity = pilot.engine_identity()
+    assert identity["duckdb"] == duckdb.__version__
+    assert len(identity["engine_sha256"]) == 64
+    assert identity["engine_bytes"] > 0
+    pilot.validate_target("engine_identity", "player_fantasy_season", "nyu_ffl", "isolated", "vol_4919j2m0wzg0xw5r")
+    with pytest.raises(ValueError, match="isolated engine"):
+        pilot.validate_target("engine_identity", "player_fantasy_season", "nyu_ffl", "isolated", "vol_other")
+
+
 def test_retained_headers_distinguish_bad_original_from_intact_duplicate(tmp_path, monkeypatch):
     import hashlib
     import struct

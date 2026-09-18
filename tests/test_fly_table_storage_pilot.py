@@ -116,3 +116,67 @@ def test_metadata_donor_action_rejects_unapproved_volume():
     from scripts.fly_table_storage_pilot import validate_target
     with pytest.raises(ValueError, match="donor volume"):
         validate_target("donor_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_test")
+
+
+def test_retained_header_probe_finds_unregistered_block_without_opening_duckdb(tmp_path, monkeypatch):
+    import hashlib
+    import struct
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    path = tmp_path / "retained.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE facts AS SELECT i FROM range(10) t(i)")
+    with path.open("rb") as stream:
+        stream.seek(12288)
+        retained = stream.read(262144)
+    offset = path.stat().st_size
+    with path.open("ab") as stream:
+        stream.write(retained)
+    wal = Path(str(path) + ".wal")
+    wal.write_bytes(b"retained WAL evidence")
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: pytest.fail("header probe opened DuckDB"))
+    result = pilot.probe_retained_donor(path, struct.unpack_from("<Q", retained)[0])
+    assert any(c["offset"] == offset and c["checksum_valid"] for c in result["candidates"])
+    assert result["header_bytes_read"] == ((path.stat().st_size - 12288) // 262144) * 8
+    assert result["repair_authorized"] is False
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    assert wal.read_bytes() == b"retained WAL evidence"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["retained.duckdb", "retained.duckdb.wal"]
+
+
+def test_retained_header_probe_stops_at_header_limit(tmp_path, monkeypatch):
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    path = tmp_path / "limit.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE facts AS SELECT i FROM range(10) t(i)")
+    monkeypatch.setattr(pilot, "RETAINED_BLOCK_LIMIT", 1, raising=False)
+    with pytest.raises(ValueError, match="header ceiling"):
+        pilot.probe_retained_donor(path, 1)
+
+
+def test_retained_header_probe_rejects_ambiguous_candidates(tmp_path, monkeypatch):
+    import struct
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    path = tmp_path / "ambiguous.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE facts AS SELECT i FROM range(10) t(i)")
+    with path.open("rb") as stream:
+        stream.seek(12288)
+        retained = stream.read(262144)
+    with path.open("ab") as stream:
+        stream.write(retained * 2)
+    with pytest.raises(ValueError, match="more than two"):
+        pilot.probe_retained_donor(path, struct.unpack_from("<Q", retained)[0])
+
+
+def test_retained_header_action_requires_exact_isolated_witness():
+    from scripts.fly_table_storage_pilot import validate_target
+    with pytest.raises(ValueError, match="donor volume"):
+        validate_target("retained_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_test")
+    validate_target("retained_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_vp26dp2g9x3167j4")

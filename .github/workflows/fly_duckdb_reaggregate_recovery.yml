@@ -16,7 +16,7 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers]
+        options: [inspect, locate, remove, donor_headers, retained_headers]
       target_table:
         description: One confirmed blocker
         required: true
@@ -75,11 +75,11 @@ jobs:
           [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]
           test "$RECOVERY_VOLUME_ID" != vol_rkg7mmd17llez224
           [[ "$WITNESS_DB_NAME" =~ ^[a-z0-9_]+$ ]]
-          case "$PILOT_ACTION" in inspect|locate|remove|donor_headers) ;; *) exit 2 ;; esac
+          case "$PILOT_ACTION" in inspect|locate|remove|donor_headers|retained_headers) ;; *) exit 2 ;; esac
           case "$TARGET_TABLE" in player_fantasy_season|player_fantasy_season_all|homepage_manager_rankings|matchup_h2h_career|standings_by_year) ;; *) exit 2 ;; esac
           flyctl machines list --app "$FLY_APP" --json > machines.json
           flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > volume.json
-          if [ "$PILOT_ACTION" = donor_headers ]; then
+          if [ "$PILOT_ACTION" = donor_headers ] || [ "$PILOT_ACTION" = retained_headers ]; then
             test "$RECOVERY_VOLUME_ID" = vol_vp26dp2g9x3167j4
             jq -e '.state == "created" and .name == "wkupd_35290038040" and ((.attached_machine_id // "") == "")' volume.json
           else

@@ -21,6 +21,7 @@ TARGETS = {"homepage_manager_rankings", "matchup_h2h_career",
 PRIMARY_MACHINE = "1781e011b69068"
 PRIMARY_VOLUME = "vol_rkg7mmd17llez224"
 DATABASE_PATH = Path("/data/___leagues.duckdb")
+RETAINED_BLOCK_LIMIT = 65536
 
 
 def emit(stage, **fields):
@@ -48,9 +49,9 @@ def validate_target(action, table, db_name, machine, volume, path=DATABASE_PATH)
         raise ValueError("primary target forbidden")
     if not machine or not volume.startswith("vol_"):
         raise ValueError("isolated machine and volume are required")
-    if action == "donor_headers" and volume != "vol_vp26dp2g9x3167j4":
+    if action in {"donor_headers", "retained_headers"} and volume != "vol_vp26dp2g9x3167j4":
         raise ValueError("donor volume is not the existing September 15 witness")
-    if action not in {"inspect", "locate", "remove", "donor_headers"} or table not in TARGETS:
+    if action not in {"inspect", "locate", "remove", "donor_headers", "retained_headers"} or table not in TARGETS:
         raise ValueError("target table/action is not allowlisted")
     if not re.fullmatch(r"[a-z0-9_]+", db_name):
         raise ValueError("invalid witness league")
@@ -105,6 +106,43 @@ def probe_metadata_donor(path, expected_checksum):
             "header_bytes_read": len(ids) * 8, "candidates": candidates, "repair_authorized": False}
 
 
+def probe_retained_donor(path, expected_checksum):
+    """Read eight-byte headers, including unregistered retained blocks; no SQL.
+
+    Logical bytes read are reported, not filesystem physical I/O. Only up to two
+    matching blocks receive a full checksum check. A match never authorizes repair.
+    """
+    from fly_duckdb_block_probe import probe
+    path = Path(path)
+    before = path.stat()
+    count, remainder = divmod(before.st_size - 12288, 262144)
+    if remainder or count < 1 or count > RETAINED_BLOCK_LIMIT:
+        raise ValueError("donor file exceeds header ceiling or is not block aligned")
+    initial = probe(path, 12288)
+    if initial["file_changed_during_read"]:
+        raise ValueError("donor file changed during initial inspection")
+    matches = []
+    emit("retained_headers_start", physical_blocks=count, header_bytes=count * 8)
+    with path.open("rb", buffering=0) as stream:
+        for block_id in range(count):
+            offset = 12288 + block_id * 262144
+            stream.seek(offset)
+            data = stream.read(8)
+            if len(data) != 8:
+                raise ValueError("short retained checksum read")
+            if struct.unpack("<Q", data)[0] == expected_checksum:
+                matches.append(offset)
+                if len(matches) > 2:
+                    raise ValueError("ambiguous checksum has more than two candidate blocks")
+    candidates = [probe(path, offset) for offset in matches]
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise ValueError("donor file changed during inspection")
+    return {"physical_blocks_checked": count, "header_bytes_read": count * 8,
+            "validation_bytes_read": initial["bytes_read"] + sum(c["bytes_read"] for c in candidates),
+            "candidates": candidates, "repair_authorized": False}
+
+
 def run(args):
     validate_target(args.action, args.target_table, args.db_name, args.machine_id, args.volume_id)
     timer = arm_deadline(args.deadline)
@@ -118,6 +156,11 @@ def run(args):
         if args.action == "inspect":
             if block["file_changed_during_read"]:
                 raise ValueError("candidate changed during read")
+            return 0
+        if args.action == "retained_headers":
+            if block["file_changed_during_read"]:
+                raise ValueError("donor changed during initial block read")
+            emit("retained_result", **probe_retained_donor(DATABASE_PATH, 18392342689821271652))
             return 0
         import duckdb
 
@@ -186,7 +229,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers"])
+    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers", "retained_headers"])
     parser.add_argument("--target-table", required=True)
     parser.add_argument("--db-name", required=True)
     parser.add_argument("--machine-id", required=True)

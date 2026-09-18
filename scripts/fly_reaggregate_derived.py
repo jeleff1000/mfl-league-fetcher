@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import logging
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -52,6 +54,8 @@ TARGET_TABLES = (
     "player_fantasy_season_all",
     "standings_by_year",
 )
+
+logger = logging.getLogger(__name__)
 
 
 def quarantine_corrupt_targets(conn) -> dict[str, str]:
@@ -130,28 +134,81 @@ def discover_leagues(conn) -> list[str]:
     return [str(row[0]) for row in rows]
 
 
-def reaggregate_one_league(conn, db_name: str) -> dict[str, int]:
+def reaggregate_one_league(
+    conn,
+    db_name: str,
+    *,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> dict[str, int]:
     """Rebuild exactly the five affected outputs for one persisted chain."""
-    years = [
-        int(row[0])
-        for row in conn.execute(
-            "SELECT DISTINCT TRY_CAST(year AS INTEGER) FROM public.matchup "
-            "WHERE db_name = ? AND TRY_CAST(year AS INTEGER) IS NOT NULL ORDER BY 1",
-            [db_name],
-        ).fetchall()
-    ]
+    def run_stage(stage: str, operation: Callable[[], object]) -> object:
+        started = time.monotonic()
+        if progress_callback:
+            progress_callback(
+                {
+                    "stage": "reaggregating",
+                    "current_db_name": db_name,
+                    "current_table": stage,
+                }
+            )
+        logger.info(
+            "derived_recovery league=%s table=%s status=started",
+            db_name,
+            stage,
+        )
+        try:
+            result = operation()
+        except Exception as exc:
+            logger.exception(
+                "derived_recovery league=%s table=%s status=failed elapsed_seconds=%.3f",
+                db_name,
+                stage,
+                time.monotonic() - started,
+            )
+            raise RuntimeError(
+                f"{stage} failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        logger.info(
+            "derived_recovery league=%s table=%s status=completed elapsed_seconds=%.3f",
+            db_name,
+            stage,
+            time.monotonic() - started,
+        )
+        return result
 
-    aggregate_fantasy_season(conn, db_name)
-    aggregate_fantasy_season_all(conn, db_name)
-    aggregate_matchup_h2h(conn, db_name, season_years=set())
-    aggregate_standings(conn, db_name, years)
-    rankings = compute_manager_rankings(conn, db_name)
-    replace_scoped_aggregate_table_from_dataframe(
-        conn,
-        db_name,
-        "homepage_manager_rankings",
-        rankings,
+    years = run_stage(
+        "matchup_years",
+        lambda: [
+            int(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT TRY_CAST(year AS INTEGER) FROM public.matchup "
+                "WHERE db_name = ? AND TRY_CAST(year AS INTEGER) IS NOT NULL ORDER BY 1",
+                [db_name],
+            ).fetchall()
+        ],
     )
+
+    run_stage("player_fantasy_season", lambda: aggregate_fantasy_season(conn, db_name))
+    run_stage(
+        "player_fantasy_season_all",
+        lambda: aggregate_fantasy_season_all(conn, db_name),
+    )
+    run_stage(
+        "matchup_h2h_career",
+        lambda: aggregate_matchup_h2h(conn, db_name, season_years=set()),
+    )
+    run_stage("standings_by_year", lambda: aggregate_standings(conn, db_name, years))
+
+    def rebuild_homepage_rankings() -> None:
+        rankings = compute_manager_rankings(conn, db_name)
+        replace_scoped_aggregate_table_from_dataframe(
+            conn,
+            db_name,
+            "homepage_manager_rankings",
+            rankings,
+        )
+
+    run_stage("homepage_manager_rankings", rebuild_homepage_rankings)
 
     return {
         table: int(
@@ -278,14 +335,24 @@ def reaggregate_parallel(
         try:
             if connection_factory is None:
                 conn.execute("SET threads=1")
+                if ops_nfl_path:
+                    _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
+                if ops_path:
+                    _attach_if_present(conn, ops_path, "___ops")
             for db_name in shard:
                 conn.execute("BEGIN TRANSACTION")
                 try:
-                    reaggregate_one_league(conn, db_name)
+                    reaggregate_one_league(
+                        conn,
+                        db_name,
+                        progress_callback=progress_callback,
+                    )
                     conn.execute("COMMIT")
-                except Exception:
+                except Exception as exc:
                     conn.execute("ROLLBACK")
-                    raise RuntimeError(f"{db_name}: scoped reaggregation failed")
+                    raise RuntimeError(
+                        f"{db_name}: scoped reaggregation failed: {type(exc).__name__}: {exc}"
+                    ) from exc
                 with progress_lock:
                     completed += 1
                     report(db_name if completed < len(leagues) else None)
@@ -294,15 +361,6 @@ def reaggregate_parallel(
             conn.close()
 
     report(None)
-    if connection_factory is None:
-        setup_conn = duckdb.connect(str(database_path))
-        try:
-            if ops_nfl_path:
-                _attach_if_present(setup_conn, ops_nfl_path, "___ops_nfl")
-            if ops_path:
-                _attach_if_present(setup_conn, ops_path, "___ops")
-        finally:
-            setup_conn.close()
     shards = [leagues[index::worker_count] for index in range(worker_count)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {executor.submit(run_shard, shard): shard for shard in shards if shard}

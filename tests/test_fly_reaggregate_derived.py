@@ -185,7 +185,8 @@ def test_parallel_reaggregation_uses_disjoint_scoped_transactions(monkeypatch, t
     monkeypatch.setattr(
         repair,
         "reaggregate_one_league",
-        lambda _conn, db_name: calls.append(db_name) or {table: 1 for table in repair.TARGET_TABLES},
+        lambda _conn, db_name, **_kwargs: calls.append(db_name)
+        or {table: 1 for table in repair.TARGET_TABLES},
     )
 
     result = repair.reaggregate_parallel(
@@ -208,6 +209,65 @@ def test_parallel_reaggregation_uses_disjoint_scoped_transactions(monkeypatch, t
         "total": 12,
         "current_db_name": None,
     }
+
+
+def test_parallel_workers_attach_shared_catalogs(monkeypatch, tmp_path):
+    primary = tmp_path / "leagues.duckdb"
+    ops = tmp_path / "ops.duckdb"
+    ops_nfl = tmp_path / "ops_nfl.duckdb"
+    duckdb.connect(str(primary)).close()
+    for path, value in ((ops, 11), (ops_nfl, 22)):
+        conn = duckdb.connect(str(path))
+        conn.execute("CREATE TABLE marker(value INTEGER)")
+        conn.execute("INSERT INTO marker VALUES (?)", [value])
+        conn.close()
+
+    observed: list[tuple[int, int]] = []
+
+    def assert_catalogs_attached(conn, _db_name, **_kwargs):
+        observed.append(
+            (
+                conn.execute("SELECT value FROM ___ops.main.marker").fetchone()[0],
+                conn.execute("SELECT value FROM ___ops_nfl.main.marker").fetchone()[0],
+            )
+        )
+        return {table: 1 for table in repair.TARGET_TABLES}
+
+    monkeypatch.setattr(repair, "reaggregate_one_league", assert_catalogs_attached)
+
+    result = repair.reaggregate_parallel(
+        primary,
+        db_names=["alpha"],
+        ops_path=ops,
+        ops_nfl_path=ops_nfl,
+        max_workers=1,
+    )
+
+    assert result == {"leagues": 1}
+    assert observed == [(11, 22)]
+
+
+def test_parallel_reaggregation_reports_exact_stage_failure(monkeypatch, tmp_path):
+    duckdb.connect(str(tmp_path / "leagues.duckdb")).close()
+
+    def fail(_conn, _db_name, **_kwargs):
+        raise RuntimeError("player_fantasy_season failed: CatalogException: missing ___ops")
+
+    monkeypatch.setattr(repair, "reaggregate_one_league", fail)
+
+    try:
+        repair.reaggregate_parallel(
+            tmp_path / "leagues.duckdb",
+            db_names=["alpha"],
+            max_workers=1,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "alpha" in message
+        assert "player_fantasy_season" in message
+        assert "missing ___ops" in message
+    else:
+        raise AssertionError("the exact inner failure must be preserved")
 
 
 def test_attach_if_present_is_idempotent(tmp_path):

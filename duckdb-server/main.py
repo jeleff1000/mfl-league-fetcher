@@ -165,6 +165,7 @@ _derived_recovery_progress: dict[str, Any] = {
     "completed": 0,
     "total": 0,
     "current_db_name": None,
+    "current_table": None,
     "started_at": None,
     "updated_at": None,
     "error": None,
@@ -185,6 +186,7 @@ def _start_derived_recovery_progress() -> None:
                 "completed": 0,
                 "total": 0,
                 "current_db_name": None,
+                "current_table": None,
                 "started_at": now,
                 "updated_at": now,
                 "error": None,
@@ -2233,7 +2235,7 @@ def _reaggregate_damaged_derived_from_sources(
         db_names=leagues,
         ops_path=ops_path,
         ops_nfl_path=ops_nfl_path,
-        max_workers=min(8, WRITE_DUCKDB_THREADS),
+        max_workers=min(4, WRITE_DUCKDB_THREADS),
         progress_callback=_update_derived_recovery_progress,
     )
     _update_derived_recovery_progress(

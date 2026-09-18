@@ -203,7 +203,7 @@ def run_child(path, mode, library=None):
 
 def fixture_files(path):
     return {suffix: hashlib.sha256(file.read_bytes()).hexdigest()
-            for suffix in ("", ".wal", ".checkpoint.wal")
+            for suffix in ("", ".wal", ".wal.checkpoint")
             if (file := Path(str(path) + suffix)).exists()}
 
 
@@ -369,7 +369,7 @@ def main():
             if args.scenario in {"normal", "real_scope"}:
                 for crash_mode, exit_code in [("crash_commit", 23), ("crash_flush", 24)]:
                     candidate.write_bytes(chosen)
-                    for suffix in (".wal", ".checkpoint.wal"):
+                    for suffix in (".wal", ".wal.checkpoint"):
                         generated_wal = Path(str(candidate) + suffix)
                         if generated_wal.exists():
                             generated_wal.unlink()  # exclusively owned synthetic fixture

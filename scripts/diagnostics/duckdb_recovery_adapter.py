@@ -27,6 +27,26 @@ RECOVERY_VOLUME = "vol_4919j2m0wzg0xw5r"
 STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 15}
 
 
+def charge_phase(spent, name, elapsed):
+    spent[name] += elapsed
+    if spent[name] > STAGE_LIMITS[name]:
+        raise ValueError(f'{name} phase budget exceeded')
+
+
+def protect_parent(expected_pid):
+    """Arm Linux parent-death termination before opening any engine file."""
+    if sys.platform != 'linux' or expected_pid < 2:
+        raise ValueError('a Linux supervisor is required')
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    prctl.restype = ctypes.c_int
+    if prctl(1, signal.SIGKILL, 0, 0, 0) != 0:  # PR_SET_PDEATHSIG
+        raise OSError(ctypes.get_errno(), 'cannot arm parent-death signal')
+    if os.getppid() != expected_pid:
+        os.kill(os.getpid(), signal.SIGKILL)  # Parent exited before prctl: close race.
+
+
 def run_stage(stage, command, *, deadline, env=None, transitions=()):
     """Parent-enforced stage cap; timeout never implies transaction rollback."""
     started = time.monotonic()
@@ -57,7 +77,14 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
                 stop_child()
                 return
             now = time.monotonic()
-            spent[phase['name']] += now - phase['since']
+            try:
+                charge_phase(spent, phase['name'], now - phase['since'])
+                if time.time() >= deadline:
+                    raise ValueError('overall deadline exceeded')
+            except ValueError:
+                protocol_error.set()
+                stop_child()
+                return
             phase.update(name=next_phase, since=now, index=index+1,
                          mutating=phase['mutating'] or next_phase in {'replay', 'remove', 'verify'})
             print(json.dumps({'event': 'child_phase', 'stage': next_phase,
@@ -333,7 +360,7 @@ def verify_stock(path, db_name, before):
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
     import duckdb
-    config = {'threads': '1', 'memory_limit': '512MB'}
+    config = {'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
@@ -408,7 +435,7 @@ def recovery_child(args):
     hook.lh_spike_allocations.restype = ctypes.c_int
     hook.lh_spike_disarm()
     files = file_inventory(path)
-    if ('.checkpoint.wal' in files or files.get('.wal', {}).get('size') != 45516621
+    if ('.wal.checkpoint' in files or files.get('.wal', {}).get('size') != 45516621
             or files['.wal']['mtime_ns'] != 1789662378556231033):
         raise ValueError('retained WAL identity changed; reconcile before replay')
 
@@ -456,6 +483,7 @@ def recovery_child(args):
                       'metadata_bytes_ceiling': 32*1024*1024}), flush=True)
     env = dict(os.environ)
     env.pop('LD_PRELOAD', None)
+    env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())
     # This process is a member of the parent's killed process group. Its open,
     # checks, write, checkpoint and reopen share the SAME 15s verify budget.
     subprocess.run([sys.executable, '-u', __file__, '--stock-child', str(folder),
@@ -476,6 +504,8 @@ def main():
     parser.add_argument('--recovery-child', action='store_true')
     parser.add_argument('--stock-child')
     args = parser.parse_args()
+    if args.recovery_child or args.stock_child:
+        protect_parent(int(os.environ.get('LH_RECOVERY_SUPERVISOR_PID', '0')))
     if not re.fullmatch(r'[a-z0-9_]+', args.db_name):
         raise ValueError('invalid witness league')
     if args.stock_child:
@@ -511,6 +541,7 @@ def main():
         return 0
     env = dict(os.environ)
     env['LD_PRELOAD'] = '/tmp/lh_five_drop.so'
+    env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())
     result = run_stage('inspect', [sys.executable, '-u', __file__, *sys.argv[1:], '--recovery-child'],
                        deadline=args.deadline, env=env,
                        transitions=('preserve', 'replay', 'preserve', 'remove', 'verify'))

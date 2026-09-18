@@ -81,7 +81,7 @@ def engine_identity():
 def file_inventory(path):
     """Stat only the exact database/WAL sidecars, never open the engine."""
     result = {}
-    for suffix in ('', '.wal', '.checkpoint.wal'):
+    for suffix in ('', '.wal', '.wal.checkpoint'):
         candidate = Path(str(path) + suffix)
         if candidate.exists():
             item = candidate.stat()

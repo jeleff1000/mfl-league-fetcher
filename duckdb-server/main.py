@@ -3586,6 +3586,12 @@ async def reaggregate_damaged_derived(request: Request):
     return result
 
 
+@app.get("/reaggregate-damaged-derived/status")
+async def reaggregate_damaged_derived_status():
+    """Return in-memory recovery progress without acquiring a DuckDB connection."""
+    return _derived_recovery_snapshot()
+
+
 @app.post("/replace-db")
 async def replace_db(
     request: Request,

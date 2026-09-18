@@ -418,6 +418,26 @@ def test_server_state_exposes_runtime_capacity(client):
     assert body["derived_recovery"]["stage"] == "idle"
 
 
+def test_derived_recovery_status_does_not_touch_database(client, monkeypatch):
+    import main as main_mod
+
+    monkeypatch.setattr(
+        main_mod,
+        "_derived_recovery_snapshot",
+        lambda: {"stage": "reaggregating", "completed": 7, "total": 20},
+    )
+    monkeypatch.setattr(
+        main_mod.db,
+        "get_metadata",
+        lambda: (_ for _ in ()).throw(AssertionError("status must not touch DuckDB")),
+    )
+
+    resp = client.get("/reaggregate-damaged-derived/status")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"stage": "reaggregating", "completed": 7, "total": 20}
+
+
 def test_query_requires_auth(client):
     resp = client.post("/query", json={"sql": "SELECT 1"})
     assert resp.status_code == 401

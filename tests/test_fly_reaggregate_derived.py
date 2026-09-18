@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import duckdb
 import pandas as pd
 
 from scripts import fly_reaggregate_derived as repair
@@ -207,6 +208,21 @@ def test_parallel_reaggregation_uses_disjoint_scoped_transactions(monkeypatch, t
         "total": 12,
         "current_db_name": None,
     }
+
+
+def test_attach_if_present_is_idempotent(tmp_path):
+    primary = tmp_path / "primary.duckdb"
+    attached = tmp_path / "ops.duckdb"
+    duckdb.connect(str(attached)).close()
+    conn = duckdb.connect(str(primary))
+    try:
+        repair._attach_if_present(conn, attached, "___ops")
+        repair._attach_if_present(conn, attached, "___ops")
+        assert conn.execute(
+            "SELECT COUNT(*) FROM duckdb_databases() WHERE database_name='___ops'"
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()
 
 
 def test_quarantine_targets_swaps_only_the_five_corrupt_objects():

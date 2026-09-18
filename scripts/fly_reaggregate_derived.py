@@ -278,10 +278,6 @@ def reaggregate_parallel(
         try:
             if connection_factory is None:
                 conn.execute("SET threads=1")
-            if ops_nfl_path:
-                _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
-            if ops_path:
-                _attach_if_present(conn, ops_path, "___ops")
             for db_name in shard:
                 conn.execute("BEGIN TRANSACTION")
                 try:
@@ -298,6 +294,15 @@ def reaggregate_parallel(
             conn.close()
 
     report(None)
+    if connection_factory is None:
+        setup_conn = duckdb.connect(str(database_path))
+        try:
+            if ops_nfl_path:
+                _attach_if_present(setup_conn, ops_nfl_path, "___ops_nfl")
+            if ops_path:
+                _attach_if_present(setup_conn, ops_path, "___ops")
+        finally:
+            setup_conn.close()
     shards = [leagues[index::worker_count] for index in range(worker_count)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {executor.submit(run_shard, shard): shard for shard in shards if shard}
@@ -318,6 +323,12 @@ def reaggregate_parallel(
 
 def _attach_if_present(conn, path: Path, catalog: str) -> None:
     if path.is_file():
+        attached = conn.execute(
+            "SELECT 1 FROM duckdb_databases() WHERE database_name = ? LIMIT 1",
+            [catalog],
+        ).fetchone()
+        if attached:
+            return
         conn.execute(
             f"ATTACH '{path.as_posix().replace(chr(39), chr(39) * 2)}' "
             f"AS {_quote_identifier(catalog)} (READ_ONLY)"

@@ -4,6 +4,18 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- 38ca16ee9 Linux proof35381566119: all6cases passed,62adapter tests6.18s,
+  real_scope8.673s. Native WriteTable observer saw103stock callbacks. Its
+  negative mutant was correctly rejected; helper-free write/reopen, individual
+  drops, interruption/replay and repeat proofs still pass. Review corrections:
+  direct table-name accessor replaces fullDDL serialization; no-op recovery
+  does not incorrectly require new checkpoint callbacks.
+- Actual performance1/4096 placement35381668335 refused at18:41:55Z with
+  insufficient resources on existing volume; no VM/DB open or baseline change.
+  No more unchanged performance launches. Next is one diagnostic on the known
+  shared4/3584 profile with newly verified table progress; unchanged40/15s
+  limits. Its purpose is locating the checkpoint work, not asserting speed.
+
 - Public main feb16731e: synthetic Linux run35379364978 passed all six cases,
   including61adapter tests5.95s and real_scope6.712s. These are synthetic,
   not proof of real-file durability.

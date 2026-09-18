@@ -33,6 +33,9 @@ and Sleeper. All three CLI startup tests pass; review found no remaining scoped
 blocker. Receipt/status/workflow tests: 120 passed in 8.86s. Manifest-coverage/
 claim tests: 26 passed in 0.76s. Both commands had 38s hard caps. Ruff, diff checks
 and public boundary validation pass.
+Fix pushed to canonical public main as `cef9cf5f847c295bd310e636b049a54977363aad`;
+boundary guard `35319172793` passed that exact revision in an eight-second job.
+This is source/boundary verification, not a production data-update canary.
 
 Limits: these tests do not run full provider ingestion or actual UI canaries.
 They do not close a runner kill before the first receipt save, an ambiguous Fly

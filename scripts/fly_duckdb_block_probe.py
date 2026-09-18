@@ -30,7 +30,20 @@ def probe(path, offset):
         pages = [headers[start:start + 4096] for start in (0, 4096, 8192)]
         if not all(struct.unpack_from("<Q", page)[0] == checksum(page[8:]) for page in pages):
             raise ValueError("Invalid or unsupported database header checksum")
-        active = max(pages[1:], key=lambda page: struct.unpack_from("<Q", page, 8)[0])
+        checkpoint_headers = [
+            {
+                "file_offset": slot * 4096,
+                "iteration": struct.unpack_from("<Q", page, 8)[0],
+                "metadata_pointer": struct.unpack_from("<Q", page, 16)[0],
+                "free_list_pointer": struct.unpack_from("<Q", page, 24)[0],
+                "block_count": struct.unpack_from("<Q", page, 32)[0],
+            }
+            for slot, page in enumerate(pages[1:], 1)
+        ]
+        active_slot = 0 if checkpoint_headers[0]["iteration"] > checkpoint_headers[1]["iteration"] else 1
+        for slot, header in enumerate(checkpoint_headers):
+            header["active"] = slot == active_slot
+        active = pages[active_slot + 1]
         block_size = struct.unpack_from("<Q", active, 40)[0] or 262144
         if block_size != 262144:
             raise ValueError("Only the observed 256 KiB block size is supported")
@@ -64,6 +77,7 @@ def probe(path, offset):
         "file_size": before.st_size,
         "file_changed_during_read": (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns),
         "main_header_sha256": hashlib.sha256(pages[0]).hexdigest(),
+        "checkpoint_headers": checkpoint_headers,
         "block_sha256": hashlib.sha256(block).hexdigest(),
         "stored_checksum": stored,
         "computed_checksum": computed,

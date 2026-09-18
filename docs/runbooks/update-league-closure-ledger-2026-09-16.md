@@ -27,8 +27,12 @@ The eight process cases plus 72 existing worker/runtime contracts passed in
 4.55s under a 38s command cap. Ruff and diff checks passed. Linux verification
 is added to the existing public boundary job as a 38s-capped, no-production-access
 test step, not a new worker or deployment.
-Independent read-only review found no critical or important merge blocker;
-Linux execution evidence remains pending until the public job completes.
+Independent read-only review found no critical or important merge blocker.
+Public main commit `53795315296a606dc56a2f2e06215d5cbd0d7221` passed actual Linux
+process verification in run `35320942120`: eight process tests in 2.16s, seven
+boundary/migration tests in 0.03s, entire job twelve seconds. Final readiness
+remained serving/accepting, zero reads/writes/publications, unchanged hashes.
+This is execution of the deadline diagnostic, not a league-refresh canary.
 
 These three workflow files and the boundary workflow do not exist in the dirty
 root-app checkout. No replacement duplicate files or new pipeline were created

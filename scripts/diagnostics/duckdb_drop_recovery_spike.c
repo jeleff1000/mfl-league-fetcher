@@ -1,0 +1,31 @@
+/* EXPERIMENT ONLY: tiny-fixture DROP interposition, never a server extension. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+static _Atomic int armed = 0;
+static _Atomic int intercepted = 0;
+
+void lh_spike_arm(void) { atomic_store(&armed, 1); }
+int lh_spike_count(void) { return atomic_load(&intercepted); }
+void lh_spike_disarm(void) { atomic_store(&armed, 0); }
+
+void lh_collection_drop(void *collection)
+    __asm__("_ZN6duckdb18RowGroupCollection15CommitDropTableEv");
+
+void lh_collection_drop(void *collection) {
+    if (atomic_exchange(&armed, 0)) {
+        atomic_fetch_add(&intercepted, 1);
+        return; /* Retain allocated blocks. Do not inspect or rewrite data. */
+    }
+    void (*original)(void *) = dlsym(RTLD_NEXT,
+        "_ZN6duckdb18RowGroupCollection15CommitDropTableEv");
+    if (!original) {
+        const char message[] = "spike: original drop symbol unavailable\n";
+        (void)write(2, message, sizeof(message) - 1);
+        _exit(91);
+    }
+    original(collection);
+}

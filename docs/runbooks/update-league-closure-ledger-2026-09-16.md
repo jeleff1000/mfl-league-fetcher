@@ -1,8 +1,88 @@
 # September Update League closure ledger
 
-State: synthetic removal and guard tests passed; the real-volume blocker is retained-WAL replay within the bounded pilot, not current Fly capacity. No real-file removal or production recovery has been performed. This ledger is for league updates, not SuperTable SOTA work.
+State: synthetic removal and guard tests passed; real-volume WAL replay now completes within 10s with temporary shared-4-CPU capacity. The next preservation gate found empty canonical replacement tables in the old isolated fixture. No real-file removal or production recovery has been performed. This ledger is for league updates, not SuperTable SOTA work.
 
 ## Current bounded-recovery receipts - 2026-09-18
+
+- Latest physical pilot revision: `1269396af`; preceding Linux matrix
+  `35365345651` passed. The user explicitly authorized temporary capacity
+  increases followed by reduction. Machine cleanup removes the temporary
+  capacity; production sizing is unchanged. Parent-side /proc counters report
+  CPU, peak RSS, reads and writes every 2s.
+- `35365427189` (performance CPU / 4 GiB) was refused by the existing volume's
+  host before creating a machine or opening the database. `35365632447`
+  (`35c9d26ba`, shared 2 CPU / 4 GiB, 3072MB cache) launched successfully but
+  reached the 10s replay ceiling. At 9.59s of replay it had consumed 2.57s
+  cumulative process CPU and 990292 KiB peak RSS; disk reads rose about
+  32-35 MB per two seconds. It never reached preservation queries or DROP.
+  Machine `286265dc442008` was destroyed at 15:59:04Z.
+- Fly's official volume limits explain that measured rate: shared 1/2 CPU
+  receives 16 MiB/s, shared 4 CPU receives 32 MiB/s
+  (https://fly.io/docs/volumes/overview/). `1269396af` changes only the disposable
+  pilot to shared 4 CPU, retaining 4 GiB RAM, 3072MB/no-spill cache, and every
+  time/allocation guard. Run `35366265545` confirms the measured I/O hypothesis:
+  WAL replay completed in 9.734s, zero experimental metadata blocks allocated.
+  Preservation then failed because `homepage_manager_rankings` had no rows for
+  `nyu_ffl`; no removal began. Total adapter time 14.020s. Machine
+  `d8d0795b99d768` was destroyed at 16:05:09Z; temporary capacity is removed.
+  No volume fork/copy or production resize is involved.
+- Prior isolated run `35170289421` explains this fixture mismatch: it created
+  EMPTY canonical shells when quarantining the five original objects. The
+  later full canonical reaggregation was production-only, not applied to this
+  retained isolated volume. Empty shells must not be presented as proof of
+  healthy aggregate-value preservation. A bounded real-value witness fixture
+  is still needed before actual removal; no emptiness bypass was added.
+- No-engine reconciliation `35366670108` took 0.024s after successful replay.
+  Original main/WAL inode, size and mtime, main-header SHA and damaged-block SHA
+  are unchanged. No checkpoint WAL exists. Machine `2870549b442d68` was
+  destroyed at 16:08:56Z. The volume and preserved WAL receipts remain retained.
+- Production `/ready` at 16:08Z: serving/accepting queries, zero active queries,
+  OPS writes and delta publications, league fingerprint unchanged
+  `sha256:935b1b973ff578d5`. No production machine/configuration change was made.
+- Actual isolated attempts `35363995259` (576MB cache) and `35364562795` (768MB)
+  reached guarded writable WAL replay but failed at 549.2 and 732.1 MiB managed
+  memory, respectively, BEFORE the preservation-query/removal stages. Replay
+  lasted approximately 5.26s and 6.59s. `35364801571` (2 GiB VM / 1536MB cache)
+  reached the externally enforced 10s replay limit. Each result is UNKNOWN,
+  never treated as a rollback or successful removal. Each machine was destroyed.
+- Each writable attempt preserved the original 45516621-byte WAL create-only
+  under its isolated-volume receipt directory. SHA256:
+  `a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f`.
+  Subsequent preflight matched original main size/mtime/header/block and WAL
+  size/mtime/digest before permitting replay. No DROP statement has run yet.
+- `35364214730` could not launch its inspection VM because the volume host
+  lacked capacity; it did not access the file. A later changed-memory recovery
+  pilot launched successfully. No unchanged capacity-failure launch loop was run.
+- Independent review held dispatch for parent-death termination and the correct
+  v1.5.4 `.wal.checkpoint` suffix. Fixes `b5973ae10` / `0d164351c` also enforce
+  outgoing and final phase budgets and disable spill on every stock open.
+  Red Linux tests `35363579487` failed as intended; `35363693850` and
+  `35363916275` passed. Linux actually kills a supervisor to verify child exit.
+- The previously failing ESPN upload is `i_95_gridlock_league_2k27`, run
+  `35287522419` attempt 5. Its upload error identifies the exact known damaged
+  block 90714112. No import canary has been retried before physical recovery.
+
+- Adapter orchestration is now on public main `d956ca93e`, mirrored locally.
+  `35363125981` passes the six-case Linux matrix: 25 adapter tests in 3.02s;
+  actual adapter removal function plus native five-name recovery in 3.460s.
+  The workflow exposes an isolated-only `engine_recover` action, with actual
+  attempt results above. It binds the runtime mount/file/build, preserves the
+  45 MB WAL create-only, supervises cumulative phase budgets externally, and
+  invokes stock verification in a new helper-free process. Unexpected phase
+  transitions and early success are rejected; replay/commit timeout is UNKNOWN.
+- `35362176139` (no engine open, 0.025s) reconciled post-timeout state: original
+  main-file size/mtime, WAL size/mtime, main-header SHA and bad-block SHA all
+  match their earlier baseline. Machine 683e3d6c449448 was removed.
+- `35362459102` (`f4340320b`) removed spill churn without increasing VM size or
+  time ceilings. Read-only replay with 576MB cache and no temp directory fails
+  cleanly in 6.666s: cannot pin another 256 KiB at 549.1/549.3 MiB used. It
+  confirms source/WAL file metadata unchanged. Process writes stayed at 8192
+  bytes rather than the earlier 110 MB. Machine 286265dc442408 was removed.
+  The next proof uses guarded writable replay, which can flush committed row
+  groups normally; it does not skip, hide, truncate or delete the source WAL.
+- Preservation witnesses now order years before display names and include
+  saved manager-name overrides/franchise merges. Twenty-four local adapter
+  tests pass, one Linux-only test skipped; Linux executes all 25 successfully.
 
 - Public main `595aec4f3`, run `35360987274`: all six synthetic matrix jobs pass;
   adapter 16 tests in 1.11s; five-object corruption/recovery fixture in 10.901s.

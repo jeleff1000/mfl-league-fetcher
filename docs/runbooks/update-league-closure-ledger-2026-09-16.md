@@ -4,6 +4,26 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Resume35386706937 on ecc328a27 reached the real engine. Replay9.894s;
+  retained-value reconciliation passed, zero newDROP/fixture rows. First
+  checkpoint advanced through41tables (last observedtransaction_player_career)
+  before the15s verify cap killed it; no checksum exception appeared in the
+  captured trace, but no checkpoint return or stock-engine proof exists.
+  PeakRSS1870316KiB; cumulative reads874651648B,writes250314752B at28.143s.
+  This proves forward checkpoint work, NOT durable success or corruption fixed.
+  Machine286265dc44e418 destroyed19:35:24Z. Do not repeat with old binding.
+- Read-only reconciliation35386902355 took0.834s. Main15555375104B,
+  inode14,mtime_ns1789760116677575290; WAL45522341B,inode64,
+  mtime_ns1789760101741571802,SHA256
+  c45382cd53958c6b66691371ff1c2de195427f1a3c06b29c5ae1286de8f11176.
+  Header and bad-block hashes unchanged; activecheckpoint12126. No companion
+  WAL checkpoint/recovery file. Inspector d895d17b006548 destroyed19:37:04Z.
+  Current adapter intentionally retains the older binding and will refuse
+  another resume until this evidence is explicitly incorporated.
+  Narrow next proposal:20s checkpoint/proof allowance within unchanged40s
+  overall pilot, rather than repeating a proven15s cutoff. This has NOT been
+  implemented or authorized; no production write or restart was performed.
+
 - On02f3c5063, synthetic35386383813 passed all6cases (62adapter tests6.22s).
   Real trial35386448920 successfully placed shared4/3072MiB machine
   48ee5d1cee7e48. It stopped BEFORE engine open: startup consumed8.4s and

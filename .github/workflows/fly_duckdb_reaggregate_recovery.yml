@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [normal, indexed, shared, budget]
+        scenario: [normal, indexed, shared, budget, real_scope]
     # No Fly secret or volume: synthetic files only, removed by TemporaryDirectory.
     steps:
       - uses: actions/checkout@v5

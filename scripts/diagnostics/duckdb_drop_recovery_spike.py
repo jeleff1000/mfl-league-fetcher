@@ -22,6 +22,9 @@ import time
 START = time.monotonic()
 LIMIT = 8 * 1024 * 1024
 TABLE = "__corrupt_recovery_player_fantasy_season"
+REAL_TABLES = tuple("__corrupt_recovery_" + name for name in (
+    "homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_season",
+    "player_fantasy_season_all", "standings_by_year"))
 WITNESS = "SELECT db_name, year, franchise_id, manager, points FROM public.facts ORDER BY year"
 EXPECTED = [("nyu_ffl", 2025, "fid-1", "Saved Alias", 112.5),
             ("nyu_ffl", 2026, "fid-1", "Saved Alias", 93.25)]
@@ -52,10 +55,14 @@ def assert_fixture(path):
             or parent.is_symlink()
             or parent.resolve().parent != Path(tempfile.gettempdir()).resolve()
             or not parent.name.startswith("lh_drop_spike_")
-            or path.name != "candidate.duckdb" or path.is_symlink()
+            or path.name not in {"candidate.duckdb", "___leagues.duckdb"} or path.is_symlink()
             or path.stat().st_nlink != 1 or path.stat().st_size > LIMIT):
         raise ValueError("only a tiny generated experiment fixture is permitted")
     return path
+
+
+def targets(path):
+    return REAL_TABLES if Path(path).name == "___leagues.duckdb" else (TABLE,)
 
 
 def child(path, mode):
@@ -67,7 +74,7 @@ def child(path, mode):
     if mode == "verify":
         verify(path)
         return 0
-    hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover", "budget"} else None
+    hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover", "budget", "forbidden"} else None
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
         hook.lh_spike_allocations.restype = ctypes.c_int
@@ -85,7 +92,11 @@ def child(path, mode):
         if conn.execute(WITNESS).fetchall() != EXPECTED:
             raise ValueError("healthy witness changed before DROP")
         emit("healthy_witness_verified", mode=mode)
-        if hook:
+        if mode == "forbidden":
+            conn.execute("CREATE TABLE public.must_keep AS SELECT 11 AS n")
+            conn.execute("DROP TABLE public.must_keep")
+            raise ValueError("real-file helper permitted an unrelated armed DROP")
+        if hook and len(targets(path)) == 1:
             before_unrelated = hook.lh_spike_count()
             conn.execute("CREATE TABLE public.forwarding_witness AS SELECT 9 AS n")
             conn.execute("DROP TABLE public.forwarding_witness")
@@ -104,27 +115,29 @@ def child(path, mode):
                 emit("fixture_corruption_located", error=str(exc).splitlines()[0])
                 return 0
             raise ValueError("candidate did not affect target metadata")
-        present = conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name=?", [TABLE]).fetchall()
+        present = conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name IN (SELECT unnest(?))", [list(targets(path))]).fetchall()
         if present and mode == "recover":
             raise ValueError("committed aggregate DROP was not replayed; do not repeat it")
         if present:
             if hook:
                 before_rollback = hook.lh_spike_count()
                 conn.execute("BEGIN TRANSACTION")
-                conn.execute(f'DROP TABLE public."{TABLE}"')
+                for table in targets(path):
+                    conn.execute(f'DROP TABLE public."{table}"')
                 conn.execute("ROLLBACK")
                 assert conn.execute(WITNESS).fetchall() == EXPECTED
                 assert conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name=?", [TABLE]).fetchall()
                 assert hook.lh_spike_count() == before_rollback
                 emit("rollback_verified")
             conn.execute("BEGIN TRANSACTION")
-            conn.execute(f'DROP TABLE public."{TABLE}"')
+            for table in targets(path):
+                conn.execute(f'DROP TABLE public."{table}"')
             conn.execute("COMMIT")
         elif mode != "recover":
             raise ValueError("aggregate absent before removal experiment")
         if hook:
             hook.lh_spike_disarm()
-            if hook.lh_spike_count() != 1 and mode != "recover":
+            if hook.lh_spike_count() != len(targets(path)) and mode != "recover":
                 raise ValueError(f"removal scope not bound: entries={hook.lh_spike_entry_calls()}, intercepted={hook.lh_spike_count()}")
         emit("drop_committed", intercepted=hook.lh_spike_count() if hook else 0)
         if mode == "crash_commit":
@@ -180,8 +193,13 @@ def verify(path):
     with connect(path, read_only=True) as conn:
         if conn.execute(WITNESS).fetchall() != EXPECTED:
             raise ValueError("healthy facts/aliases changed after reopen")
-        if conn.execute("SELECT table_name FROM duckdb_tables() WHERE table_name=?", [TABLE]).fetchall():
+        if conn.execute("SELECT table_name FROM duckdb_tables() WHERE table_name IN (SELECT unnest(?))", [list(targets(path))]).fetchall():
             raise ValueError("dropped aggregate still exists after reopen")
+        if len(targets(path)) == 5:
+            for table in REAL_TABLES:
+                canonical = table.removeprefix("__corrupt_recovery_")
+                assert conn.execute(f'SELECT year, manager, points FROM public."{canonical}" ORDER BY year').fetchall() == [
+                    (2025, "Saved Alias", 112.5), (2026, "Saved Alias", 93.25)]
     # Exercise an ordinary independent write and a second checkpoint/reopen.
     with connect(path) as conn:
         conn.execute("CREATE OR REPLACE TABLE public.write_witness AS SELECT 7 AS value")
@@ -195,8 +213,8 @@ def verify(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget"], default="ordinary")
-    parser.add_argument("--scenario", choices=["normal", "indexed", "shared", "budget"], default="normal")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden"], default="ordinary")
+    parser.add_argument("--scenario", choices=["normal", "indexed", "shared", "budget", "real_scope"], default="normal")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
     args = parser.parse_args()
@@ -213,7 +231,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix="lh_drop_spike_") as temp:
             folder = Path(temp)
             baseline = folder / "baseline.duckdb"
-            candidate = folder / "candidate.duckdb"
+            candidate = folder / ("___leagues.duckdb" if args.scenario == "real_scope" else "candidate.duckdb")
             with connect(baseline) as conn:
                 conn.execute("CREATE SCHEMA public")
                 cols = ", ".join(f"(i//2048)+{i} AS c{i}" for i in range(2 if args.binding_only or args.scenario == "shared" else 64))
@@ -221,11 +239,19 @@ def main():
                 if args.scenario == "indexed":
                     cols += ", i AS row_id"
                 conn.execute(f'CREATE TABLE public."{TABLE}" AS SELECT {cols} FROM range({rows}) t(i)')
+                if args.scenario == "real_scope":
+                    for table in REAL_TABLES:
+                        if table != TABLE:
+                            conn.execute(f'CREATE TABLE public."{table}" AS SELECT 7 AS obsolete')
                 if args.scenario == "indexed":
                     conn.execute(f'CREATE UNIQUE INDEX target_idx ON public."{TABLE}" (row_id)')
                 conn.execute("CHECKPOINT")
                 conn.execute("CREATE TABLE public.facts (db_name VARCHAR, year INTEGER, franchise_id VARCHAR, manager VARCHAR, points DOUBLE)")
                 conn.executemany("INSERT INTO public.facts VALUES (?, ?, ?, ?, ?)", EXPECTED)
+                if args.scenario == "real_scope":
+                    for table in REAL_TABLES:
+                        canonical = table.removeprefix("__corrupt_recovery_")
+                        conn.execute(f'CREATE TABLE public."{canonical}" AS SELECT * FROM public.facts')
                 conn.execute("CHECKPOINT")
                 old_blocks = [r[0] for r in conn.execute("SELECT block_id FROM pragma_metadata_info()").fetchall()]
             if baseline.stat().st_size > LIMIT:
@@ -235,6 +261,7 @@ def main():
             library = folder / "drop_spike.so"
             if not args.fixture_only:
                 subprocess.run(["c++", "-shared", "-fPIC", "-O2", "-Wall", "-Werror",
+                                *(["-DLH_REAL_FILE"] if args.scenario == "real_scope" else []),
                                 str(Path(__file__).with_suffix(".cpp")), "-ldl", "-o", str(library)],
                                check=True, timeout=5)
                 shutil.copyfile(baseline, candidate)
@@ -305,7 +332,7 @@ def main():
                 raise ValueError("experimental removal failed; not safe for a real volume")
             if run_child(candidate, "verify").returncode:
                 raise ValueError("stock-engine recovery verification failed")
-            if args.scenario == "normal":
+            if args.scenario in {"normal", "real_scope"}:
                 for crash_mode, exit_code in [("crash_commit", 23), ("crash_flush", 24)]:
                     candidate.write_bytes(chosen)
                     for suffix in (".wal", ".checkpoint.wal"):
@@ -322,6 +349,11 @@ def main():
                     if run_child(candidate, "recover", library).returncode or run_child(candidate, "verify").returncode:
                         raise ValueError(f"{crash_mode} same-input recovery was not idempotent")
                     emit("crash_recovery_verified", boundary=crash_mode)
+            if args.scenario == "real_scope":
+                forbidden = run_child(candidate, "forbidden", library)
+                if forbidden.returncode != 99:
+                    raise ValueError("real-file mode did not refuse an unrelated armed DROP")
+                emit("real_catalog_five_targets_verified", target_count=5)
             if hashlib.sha256(baseline.read_bytes()).hexdigest() != baseline_hash:
                 raise ValueError("baseline changed")
             emit("synthetic_pilot_passed", production_repair_authorized=False)

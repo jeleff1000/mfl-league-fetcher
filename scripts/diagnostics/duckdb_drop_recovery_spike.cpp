@@ -24,6 +24,9 @@ static thread_local bool allowed_table_drop = false;
 extern "C" {
 
 void lh_spike_arm(void) { atomic_store(&armed, 1); }
+// Startup replay may legitimately contain earlier unrelated DROP records.
+// Those keep stock behavior; explicit removal switches back to strict mode.
+void lh_spike_replay(void) { atomic_store(&armed, 2); }
 int lh_spike_count(void) { return atomic_load(&intercepted); }
 void lh_spike_disarm(void) { atomic_store(&armed, 0); }
 void lh_spike_checkpoint(int enable) { atomic_store(&fresh_metadata, enable); }
@@ -71,7 +74,7 @@ void lh_table_drop(void *table) {
         }
         // Explicit removal is fail-closed. Never forward an unexpected DROP
         // while the real-file helper is armed.
-        if (!allowed_table_drop) { _exit(99); }
+        if (!allowed_table_drop && atomic_load(&armed) == 1) { _exit(99); }
 #else
         const std::string prefix = "CREATE TABLE candidate.public.__corrupt_recovery_player_fantasy_season(";
         allowed_table_drop = sql.compare(0, prefix.size(), prefix) == 0;

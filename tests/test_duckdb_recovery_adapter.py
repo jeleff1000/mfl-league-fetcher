@@ -114,3 +114,29 @@ def test_expired_stage_does_not_execute_command(tmp_path):
                          deadline=time.time()-1)
     assert result["outcome"] == "NOT_STARTED"
     assert not target.exists()
+
+
+def test_block_identity_requires_exact_known_damage_not_merely_a_checksum_error():
+    a = adapter()
+    block = {"block_id": 346, "offset": 90714112, "block_size": 262144,
+             "file_changed_during_read": False, "checksum_valid": False,
+             "block_sha256": "7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186",
+             "stored_checksum": 18392342689821271652, "computed_checksum": 5168518579405463287}
+    a.validate_block(block)
+    for field, value in [("block_id", 347), ("offset", 0), ("checksum_valid", True),
+                         ("file_changed_during_read", True), ("block_sha256", "other")]:
+        with pytest.raises(ValueError):
+            a.validate_block({**block, field: value})
+
+
+def test_capture_witness_does_not_hide_duplicate_sampled_rows():
+    a = adapter()
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'nyu_ffl' AS db_name, 2025 AS year, 'alias' AS manager, 44.0 AS points")
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT * FROM public.matchup')
+        before = a.capture_witness(conn, "nyu_ffl")
+        conn.execute("INSERT INTO public.matchup SELECT * FROM public.matchup")
+        with pytest.raises(ValueError, match="witness"):
+            a.compare_witness(before, a.capture_witness(conn, "nyu_ffl"))

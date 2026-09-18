@@ -83,6 +83,8 @@ def child(path, mode):
         hook.lh_spike_count.restype = ctypes.c_int
         hook.lh_spike_allocations.restype = ctypes.c_int
         hook.lh_spike_arm()
+        if len(targets(path)) == 5:
+            hook.lh_spike_replay()
         if mode == "budget":
             hook.lh_spike_allocation_limit(1)
         if mode == "recover":
@@ -90,6 +92,8 @@ def child(path, mode):
     conn = None
     try:
         conn = connect(path)
+        if hook:
+            hook.lh_spike_arm()
         emit("connected", mode=mode)
         conn.execute("SET checkpoint_threshold='1GB'")
         conn.execute("PRAGMA disable_checkpoint_on_shutdown")

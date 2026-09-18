@@ -103,6 +103,15 @@ def validate_objects(rows):
         raise ValueError("exact quarantined objects and all healthy replacements are required")
 
 
+def validate_block(block):
+    expected = {"block_id": 346, "offset": 90714112, "block_size": 262144,
+                "file_changed_during_read": False, "checksum_valid": False,
+                "block_sha256": "7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186",
+                "stored_checksum": 18392342689821271652, "computed_checksum": 5168518579405463287}
+    if any(block.get(key) != value for key, value in expected.items()):
+        raise ValueError("database does not match the exact known damaged block")
+
+
 def _quote(name):
     return '"' + name.replace('"', '""') + '"'
 
@@ -124,14 +133,14 @@ def capture_witness(conn, db_name):
         if "db_name" not in {row[0] for row in columns}:
             raise ValueError(f"witness {table} is missing its league identity")
         names = ", ".join(_quote(row[0]) for row in columns)
-        samples = set()
+        samples = []
         for direction in ("ASC", "DESC"):
             rows = conn.execute(f'SELECT {names} FROM public.{_quote(table)} WHERE db_name=? ORDER BY ALL {direction} NULLS LAST LIMIT 8', [db_name]).fetchall()
-            samples.update(json.dumps(row, default=str, separators=(",", ":"), ensure_ascii=True) for row in rows)
-        if not samples:
+            samples.append(rows)
+        if not samples[0]:
             raise ValueError(f"witness {table} has no rows for the selected league")
-        payload = json.dumps({"schema": columns, "values": sorted(samples)}, separators=(",", ":"))
-        result[table] = {"rows": len(samples), "sha256": hashlib.sha256(payload.encode()).hexdigest()}
+        payload = json.dumps({"schema": columns, "values": samples}, default=str, separators=(",", ":"))
+        result[table] = {"rows": len(samples[0]), "sha256": hashlib.sha256(payload.encode()).hexdigest()}
     return result
 
 

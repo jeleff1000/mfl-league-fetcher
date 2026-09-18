@@ -16,7 +16,11 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory]
+        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_logs]
+      diagnostic_machine_id:
+        description: Isolated pilot machine for read-only exit diagnostics
+        required: false
+        type: string
       target_table:
         description: One confirmed blocker
         required: true
@@ -100,6 +104,7 @@ jobs:
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
       - name: One-table pilot - 40 second hard ceiling including machine startup
+        if: inputs.action != 'engine_logs'
         env:
           RECOVERY_VOLUME_ID: ${{ inputs.recovery_volume_id }}
           PILOT_ACTION: ${{ inputs.action }}
@@ -154,8 +159,18 @@ jobs:
           echo "stage=pilot_finished utc=$(date -u +%FT%TZ)"
           PILOT
 
+      - name: Read isolated pilot exit diagnostics - hard 15 seconds
+        if: inputs.action == 'engine_logs'
+        env:
+          DIAGNOSTIC_MACHINE_ID: ${{ inputs.diagnostic_machine_id }}
+        run: |
+          set -euo pipefail
+          [[ "$DIAGNOSTIC_MACHINE_ID" =~ ^[a-f0-9]{14}$ ]]
+          test "$DIAGNOSTIC_MACHINE_ID" != 1781e011b69068
+          timeout --signal=KILL 15s flyctl logs --app "$FLY_APP" --instance "$DIAGNOSTIC_MACHINE_ID" --no-tail 2>&1 | tee table-pilot.jsonl
+
       - name: Remove only this disposable pilot machine (never its volume)
-        if: always()
+        if: always() && inputs.action != 'engine_logs'
         run: |
           timeout --signal=KILL 20s bash <<'CLEANUP'
           set -euo pipefail

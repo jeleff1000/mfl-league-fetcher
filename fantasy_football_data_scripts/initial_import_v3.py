@@ -186,8 +186,40 @@ def _parse_context_bool(raw, default=False):
     return default
 
 
-def _load_frontend_context_settings(reader, safe_db: str) -> dict:
+def _load_frontend_context_settings(reader, safe_db: str, *, strict_identity: bool = False) -> dict:
     """Read frontend-owned import settings from Fly for --league reimports."""
+    if strict_identity:
+        # Quick imports must distinguish no saved row from an unavailable or
+        # malformed read. Never use the legacy fallback that omits merges.
+        fields = {"manager_name_overrides": dict, "franchise_merges": list}
+        try:
+            rows = reader.query(
+                "SELECT manager_name_overrides_json, franchise_merges_json "
+                f"FROM public.league_context WHERE db_name = '{safe_db}' LIMIT 2",
+                database="___leagues",
+            )
+        except Exception as exc:
+            raise RuntimeError("Could not read saved quick identity settings") from exc
+        if not isinstance(rows, list) or len(rows) > 1:
+            raise ValueError("Ambiguous saved quick identity settings")
+        if not rows:
+            return {}
+        row = rows[0]
+        settings = {}
+        for field, kind in fields.items():
+            column = f"{field}_json"
+            if not isinstance(row, dict) or column not in row:
+                raise ValueError(f"Missing saved identity field: {column}")
+            raw = row[column]
+            try:
+                value = kind() if raw is None or raw == "" else json.loads(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Malformed saved identity field: {column}") from exc
+            if not isinstance(value, kind):
+                raise ValueError(f"Malformed saved identity field: {column}")
+            settings[field] = value
+        return settings
+
     full_cols = (
         "league_name, league_ids_json, manager_name_overrides_json, franchise_merges_json, "
         "keeper_rules_json, league_rules_json, standings_weights_json, is_private"
@@ -216,6 +248,24 @@ def _load_frontend_context_settings(reader, safe_db: str) -> dict:
             "is_private": _parse_context_bool(row.get("is_private"), False),
         }
     return {}
+
+
+def _hydrate_quick_identity_context(ctx, context_path: Path, *, reader=None) -> None:
+    """Load only canonical identities before fetch/transform; retain import scope/auth."""
+    from multi_league.core.db_reader import get_reader
+    from multi_league.core.fetch_runtime import _resolve_db_name
+
+    db_name = _resolve_db_name(ctx, ctx.league_name)
+    settings = _load_frontend_context_settings(
+        reader if reader is not None else get_reader(),
+        str(db_name).replace("'", "''"),
+        strict_identity=True,
+    )
+    if not settings:
+        return  # New league: onboarding preferences remain authoritative.
+    ctx.manager_name_overrides = settings["manager_name_overrides"]
+    ctx.franchise_merges = settings["franchise_merges"]
+    ctx.save(context_path)  # Subprocesses and final publication must see the same settings.
 
 
 def _build_context_from_fly(
@@ -1111,6 +1161,9 @@ def main():
             log(f"[FAIL] League context not found: {context_path}")
             sys.exit(1)
         ctx = _load_ctx(str(context_path))
+
+    if (args.quick or getattr(ctx, "import_mode", None) == "quick") and not args.dry_run:
+        _hydrate_quick_identity_context(ctx, context_path)
 
     # Apply --quick flag: single year import. Resolves year from league settings
     # if start_year/end_year aren't set (one API call, no full discovery needed).

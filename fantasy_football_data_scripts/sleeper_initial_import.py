@@ -263,6 +263,12 @@ def main():
         if args.database_name:
             ctx.database_name = args.database_name
 
+        context_path = data_dir / "sleeper_context.json"
+        if args.import_mode == "quick" and not args.dry_run:
+            from initial_import_v3 import _hydrate_quick_identity_context
+
+            _hydrate_quick_identity_context(ctx, context_path)
+
         # Discover full league history so get_league_id_for_year() works for all years
         log("[BOOTSTRAP] Discovering league history...")
         history = discover_league_history(client, args.league_id)
@@ -317,6 +323,10 @@ def main():
             log(f"[FAIL] Sleeper context not found: {context_path}")
             sys.exit(1)
         ctx = SleeperContext.load(str(context_path))
+        if args.import_mode == "quick" and not args.dry_run:
+            from initial_import_v3 import _hydrate_quick_identity_context
+
+            _hydrate_quick_identity_context(ctx, context_path)
 
     # CRITICAL: Set import_mode on context so transformations know if it's quick or full
     # This affects SQLEnrichments.expand_to_all_nfl(), which honors quick mode by limiting

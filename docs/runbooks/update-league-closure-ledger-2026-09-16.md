@@ -14,7 +14,8 @@ For each unique league, require evidence of the intended imported history
 and retained prior seasons; required source/derived tables at correct grain;
 saved franchise merges and preferred aliases applied to rows, not merely
 retained in configuration JSON; provider-correct2026week1scores/data;
-correct precomputed NFL-wide rankings; and cache/live-page publication.
+ correct game ranks over the complete league-history population and correct
+ precomputed NFL rank lookups where those are the metric; and cache/live-page publication.
 Record the expected identities/preferences source and actual values, plus
 remaining gaps. Neither workflow success nor nonempty table counts close
 these checks. Use bounded league-filtered queries and existing workers;
@@ -81,6 +82,35 @@ review55passed in20.50s/3.37s chunks; developer141passed in18.61s/17.38s
 chunks. This does not resolve the separate game-rank semantic defect.
 
 ## Live continuation - 2026-09-18 21:25 UTC
+
+### Expanded cohort evidence - September18 22:35 UTC
+
+- Census:403attempts/397runs,100resolved targets including one verify-only
+  fixture;13attempt identities unresolved. Metadata includes all conclusions
+  and older-created runs rerun inside the NewYork September14-18 window.
+  These are inventory counts, not acceptance passes.
+- Initial88target read found eight with no matchup rows and20with no2026week1.
+  Historical-only requested scopes still require separate reconciliation.
+  No blank franchise IDs in existing matchup rows. Across113saved merged-away
+  IDs, matchup/homepage_manager_rankings/draft/schedule retained zero old IDs
+  (1.547s). Absence of rows is not an identity-preservation pass.
+- Of329explicit alias pairs checked, Mawhinney's Vixens has181historic Emily
+  rows despite a generic Emily->Tayvia rule. Specific saved rules instead map
+  Minnear's Monsters/esechrest to Emily;2026 alone says Tayvia. This is a saved
+  preference conflict, not permission to rename181rows. Owner decision pending;
+  hold this league's publication while other recoveries proceed.
+- I95 live2026week1 provider parity passed:14teams, zero missing/extra team IDs,
+  zero score mismatches (2.297s). Historical2019 archive needs the stored ESPN
+  cookie pair: authenticated200/12teams versus unauthenticated404. The ID1288033
+  is unchanged. Historical score parity remains a separate pending check.
+- Quick imports now hydrate exact current aliases/merges before provider work
+  on all three platforms. Saved empty preferences override stale payloads;
+  malformed/unavailable/ambiguous reads reject before fetch. IDs, credentials,
+  year scopes and generations are untouched. Main32tests passed25.11s;
+  independent reviewer36passed21.30s. No broad data downloads or copies.
+- The existing derived-only recovery endpoint currently drains/closes the
+  entire read pool. Do not use it for cohort repairs until it reuses normal
+  online writer admission and has an actual bounded rollback deadline.
 
 - Post-repair live data, not historical green status, is the recovery authority.
   DFB's OPS status says succeeded35190161742, but current league generation4

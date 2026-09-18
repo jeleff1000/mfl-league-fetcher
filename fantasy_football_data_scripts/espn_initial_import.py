@@ -188,6 +188,10 @@ def main():
 
     # Load context
     ctx = ESPNContext.load(str(context_path))
+    if args.import_mode == "quick" and not args.dry_run:
+        from initial_import_v3 import _hydrate_quick_identity_context
+
+        _hydrate_quick_identity_context(ctx, context_path)
     ctx.import_mode = args.import_mode
 
     # --skip-fetchers skips Phase 1 (data fetchers) but NOT Phase 0 (discovery/settings)

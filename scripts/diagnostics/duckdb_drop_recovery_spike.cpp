@@ -47,8 +47,9 @@ void lh_table_drop(void *table) {
         if (write(2, message.data(), message.size()) < 0) {
             _exit(96);
         }
-        // Exact schema and reserved aggregate identity. No private layout access.
-        const std::string prefix = "CREATE TABLE public.__corrupt_recovery_player_fantasy_season(";
+        // Exact catalog, schema and reserved identity, observed on stock 1.5.4.
+        // Never broaden this to a first-DROP or substring match.
+        const std::string prefix = "CREATE TABLE candidate.public.__corrupt_recovery_player_fantasy_season(";
         allowed_table_drop = sql.compare(0, prefix.size(), prefix) == 0;
     }
     try {

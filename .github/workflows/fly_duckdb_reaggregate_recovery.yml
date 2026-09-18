@@ -151,7 +151,7 @@ jobs:
           machine_id="$(flyctl machines list --app "$FLY_APP" --json | jq -r --arg name "$PILOT_MACHINE_NAME" '.[] | select(.name == $name) | .id')"
           test -n "$machine_id"
           test "$machine_id" != 1781e011b69068
-          flyctl machine status "$machine_id" --app "$FLY_APP" --json > pilot-machine.json
+          flyctl machines list --app "$FLY_APP" --json | jq --arg id "$machine_id" '.[] | select(.id == $id)' > pilot-machine.json
           flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > attached-volume.json
           remaining="$(( PILOT_DEADLINE - $(date +%s) ))"
           test "$remaining" -gt 0

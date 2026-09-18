@@ -71,8 +71,12 @@ def child(path, mode):
         sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     import duckdb
     path = assert_fixture(path)
-    if mode == "verify":
+    if mode in {"verify", "verify_wal"}:
         verify(path)
+        if mode == "verify_wal":
+            with connect(path, read_only=True) as conn:
+                assert conn.execute("SELECT value FROM public.wal_fact").fetchall() == [("committed before recovery",)]
+            emit("prior_committed_wal_preserved")
         return 0
     hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover", "budget", "forbidden"} else None
     if hook:
@@ -92,6 +96,12 @@ def child(path, mode):
         if conn.execute(WITNESS).fetchall() != EXPECTED:
             raise ValueError("healthy witness changed before DROP")
         emit("healthy_witness_verified", mode=mode)
+        if mode == "seed_wal":
+            conn.execute("CREATE TABLE public.wal_fact AS SELECT 'committed before recovery' AS value")
+            conn.execute("CREATE TABLE public.ordinary_wal_drop AS SELECT 8 AS n")
+            conn.execute("DROP TABLE public.ordinary_wal_drop")
+            emit("prior_wal_seeded")
+            os._exit(25)
         if mode == "forbidden":
             conn.execute("CREATE TABLE public.must_keep AS SELECT 11 AS n")
             conn.execute("DROP TABLE public.must_keep")
@@ -152,7 +162,7 @@ def child(path, mode):
             # the new catalog, before a stock engine is asked to reuse space.
             conn.execute("CHECKPOINT")
             hook.lh_spike_checkpoint(0)
-            if hook.lh_spike_allocations() < 1:
+            if hook.lh_spike_allocations() < 1 and mode != "recover":
                 raise ValueError("fresh metadata allocation hook was not exercised")
             emit("fresh_metadata_checkpoints", allocations=hook.lh_spike_allocations())
         conn.close()
@@ -213,7 +223,7 @@ def verify(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden"], default="ordinary")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden", "seed_wal", "verify_wal"], default="ordinary")
     parser.add_argument("--scenario", choices=["normal", "indexed", "shared", "budget", "real_scope"], default="normal")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
@@ -265,10 +275,14 @@ def main():
                                 str(Path(__file__).with_suffix(".cpp")), "-ldl", "-o", str(library)],
                                check=True, timeout=5)
                 shutil.copyfile(baseline, candidate)
+                if args.scenario == "real_scope":
+                    seeded = run_child(candidate, "seed_wal")
+                    if seeded.returncode != 25:
+                        raise ValueError("prior committed WAL fixture was not created")
                 binding = run_child(candidate, "hook", library)
                 if binding.returncode:
                     raise ValueError("engine does not support this interposition; do not use on a volume")
-                if run_child(candidate, "verify").returncode:
+                if run_child(candidate, "verify_wal" if args.scenario == "real_scope" else "verify").returncode:
                     raise ValueError("stock-engine binding verification failed")
                 emit("binding_proved", production_repair_authorized=False)
                 if args.binding_only:

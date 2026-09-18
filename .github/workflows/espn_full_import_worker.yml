@@ -265,8 +265,15 @@ jobs:
 
           echo "No ESPN cookies in payload — retrieving from Fly..."
           python - <<'PYEOF'
+          import json
           import os
           import sys
+
+          with open('league_data_input.json', encoding='utf-8') as fh:
+              league_data = json.load(fh)
+          if league_data.get('is_private') is False:
+              print("Public ESPN league — stored cookies are not required")
+              sys.exit(0)
 
           db_name = "${{ steps.parse.outputs.database_name }}"
           if not os.environ.get('CREDENTIAL_ENCRYPTION_KEY', ''):

@@ -1,4 +1,4 @@
-"""Guarded primitives for offline five-object recovery; no production CLI.
+"""Guarded offline five-object recovery; isolated-volume CLI only.
 
 All mutation orchestration must first bind these checks to the isolated volume,
 exact engine artifact, retained WAL and an externally enforced deadline.
@@ -6,6 +6,9 @@ exact engine artifact, retained WAL and an externally enforced deadline.
 from __future__ import annotations
 
 import hashlib
+import argparse
+import base64
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -13,6 +16,7 @@ import re
 import signal
 import stat
 import subprocess
+import sys
 import threading
 import time
 
@@ -20,10 +24,10 @@ CANONICAL = ("homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_
              "player_fantasy_season_all", "standings_by_year")
 QUARANTINED = tuple("__corrupt_recovery_" + name for name in CANONICAL)
 RECOVERY_VOLUME = "vol_4919j2m0wzg0xw5r"
-STAGE_LIMITS = {"inspect": 5, "preserve": 10, "remove": 5, "verify": 15}
+STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 15}
 
 
-def run_stage(stage, command, *, deadline, env=None):
+def run_stage(stage, command, *, deadline, env=None, transitions=()):
     """Parent-enforced stage cap; timeout never implies transaction rollback."""
     started = time.monotonic()
     remaining = min(STAGE_LIMITS[stage], deadline - time.time())
@@ -34,6 +38,30 @@ def run_stage(stage, command, *, deadline, env=None):
                              start_new_session=os.name == "posix")
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     limited = threading.Event()
+    protocol_error = threading.Event()
+    phase_lock = threading.Lock()
+    phase = {"name": stage, "since": started, "index": 0, "mutating": stage in {'remove', 'verify'}}
+    spent = {name: 0.0 for name in STAGE_LIMITS}
+
+    def phase_event(line):
+        try:
+            event = json.loads(line)
+        except (ValueError, UnicodeError):
+            return
+        if not isinstance(event, dict) or event.get('event') != 'phase':
+            return
+        with phase_lock:
+            index, next_phase = phase['index'], event.get('stage')
+            if index >= len(transitions) or next_phase != transitions[index] or next_phase not in STAGE_LIMITS:
+                protocol_error.set()
+                stop_child()
+                return
+            now = time.monotonic()
+            spent[phase['name']] += now - phase['since']
+            phase.update(name=next_phase, since=now, index=index+1,
+                         mutating=phase['mutating'] or next_phase in {'replay', 'remove', 'verify'})
+            print(json.dumps({'event': 'child_phase', 'stage': next_phase,
+                              'elapsed_s': round(now-started, 3)}), flush=True)
 
     def stop_child():
         try:
@@ -45,6 +73,7 @@ def run_stage(stage, command, *, deadline, env=None):
             pass
 
     def drain(name, pipe):
+        pending = b''
         with pipe:
             while chunk := pipe.read1(4096):
                 free = 65536 - len(captured[name])
@@ -53,13 +82,28 @@ def run_stage(stage, command, *, deadline, env=None):
                     limited.set()
                     stop_child()
                     return
+                if name == 'stdout' and transitions:
+                    pending += chunk
+                    while b'\n' in pending:
+                        line, pending = pending.split(b'\n', 1)
+                        phase_event(line)
 
     readers = [threading.Thread(target=drain, args=(name, getattr(child, name)), daemon=True)
                for name in captured]
     for reader in readers:
         reader.start()
     try:
-        code = child.wait(timeout=max(0.001, remaining - (time.monotonic() - started)))
+        while child.poll() is None:
+            with phase_lock:
+                budget = STAGE_LIMITS[phase['name']] - spent[phase['name']] - (time.monotonic() - phase['since'])
+            budget = min(budget, deadline-time.time())
+            if budget <= 0:
+                raise subprocess.TimeoutExpired(command, remaining)
+            try:
+                child.wait(timeout=min(0.02, budget))
+            except subprocess.TimeoutExpired:
+                continue
+        code = child.returncode
     except subprocess.TimeoutExpired:
         stop_child()
         child.wait(timeout=1)
@@ -69,11 +113,17 @@ def run_stage(stage, command, *, deadline, env=None):
             reader.join(timeout=1)
     if limited.is_set():
         code = 125
+    if protocol_error.is_set():
+        code = 126
+    if code == 0 and transitions and phase['index'] != len(transitions):
+        code = 126
+        protocol_error.set()
     stdout, stderr = (captured[name].decode("utf-8", errors="replace") for name in ("stdout", "stderr"))
-    outcome = "PASS" if code == 0 else ("UNKNOWN" if stage in {"remove", "verify"} else "FAILED")
+    outcome = "PASS" if code == 0 else ("UNKNOWN" if phase['mutating'] else "FAILED")
     result = {"stage": stage, "outcome": outcome, "exit_code": code,
               "elapsed_s": round(time.monotonic() - started, 3),
-              "stdout": stdout, "stderr": stderr, "output_limited": limited.is_set()}
+              "stdout": stdout, "stderr": stderr, "output_limited": limited.is_set(),
+              "last_phase": phase['name'], "protocol_error": protocol_error.is_set()}
     print(json.dumps({"event": "end", **result}), flush=True)
     return result
 
@@ -299,3 +349,180 @@ def verify_stock(path, db_name, before):
         conn.execute('DROP TABLE public.__lh_recovery_write_probe')
         conn.execute('CHECKPOINT')
         compare_witness(before, capture_witness(conn, db_name))
+
+
+def write_receipt(path, payload):
+    """Create-only durable small evidence. Never replace an earlier attempt."""
+    data = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
+    if len(data) > 65536:
+        raise ValueError('receipt exceeds 64 KiB ceiling')
+    with Path(path).open('xb') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if os.name == 'posix':
+        fd = os.open(Path(path).parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def preflight_identity(encoded, runtime_machine_id):
+    if len(encoded) > 16384:
+        raise ValueError('inventory exceeds bounded identity receipt')
+    data = json.loads(base64.b64decode(encoded, validate=True))
+    path = Path('/data/___leagues.duckdb')
+    validate_inventory(data['machine'], data['volume'], runtime_machine_id, path)
+    return validate_file_binding(path, path.parent)
+
+
+def phase(name):
+    print(json.dumps({'event': 'phase', 'stage': name}), flush=True)
+
+
+def recovery_child(args):
+    """Never called in the web server; parent enforces every stage deadline."""
+    if sys.platform != 'linux':
+        raise ValueError('isolated recovery requires the verified Linux runtime')
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+    from fly_table_storage_pilot import engine_identity, inventory_connect_config, file_inventory
+    from fly_duckdb_block_probe import probe
+    import duckdb
+
+    path = Path('/data/___leagues.duckdb')
+    binding = preflight_identity(args.inventory_base64, os.environ.get('FLY_MACHINE_ID', ''))
+    validate_engine(engine_identity())
+    block = probe(path, 90714112)
+    validate_block(block)
+    if (binding['size'] != 15555375104 or binding['mtime_ns'] != 1789662410048242836
+            or block['main_header_sha256'] != '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'):
+        raise ValueError('isolated source changed: reconcile, do not start another removal')
+    library = Path('/tmp/lh_five_drop.so')
+    if (os.environ.get('LD_PRELOAD') != str(library) or library.is_symlink()
+            or library.stat().st_size > 1024 * 1024
+            or hashlib.sha256(library.read_bytes()).hexdigest() != args.helper_sha256):
+        raise ValueError('loaded helper does not match the bounded reviewed artifact')
+    hook = ctypes.CDLL(None)
+    hook.lh_spike_count.restype = ctypes.c_int
+    hook.lh_spike_allocations.restype = ctypes.c_int
+    hook.lh_spike_disarm()
+    files = file_inventory(path)
+    if ('.checkpoint.wal' in files or files.get('.wal', {}).get('size') != 45516621
+            or files['.wal']['mtime_ns'] != 1789662378556231033):
+        raise ValueError('retained WAL identity changed; reconcile before replay')
+
+    phase('preserve')
+    folder = Path('/data') / ('recovery_five_' + args.receipt_id)
+    folder.mkdir()  # Create-only; an interrupted attempt is never overwritten.
+    wal = preserve_wal(Path(str(path) + '.wal'), folder / 'original.wal')
+    write_receipt(folder / 'input.json', {'binding': binding, 'files': files, 'wal': wal,
+                                        'inventory_base64': args.inventory_base64,
+                                        'helper_sha256': args.helper_sha256, 'db_name': args.db_name})
+    if preflight_identity(args.inventory_base64, os.environ.get('FLY_MACHINE_ID', '')) != binding:
+        raise ValueError('database identity changed while preserving WAL')
+    print(json.dumps({'event': 'wal_preserved', **wal}), flush=True)
+
+    phase('replay')
+    hook.lh_spike_replay()
+    hook.lh_spike_checkpoint(1)
+    replay_started = time.monotonic()
+    # Read-write replay can flush committed row groups normally; read-only
+    # replay could not fit them in memory. WAL remains present for the engine.
+    conn = duckdb.connect(str(path), config={**inventory_connect_config(), 'checkpoint_threshold': '1GB'})
+    conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+    print(json.dumps({'event': 'wal_replayed', 'elapsed_s': round(time.monotonic()-replay_started, 3),
+                      'wal_source_bytes': wal['bytes'], 'metadata_blocks': hook.lh_spike_allocations()}), flush=True)
+    phase('preserve')
+    validate_objects(object_inventory(conn))
+    before = capture_witness(conn, args.db_name)
+    write_receipt(folder / 'before.json', before)
+
+    phase('remove')
+    hook.lh_spike_arm()
+    prior = hook.lh_spike_count()
+    removed = remove_quarantined(conn)
+    hook.lh_spike_disarm()
+    if removed != 5 or hook.lh_spike_count() - prior != 5:
+        raise ValueError('unexpected native removal count; outcome UNKNOWN')
+    print(json.dumps({'event': 'commit_returned', 'removed': removed}), flush=True)
+
+    phase('verify')
+    conn.execute('CHECKPOINT')
+    conn.execute('CHECKPOINT')
+    conn.close()
+    hook.lh_spike_checkpoint(0)
+    print(json.dumps({'event': 'checkpoint_returned', 'metadata_blocks': hook.lh_spike_allocations(),
+                      'metadata_bytes_ceiling': 32*1024*1024}), flush=True)
+    env = dict(os.environ)
+    env.pop('LD_PRELOAD', None)
+    # This process is a member of the parent's killed process group. Its open,
+    # checks, write, checkpoint and reopen share the SAME 15s verify budget.
+    subprocess.run([sys.executable, '-u', __file__, '--stock-child', str(folder),
+                    '--db-name', args.db_name, '--deadline', str(args.deadline)], env=env, check=True,
+                   timeout=max(.001, min(15, args.deadline-time.time())))
+    write_receipt(folder / 'completed.json', {'removed': removed, 'stock_verified': True,
+                                             'metadata_blocks': hook.lh_spike_allocations()})
+    print(json.dumps({'event': 'isolated_recovery_verified', 'receipt': folder.name}), flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--inventory-base64')
+    parser.add_argument('--receipt-id')
+    parser.add_argument('--helper-sha256')
+    parser.add_argument('--db-name', required=True)
+    parser.add_argument('--deadline', type=float)
+    parser.add_argument('--recovery-child', action='store_true')
+    parser.add_argument('--stock-child')
+    args = parser.parse_args()
+    if not re.fullmatch(r'[a-z0-9_]+', args.db_name):
+        raise ValueError('invalid witness league')
+    if args.stock_child:
+        if not args.deadline or not 0 < args.deadline-time.time() <= 40:
+            raise ValueError('stock verification requires the original bounded deadline')
+        folder = Path(args.stock_child)
+        if (folder.parent != Path('/data') or folder.is_symlink()
+                or not re.fullmatch(r'recovery_five_[0-9]+_[0-9]+', folder.name)):
+            raise ValueError('stock witness must be the isolated receipt folder')
+        if os.environ.get('FLY_MACHINE_ID') == '1781e011b69068':
+            raise ValueError('production stock pilot forbidden')
+        manifest = json.loads((folder / 'input.json').read_text())
+        binding = preflight_identity(manifest['inventory_base64'], os.environ.get('FLY_MACHINE_ID', ''))
+        if any(binding[k] != manifest['binding'][k] for k in ('device', 'inode')):
+            raise ValueError('stock verification database inode changed')
+        if manifest['db_name'] != args.db_name:
+            raise ValueError('stock witness league identity mismatch')
+        verify_stock('/data/___leagues.duckdb', args.db_name, json.loads((folder / 'before.json').read_text()))
+        from fly_duckdb_block_probe import probe
+        import duckdb
+        with duckdb.connect('/data/___leagues.duckdb', read_only=True) as conn:
+            registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=346').fetchall())
+        if registered and not probe('/data/___leagues.duckdb', 90714112)['checksum_valid']:
+            raise ValueError('damaged metadata remains eligible for stock reuse')
+        print(json.dumps({'event': 'stock_reopen_write_verified', 'old_block_registered': registered}), flush=True)
+        return 0
+    if (not args.deadline or not 0 < args.deadline-time.time() <= 40
+            or not re.fullmatch(r'[0-9]+_[0-9]+', args.receipt_id or '')
+            or not re.fullmatch(r'[0-9a-f]{64}', args.helper_sha256 or '')):
+        raise ValueError('exact receipt, helper fingerprint and bounded deadline required')
+    if args.recovery_child:
+        recovery_child(args)
+        return 0
+    env = dict(os.environ)
+    env['LD_PRELOAD'] = '/tmp/lh_five_drop.so'
+    result = run_stage('inspect', [sys.executable, '-u', __file__, *sys.argv[1:], '--recovery-child'],
+                       deadline=args.deadline, env=env,
+                       transitions=('preserve', 'replay', 'preserve', 'remove', 'verify'))
+    return result['exit_code'] if result['exit_code'] >= 0 else 128-result['exit_code']
+
+
+if __name__ == '__main__':
+    try:
+        exit_code = main()
+    except BaseException as exc:
+        print(json.dumps({'event': 'adapter_failed', 'error': type(exc).__name__ + ': ' + str(exc)[:1000],
+                          'outcome': 'UNKNOWN' if '--recovery-child' in sys.argv else 'FAILED'}), flush=True)
+        exit_code = 2
+    # Never checkpoint implicitly during exception-path destructor cleanup.
+    os._exit(exit_code)

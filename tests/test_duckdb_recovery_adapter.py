@@ -267,3 +267,64 @@ def test_stock_verification_requires_no_quarantine_and_preserves_real_values(tmp
         conn.execute(f'CREATE TABLE public."{a.QUARANTINED[0]}" AS SELECT 3 AS value')
     with pytest.raises(ValueError, match='quarantined'):
         a.verify_stock(path, 'nyu_ffl', before)
+
+
+def test_parent_enforces_phase_deadlines_and_rejects_unexpected_transitions():
+    a = adapter()
+    code = "import json,time; print(json.dumps({'event':'phase','stage':'remove'}),flush=True); print('COMMIT started',flush=True); time.sleep(5)"
+    result = a.run_stage('preserve', [sys.executable, '-u', '-c', code],
+                         deadline=time.time()+0.5, transitions=('remove', 'verify'))
+    assert result['outcome'] == 'UNKNOWN'
+    assert result['last_phase'] == 'remove'
+    assert 'COMMIT started' in result['stdout']
+    bad = "import json,time; print(json.dumps({'event':'phase','stage':'verify'}),flush=True); time.sleep(5)"
+    result = a.run_stage('preserve', [sys.executable, '-u', '-c', bad],
+                         deadline=time.time()+2, transitions=('remove', 'verify'))
+    assert result['exit_code'] == 126
+    assert result['protocol_error']
+
+
+def test_repeated_phase_cannot_reset_its_budget():
+    a = adapter()
+    a.STAGE_LIMITS['preserve'] = 0.35
+    code = "import json,time; time.sleep(.2); print(json.dumps({'event':'phase','stage':'inspect'}),flush=True); print(json.dumps({'event':'phase','stage':'preserve'}),flush=True); time.sleep(.25)"
+    result = a.run_stage('preserve', [sys.executable, '-u', '-c', code],
+                         deadline=time.time()+3, transitions=('inspect', 'preserve'))
+    assert result['exit_code'] == 124
+
+
+def test_adapter_cli_refuses_wrong_machine_before_opening_any_file():
+    import base64
+    import json
+    a = adapter()
+    machine, volume = inventory()
+    encoded = base64.b64encode(json.dumps({'machine': machine, 'volume': volume}).encode()).decode()
+    with pytest.raises(ValueError, match='running isolated'):
+        a.preflight_identity(encoded, '1781e011b69068')
+
+
+def test_durable_receipt_is_create_only_and_preserves_before_values(tmp_path):
+    a = adapter()
+    path = tmp_path / 'before.json'
+    a.write_receipt(path, {'values_sha': 'original'})
+    with pytest.raises(FileExistsError):
+        a.write_receipt(path, {'values_sha': 'replacement'})
+    import json
+    assert json.loads(path.read_text()) == {'values_sha': 'original'}
+
+
+def test_early_success_without_required_phases_is_not_a_passing_repair():
+    a = adapter()
+    result = a.run_stage('inspect', [sys.executable, '-c', 'pass'],
+                         deadline=time.time()+2, transitions=('preserve', 'remove', 'verify'))
+    assert result['exit_code'] == 126
+    assert result['outcome'] != 'PASS'
+
+
+def test_writable_replay_timeout_is_unknown_not_failed():
+    a = adapter()
+    code = "import json,time; print(json.dumps({'event':'phase','stage':'replay'}),flush=True); time.sleep(5)"
+    result = a.run_stage('preserve', [sys.executable, '-u', '-c', code],
+                         deadline=time.time()+.5, transitions=('replay',))
+    assert result['exit_code'] == 124
+    assert result['outcome'] == 'UNKNOWN'

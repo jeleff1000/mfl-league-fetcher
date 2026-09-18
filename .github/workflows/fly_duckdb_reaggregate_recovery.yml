@@ -16,7 +16,7 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_logs, service_health]
+        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_logs, service_health]
       diagnostic_machine_id:
         description: Isolated pilot machine for read-only exit diagnostics
         required: false
@@ -124,8 +124,8 @@ jobs:
           [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]
           test "$RECOVERY_VOLUME_ID" != vol_rkg7mmd17llez224
           [[ "$WITNESS_DB_NAME" =~ ^[a-z0-9_]+$ ]]
-          case "$PILOT_ACTION" in inspect|locate|remove|donor_headers|retained_headers|engine_inventory|engine_identity) ;; *) exit 2 ;; esac
-          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_identity ]; then
+          case "$PILOT_ACTION" in inspect|locate|remove|donor_headers|retained_headers|engine_inventory|engine_identity|engine_recover) ;; *) exit 2 ;; esac
+          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_identity ] || [ "$PILOT_ACTION" = engine_recover ]; then
             test "$RECOVERY_VOLUME_ID" = vol_4919j2m0wzg0xw5r
           fi
           case "$TARGET_TABLE" in player_fantasy_season|player_fantasy_season_all|homepage_manager_rankings|matchup_h2h_career|standings_by_year) ;; *) exit 2 ;; esac
@@ -147,13 +147,24 @@ jobs:
           image="$(jq -r '.[] | select(.id == "1781e011b69068" and .state == "started") | .config.image' machines.json)"
           test -n "$image"
           vm_memory=512
-          if [ "$PILOT_ACTION" = engine_inventory ]; then vm_memory=1024; fi
+          files=()
+          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then vm_memory=1024; fi
+          if [ "$PILOT_ACTION" = engine_recover ]; then
+            echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"
+            timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE \
+              scripts/diagnostics/duckdb_drop_recovery_spike.cpp -ldl -o /tmp/lh_five_drop.so
+            test "$(stat -c %s /tmp/lh_five_drop.so)" -lt 1048576
+            helper_sha="$(sha256sum /tmp/lh_five_drop.so | cut -d ' ' -f 1)"
+            files+=(--file-local /tmp/lh_five_drop.so=/tmp/lh_five_drop.so)
+            files+=(--file-local /tmp/duckdb_recovery_adapter.py=scripts/diagnostics/duckdb_recovery_adapter.py)
+          fi
           echo "stage=isolated_machine_start utc=$(date -u +%FT%TZ)"
           flyctl machine run "$image" --app "$FLY_APP" --region "$region" \
             --name "$PILOT_MACHINE_NAME" --volume "$RECOVERY_VOLUME_ID:/data" \
             --entrypoint /bin/sh --restart no --detach --vm-cpus 1 --vm-memory "$vm_memory" \
             --file-local "/tmp/fly_table_storage_pilot.py=scripts/fly_table_storage_pilot.py" \
             --file-local "/tmp/fly_duckdb_block_probe.py=scripts/fly_duckdb_block_probe.py" \
+            "${files[@]}" \
             -- -lc 'sleep 45'
           machine_id="$(flyctl machines list --app "$FLY_APP" --json | jq -r --arg name "$PILOT_MACHINE_NAME" '.[] | select(.name == $name) | .id')"
           test -n "$machine_id"
@@ -169,6 +180,15 @@ jobs:
           esac
           if [ "$remaining" -gt "$stage_limit" ]; then remaining="$stage_limit"; fi
           echo "stage=sql_pilot_start remaining_seconds=$remaining"
+          if [ "$PILOT_ACTION" = engine_recover ]; then
+            inventory="$(jq -cn --argjson machine "$(jq '{id,name,state,config:{mounts:.config.mounts}}' pilot-machine.json)" \
+              --argjson volume "$(jq '{id,name,attached_machine_id}' attached-volume.json)" \
+              '{machine:$machine,volume:$volume}' | base64 -w0)"
+            flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
+              -C "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/duckdb_recovery_adapter.py --inventory-base64 $inventory --receipt-id ${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT} --helper-sha256 $helper_sha --db-name $WITNESS_DB_NAME --deadline $PILOT_DEADLINE'"
+            echo "stage=isolated_recovery_finished utc=$(date -u +%FT%TZ)"
+            exit 0
+          fi
           flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
             -C "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); if [ \"\$remaining\" -gt $stage_limit ]; then remaining=$stage_limit; fi; test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/fly_table_storage_pilot.py --action $PILOT_ACTION --target-table $TARGET_TABLE --db-name $WITNESS_DB_NAME --machine-id $machine_id --volume-id $RECOVERY_VOLUME_ID --deadline $PILOT_DEADLINE'"
           echo "stage=pilot_finished utc=$(date -u +%FT%TZ)"

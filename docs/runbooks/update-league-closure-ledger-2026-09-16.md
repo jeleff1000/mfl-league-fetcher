@@ -74,6 +74,40 @@ COMMITTED. Thus this is NOT an already-successful import whose cache merely
 needs expiring, and it must not be marked recovered. No retry was launched
 against the nearly-full WAL.
 
+The continuation inventory now covers 92 additional executions after the old
+September 16 16:58:35 UTC cutoff, through this September 18 inspection, across
+34 leagues. See `update-league-cohort-continuation-2026-09-18.csv`. Ninety-one
+identities came from workflow logs; NYU run `35130659510` is identified by the
+earlier UI/publication receipt in this ledger (its log API failed). GitHub-only
+inventory processing took 16.828s plus a 2.844s UTF-8 decoding retry. No Fly load.
+
+Twelve league identities were outside the old inventory. `go_pats_2021` was
+already separately checked with missing facts. Eleven new individual read-only
+key checks each took 0.609-0.672s, with the process completing in under eight
+seconds. `monsters_of_the_midway` has all 11,870 expected player-season keys;
+that key check alone is not numerical/ranking validation. Ten others have
+readable player-week facts but zero canonical player-season keys:
+
+| League | Missing player-season keys | Persisted source years |
+| --- | ---: | --- |
+| `a_good_day_to_dynasty` | 8,461 | 2021-2025 |
+| `a_league_has_no_name` | 5,787 | 2018-2026 |
+| `aaron_rodgers_hates_his_family` | 3,870 | 2020-2025 |
+| `bitter_a_old_guys` | 6,532 | 2016-2025 |
+| `chuck_noris_is_god` | 9,971 | 2011-2025 |
+| `dynasty_849e` | 1,229 | 2024-2025 |
+| `g_club` | 13,905 | 2018-2026 |
+| `legacy` | 167 | 2026 |
+| `the_acl` | 3,470 | 2022-2026 |
+| `the_rubes` | 13,577 | 2006-2026 |
+
+These are pending the same already-proven scoped reaggregation, not full-import
+or full-database rebuild candidates. No write was started past the WAL headroom
+stop. The recovered 30 must not be presented as every affected league.
+An explicit decision was requested before any older-snapshot probe: Fly would
+require a full-size isolated restored volume even though only one block would
+be examined. No restore has been authorized or performed in this continuation.
+
 ## Scoped aggregate recovery works - 2026-09-18
 
 This evidence supersedes the earlier assumption that physical-block removal must

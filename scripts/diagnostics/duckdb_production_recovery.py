@@ -231,10 +231,10 @@ class Fly:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             current = self.call()
-            if current['state'] == state:
+            if current['state'] in ((state,) if isinstance(state, str) else state):
                 return current
             time.sleep(1)
-        raise TimeoutError('machine did not reach ' + state)
+        raise TimeoutError('machine did not reach ' + str(state))
 
 
 def handoff(args):
@@ -283,6 +283,7 @@ def run_handoff(fly, original, config, args, helper_sha):
         event('writer_stopped', instance_id=stopped['instance_id'])
         fly.call('', {'config': config, 'current_version': stopped['instance_id'],
                       'skip_launch': True, 'skip_service_registration': True}, 'POST')
+        fly.wait(('created', 'stopped'))
         fly.call('/start', {}, 'POST')
         fly.wait('started')
         event('maintenance_started', repair_limit_s=150)

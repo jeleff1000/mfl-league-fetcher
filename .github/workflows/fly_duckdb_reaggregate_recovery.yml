@@ -152,7 +152,9 @@ jobs:
           files=()
           if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then
             vm_memory=4096
-            vm_cpus=2
+            # Fly volume bandwidth: shared 1/2 CPU=16 MiB/s, 4 CPU=32 MiB/s.
+            # Temporary pilot only; cleanup destroys this VM, retaining the volume.
+            vm_cpus=4
           fi
           if [ "$PILOT_ACTION" = engine_recover ]; then
             echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"

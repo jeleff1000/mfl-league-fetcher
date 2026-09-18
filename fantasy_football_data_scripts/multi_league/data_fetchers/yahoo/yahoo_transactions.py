@@ -699,6 +699,7 @@ def fetch_team_mappings(
         teams_url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{lk}/teams"
         try:
             root = fetch_url(teams_url, oauth)
+            identity_rows = []
 
             for team_elem in root.findall(".//team"):
                 # Extract team_key
@@ -714,7 +715,14 @@ def fetch_team_mappings(
                 # Get manager guid (persistent identifier across years)
                 guid_elem = team_elem.find(".//manager/guid")
                 manager_guid = guid_elem.text if guid_elem is not None else None
-                team_id_to_guid[team_key] = manager_guid
+                identity_rows.append(
+                    {
+                        "team_key": team_key,
+                        "manager_guid": manager_guid,
+                        "manager_nickname_raw": raw_nickname,
+                        "manager_image_url": team_elem.findtext(".//manager/image_url"),
+                    }
+                )
 
                 # Get team name for franchise tracking and --hidden-- fallback
                 team_name_elem = team_elem.find("name")
@@ -727,6 +735,17 @@ def fetch_team_mappings(
                 )
 
                 team_id_to_manager[team_key] = manager_name
+
+            if identity_rows:
+                from multi_league.data_fetchers.yahoo.yahoo_identity import resolve_yahoo_manager_guids
+
+                # Match the matchup fetcher's identity inputs for hidden GUIDs.
+                # Keeping the base GUID lets the existing SQL identity pass
+                # recognize and split both trade parties consistently, even
+                # when schedule still carries the pre-split franchise ID.
+                identities = pd.DataFrame(identity_rows)
+                resolved = resolve_yahoo_manager_guids(identities)
+                team_id_to_guid.update(zip(identities["team_key"], resolved))
 
         except Exception as e:
             if lk == league_key:

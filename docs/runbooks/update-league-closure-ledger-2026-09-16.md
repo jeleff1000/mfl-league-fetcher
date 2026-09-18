@@ -4,6 +4,26 @@ State: production storage repair PASSED in35390732009; both checkpoints and a fr
 
 ## Live continuation - 2026-09-18 21:25 UTC
 
+- Post-repair live data, not historical green status, is the recovery authority.
+  DFB's OPS status says succeeded35190161742, but current league generation4
+  still names34909713792 and matchup contains2025only. Original2KBartifact
+  confirms35190161742committedfrombase4 (soexpectedgeneration5). Reconcile
+  against present durable storage; do not simply rewarm caches for absentdata.
+  The same livecheck found no2026matchups for bitter_a_old_guys,
+  chuck_noris_is_god,clemson_fantasy_league,fanball_3e8d,
+  group_chat_foosball,playing_for_keeps_league,a_good_day_to_dynasty.
+  cmon_man has saved10aliases but no matchup rows; newimports
+  choccy_championship,rva_d_league_770f,NFL14 remain absent. Agusta currently
+  has only2026; its prior missing-history problem remains unresolved.
+- ESPNarchive fix37c5dc7b0 is on publicmain:60tests passed18.51s;
+  actual2019provider replay passed. No2019production publication yet.
+- NFL14 transaction identity regression independently rerun:9passed5.15s.
+  Existing shared resolver fixes hidden-GUID/profile split mismatch between
+  transactions andmatchups; strict mirror validator retained. Reviewpending.
+- Cache committed_at follow-up: reconciliation timestamp is auditmetadata,
+  not the data-delta watermark. Captured manifests/materializedweeks drive
+  fetchscope; atomicmerge ledger keeps actualcommit ordering. No windowloss
+  from the13.359s cache-only recovery; no data republished.
 - User explicitly excluded `the_league` from recovery. Do not dispatch it.
 - ESPN archive routing fix reuses the provider/library-selected history route
   for rawviews and existing historical matchup/roster/transaction fetchers.

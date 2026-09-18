@@ -62,3 +62,23 @@ def test_pilot_refuses_a_nonisolated_path(tmp_path):
     from scripts.fly_table_storage_pilot import validate_target
     with pytest.raises(ValueError, match="database path"):
         validate_target("remove", "player_fantasy_season", "nyu_ffl", "isolated", "vol_test", tmp_path / "anything.duckdb")
+
+
+def test_inspect_reports_candidate_block_without_opening_database(monkeypatch, capsys):
+    from types import SimpleNamespace
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    import fly_duckdb_block_probe
+
+    monkeypatch.setattr(fly_duckdb_block_probe, "probe", lambda path, offset: {
+        "file_changed_during_read": False, "checksum_valid": True,
+        "block_sha256": "different-candidate", "bytes_read": 274432,
+    })
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: pytest.fail("inspect opened DuckDB"))
+    args = SimpleNamespace(action="inspect", target_table="player_fantasy_season",
+        db_name="nyu_ffl", machine_id="isolated", volume_id="vol_test",
+        deadline=time.time() + 5)
+    assert pilot.run(args) == 0
+    assert '"checksum_valid": true' in capsys.readouterr().out

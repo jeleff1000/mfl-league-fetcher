@@ -230,6 +230,16 @@ def test_scoped_recovery_invalidates_stale_bundles_only_when_committed(client, t
         json={'mode':'scoped_rebuild', 'db_name':'test_league', 'confirm_targets':list(main._DAMAGED_DERIVED_TARGETS)})
     success = request.node.callspec.params['data_dir'] == 'recovery_source'
     assert response.status_code == (200 if success else 500), response.text
+    # A leaked read-only attachment makes the next metadata write drain the
+    # league pool just to obtain the OPS writer handle. Both commit and rollback
+    # must release it before returning the connection to normal traffic.
+    connection = main.db.acquire_connection(timeout=1)
+    try:
+        assert connection.execute(
+            "SELECT database_name FROM duckdb_databases() WHERE database_name='___ops'"
+        ).fetchall() == []
+    finally:
+        main.db.release_connection(connection)
     assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 8 if success else 7}]
     assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year") == before
     if success:

@@ -2,6 +2,132 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Scoped aggregate recovery works - 2026-09-18
+
+This evidence supersedes the earlier assumption that physical-block removal must
+precede every logical aggregate recovery. Successful import `35305903072`
+published `crosswater_pigskins`: its matching bundle receipt is COMMITTED,
+38 tables / 0.2 MB merged in 2.7s, and cache warming succeeded. Existing pooled
+reads and commits work; this does not prove the damaged block can checkpoint.
+
+The already-deployed `/reaggregate-damaged-derived` endpoint with
+`mode=scoped_rebuild` rebuilt only the five allowlisted aggregate tables for
+each league below, using canonical aggregators over persisted facts. No provider
+fetch, full database copy/replacement, quarantine DROP, restart or deployment.
+
+| League | Server work | HTTP elapsed | Player-season keys reconciled | Missing keys / numeric mismatches |
+| --- | ---: | ---: | ---: | --- |
+| `nyu_ffl` | 2.694s | 3.719s | 5,904 | 0 / 0 |
+| `tfl_of_extraordinary_gentleman` | 2.275s | 2.875s | 10,043 | 0 / 0 |
+| `kmffl` | 1.918s | 2.531s | 8,058 | 0 / 0 |
+
+Numeric witnesses reconcile fantasy points, manager LAMAR, started-player clutch
+and games against persisted player-week facts. An initial NYU witness incorrectly
+included bench clutch; using the canonical started-player definition removes all
+339 apparent mismatches. Matchup counts/history and identity hashes were unchanged:
+NYU 1,608 rows / 2018-2026; ESPN 2,760 / 2012-2026; KMFFL 1,820 / 2015-2026.
+This preserves the history currently present, not proof of older missing seasons.
+Existing import cache-expiration helper succeeded for all three; live overviews
+returned 12, 15 and 10 manager rankings respectively, with current standings.
+
+All three responses report `checkpointed:false`. Physical checkpoint corruption
+remains unresolved. The deployed response lacks the generation field present on
+current main; deployed revision parity is not established. HTTP requests were
+bounded to 35s and returned within four seconds, but client timeout is NOT a
+server-side cancellation guarantee. Full refresh/UI acceptance is still open.
+
+Continuation through the previously identified update-attempt cohort uses the
+same single-league endpoint and the same reconciliation. Each row below has
+zero missing player-season keys, zero points/LAMAR/started-clutch/games
+mismatches, unchanged matchup counts/year bounds/identity hash, successful cache
+expiration and HTTP 200 overview with populated rankings. Times include network;
+the final column also includes before/after checks and live cache verification.
+
+| League | Rebuilt player-season keys | Rebuild HTTP | Repair/check/cache total |
+| --- | ---: | ---: | ---: |
+| `the_real_ff_league` | 2,077 | 3.219s | 7.391s |
+| `the_chulent_bowl` | 4,802 | 2.234s | 6.062s |
+| `playing_for_keeps_league` | 3,527 | 2.109s | 5.828s |
+| `afi_data` | 432 | 2.937s | 8.953s |
+| `always_sunny_in_emmitsburg` | 8,485 | 3.094s | 7.938s |
+| `bethany_beach_league` | 1,826 | 2.891s | 8.078s |
+| `bfl` | 2,521 | 2.531s | 7.094s |
+| `clemson_fantasy_league` | 10,968 | 3.078s | 7.406s |
+| `dom_s_year` | 26,357 | 3.469s | 8.172s |
+| `fanball_3e8d` | 4,149 | 3.797s | 8.125s |
+| `fantasy_football_8ad9` | 398 | 2.422s | 6.359s |
+| `fight_club_except_we_do_talk` | 3,977 | 3.219s | 7.438s |
+| `franchise_mode_fantasy` | 6,231 | 2.625s | 6.609s |
+| `group_chat_foosball` | 4,971 | 2.531s | 6.312s |
+| `handegg_dynasty_league` | 5,984 | 2.110s | 5.922s |
+| `joes_pussy` | 3,983 | 2.875s | 7.078s |
+| `l_78_shootas` | 4,060 | 2.203s | 6.328s |
+| `live_draft_beer_league` | 11,599 | 2.703s | 6.891s |
+| `mawhinney_s_vixens` | 7,183 | 2.391s | 6.297s |
+| `mirabeau_fantasy_football` | 2,729 | 2.468s | 7.157s |
+| `new_league_same_result` | 1,842 | 2.797s | 6.984s |
+| `not_for_long` | 11,138 | 2.735s | 6.719s |
+| `pimps_and_ochos` | 10,426 | 2.703s | 7.531s |
+| `superleague_v2_0` | 7,088 | 2.453s | 7.125s |
+| `the_beata_cup` | 8,688 | 2.640s | 7.640s |
+| `the_dfb_league_ii` | 2,842 | 2.297s | 6.688s |
+| `the_fucking_catalina_wine_mixer` | 3,601 | 3.015s | 7.484s |
+
+Fresh focused regression checks: 16 canonical recovery-helper tests passed in
+3.22s; five recovery endpoint tests passed in 3.32s. These cover the existing
+five-target and single-league scope, not the entire weekly-update acceptance plan.
+The existing deployed DuckDB automatic checkpoint threshold is 488.2 MiB;
+recovery checks WAL size between leagues and starts no further repair at or
+above 480 MiB. No threshold,
+checksum, durability or checkpoint setting was changed. The physical issue is
+separate from the demonstrated ability to regenerate scoped aggregate rows.
+
+The scoped recovery completed for 30 leagues / 185,889 player-season keys. The next league,
+`the_super_bowlava`, was stopped BEFORE any write at 480.4 MiB WAL; it and
+`world_league_of_howell` remain unrepaired in this cohort (6,166 and 14,178
+expected player-season keys respectively). This is a checkpoint-headroom stop,
+not expensive or unreproducible aggregate math. Do not raise the threshold,
+blindly retry, disable checksums or restart production to claim completion.
+
+The 185,889 total is the sum of the 30 successful per-league reconciliations.
+A redundant combined-cohort reconciliation exceeded its five-second HTTP read
+budget and was not retried; it is not passing evidence. The scoped witnesses
+above are the numerical acceptance evidence.
+
+Read-only diagnostics `35308042544` (16s inspection) and `35308232185` (21s)
+observed a separate OPS metadata write timing out, then application startup
+checkpoint failure on the same damaged block. No manual restart, new volume,
+snapshot, database replacement or write was requested by either diagnostic.
+Pool initialization completed at 04:45:17 UTC. Subsequent public readiness is
+200 / serving / zero active queries or writes; NYU and Catalina repaired rows
+remain readable (5,904 / 3,601). WAL remains 480.4 MiB. The temporary failure is
+not proof that the combined read caused the interruption or that storage healed.
+
+A concrete lifecycle defect was reproduced locally: scoped recovery left OPS
+attached read-only after both COMMIT and ROLLBACK. Both regression cases failed
+on the leaked catalog. The narrow fix uses the existing reference-counted OPS
+acquire/release pair, releasing before returning the pooled connection. Both
+cases then passed, and eight focused server cases passed in 7.90s. Independent
+review found no concurrency/lifecycle blocker; overlapping-user behavior was
+reviewed in the existing helper but is not a new concurrent execution test.
+This code fix is not yet deployed; it is not a claimed cause of the live restart.
+
+The existing 40-second isolated pilot gains a byte-only `inspect` action. It reads
+274,432 bytes from the known block offset on an existing recovery volume and
+never opens DuckDB or replays WAL. A red/green test proves a different valid
+candidate is reportable without opening a database. All 23 pilot/block/workflow
+tests pass in 4.21s. This can compare existing candidates without the earlier
+connection timeout; it is not a block-transplant authorization or repair proof.
+
+Other scope limits: the cohort inventory is frozen September 16 and does not
+prove every subsequent attempted league was covered. `the_league` was excluded
+as the user requested. `agusta_fantasy_league` currently has only 2026 player
+source data; `go_pats_2021` has no matchup facts in the current store. Missing
+facts cannot be restored by recomputing aggregate rows. `league_of_snakes` and
+`pass_interferance` already had matching player-season key coverage and were
+not rewritten here. Reconnect requirements, all-time NFL rank correctness,
+provider freshness and the full UI refresh path remain separate open evidence.
+
 ## User scope correction and 40-second pilots - 2026-09-18
 
 Actual isolated removal pilot: run `35305006093`, public main

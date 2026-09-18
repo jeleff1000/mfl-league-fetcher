@@ -46,7 +46,7 @@ def validate_target(action, table, db_name, machine, volume, path=DATABASE_PATH)
         raise ValueError("primary target forbidden")
     if not machine or not volume.startswith("vol_"):
         raise ValueError("isolated machine and volume are required")
-    if action not in {"locate", "remove"} or table not in TARGETS:
+    if action not in {"inspect", "locate", "remove"} or table not in TARGETS:
         raise ValueError("target table/action is not allowlisted")
     if not re.fullmatch(r"[a-z0-9_]+", db_name):
         raise ValueError("invalid witness league")
@@ -59,14 +59,19 @@ def run(args):
     timer = arm_deadline(args.deadline)
     conn = None
     try:
-        import duckdb
         from fly_duckdb_block_probe import probe
+
+        emit("block_probe_start", action=args.action, table=args.target_table)
+        block = probe(DATABASE_PATH, 90714112)
+        emit("block_probe", **block)
+        if args.action == "inspect":
+            if block["file_changed_during_read"]:
+                raise ValueError("candidate changed during read")
+            return 0
+        import duckdb
 
         if duckdb.__version__ != "1.5.4":
             raise ValueError("pilot must use production DuckDB 1.5.4")
-        emit("block_probe_start", action=args.action, table=args.target_table, engine=duckdb.__version__)
-        block = probe(DATABASE_PATH, 90714112)
-        emit("block_probe", **block)
         if block["file_changed_during_read"] or block["block_sha256"] != "7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186":
             raise ValueError("target is not the exact previously observed damaged block")
         if args.action == "remove" and Path(str(DATABASE_PATH) + ".wal").exists():
@@ -125,7 +130,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--action", required=True, choices=["locate", "remove"])
+    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove"])
     parser.add_argument("--target-table", required=True)
     parser.add_argument("--db-name", required=True)
     parser.add_argument("--machine-id", required=True)

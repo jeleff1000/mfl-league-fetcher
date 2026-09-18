@@ -2248,9 +2248,12 @@ def _reaggregate_damaged_derived_from_sources(
             raise ValueError("scoped_rebuild requires a valid db_name")
         conn = db.acquire_connection(timeout=10.0)
         started = time.monotonic()
+        attached_ops = False
         try:
             _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
-            _attach_if_present(conn, ops_path, "___ops")
+            if ops_path.is_file():
+                _acquire_ops_attachment(conn)
+                attached_ops = True
             conn.execute("BEGIN TRANSACTION")
             try:
                 target_counts = reaggregate_one_league(
@@ -2288,6 +2291,8 @@ def _reaggregate_damaged_derived_from_sources(
                 conn.execute("ROLLBACK")
                 raise
         finally:
+            if attached_ops:
+                _release_ops_attachment(conn)
             db.release_connection(conn)
         elapsed_seconds = round(time.monotonic() - started, 3)
         _update_derived_recovery_progress(

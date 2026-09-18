@@ -2,6 +2,45 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 07:44 UTC
+
+Fly was serving/accepting with zero active queries, OPS writes and publications;
+league/OPS fingerprints are unchanged. No production write, restart, deployment,
+restore, diagnostic VM or storage modification was attempted. The physical
+checkpoint fault and last observed 480.4 MiB WAL still block publication canaries.
+
+Found a distinct worker deadline defect: all three workflows used GNU timeout
+with TERM and --foreground. TERM can be ignored and foreground mode excludes
+descendants from the timeout. Six real process tests reproduced a child running
+after the accelerated deadline (refresh and failure-status steps for each
+platform); two timely exit controls passed. The red selection took 22.44s.
+
+The same six commands now send KILL to their local process group. The existing
+absolute 105s deadline, reserved finalization time and 8s failure-status budget
+remain unchanged; no provider/pipeline/publication code changed. Tests execute
+the workflow's actual timeout flags against TERM-resistant Bash parent/child
+processes, with only duration accelerated to 0.35s. Fixtures finish naturally
+after about 2s if the deadline fails, and every test has a 5s parent timeout.
+Git Bash on Windows returns a different native kill status (2304); tests check
+nonzero there and 137/-9 on POSIX, plus no child-overrun output and bounded time.
+The eight process cases plus 72 existing worker/runtime contracts passed in
+4.55s under a 38s command cap. Ruff and diff checks passed. Linux verification
+is added to the existing public boundary job as a 38s-capped, no-production-access
+test step, not a new worker or deployment.
+Independent read-only review found no critical or important merge blocker;
+Linux execution evidence remains pending until the public job completes.
+
+These three workflow files and the boundary workflow do not exist in the dirty
+root-app checkout. No replacement duplicate files or new pipeline were created
+there; the canonical public executing copy is the only existing target.
+
+Limits: this is a local-runner process-group deadline, not a guarantee that a
+native Fly operation is cancelled, or that every setup/finalization step and
+queue delay fits the click-to-visible target. A forced kill before a confirmed
+receipt is saved can still require remote commit reconciliation. Detached child
+process groups are not covered. Storage repair and actual full UI/provider
+publication canaries remain unverified; no completion claim is made.
+
 ## Bounded continuation - 2026-09-18 07:37 UTC
 
 Fly readiness remains serving/accepting, with zero active queries, OPS writes

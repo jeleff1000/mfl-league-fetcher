@@ -112,8 +112,8 @@ def test_active_updates_reserve_time_to_fail_and_exit_before_two_minutes(filenam
     assert "- name: Set hard update deadline" in text
     assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 105 ))" in text
     assert 'remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))' in text
-    assert 'timeout --foreground --signal=TERM "${remaining}s" python scripts/refresh_' in text
-    assert 'timeout --foreground --signal=TERM 8s python scripts/record_league_update_status.py' in text
+    assert 'timeout --signal=KILL "${remaining}s" python scripts/refresh_' in text
+    assert 'timeout --signal=KILL 8s python scripts/record_league_update_status.py' in text
     assert text.index("- name: Set hard update deadline") < text.index("- name: Checkout")
 
 

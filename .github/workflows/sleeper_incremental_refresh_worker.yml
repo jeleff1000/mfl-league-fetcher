@@ -216,7 +216,9 @@ jobs:
             echo "::error::Weekly update exhausted its two-minute budget before provider refresh."
             exit 124
           fi
-          timeout --foreground --signal=TERM "${remaining}s" python scripts/refresh_sleeper_active_season.py "${args[@]}"
+          # Kill the local worker process group at the reserved deadline.
+          # TERM can be ignored; --foreground leaves descendants running.
+          timeout --signal=KILL "${remaining}s" python scripts/refresh_sleeper_active_season.py "${args[@]}"
 
       - name: Classify Fly publication
         id: publication
@@ -334,7 +336,7 @@ jobs:
           else
             args+=(--error "Sleeper active-season refresh did not publish")
           fi
-          timeout --foreground --signal=TERM 8s python scripts/record_league_update_status.py "${args[@]}"
+          timeout --signal=KILL 8s python scripts/record_league_update_status.py "${args[@]}"
 
       - name: Upload refresh receipt
         id: diagnostic_artifact

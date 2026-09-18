@@ -27,3 +27,5 @@ jobs:
           tests/test_validate_public_worker_boundaries.py
           tests/test_migrate_public_worker_workflows.py
           -q
+      - name: Prove weekly worker process deadlines without production access
+        run: timeout --signal=KILL 38s python -m pytest tests/test_weekly_refresh_deadlines.py -q

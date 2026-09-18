@@ -141,10 +141,12 @@ jobs:
           region="$(jq -r '.region' volume.json)"
           image="$(jq -r '.[] | select(.id == "1781e011b69068" and .state == "started") | .config.image' machines.json)"
           test -n "$image"
+          vm_memory=512
+          if [ "$PILOT_ACTION" = engine_inventory ]; then vm_memory=1024; fi
           echo "stage=isolated_machine_start utc=$(date -u +%FT%TZ)"
           flyctl machine run "$image" --app "$FLY_APP" --region "$region" \
             --name "$PILOT_MACHINE_NAME" --volume "$RECOVERY_VOLUME_ID:/data" \
-            --entrypoint /bin/sh --restart no --detach --vm-cpus 1 --vm-memory 512 \
+            --entrypoint /bin/sh --restart no --detach --vm-cpus 1 --vm-memory "$vm_memory" \
             --file-local "/tmp/fly_table_storage_pilot.py=scripts/fly_table_storage_pilot.py" \
             --file-local "/tmp/fly_duckdb_block_probe.py=scripts/fly_duckdb_block_probe.py" \
             -- -lc 'sleep 45'

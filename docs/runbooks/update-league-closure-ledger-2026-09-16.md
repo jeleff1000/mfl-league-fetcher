@@ -4,6 +4,27 @@ State: active. Production completion is unproven. This ledger is for league upda
 
 ## User scope correction and 40-second pilots - 2026-09-18
 
+Actual isolated removal pilot: run `35305006093`, public main
+`8625d2cc51d639b2eb1742996b90c45bc4cdefe0`, existing volume
+`vol_vgnpo57xd112npj4`. The pilot step ran 03:55:28-03:55:36 UTC (8s,
+including machine startup). DuckDB 1.5.4 loaded; the read-only block probe
+confirmed the exact known bad checksum after 1.378s of helper execution,
+reading only 274,432 bytes. At 1.380s the retained-WAL guard stopped the
+operation before opening a database connection. No DROP, COMMIT, CHECKPOINT,
+reopen or reaggregation was attempted. This is a blocked removal test, not a
+successful removal or storage repair. Do not retry it unchanged or remove its
+WAL guard to obtain a green result.
+
+Cleanup destroyed only owned disposable machine `8576200a245108`, in 8s;
+the volume and retained WAL were preserved. Queue/setup/artifact time is not
+included in the 8s pilot figure (the complete Actions job was 21s). A subsequent
+live readiness check still reports serving, no active queries/writes, and the
+same league fingerprint `sha256:935b1b973ff578d5`. It does not establish durable
+publication. Find = confirmed; remove = blocked before SQL; fix = not attempted.
+No production canary is authorized by this diagnostic result. A supported
+method to remove the damaged physical metadata remains the prerequisite;
+renaming/reaggregating its logical table is not that proof.
+
 The user rejected per-league database migration. That proposal is withdrawn.
 Scope is only the blocking derived-table objects; no all-league storage split.
 The new hard limit is 40 seconds per pilot, including its Fly machine startup,

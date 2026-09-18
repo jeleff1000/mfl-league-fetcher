@@ -28,6 +28,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_SCRIPTS = ROOT / "fantasy_football_data_scripts"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if str(DATA_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(DATA_SCRIPTS))
 
@@ -2026,6 +2028,7 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
+    from scripts.league_update_workflow_receipt import record_publication_commit, write_refresh_receipt
     from multi_league.core.yahoo_league_settings import discover_league_history
 
     timer = PhaseTimer()
@@ -2352,12 +2355,9 @@ def main(argv: list[str] | None = None) -> int:
                 bundle_id=bundle.bundle_id,
                 bundle_hash=bundle.bundle_hash,
             )
-            if str(result.get("status") or "").upper() != "COMMITTED":
-                raise RuntimeError(f"scoped weekly refresh did not commit: {result}")
-            receipt["status"] = "COMMITTED"
-            receipt["data_bundle_id"] = bundle.bundle_id
-            receipt["bundle_id"] = bundle.bundle_id
-            receipt["homepage_bundle_id"] = bundle.bundle_id
+            record_publication_commit(
+                receipt, result=result, bundle_id=bundle.bundle_id, path=args.json_out,
+            )
             receipt["homepage_rows"] = result.get("homepage_rollups", {}).get(args.db, {})
             receipt["homepage_seconds"] = result.get("homepage_seconds", {}).get(args.db)
             receipt["season_rollups"] = result.get("season_rollups", {}).get(args.db, {})
@@ -2382,9 +2382,7 @@ def main(argv: list[str] | None = None) -> int:
             local_db.close()
 
     receipt["phase_seconds"] = timer.finish()
-    print(json.dumps(receipt, sort_keys=True))
-    if args.json_out:
-        args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+    write_refresh_receipt(receipt, args.json_out)
     return 0
 
 

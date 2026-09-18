@@ -14,6 +14,35 @@ from typing import Any
 MANUAL_NO_OP_STATUSES = {"NO_FINALIZED_WEEKS", "NO_ACTIVE_RENEWAL"}
 
 
+def write_refresh_receipt(receipt: Mapping[str, Any], path: Path | None) -> None:
+    """Keep the previous complete receipt if a later diagnostic rewrite fails."""
+    payload = json.dumps(receipt, indent=2, sort_keys=True)
+    if path is not None:
+        pending = path.with_name(path.name + ".tmp")
+        pending.write_text(payload, encoding="utf-8")
+        pending.replace(path)
+    try:
+        print(json.dumps(receipt, sort_keys=True), flush=True)
+    except (OSError, ValueError):
+        # A closed log sink must not lose an already saved publication receipt.
+        pass
+
+
+def record_publication_commit(
+    receipt: dict[str, Any], *, result: Mapping[str, Any], bundle_id: str, path: Path | None,
+) -> None:
+    """Save a confirmed Fly commit before any post-publication reads or cleanup."""
+    if str(result.get("status") or "").upper() != "COMMITTED":
+        raise ValueError("scoped refresh did not return a confirmed COMMITTED publication")
+    if receipt.get("executed") is not True or not bundle_id:
+        raise ValueError("commit receipt requires an executed publication and bundle identity")
+    receipt.update(
+        status="COMMITTED", bundle_id=bundle_id, data_bundle_id=bundle_id,
+        homepage_bundle_id=bundle_id,
+    )
+    write_refresh_receipt(receipt, path)
+
+
 def classify_publication(receipt: Mapping[str, Any] | None, *, require_publication: bool) -> bool:
     """Never warm cache or mark UI success without an executed Fly commit."""
     if not receipt:

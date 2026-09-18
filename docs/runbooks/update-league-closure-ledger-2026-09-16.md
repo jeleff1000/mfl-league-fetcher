@@ -2,6 +2,51 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 07:19 UTC
+
+Fly remains serving/accepting with zero active queries, OPS writes and
+publications. Northern League returned HTTP 200 in 0.264s. One metadata-only
+WAL check took 0.672s and still reports 480.4 MiB; database fingerprints are
+unchanged. No production write, restart, deployment or diagnostic VM was used.
+Physical storage recovery and production publication canaries remain blocked.
+
+Confirmed another publication-recovery gap: all three active-season workers
+saved their COMMITTED receipt only after diagnostic count queries and local
+cleanup. Any failure there could hide an already successful data commit from
+the workflow's existing cache-only recovery handler. The workers now save the
+confirmed bundle receipt immediately after Fly returns COMMITTED, before those
+steps. One shared writer atomically replaces the local JSON and saves before
+printing; interrupted diagnostic rewrites and broken stdout cannot truncate or
+discard the earlier receipt. Source-manifest completeness is not changed.
+There are no new Fly calls, fetches, transformations or publication changes.
+
+Two regression cases reproduced the existing stdout-before-file failure; eleven
+new receipt-boundary cases failed before the shared helper existed. Three added
+real in-memory DuckDB lifecycle tests verify that the earliest saved receipt
+can become committed_cache_pending and complete through existing cache-only
+recovery for Yahoo, ESPN and Sleeper, without a second publication. A newer
+publication generation rejects that recovery. Independent review caught a
+Yahoo CLI import-path regression before push: an isolated subprocess reproduced
+the missing `scripts` package, with network denied and startup stopped before
+reader construction. Yahoo now has the same two-line root bootstrap as ESPN
+and Sleeper. All three CLI startup tests pass; review found no remaining scoped
+blocker. Receipt/status/workflow tests: 120 passed in 8.86s. Manifest-coverage/
+claim tests: 26 passed in 0.76s. Both commands had 38s hard caps. Ruff, diff checks
+and public boundary validation pass.
+
+Limits: these tests do not run full provider ingestion or actual UI canaries.
+They do not close a runner kill before the first receipt save, an ambiguous Fly
+response, or loss of the runner filesystem before status persistence. This is
+the confirmed-response-to-later-diagnostics gap only, not storage repair.
+
+Read-only draft-routing investigation also confirmed the weekless draft gap
+remains OPEN. The existing offseason helper is not yet a safe drop-in: it
+requires existing draft/matchup history, the Sleeper draft-only fetch does not
+apply franchise_merges, and its publication handoff lacks the weekly claim and
+receipt integration. No alternate pipeline or draft routing was introduced.
+These worker modules exist only in the canonical public worker checkout; no
+new duplicate app-repo copies, branch, worktree, snapshot or rebuild was made.
+
 ## Bounded continuation - 2026-09-18 07:01 UTC
 
 Production readiness timed out twice (10s/8s) at the start of this continuation,

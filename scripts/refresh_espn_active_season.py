@@ -346,9 +346,9 @@ def _merge_active_payloads(
 
 def _write_receipt(receipt: dict[str, Any], path: Path | None) -> None:
     """Emit the non-secret receipt and retain it for the Actions artifact."""
-    print(json.dumps(receipt, sort_keys=True))
-    if path:
-        path.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+    from scripts.league_update_workflow_receipt import write_refresh_receipt
+
+    write_refresh_receipt(receipt, path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -380,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
+    from scripts.league_update_workflow_receipt import record_publication_commit
     from scripts.refresh_yahoo_active_season import (
         UPDATE_REFRESH_SOURCE_TABLES,
         OPS_DATABASE,
@@ -670,12 +671,9 @@ def main(argv: list[str] | None = None) -> int:
                 bundle_id=bundle.bundle_id,
                 bundle_hash=bundle.bundle_hash,
             )
-            if str(result.get("status") or "").upper() != "COMMITTED":
-                raise RuntimeError(f"scoped ESPN refresh did not commit: {result}")
-            receipt["status"] = "COMMITTED"
-            receipt["data_bundle_id"] = bundle.bundle_id
-            receipt["bundle_id"] = bundle.bundle_id
-            receipt["homepage_bundle_id"] = bundle.bundle_id
+            record_publication_commit(
+                receipt, result=result, bundle_id=bundle.bundle_id, path=args.json_out,
+            )
             receipt["homepage_rows"] = result.get("homepage_rollups", {}).get(args.db, {})
             receipt["homepage_seconds"] = result.get("homepage_seconds", {}).get(args.db)
             receipt["season_rollups"] = result.get("season_rollups", {}).get(args.db, {})

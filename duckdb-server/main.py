@@ -1759,11 +1759,7 @@ def _replace_canonical_table(
     incoming_ref = f"_incoming.public.{_quote_identifier(table_name)}"
 
     try:
-        conn = db.connect_database(
-            database_path,
-            data_dir=db.get_data_dir(),
-            threads=WRITE_DUCKDB_THREADS,
-        )
+        conn = db.acquire_connection(timeout=10.0)
         conn.execute(f"ATTACH '{incoming_path.as_posix()}' AS _incoming (READ_ONLY)")
         attached = True
 
@@ -2277,11 +2273,7 @@ def _reaggregate_damaged_derived_from_sources(
     if mode == "scoped_rebuild":
         if not db_name or not _DB_NAME_PATTERN.fullmatch(db_name):
             raise ValueError("scoped_rebuild requires a valid db_name")
-        conn = db.connect_database(
-            database_path,
-            data_dir=db.get_data_dir(),
-            threads=WRITE_DUCKDB_THREADS,
-        )
+        conn = db.acquire_connection(timeout=10.0)
         started = time.monotonic()
         try:
             _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
@@ -2318,7 +2310,7 @@ def _reaggregate_damaged_derived_from_sources(
                 conn.execute("ROLLBACK")
                 raise
         finally:
-            conn.close()
+            db.release_connection(conn)
         elapsed_seconds = round(time.monotonic() - started, 3)
         _update_derived_recovery_progress(
             {

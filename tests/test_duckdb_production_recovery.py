@@ -35,7 +35,7 @@ def test_maintenance_disables_serving_without_mutating_saved_config():
     assert config['init']['exec'] == ['/bin/sleep', '600']
     assert config['init']['swap_size_mb'] == 4096
     assert config['env'] == {'KEEP': 'yes'}
-    assert config['guest'] == {'cpus': 8, 'memory_mb': 16384}
+    assert config['guest'] == {'cpus': 4, 'memory_mb': 16384}
     assert config['mounts'] == saved['config']['mounts']
 
 
@@ -135,7 +135,9 @@ def test_handoff_restores_exact_config_only_after_proof_and_uncordons_after_heal
     args = SimpleNamespace(receipt_id='1_1', db_name='nyu_ffl')
     if verified:
         r.run_handoff(api, original, config, args, 'a'*64)
-        assert api.current['config'] == original['config']
+        expected = copy.deepcopy(original['config'])
+        expected['guest']['cpus'] = 4
+        assert api.current['config'] == expected
         assert api.calls[-2][0] == '/uncordon'
     else:
         with pytest.raises(ValueError):

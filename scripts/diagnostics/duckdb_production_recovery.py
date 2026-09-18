@@ -25,7 +25,7 @@ MACHINE = '1781e011b69068'
 VOLUME = 'vol_rkg7mmd17llez224'
 IMAGE = 'registry.fly.io/league-history-duckdb:deployment-01M2S3CCAQK5KYEB807DK6C33Z'
 PATH = Path('/data/___leagues.duckdb')
-CONFIG = {'threads': '8', 'memory_limit': '8GB', 'temp_directory': '',
+CONFIG = {'threads': '4', 'memory_limit': '8GB', 'temp_directory': '',
           'max_vacuum_tasks': '0', 'checkpoint_threshold': '2GB'}
 
 
@@ -43,6 +43,9 @@ def maintenance_config(machine, files):
     config['services'] = []
     config['checks'] = {}
     config['restart'] = {'policy': 'no'}
+    # Confirmed host admission error35389697018: eight CPUs unavailable.
+    # Keep16GiB memory; use four CPUs for maintenance and service recovery.
+    config['guest']['cpus'] = 4
     config['init'] = {'swap_size_mb': config.get('init', {}).get('swap_size_mb', 0),
                       'exec': ['/bin/sleep', '600']}
     config['files'] = list(config.get('files') or []) + files
@@ -293,7 +296,9 @@ def run_handoff(fly, original, config, args, helper_sha):
         require_verified(result)
         current = fly.call()
         event('restore_original_service')
-        fly.call('', {'config': original['config'], 'current_version': current['instance_id'],
+        restored = copy.deepcopy(original['config'])
+        restored['guest']['cpus'] = 4
+        fly.call('', {'config': restored, 'current_version': current['instance_id'],
                       'skip_service_registration': True}, 'POST')
         fly.wait('started')
         # Probe the server locally while still cordoned; only route after ready.
@@ -302,7 +307,8 @@ def run_handoff(fly, original, config, args, helper_sha):
         if health.get('exit_code', 0) != 0 or health.get('exit_signal', 0) != 0 or 'READY' not in health.get('stdout', ''):
             raise ValueError('restored service is not ready; still cordoned')
         fly.call('/uncordon', {}, 'POST')
-        event('production_service_restored', config_sha256=hashlib.sha256(json.dumps(original['config'], sort_keys=True).encode()).hexdigest())
+        event('production_service_restored', temporary_cpus=4,
+              config_sha256=hashlib.sha256(json.dumps(restored, sort_keys=True).encode()).hexdigest())
     finally:
         # No unconditional restore: an ambiguous repair must not invoke the
         # server's startup quarantine/.prev recovery against unverified data.

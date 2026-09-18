@@ -466,8 +466,8 @@ def remove_quarantined(conn, *, prepare=None):
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
     """Two observed isolated states only; never infer permission from a timestamp."""
     main_mtime, wal_size, wal_mtime, wal_sha = (
-        (1789748756148253909, 45522023, 1789748753472137934,
-         'b330657077bb40250e0e1977309d917810f6c9856eb9bc4cef9dc1d9b0dc1213') if resume else
+        (1789750685202052088, 45522076, 1789750670218175673,
+         '6be240c48f4ad466183c07ffb5e8f3acdbefc1317efa330ec398a3a827e3aa91') if resume else
         (1789662410048242836, 45516621, 1789662378556231033,
          'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
     if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime

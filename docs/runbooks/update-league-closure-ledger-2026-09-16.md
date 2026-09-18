@@ -1,8 +1,33 @@
 # September Update League closure ledger
 
-State: isolated real-file removal COMMIT returned for all five objects; checkpoint exited at the unchanged 128-new-block ceiling. Outcome remains UNKNOWN until retained-WAL reconciliation and stock verification. A selective allocator fix is under synthetic verification. Production has not been changed. This ledger is for league updates, not SuperTable SOTA work.
+State: isolated real-file removal COMMIT returned for all five objects; checkpoint exited at the unchanged 128-new-block ceiling. Outcome remains UNKNOWN until retained-WAL reconciliation and stock verification. Selective allocator and guarded-resume regressions passed the Linux matrix. Production has not been changed. This ledger is for league updates, not SuperTable SOTA work.
 
 ## Current bounded-recovery receipts - 2026-09-18
+
+- Actual resume `35371482774`: retained current WAL, replay 9.648s, five DROP
+  records replayed, all five names absent, original value witnesses matched;
+  zero new inserts/drops. First CHECKPOINT hit the 15s verify cap: UNKNOWN,
+  adapter 29.114s. Process I/O reached 929,771,520 read and 218,066,944 written
+  bytes including WAL/evidence and ordinary row-group work, not a full DB copy.
+  No checkpoint return marker. VM `48ee5d1cee6908` removed at 16:58:16Z.
+- No-engine reconciliation `35371660210` completed in 0.967s. Same main size,
+  inode, header iteration 12126 and bad-block SHA. Main mtime now
+  1789750685202052088; WAL size 45522076, mtime 1789750670218175673, inode64,
+  SHA `6be240c48f4ad466183c07ffb5e8f3acdbefc1317efa330ec398a3a827e3aa91`.
+  No alternate WAL sidecars. VM `286265dc442108` removed16:59:39Z. This is the
+  ONLY new accepted resume state; both earlier WAL/evidence copies remain.
+  Next resume uses user-authorized temporary performance-8 CPU/16GiB for
+  128MiB/s volume bandwidth; existing DuckDB memory,128block and time caps
+  remain unchanged. Cleanup destroys temporary capacity; production unchanged.
+
+- Public main `d93faa186`, matrix `35371382486`: all six Linux groups passed.
+  The shared-reference MarkBlocksAsModified proof fails the deliberately broken
+  mask variant with exposed allocatable subslots, then passes the real mask on
+  two checkpoints with incoming mask `0xfffffffffffffffd`. Retained values
+  and the protected block digest stay unchanged; releasing the last reference
+  retires the block normally. Stock-helper-free reopen/write/checkpoint passes.
+  Shared group elapsed 2.804s, fixture 1,323,008 bytes; no Fly access in matrix.
+  Actual isolated resume dispatched as `35371482774` on that exact SHA.
 
 - Guarded resume implementation: only original receipt `35368369603_1` plus
   the exact post-commit main/WAL identity from `35369876519` is accepted.

@@ -401,10 +401,10 @@ def test_repeated_phase_cannot_reset_its_budget():
 
 def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
     a = adapter()
-    binding = {'size': 15555375104, 'mtime_ns': 1789748756148253909, 'inode': 14}
-    files = {'.wal': {'size': 45522023, 'mtime_ns': 1789748753472137934, 'inode': 64}}
+    binding = {'size': 15555375104, 'mtime_ns': 1789750685202052088, 'inode': 14}
+    files = {'.wal': {'size': 45522076, 'mtime_ns': 1789750670218175673, 'inode': 64}}
     header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
-    assert a.validate_recovery_baseline(binding, files, header, resume=True) == 'b330657077bb40250e0e1977309d917810f6c9856eb9bc4cef9dc1d9b0dc1213'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '6be240c48f4ad466183c07ffb5e8f3acdbefc1317efa330ec398a3a827e3aa91'
     with pytest.raises(ValueError):
         a.validate_recovery_baseline(binding, files, header, resume=False)
     for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):

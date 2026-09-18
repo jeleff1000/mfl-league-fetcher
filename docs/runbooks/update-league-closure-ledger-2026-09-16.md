@@ -2,6 +2,43 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 06:41 UTC
+
+Current source inspection corrected a stale audit note: historical PPG already
+uses the existing OPS precomputations in `40778c937`. The three existing real
+transformation regressions passed again in 12.84s under a 38s subprocess cap.
+No second PPG fix, NFL download, provider fetch, or production write was made.
+
+A separate confirmed freshness defect was still present: `build_refresh_plan`
+retains changed historical partitions in `weeks_by_season`, but the three active
+workers assessed source completeness only from their active-year provider fetch.
+Thus a completed active-year fetch could acknowledge the entire captured
+manifest, including an untouched older correction.
+
+One shared in-memory coverage predicate now compares the captured plan's seasons
+and weeks against the actual active partition. Yahoo OAuth, ESPN and Sleeper all
+use it before setting `source_manifest_complete`. Missing plan, wrong year,
+unfetched week or any other-season partition leaves freshness pending. Provider
+draft/game/outcome checks still apply. No query, retry, dependency, new pipeline,
+historical hydration or publication-schema change is added.
+
+Twenty-one new cross-platform cases cover real provider completeness helpers
+and real in-memory DuckDB commit/cache/success transitions. Bypassing the new
+predicate reproduced three incorrect historical-digest promotions; the normal
+guard retains the old published digest while preserving successful active-data
+and cache status. Focused coverage/planner/status/pending-game suite: 76 passed
+in 1.77s. Provider/worker-contract/coverage suite: 126 passed in 5.69s. Ruff and
+diff checks pass. Independent review found no blocker after the existing
+completeness fixtures were supplied explicit captured plans.
+
+This closes false whole-chain acknowledgment only. Older-season correction
+execution and weekless draft-only execution are NOT implemented by this patch;
+the active workers still do not consume those other partitions. Physical storage
+recovery and live publication acceptance remain blocked. No server deployment,
+Fly restart/write, restore, snapshot, rebuild or architecture change was made.
+These worker modules exist only in the canonical public worker checkout; no
+duplicate root-app worker files or new branch were created.
+
 ## Bounded continuation - 2026-09-18 06:26 UTC
 
 The remaining retained-block donor hypothesis was tested, not assumed: an
@@ -1231,10 +1268,10 @@ all rank validation. Next: prove the unsupported-position semantics with the
 actual shared rank function and distinguish legitimate non-applicability from
 missing supported-position source data.
 
-Additional audit finding: `optimal_lineup.position_rank` uses OPS for position
-all-time rank but still computes `alltime_ppg` from local active-year rows.
-That remains an open complete-history violation; successful career rollup
-checks do not validate all weekly NFL comparison fields.
+Historical audit finding, superseded by `40778c937` and the shared historical
+PPG correction below: `optimal_lineup.position_rank` formerly computed
+`alltime_ppg` from local active-year rows. Current code uses OPS precomputed
+PPG; do not treat this old note as a still-unfixed implementation defect.
 
 No workers from these three canaries remain running. No all-platform completion
 claim is justified. UI verification, all attempted-league recovery, multiplatform

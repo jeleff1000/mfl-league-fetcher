@@ -54,6 +54,26 @@ class PersistedManifestError(RuntimeError):
     """Persisted source manifests cannot prove the dispatched snapshot."""
 
 
+def active_publication_covers_plan(
+    plan: RefreshPlan | PersistedRefreshPlan | None,
+    *,
+    year: int | None,
+    weeks: Iterable[int],
+) -> bool:
+    """Never acknowledge untouched chain partitions as source-current.
+
+    Provider completeness (draft, games and outcomes) is checked by the caller.
+    This only compares the captured plan with the active partition it fetched.
+    """
+    if plan is None or year != plan.active_season or not plan.weeks_by_season:
+        return False
+    covered_weeks = set(weeks)
+    return all(
+        season == year and set(required_weeks).issubset(covered_weeks)
+        for season, required_weeks in plan.weeks_by_season
+    )
+
+
 def _scope_year_week(scope: str) -> tuple[int | None, int | None]:
     parts = str(scope).split(":")
     try:

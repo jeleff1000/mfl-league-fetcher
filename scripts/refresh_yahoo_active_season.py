@@ -1352,10 +1352,15 @@ def _ensure_ops_cache_matches_live(
     return current
 
 
-def yahoo_source_manifest_complete(*, refresh_weeks: list[int], fetch_rows: dict[str, Any]) -> bool:
+def yahoo_source_manifest_complete(
+    *, refresh_weeks: list[int], fetch_rows: dict[str, Any], plan=None, year: int | None = None,
+) -> bool:
     """Keep the observed Yahoo source pending until all scored games/results are admitted."""
+    from multi_league.core.league_update_plan import active_publication_covers_plan
+
     return (
-        fetch_rows.get("draft_validated") is True
+        active_publication_covers_plan(plan, year=year, weeks=refresh_weeks)
+        and fetch_rows.get("draft_validated") is True
         and
         "pending_nfl_teams" in fetch_rows
         and "final_matchup_weeks" in fetch_rows
@@ -2173,7 +2178,8 @@ def main(argv: list[str] | None = None) -> int:
                 finalized_ops=finalized_ops,
             )
             receipt["source_manifest_complete"] = yahoo_source_manifest_complete(
-                refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"]
+                refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"],
+                plan=persisted_plan, year=active_year,
             )
             timer.mark("provider_fetch")
             if not args.execute:

@@ -59,10 +59,15 @@ def espn_source_manifest_complete(
     *,
     refresh_weeks: list[int],
     fetch_rows: dict[str, Any],
+    plan=None,
+    year: int | None = None,
 ) -> bool:
     """Do not call a safe partial ESPN publication fully source-current."""
+    from multi_league.core.league_update_plan import active_publication_covers_plan
+
     return (
-        fetch_rows.get("draft_validated") is True
+        active_publication_covers_plan(plan, year=year, weeks=refresh_weeks)
+        and fetch_rows.get("draft_validated") is True
         and not fetch_rows.get("pending_nfl_teams")
         and int(fetch_rows.get("final_matchup_weeks") or 0) == len(refresh_weeks)
     )
@@ -515,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
             receipt["source_manifest_complete"] = espn_source_manifest_complete(
                 refresh_weeks=refresh_weeks,
                 fetch_rows=receipt["fetch_rows"],
+                plan=persisted_plan, year=active_year,
             )
             timer.mark("provider_fetch")
             if not args.execute:

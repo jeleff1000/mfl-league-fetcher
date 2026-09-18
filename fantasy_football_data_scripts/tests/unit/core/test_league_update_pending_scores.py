@@ -1,9 +1,14 @@
 import pandas as pd
 
 from multi_league.core.league_refresh import pending_provider_nfl_teams
+from multi_league.core.league_update_plan import RefreshPlan
 from scripts.refresh_espn_active_season import espn_source_manifest_complete
 from scripts.refresh_yahoo_active_season import yahoo_source_manifest_complete
 
+PLAN_SCOPE = {
+    "plan": RefreshPlan("test", 2026, (1,), (), (), False, ((2026, (1,)),)),
+    "year": 2026,
+}
 
 def test_live_espn_score_from_missing_monday_game_keeps_manifest_pending():
     roster = pd.DataFrame([
@@ -30,14 +35,17 @@ def test_live_espn_score_from_missing_monday_game_keeps_manifest_pending():
 
 def test_espn_manifest_requires_every_changed_game_and_matchup_result():
     assert not espn_source_manifest_complete(
+        **PLAN_SCOPE,
         refresh_weeks=[1],
         fetch_rows={"pending_nfl_teams": ["DEN", "KC"], "final_matchup_weeks": 0},
     )
     assert not espn_source_manifest_complete(
+        **PLAN_SCOPE,
         refresh_weeks=[1],
         fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 0},
     )
     assert espn_source_manifest_complete(
+        **PLAN_SCOPE,
         refresh_weeks=[1],
         fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1, "draft_validated": True},
     )
@@ -45,13 +53,16 @@ def test_espn_manifest_requires_every_changed_game_and_matchup_result():
 
 def test_yahoo_manifest_must_not_advance_for_partial_game_or_matchup_week():
     assert not yahoo_source_manifest_complete(
+        **PLAN_SCOPE,
         refresh_weeks=[1], fetch_rows={"pending_nfl_teams": ["DEN"], "final_matchup_weeks": 0}
     )
     assert not yahoo_source_manifest_complete(
+        **PLAN_SCOPE,
         refresh_weeks=[1], fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 0}
     )
-    assert not yahoo_source_manifest_complete(refresh_weeks=[1], fetch_rows={})
+    assert not yahoo_source_manifest_complete(**PLAN_SCOPE, refresh_weeks=[1], fetch_rows={})
     assert yahoo_source_manifest_complete(
+        **PLAN_SCOPE,
         refresh_weeks=[1], fetch_rows={"pending_nfl_teams": [], "final_matchup_weeks": 1, "draft_validated": True}
     )
 
@@ -60,8 +71,8 @@ def test_no_provider_can_promote_a_manifest_without_exact_draft_admission():
     """A complete game result cannot conceal an unchecked completed draft."""
     from scripts.refresh_sleeper_active_season import sleeper_source_manifest_complete
     complete_games = {"pending_nfl_teams": [], "final_matchup_weeks": 1}
-    assert not yahoo_source_manifest_complete(refresh_weeks=[1], fetch_rows=complete_games)
-    assert not espn_source_manifest_complete(refresh_weeks=[1], fetch_rows=complete_games)
-    assert not sleeper_source_manifest_complete(refresh_weeks=[1], fetch_rows=complete_games)
+    assert not yahoo_source_manifest_complete(**PLAN_SCOPE, refresh_weeks=[1], fetch_rows=complete_games)
+    assert not espn_source_manifest_complete(**PLAN_SCOPE, refresh_weeks=[1], fetch_rows=complete_games)
+    assert not sleeper_source_manifest_complete(**PLAN_SCOPE, refresh_weeks=[1], fetch_rows=complete_games)
     admitted = {**complete_games, "draft_validated": True}
-    assert sleeper_source_manifest_complete(refresh_weeks=[1], fetch_rows=admitted)
+    assert sleeper_source_manifest_complete(**PLAN_SCOPE, refresh_weeks=[1], fetch_rows=admitted)

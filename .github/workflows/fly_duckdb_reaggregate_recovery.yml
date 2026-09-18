@@ -16,7 +16,7 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_resume, engine_logs, service_health]
+        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_resume, engine_logs, service_health, production_recover]
       diagnostic_machine_id:
         description: Isolated pilot machine for read-only exit diagnostics
         required: false
@@ -45,6 +45,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  production-recovery:
+    if: inputs.action == 'production_recover'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify exact public main before maintenance
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          TARGET_VOLUME: ${{ inputs.recovery_volume_id }}
+        run: |
+          test "$GITHUB_REPOSITORY" = jeleff1000/mfl-league-fetcher
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "$TARGET_VOLUME" = vol_rkg7mmd17llez224
+      - name: Compile proven helper - no image build
+        run: timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE scripts/diagnostics/duckdb_drop_recovery_spike.cpp -ldl -o /tmp/lh_five_drop.so
+      - name: Exclusive production handoff and bounded repair
+        env:
+          WITNESS: ${{ inputs.witness_db_name }}
+        run: |
+          set -euo pipefail
+          timeout --signal=KILL 300s python -u scripts/diagnostics/duckdb_production_recovery.py \
+            --mode handoff --receipt-id "${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
+            --db-name "$WITNESS" 2>&1 | tee production-recovery.jsonl
+      - name: Upload small redacted receipt only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: production-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production-recovery.jsonl
+          retention-days: 14
   synthetic-engine-probe:
     if: inputs.action == 'engine_probe'
     runs-on: ubuntu-latest
@@ -89,7 +123,7 @@ jobs:
           path: engine-pilot.jsonl
           if-no-files-found: warn
   pilot:
-    if: inputs.action != 'engine_probe'
+    if: inputs.action != 'engine_probe' && inputs.action != 'production_recover'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:

@@ -1,8 +1,25 @@
 # September Update League closure ledger
 
-State: isolated real-file removal COMMIT returned for all five objects; retained-WAL reconciliation confirms no additional DROP is needed. The latest first checkpoint exceeded its unchanged 15-second ceiling, so durable removal and helper-free stock verification remain UNKNOWN. Production storage-reference cleanup has not been applied. This ledger is for league updates, not SuperTable SOTA work.
+State: isolated real-file repair PASSED in35387584221: both checkpoints, fresh unmodified engine write/checkpoint/reopen, and block346 retirement verified. Production repair is prepared but not yet executed. This ledger is for league updates, not SuperTable SOTA work.
 
 ## Current bounded-recovery receipts - 2026-09-18
+
+- SUCCESS35387584221, publicmain058db42e9: isolated replay9.854s,
+  both CHECKPOINTs returned, zero newly allocated metadata blocks, fresh
+  stock write/checkpoint/reopen/drop/checkpoint passed. Block346 no longer
+  registered. Entire remote proof48.2s including startup; machine destroyed.
+  Artifact10563988695 is65010bytes, no database payload.
+- Live read-only catalog verification confirms all five exact quarantined
+  names plus five replacements. Production WAL484MiB (35388068533), so
+  production handoff retains only this WAL (explicit1GiB ceiling), not16GB
+  database. Existing16GiB/8CPU capacity retained. Remote work<=150s with
+  inspect5/preserve25/replay65/remove5/verify50 phase caps. The ordinary
+  refresh120s hard limit is unchanged. No unconditional service restart
+  after an ambiguous result; exact original config restored only after
+  durable stock proof. No fixtures or isolated resume evidence on production.
+- Reviewed handoff fixed two predeployment response bugs with red/green
+  regression tests: supervisor completion event propagation and raw Fly
+  API exit_signal handling. No production mutation from these tests.
 
 - Trial35387352711 stopped before engine open with34s remaining, so the
  35s startup guard was the artificial blocker; no DB mutation occurred.

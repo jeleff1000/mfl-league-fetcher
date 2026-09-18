@@ -379,7 +379,7 @@ def preserve_wal(source, destination, *, max_bytes=64 * 1024 * 1024):
     if source.is_symlink() or destination.is_symlink():
         raise ValueError("WAL evidence cannot use symlinks")
     named_before = source.lstat()
-    if not stat.S_ISREG(named_before.st_mode) or not 0 < max_bytes <= 64 * 1024 * 1024:
+    if not stat.S_ISREG(named_before.st_mode) or not 0 < max_bytes <= 1024 * 1024 * 1024:
         raise ValueError("WAL requires a regular file and bounded preservation ceiling")
     with source.open("rb") as original:
         before = os.fstat(original.fileno())
@@ -673,12 +673,12 @@ def report_checkpoint_progress(hook, stopped):
         print(json.dumps(checkpoint_progress(hook)), flush=True)
 
 
-def verify_stock(path, db_name, before, *, receipt_id='stock-proof'):
+def verify_stock(path, db_name, before, *, receipt_id='stock-proof', config=None):
     """Run in a fresh helper-free child. Ordinary write leaves no user rows."""
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
     import duckdb
-    config = recovery_connect_config()
+    config = recovery_connect_config() if config is None else config
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):

@@ -543,7 +543,7 @@ def recovery_child(args):
     hook.lh_spike_allocations.restype = ctypes.c_int
     hook.lh_spike_disarm()
     files = file_inventory(path)
-    if ('.wal.checkpoint' in files or files.get('.wal', {}).get('size') != 45516621
+    if ('.wal.checkpoint' in files or '.wal.recovery' in files or files.get('.wal', {}).get('size') != 45516621
             or files['.wal']['mtime_ns'] != 1789662378556231033):
         raise ValueError('retained WAL identity changed; reconcile before replay')
 

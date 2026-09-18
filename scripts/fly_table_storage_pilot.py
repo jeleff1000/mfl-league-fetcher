@@ -81,12 +81,38 @@ def engine_identity():
 def file_inventory(path):
     """Stat only the exact database/WAL sidecars, never open the engine."""
     result = {}
-    for suffix in ('', '.wal', '.wal.checkpoint'):
+    for suffix in ('', '.wal', '.wal.checkpoint', '.wal.recovery'):
         candidate = Path(str(path) + suffix)
         if candidate.exists():
             item = candidate.stat()
             result[suffix] = {'size': item.st_size, 'mtime_ns': item.st_mtime_ns,
                               'inode': item.st_ino, 'device': item.st_dev}
+    return result
+
+
+def wal_fingerprints(path, *, max_bytes=64 * 1024 * 1024):
+    """Bounded read-only reconciliation of all exact WAL sidecars, no engine."""
+    before = file_inventory(path)
+    sidecars = {s: item for s, item in before.items() if s}
+    if not 0 < max_bytes <= 64 * 1024 * 1024 or sum(s['size'] for s in sidecars.values()) > max_bytes:
+        raise ValueError('WAL fingerprint bytes exceed ceiling')
+    result = {}
+    for suffix, item in sidecars.items():
+        candidate = Path(str(path) + suffix)
+        if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_nlink != 1:
+            raise ValueError('WAL fingerprint requires unique regular sidecars')
+        with candidate.open('rb') as stream:
+            digest = hashlib.sha256()
+            remaining = item['size']
+            while remaining:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise ValueError('short WAL fingerprint read')
+                digest.update(chunk)
+                remaining -= len(chunk)
+        result[suffix] = {**item, 'sha256': digest.hexdigest()}
+    if file_inventory(path) != before:
+        raise ValueError('database or WAL changed during fingerprint read')
     return result
 
 
@@ -242,6 +268,7 @@ def run(args):
             if block["file_changed_during_read"]:
                 raise ValueError("candidate changed during read")
             emit('files_without_engine_open', files=file_inventory(DATABASE_PATH))
+            emit('wal_fingerprints_without_engine_open', files=wal_fingerprints(DATABASE_PATH))
             return 0
         if args.action == "retained_headers":
             if block["file_changed_during_read"]:

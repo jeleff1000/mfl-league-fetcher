@@ -219,12 +219,34 @@ def test_file_inventory_does_not_open_duckdb_or_hide_wal(tmp_path, monkeypatch):
     wal.write_bytes(b'committed')
     checkpoint_wal = Path(str(path) + '.wal.checkpoint')
     checkpoint_wal.write_bytes(b'checkpoint committed')
+    recovery_wal = Path(str(path) + '.wal.recovery')
+    recovery_wal.write_bytes(b'recovery committed')
     result = pilot.file_inventory(path)
     assert result['']['size'] == 7
     assert result['.wal']['size'] == 9
     assert result['.wal']['mtime_ns'] == wal.stat().st_mtime_ns
     assert wal.read_bytes() == b'committed'
     assert result['.wal.checkpoint']['size'] == 20
+    assert result['.wal.recovery']['size'] == 18
+
+
+def test_bounded_wal_fingerprints_cover_exact_sidecars_without_engine_open(tmp_path, monkeypatch):
+    import hashlib
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.setattr(duckdb, 'connect', lambda *a, **k: pytest.fail('fingerprint opened DuckDB'))
+    path = tmp_path / '___leagues.duckdb'
+    path.write_bytes(b'main unchanged')
+    for suffix in ('.wal', '.wal.checkpoint', '.wal.recovery'):
+        Path(str(path) + suffix).write_bytes(suffix.encode())
+    with pytest.raises(ValueError, match='ceiling'):
+        pilot.wal_fingerprints(path, max_bytes=2)
+    result = pilot.wal_fingerprints(path, max_bytes=64)
+    assert set(result) == {'.wal', '.wal.checkpoint', '.wal.recovery'}
+    for suffix, receipt in result.items():
+        assert receipt['sha256'] == hashlib.sha256(suffix.encode()).hexdigest()
+        assert Path(str(path) + suffix).read_bytes() == suffix.encode()
+    assert path.read_bytes() == b'main unchanged'
 
 
 def test_inventory_replay_has_no_spill_and_fits_bounded_four_gib_machine():

@@ -65,6 +65,12 @@ def targets(path):
     return REAL_TABLES if Path(path).name == "___leagues.duckdb" else (TABLE,)
 
 
+def add_metadata_density(conn):
+    columns = ','.join(f'column_{i:03d}_with_a_long_but_ordinary_metadata_name VARCHAR' for i in range(64))
+    for i in range(96):
+        conn.execute(f'CREATE TABLE public.metadata_density_{i:03d} ({columns})')
+
+
 def child(path, mode):
     # The interposer's forwarding lookup needs Python's engine globally visible.
     if sys.platform == "linux":
@@ -97,9 +103,11 @@ def child(path, mode):
     try:
         conn = connect(path)
         if hook and marker.exists():
-            if hook.lh_spike_reserved_masks() < 1:
+            block_id = json.loads(marker.read_text())['block_id']
+            registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=?', [block_id]).fetchall())
+            if registered and hook.lh_spike_reserved_masks() < 1:
                 raise ValueError('engine Read did not invoke the selective metadata reservation')
-            emit('metadata_read_mask_bound', calls=hook.lh_spike_reserved_masks())
+            emit('metadata_read_mask_bound', calls=hook.lh_spike_reserved_masks(), registered=registered)
         if hook:
             hook.lh_spike_arm()
         emit("connected", mode=mode)
@@ -108,6 +116,10 @@ def child(path, mode):
         if conn.execute(WITNESS).fetchall() != EXPECTED:
             raise ValueError("healthy witness changed before DROP")
         emit("healthy_witness_verified", mode=mode)
+        if mode == 'budget':
+            # Force real physical allocations under stock 64-subslot packing;
+            # tiny catalogs can legitimately checkpoint without a fresh block.
+            add_metadata_density(conn)
         if mode == "seed_wal":
             conn.execute("CREATE TABLE public.wal_fact AS SELECT 'committed before recovery' AS value")
             conn.execute("CREATE TABLE public.ordinary_wal_drop AS SELECT 8 AS n")
@@ -178,7 +190,7 @@ def child(path, mode):
             # the new catalog, before a stock engine is asked to reuse space.
             conn.execute("CHECKPOINT")
             hook.lh_spike_checkpoint(0)
-            if hook.lh_spike_allocations() < 1 and mode != "recover":
+            if hook.lh_spike_allocations() < 1 and mode != "recover" and len(targets(path)) == 5:
                 raise ValueError("fresh metadata allocation hook was not exercised")
             emit("fresh_metadata_checkpoints", allocations=hook.lh_spike_allocations())
             emit('selective_metadata_reservation', calls=hook.lh_spike_reserved_masks())
@@ -293,9 +305,7 @@ def main():
                     # A real catalog contains many metadata handles. Reusing
                     # healthy sub-blocks must not become one 256KiB allocation
                     # per 4KiB handle just to avoid one damaged physical block.
-                    columns = ','.join(f'column_{i:03d}_with_a_long_but_ordinary_metadata_name VARCHAR' for i in range(64))
-                    for i in range(96):
-                        conn.execute(f'CREATE TABLE public.metadata_density_{i:03d} ({columns})')
+                    add_metadata_density(conn)
                 conn.execute("CHECKPOINT")
                 old_blocks = [r[0] for r in conn.execute("SELECT block_id FROM pragma_metadata_info()").fetchall()]
             if baseline.stat().st_size > LIMIT:

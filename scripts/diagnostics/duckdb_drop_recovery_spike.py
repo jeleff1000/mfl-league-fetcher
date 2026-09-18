@@ -68,6 +68,7 @@ def child(path, mode):
     hook = ctypes.CDLL(None) if mode == "hook" else None
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
+        hook.lh_spike_allocations.restype = ctypes.c_int
     conn = None
     try:
         conn = connect(path)
@@ -102,7 +103,17 @@ def child(path, mode):
             if hook.lh_spike_count() != 1:
                 raise ValueError("removal hook did not intercept exactly one call")
         emit("drop_committed", intercepted=hook.lh_spike_count() if hook else 0)
+        if hook:
+            hook.lh_spike_checkpoint(1)
         conn.execute("CHECKPOINT")
+        if hook:
+            # A second checkpoint retires metadata no longer referenced by
+            # the new catalog, before a stock engine is asked to reuse space.
+            conn.execute("CHECKPOINT")
+            hook.lh_spike_checkpoint(0)
+            if hook.lh_spike_allocations() < 1:
+                raise ValueError("fresh metadata allocation hook was not exercised")
+            emit("fresh_metadata_checkpoints", allocations=hook.lh_spike_allocations())
         conn.close()
         conn = None
         # New process without LD_PRELOAD verifies the actual persisted file.
@@ -114,6 +125,7 @@ def child(path, mode):
     finally:
         if hook:
             hook.lh_spike_disarm()
+            hook.lh_spike_checkpoint(0)
         if conn is not None:
             conn.close()
 

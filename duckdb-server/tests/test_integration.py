@@ -285,7 +285,8 @@ def test_rename_league_runs_one_server_side_operation(client, monkeypatch):
             "rename-agusta",
         )
     ]
-    assert handoff[:2] == ["drain_ops", "close_all"]
+    assert handoff == []
+    assert main_mod._delta_publish_inflight == 0
 
 
 def test_rename_league_rejects_invalid_target_before_write(client, monkeypatch):
@@ -327,13 +328,15 @@ def test_server_side_rename_reuses_one_ops_connection(data_dir, monkeypatch):
 
     def connect_once(path, **kwargs):
         nonlocal ops_opens
-        if str(path) == str(ops_path):
+        if str(path) == str(ops_path) and not kwargs.get("read_only"):
             ops_opens += 1
             if ops_opens > 1:
                 raise RuntimeError("ops database opened more than once")
         return real_connect(path, **kwargs)
 
     monkeypatch.setattr(main_mod.db, "connect_database", connect_once)
+    monkeypatch.setattr(main_mod.db, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(main_mod.db, "reopen_ops_connection", lambda: None)
     result = main_mod._rename_league_server_side(
         data_dir=data_dir,
         source_db="old_league",
@@ -371,6 +374,8 @@ def test_server_side_rename_retry_skips_noop_checkpoints(data_dir, monkeypatch):
     ops.execute("CREATE TABLE main.league_credentials(database_name VARCHAR, token VARCHAR)")
     ops.execute("INSERT INTO main.league_credentials VALUES ('old_league', 'encrypted')")
     ops.close()
+    monkeypatch.setattr(main_mod.db, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(main_mod.db, "reopen_ops_connection", lambda: None)
 
     first = main_mod._rename_league_server_side(
         data_dir=data_dir,
@@ -398,6 +403,309 @@ def test_server_side_rename_retry_skips_noop_checkpoints(data_dir, monkeypatch):
     assert second["control_status"] == "ALREADY_COMMITTED"
     assert second["data_checkpointed"] is False
     assert second["ops_checkpointed"] is False
+
+
+def _prepare_online_rename(data_dir, *, committed=True):
+    import main
+    conn = main.db.connect_database(data_dir / "___leagues.duckdb")
+    conn.execute("ALTER TABLE public.matchup ADD COLUMN db_name VARCHAR")
+    conn.execute("UPDATE public.matchup SET db_name='old_league'")
+    conn.execute("INSERT INTO public.matchup VALUES (2026, 1, 'Alice', 'new_league')")
+    conn.execute("ALTER TABLE public.matchup ADD COLUMN manager_week VARCHAR")
+    conn.execute("UPDATE public.matchup SET manager_week=year || '_' || week || '_' || manager")
+    conn.execute("CREATE TABLE public.league_context(db_name VARCHAR, league_name VARCHAR, context_json VARCHAR)")
+    conn.execute("INSERT INTO public.league_context VALUES ('new_league', 'New League', ?)",
+                 [json.dumps({"aliases": {"old": "preferred"}, "merges": [["a", "b"]]})])
+    conn.close()
+    main.db.close_ops_connection()
+    ops = main.db.connect_database(data_dir / "___ops.duckdb")
+    ops.execute("CREATE SCHEMA IF NOT EXISTS accounts")
+    ops.execute("CREATE TABLE main.league_credentials(database_name VARCHAR, token VARCHAR)")
+    ops.execute("INSERT INTO main.league_credentials VALUES (?, 'encrypted')",
+                ["new_league" if committed else "old_league"])
+    if committed:
+        ops.execute("CREATE TABLE accounts.league_rename_operations "
+                    "(operation_id VARCHAR, source_db VARCHAR, target_db VARCHAR, status VARCHAR)")
+        ops.execute("INSERT INTO accounts.league_rename_operations VALUES "
+                    "('league_rename_9ffe790d168ae90b', 'old_league', 'new_league', 'COMMITTED')")
+    ops.close()
+    main.db.reopen_ops_connection()
+
+
+def _request_online_rename(client):
+    return client.post('/rename-league', headers={"Authorization": "Bearer test-admin"}, json={
+        "source_db": "old_league", "target_db": "new_league", "display_name": "New League",
+        "operation_id": "league_rename_9ffe790d168ae90b"})
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_online_rename_preserves_history_context_and_read_pool(client, data_dir, monkeypatch, committed):
+    import main
+    from multi_league.core import league_rename
+    _prepare_online_rename(data_dir, committed=committed)
+    entered, release = Event(), Event()
+    original = league_rename.consolidate_canonical_league
+    def held(conn, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original(conn, **kwargs)
+    monkeypatch.setattr(league_rename, 'consolidate_canonical_league', held)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('rename must not close the public pool or force a checkpoint')
+    monkeypatch.setattr(main.db, 'close_pool', forbidden)
+    monkeypatch.setattr(main, '_checkpoint_result', forbidden)
+    monkeypatch.setattr(main, '_checkpoint_connection_if_wal_large', forbidden)
+    if committed:
+        monkeypatch.setattr(main, '_execute_ops_query_rw_serialized', forbidden)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(_request_online_rename, client)
+        try:
+            assert entered.wait(3)
+            assert client.get('/ready').json()['accepting_queries'] is True
+            read = client.post('/query', headers={"Authorization": "Bearer test-read"},
+                               json={"sql": "SELECT COUNT(*) AS n FROM public.matchup WHERE db_name='old_league'"})
+            assert read.status_code == 200
+            assert read.json() == [{"n": 2}]
+            assert main._delta_publish_inflight == 1
+        finally:
+            release.set()
+        response = pending.result(timeout=5)
+    assert response.status_code == 200, response.text
+    assert response.json()['target_years'] == [2024, 2026]
+    assert response.json()['control_status'] == ('ALREADY_COMMITTED' if committed else 'COMMITTED')
+    assert response.json()['data_checkpointed'] is False
+    conn = main.db.connect_database(data_dir / '___leagues.duckdb')
+    assert conn.execute("SELECT db_name, count(*) FROM public.matchup GROUP BY 1").fetchall() == [('new_league', 3)]
+    assert json.loads(conn.execute("SELECT context_json FROM public.league_context").fetchone()[0]) == {
+        "aliases": {"old": "preferred"}, "merges": [["a", "b"]]}
+    conn.close()
+    assert main.db.get_ops_connection().execute('SELECT database_name FROM main.league_credentials').fetchall() == [('new_league',)]
+    assert main._delta_publish_inflight == 0
+    monkeypatch.undo()  # fixture teardown is allowed to close the pool
+
+
+def test_online_rename_real_sql_deadline_rolls_back(client, data_dir, monkeypatch):
+    import main
+    from multi_league.core import league_rename
+    _prepare_online_rename(data_dir)
+    def expensive(conn, **kwargs):
+        conn.execute('BEGIN')
+        conn.execute("UPDATE public.matchup SET db_name='new_league'")
+        conn.execute('SELECT SUM(i) FROM range(1000000000000) t(i)').fetchone()
+    monkeypatch.setattr(league_rename, 'consolidate_canonical_league', expensive)
+    monkeypatch.setattr(main, 'RENAME_TIMEOUT_SECONDS', 0.3, raising=False)
+    # Old code has no engine deadline; keep the RED proof bounded too.
+    original_connect = main.db.connect_database
+    import threading
+    timers = []
+    def connect(path, **kwargs):
+        conn = original_connect(path, **kwargs)
+        if path.name == '___leagues.duckdb':
+            timer = threading.Timer(2, conn.interrupt)
+            timer.start()
+            timers.append(timer)
+        return conn
+    monkeypatch.setattr(main.db, 'connect_database', connect)
+    started = time.monotonic()
+    try:
+        response = _request_online_rename(client)
+    finally:
+        for timer in timers:
+            timer.cancel()
+            timer.join()
+    assert response.status_code == 504, response.text
+    assert time.monotonic() - started < 1.5
+    conn = original_connect(data_dir / '___leagues.duckdb')
+    assert conn.execute("SELECT COUNT(*) FROM public.matchup WHERE db_name='old_league'").fetchone() == (2,)
+    conn.close()
+    assert main._delta_publish_inflight == 0
+    assert client.get('/ready').json()['accepting_queries'] is True
+
+
+@pytest.mark.parametrize('phase', ['data', 'control'])
+def test_online_rename_durable_commit_survives_errors(client, data_dir, monkeypatch, phase):
+    import main
+    _prepare_online_rename(data_dir, committed=phase == 'data')
+    connect = main.db.connect_database
+    wrapped = False
+    class Connection:
+        def __init__(self, conn):
+            self.conn = conn
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+        def execute(self, sql, *args, **kwargs):
+            result = self.conn.execute(sql, *args, **kwargs)
+            if sql.strip().upper() == 'COMMIT':
+                raise RuntimeError('error after durable commit')
+            return result
+        def close(self):
+            self.conn.close()
+            raise RuntimeError('cleanup after durable commit')
+    def wrap(path, **kwargs):
+        nonlocal wrapped
+        conn = connect(path, **kwargs)
+        wanted = '___leagues.duckdb' if phase == 'data' else '___ops.duckdb'
+        if not wrapped and path.name == wanted and not kwargs.get('read_only'):
+            wrapped = True
+            return Connection(conn)
+        return conn
+    monkeypatch.setattr(main.db, 'connect_database', wrap)
+    response = _request_online_rename(client)
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'COMMITTED'
+    assert response.json()['target_years'] == [2024, 2026]
+    assert main._delta_publish_inflight == 0
+    assert main._ops_write_count == 0
+    assert client.get('/ready').json()['accepting_queries'] is True
+
+
+def test_online_rename_receipt_mismatch_rejected_before_physical_write(client, data_dir):
+    import main
+    _prepare_online_rename(data_dir)
+    main._execute_ops_query_rw_serialized(
+        "UPDATE accounts.league_rename_operations SET source_db='unrelated_league'")
+    response = _request_online_rename(client)
+    assert response.status_code == 400, response.text
+    conn = main.db.connect_database(data_dir / '___leagues.duckdb')
+    assert conn.execute("SELECT COUNT(*) FROM public.matchup WHERE db_name='old_league'").fetchone() == (2,)
+    assert conn.execute("SELECT COUNT(*) FROM information_schema.tables "
+                        "WHERE table_schema='merge_admin' AND table_name='league_rename_operations'").fetchone() == (0,)
+    conn.close()
+
+
+def test_online_rename_rejects_persisted_fleet_lock_before_mutation(client, data_dir):
+    import main
+    _prepare_online_rename(data_dir)
+    conn = main.db.connect_database(data_dir / '___leagues.duckdb')
+    main.fleet_merge.set_fleet_publish_lock(conn, True, run_id='fleet-in-progress')
+    conn.close()
+    response = _request_online_rename(client)
+    assert response.status_code == 409, response.text
+    conn = main.db.connect_database(data_dir / '___leagues.duckdb')
+    assert conn.execute("SELECT db_name, count(*) FROM public.matchup GROUP BY 1 ORDER BY 1").fetchall() == [
+        ('new_league', 1), ('old_league', 2)]
+    assert conn.execute("SELECT COUNT(*) FROM information_schema.tables "
+                        "WHERE table_schema='merge_admin' AND table_name='league_rename_operations'").fetchone() == (0,)
+    assert main.fleet_merge.fleet_publish_locked(conn)
+    conn.close()
+    assert main._delta_publish_inflight == 0
+    assert client.get('/ready').json()['accepting_queries'] is True
+
+
+def test_online_rename_committed_ops_reopen_failure_is_not_false_ready(client, data_dir, monkeypatch):
+    import main
+    _prepare_online_rename(data_dir, committed=False)
+    def fail_reopen():
+        raise RuntimeError('private failure details must not appear in the response')
+    monkeypatch.setattr(main.db, 'reopen_ops_connection', fail_reopen)
+    response = _request_online_rename(client)
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'COMMITTED'
+    assert response.json().get('recovery_error')
+    assert 'private failure details' not in response.text
+    assert main.db.get_ops_connection() is None
+    ready = client.get('/ready')
+    assert ready.status_code == 503, ready.text
+    assert ready.json()['accepting_queries'] is False
+    assert ready.json()['recovery_error'] == response.json()['recovery_error']
+    main._set_serving_or_ops_writing()
+    assert client.get('/ready').status_code == 503
+    assert main._ops_write_count == 0
+    assert main._delta_publish_inflight == 0
+    # Independent durable witnesses, not the writer's uncommitted transaction.
+    conn = main.db.connect_database(data_dir / '___leagues.duckdb')
+    assert conn.execute("SELECT db_name, count(*) FROM public.matchup GROUP BY 1").fetchall() == [('new_league', 3)]
+    conn.close()
+    ops = main.db.connect_database(data_dir / '___ops.duckdb', read_only=True)
+    assert ops.execute('SELECT status FROM accounts.league_rename_operations').fetchone() == ('COMMITTED',)
+    ops.close()
+
+
+def test_online_rename_cancellation_retains_admission_until_rollback(client, data_dir, monkeypatch):
+    import asyncio
+    import main
+    from starlette.requests import Request
+    from multi_league.core import league_rename
+    _prepare_online_rename(data_dir)
+    entered, release = Event(), Event()
+    deadline_timers = []
+    real_timer = main.threading.Timer
+    def timer(interval, function, *args, **kwargs):
+        value = real_timer(interval, function, *args, **kwargs)
+        if 'run_phase.<locals>.interrupt' in function.__qualname__:
+            deadline_timers.append(value)
+        return value
+    monkeypatch.setattr(main.threading, 'Timer', timer)
+    def expensive(conn, **kwargs):
+        conn.execute('BEGIN')
+        conn.execute("UPDATE public.matchup SET db_name='new_league'")
+        entered.set()
+        assert release.wait(3)
+        conn.execute('SELECT SUM(i) FROM range(1000000000000) t(i)').fetchone()
+    monkeypatch.setattr(league_rename, 'consolidate_canonical_league', expensive)
+    async def exercise():
+        async def receive():
+            return {'type': 'http.request', 'body': json.dumps({
+                'source_db': 'old_league', 'target_db': 'new_league', 'display_name': 'New League',
+                'operation_id': 'league_rename_9ffe790d168ae90b'}).encode()}
+        request = Request({'type': 'http', 'headers': [(b'authorization', b'Bearer test-admin')]}, receive)
+        task = asyncio.create_task(main.rename_league(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert main._merge_lock.locked()
+            assert main._delta_publish_inflight == 1
+            task.cancel()
+            # Fire the actual deadline callback after setup and cancellation,
+            # not a flaky 0.3s from initial file/credential validation. Real
+            # running-engine interruption has its separate regression test.
+            deadline_timers[0].function()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    client.portal.call(exercise)
+    assert main._delta_publish_inflight == 0
+    assert not main._merge_lock.locked()
+    conn = main.db.connect_database(data_dir / '___leagues.duckdb')
+    assert conn.execute("SELECT COUNT(*) FROM public.matchup WHERE db_name='old_league'").fetchone() == (2,)
+    conn.close()
+
+
+def test_fresh_rename_queued_ops_deadline_stays_online_and_can_resume(client, data_dir, monkeypatch):
+    import main
+    _prepare_online_rename(data_dir, committed=False)
+    reader = main.db.connect_database(data_dir / '___leagues.duckdb')
+    main._acquire_ops_attachment(reader)
+    entered = Event()
+    drain = main._drain_ops_attachments_for_snapshot
+    def held_drain(**kwargs):
+        entered.set()
+        return drain(**kwargs)
+    monkeypatch.setattr(main, '_drain_ops_attachments_for_snapshot', held_drain)
+    monkeypatch.setattr(main, 'RENAME_TIMEOUT_SECONDS', 0.5)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(_request_online_rename, client)
+            assert entered.wait(2)
+            assert main._ops_write_count == 0
+            assert client.get('/ready').json()['accepting_queries'] is True
+            read = client.post('/query', headers={"Authorization": "Bearer test-read"},
+                               json={"sql": "SELECT COUNT(*) AS n FROM public.matchup WHERE db_name='new_league'"})
+            assert read.status_code == 200 and read.json() == [{'n': 3}]
+            response = pending.result(timeout=2)
+        assert response.status_code == 504, response.text
+        assert main._ops_write_count == 0
+        assert main._delta_publish_inflight == 0
+    finally:
+        main._release_ops_attachment(reader)
+        reader.close()
+    monkeypatch.setattr(main, 'RENAME_TIMEOUT_SECONDS', 35)
+    retry = _request_online_rename(client)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()['data_status'] == 'ALREADY_CONSOLIDATED'
+    assert retry.json()['control_status'] == 'COMMITTED'
 
 
 def test_server_state_exposes_runtime_capacity(client):

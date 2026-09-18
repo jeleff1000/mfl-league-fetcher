@@ -123,6 +123,7 @@ FLEET_MERGE_HARD_EXIT_SECONDS = _env_float("FLEET_MERGE_HARD_EXIT_SECONDS", 900.
 # Reserve headroom inside the 40s pilot for admission, receipt reconciliation,
 # rollback/cleanup and transport. Never kill the process at this SQL deadline.
 DERIVED_REBUILD_TIMEOUT_SECONDS = 35.0
+RENAME_TIMEOUT_SECONDS = 35.0
 # /merge-ops replaces whole ___ops reference tables (the ~1.2M x 820 super table takes minutes to
 # CREATE OR REPLACE), so it needs its own generous ceilings independent of the 120s admin default.
 OPS_MERGE_TIMEOUT = _env_float("OPS_MERGE_TIMEOUT", 900.0, min_value=120.0)  # per-table statement
@@ -234,6 +235,10 @@ def _end_ops_write_state() -> None:
 
 
 def _set_serving_or_ops_writing() -> None:
+    if _state.get("recovery_error") and db.get_ops_connection() is None:
+        _state["status"] = "recovery_failed"
+        return
+    _state.pop("recovery_error", None)
     _state["status"] = "ops_writing" if _ops_write_count > 0 else "serving"
 
 
@@ -1248,28 +1253,47 @@ def _sql_requests_checkpoint(sql: str) -> bool:
     return re.search(r"\b(?:FORCE\s+)?CHECKPOINT\b", scrubbed, flags=re.IGNORECASE) is not None
 
 
-def _execute_ops_query_rw(sql: str) -> list[dict]:
+def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = None):
     """Execute an admin write against ___ops without draining ___leagues reads."""
     import db as _db
 
     data_dir = _db.get_data_dir()
     ops_path = data_dir / "___ops.duckdb"
     conn = None
+    result = None
     pool_closed = False
 
     # Autocommit DDL/DML and connection close can checkpoint implicitly.
     # Interrupt queries, but never terminate the server inside those writes.
     checkpoint_sql = _sql_requests_checkpoint(sql)
-    with _db._ops_lock:
+    def remaining():
+        if deadline is None:
+            return ADMIN_QUERY_TIMEOUT
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError("League rename exceeded its SQL deadline")
+        return budget
+
+    if not _db._ops_lock.acquire(timeout=remaining() if deadline is not None else -1):
+        raise TimeoutError("OPS writer lock exceeded the rename deadline")
+    try:
         # Pending writers must not advertise a site outage while a fleet
         # reader holds OPS. Keep the attachment gate locked, but enter the
         # exclusive-write state/cleanup only after existing references drain.
-        _drain_ops_attachments_for_snapshot(timeout_seconds=min(PUBLIC_QUERY_TIMEOUT, ADMIN_QUERY_TIMEOUT / 2))
+        try:
+            _drain_ops_attachments_for_snapshot(
+                timeout_seconds=min(PUBLIC_QUERY_TIMEOUT, ADMIN_QUERY_TIMEOUT / 2, remaining()))
+        except RuntimeError as exc:
+            if deadline is not None:
+                raise TimeoutError("OPS readers did not drain within the rename deadline") from exc
+            raise
+        remaining()
         _begin_ops_write_state()
         try:
             _db.close_ops_connection()
             last_connect_error: Exception | None = None
             for attempt in range(8):
+                remaining()
                 try:
                     conn = _db.connect_database(ops_path, data_dir=data_dir)
                     break
@@ -1282,14 +1306,19 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
                     # the read-only handle. The public pool no longer keeps
                     # ___ops attached while idle, so rebuilding the pool is a
                     # rare fallback rather than the normal path.
-                    time.sleep(0.25 * (attempt + 1))
+                    time.sleep(min(0.25 * (attempt + 1), remaining()))
                     _db.close_ops_connection()
-                    if attempt >= 3 and not pool_closed:
+                    if operation is None and attempt >= 3 and not pool_closed:
                         logger.warning("Closing public pool during ___ops write after repeated handle conflicts")
                         _db.close_pool()
                         pool_closed = True
             if conn is None:
                 raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
+            if operation is not None:
+                # Rename reuses the exclusive OPS lifecycle, not SQL-script
+                # checkpointing or the legacy public-pool-close fallback.
+                result = operation(conn)
+                return result
             _db._attach_ops_nfl(conn)  # so admin writes (e.g. the one-time view cutover) can bind ___ops_nfl
             result = _execute_script_with_timeout(
                 conn,
@@ -1309,7 +1338,8 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
             reopen_actions = [("reopen ___ops connection", _db.reopen_ops_connection)]
             if pool_closed:
                 reopen_actions.append(("reopen ___leagues pool", _db.reopen_pool))
-            reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
+            if operation is None:
+                reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
             for label, action in reopen_actions:
                 try:
                     action()
@@ -1317,17 +1347,35 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
                     if cleanup_error is None:
                         cleanup_error = exc
                     logger.exception("Failed to %s after ___ops write", label)
+                    if operation is not None and label == "reopen ___ops connection":
+                        # Commit durability and reader recovery are separate.
+                        # Keep the receipt result, but never advertise a ready
+                        # service with its OPS reader missing. Exclude raw error
+                        # details from the response and readiness surface.
+                        recovery_error = f"OPS reader recovery failed ({type(exc).__name__})"
+                        _state.update(status="recovery_failed", recovery_error=recovery_error)
+                        if result is not None:
+                            result["recovery_error"] = recovery_error
             try:
-                if cleanup_error is not None:
+                if cleanup_error is not None and operation is None:
                     raise cleanup_error
             finally:
                 _end_ops_write_state()
+    finally:
+        _db._ops_lock.release()
 
 
-def _execute_ops_query_rw_serialized(sql: str) -> list[dict]:
+def _execute_ops_query_rw_serialized(sql: str, *, operation=None, deadline: float | None = None):
     """Run an ___ops write without racing an online replacement snapshot."""
-    with _ops_rebuild_lock:
-        return _execute_ops_query_rw(sql)
+    if deadline is None:
+        with _ops_rebuild_lock:
+            return _execute_ops_query_rw(sql)
+    if not _ops_rebuild_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+        raise TimeoutError("OPS publication lock exceeded the rename deadline")
+    try:
+        return _execute_ops_query_rw(sql, operation=operation, deadline=deadline)
+    finally:
+        _ops_rebuild_lock.release()
 
 
 _OPS_MERGE_SCHEMA = "nfl_historical"
@@ -1594,6 +1642,7 @@ async def ready():
             "status": _state["status"],
             "ready": False,
             "accepting_queries": False,
+            "recovery_error": _state.get("recovery_error"),
             "role": os.environ.get("FLY_ROLE", "primary"),
             "active_queries": db.get_active_count(),
             "ops_writes": _ops_write_count,
@@ -2224,7 +2273,11 @@ def _rename_league_server_side(
     display_name: str,
     operation_id: str,
 ) -> dict[str, Any]:
-    """Converge league data and control-plane identity without downloading a snapshot."""
+    """Resume the two existing rename transactions without closing public reads.
+
+    OPS completion is not evidence of physical completion. Each phase keeps
+    its existing permanent operation receipt; a retry finishes the other phase.
+    """
     from multi_league.core.delta_publish import canonical_table_registry
     from multi_league.core.league_rename import (
         consolidate_canonical_league,
@@ -2237,50 +2290,146 @@ def _rename_league_server_side(
     if not leagues_path.exists() or not ops_path.exists():
         raise ValueError("league rename requires both ___leagues and ___ops databases")
 
-    # Collision validation is read-only and must happen before either database
-    # is changed. A partial prior rename is accepted only when inventory already
-    # points both aliases at the same canonical target.
-    ops_conn = db.connect_database(ops_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
-    try:
-        validate_control_plane_rename(
-            ops_conn,
-            source_db=source_db,
-            target_db=target_db,
-        )
-        leagues_conn = db.connect_database(
-            leagues_path,
-            data_dir=data_dir,
-            threads=WRITE_DUCKDB_THREADS,
-        )
-        try:
-            data_result = consolidate_canonical_league(
-                leagues_conn,
-                source_db=source_db,
-                target_db=target_db,
-                display_name=display_name,
-                operation_id=operation_id,
-                registry=canonical_table_registry(),
-            )
-            if data_result.get("status") == "ALREADY_CONSOLIDATED":
-                data_checkpointed, data_checkpoint_error = False, None
-            else:
-                data_checkpointed, data_checkpoint_error = _checkpoint_result(leagues_conn)
-        finally:
-            leagues_conn.close()
+    deadline = time.monotonic() + RENAME_TIMEOUT_SECONDS
+    kwargs = dict(source_db=source_db, target_db=target_db,
+                  display_name=display_name, operation_id=operation_id)
 
-        control_result = retarget_league_control_plane(
-            ops_conn,
-            source_db=source_db,
-            target_db=target_db,
-            display_name=display_name,
-            operation_id=operation_id,
-        )
-        if control_result.get("status") == "ALREADY_COMMITTED":
-            ops_checkpointed, ops_checkpoint_error = False, None
-        else:
-            ops_checkpointed, ops_checkpoint_error = _checkpoint_result(ops_conn)
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError(f"League rename exceeded {RENAME_TIMEOUT_SECONDS:g}s SQL deadline")
+        return budget
+
+    def execute_step(conn, sql, params=None, *, step="rename validation"):
+        return _interrupting_execute(conn, sql, params, step=step,
+                                     timeout_seconds=min(MERGE_STEP_TIMEOUT_SECONDS, remaining()))
+
+    def run_phase(raw, path, operation, *, control=False):
+        commit_started = False
+        expired = threading.Event()
+
+        def interrupt():
+            expired.set()
+            raw.interrupt()
+
+        timer = threading.Timer(remaining(), interrupt)
+        timer.daemon = True
+        timer.start()
+
+        def stop_timer():
+            timer.cancel()
+            timer.join()  # No late interrupt may race rollback or receipt reconciliation.
+
+        def execute(conn, sql, params=None, *, step=""):
+            nonlocal commit_started
+            statement = sql.strip().upper()
+            if statement == "ROLLBACK":
+                stop_timer()
+                return _interrupting_execute(conn, sql, step="rename rollback", timeout_seconds=2)
+            if expired.is_set():
+                raise TimeoutError("League rename exceeded its SQL deadline")
+            remaining()
+            if statement == "COMMIT":
+                commit_started = True
+            return execute_step(conn, sql, params, step="rename control" if control else "rename data")
+
+        try:
+            timed_conn = fleet_merge._AggregationConnection(raw, execute)
+            if not control and fleet_merge.fleet_publish_locked(timed_conn):
+                raise DeltaConflictError("Fleet publish window is locked; retry league rename later")
+            return operation(timed_conn)
+        except Exception:
+            stop_timer()
+            with suppress(Exception):
+                _interrupting_execute(raw, "ROLLBACK", step="rename rollback", timeout_seconds=2)
+            if commit_started:
+                # The core's COMMIT (or its subsequent Python/ROLLBACK) can
+                # raise after durability. An independent transaction, never
+                # this writer's uncommitted receipt, establishes completion.
+                witness = None
+                try:
+                    witness = db.connect_database(path, data_dir=data_dir)
+                    schema = "accounts" if control else "merge_admin"
+                    result_column = "status" if control else "result_json"
+                    receipt = _interrupting_execute(
+                        witness,
+                        f"SELECT {result_column} FROM {schema}.league_rename_operations "
+                        "WHERE operation_id=? AND source_db=? AND target_db=? AND status=?",
+                        [operation_id, source_db, target_db, "COMMITTED" if control else "CONSOLIDATED"],
+                        step="rename durable receipt", timeout_seconds=2,
+                    ).fetchone()
+                    if receipt:
+                        return {"status": "COMMITTED", **kwargs} if control else json.loads(receipt[0])
+                except Exception:
+                    logger.exception("Unable to reconcile rename receipt for %s", operation_id)
+                finally:
+                    if witness is not None:
+                        with suppress(Exception):
+                            witness.close()
+            if expired.is_set():
+                raise TimeoutError("League rename exceeded its SQL deadline") from None
+            raise
+        finally:
+            stop_timer()
+
+    # Use the existing OPS read gate. No RW handle, DDL, credential value read,
+    # or inventory reconciliation is needed for an exact completed OPS phase.
+    if not db._ops_lock.acquire(timeout=remaining()):
+        raise TimeoutError("OPS validation lock exceeded the rename deadline")
+    ops_conn = None
+    control_done = False
+    try:
+        ops_conn = db.connect_database(ops_path, read_only=True, data_dir=data_dir)
+        validation = fleet_merge._AggregationConnection(ops_conn, execute_step)
+        validate_control_plane_rename(validation, source_db=source_db, target_db=target_db)
+        receipt_exists = validation.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_catalog=current_database() "
+            "AND table_schema='accounts' AND table_name='league_rename_operations'"
+        ).fetchone()[0]
+        if receipt_exists:
+            prior = validation.execute(
+                "SELECT source_db, target_db, status FROM accounts.league_rename_operations WHERE operation_id=?",
+                [operation_id],
+            ).fetchone()
+            if prior and tuple(prior[:2]) != (source_db, target_db):
+                raise ValueError("operation_id already belongs to a different rename")
+            if prior and prior[2] == "COMMITTED":
+                credentials_exist = validation.execute(
+                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_catalog=current_database() "
+                    "AND table_schema='main' AND table_name='league_credentials'"
+                ).fetchone()[0]
+                control_done = bool(credentials_exist and validation.execute(
+                    "SELECT 1 FROM main.league_credentials WHERE database_name=? LIMIT 1", [target_db]
+                ).fetchone())
+                # Credential-free leagues retain the core's normal retry path.
     finally:
-        ops_conn.close()
+        try:
+            if ops_conn is not None:
+                ops_conn.close()
+        finally:
+            db._ops_lock.release()
+
+    remaining()
+    leagues_conn = db.connect_database(leagues_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
+    try:
+        data_result = run_phase(
+            leagues_conn, leagues_path,
+            lambda conn: consolidate_canonical_league(conn, **kwargs, registry=canonical_table_registry()),
+        )
+    finally:
+        try:
+            leagues_conn.close()
+        except Exception:
+            logger.exception("Failed closing rename data writer for %s", operation_id)
+
+    if control_done:
+        control_result = {"status": "ALREADY_COMMITTED"}
+    else:
+        control_result = _execute_ops_query_rw_serialized(
+            "", deadline=deadline,
+            operation=lambda raw: run_phase(
+                raw, ops_path, lambda conn: retarget_league_control_plane(conn, **kwargs), control=True),
+        )
 
     return {
         "status": "COMMITTED",
@@ -2290,10 +2439,11 @@ def _rename_league_server_side(
         "target_years": data_result.get("target_years", []),
         "data_status": data_result.get("status"),
         "control_status": control_result.get("status"),
-        "data_checkpointed": data_checkpointed,
-        "data_checkpoint_error": data_checkpoint_error,
-        "ops_checkpointed": ops_checkpointed,
-        "ops_checkpoint_error": ops_checkpoint_error,
+        "recovery_error": control_result.get("recovery_error"),
+        "data_checkpointed": False,
+        "data_checkpoint_error": None,
+        "ops_checkpointed": False,
+        "ops_checkpoint_error": None,
     }
 
 
@@ -3603,7 +3753,7 @@ async def replace_canonical_table(
 
 @app.post("/rename-league")
 async def rename_league(request: Request):
-    """Atomically consolidate one league identity and retarget its registries."""
+    """Resume the receipted league and OPS transactions under online admission."""
     try:
         validate_admin_token(get_bearer_token(request))
     except AuthError as exc:
@@ -3627,28 +3777,48 @@ async def rename_league(request: Request):
     if not operation_id or len(operation_id) > 200:
         raise HTTPException(status_code=400, detail="operation_id is required and must be at most 200 characters")
 
-    async with _merge_lock:
-        _state["status"] = "draining"
-        elapsed = 0.0
-        while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
-            await asyncio.sleep(0.5)
-            elapsed += 0.5
-        if db.get_active_count() > 0:
-            await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
-        _drain_ops_attachments_for_snapshot()
-        db.close_all()
-        _state["status"] = "writing"
+    publish_token = await _acquire_delta_publish_slot(target_db, operation_id)
+    lock_acquired = False
+    try:
+        _update_delta_publish_slot(publish_token, "waiting_merge_lock")
         try:
-            result = await asyncio.to_thread(
+            await asyncio.wait_for(_merge_lock.acquire(), timeout=DELTA_ADMISSION_TIMEOUT_SECONDS)
+            lock_acquired = True
+        except TimeoutError as exc:
+            raise HTTPException(status_code=429, detail="Delta publish server busy; retry later",
+                                headers={"Retry-After": str(int(math.ceil(DELTA_BUSY_RETRY_AFTER_SECONDS))),
+                                         "Cache-Control": "no-store"}) from exc
+        _update_delta_publish_slot(publish_token, "merging")
+        try:
+            worker = asyncio.create_task(asyncio.to_thread(
                 _rename_league_server_side,
                 data_dir=db.get_data_dir(),
                 source_db=source_db,
                 target_db=target_db,
                 display_name=display_name,
                 operation_id=operation_id,
-            )
+            ))
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Cancellation cannot abandon a live SQL thread or release
+                # admission until its deadline, rollback and cleanup finish.
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not worker.cancelled():
+                    worker.exception()
+                raise
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DeltaConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
         except Exception as exc:
             logger.error(
                 "League rename failed for %s -> %s: %s",
@@ -3658,9 +3828,10 @@ async def rename_league(request: Request):
                 exc_info=True,
             )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            await _reopen_pool_after_write(f"league rename {source_db} -> {target_db}")
-            _set_serving_or_ops_writing()
+    finally:
+        if lock_acquired:
+            _merge_lock.release()
+        _release_delta_publish_slot(publish_token)
 
     track_event(
         "league_renamed",

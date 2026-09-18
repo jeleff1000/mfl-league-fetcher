@@ -1,6 +1,37 @@
 # September Update League closure ledger
 
-State: synthetic recovery tests passed; real-volume verification is awaiting Fly host capacity. Production physical recovery and update completion remain unproven. This ledger is for league updates, not SuperTable SOTA work.
+State: synthetic removal and guard tests passed; the real-volume blocker is retained-WAL replay within the bounded pilot, not current Fly capacity. No real-file removal or production recovery has been performed. This ledger is for league updates, not SuperTable SOTA work.
+
+## Current bounded-recovery receipts - 2026-09-18
+
+- Public main `595aec4f3`, run `35360987274`: all six synthetic matrix jobs pass;
+  adapter 16 tests in 1.11s; five-object corruption/recovery fixture in 10.901s.
+  The stock engine proves the damaged metadata block is either unregistered or
+  checksum-valid after repair, not merely that DROP no longer lists the object.
+  Prior committed WAL data survives. Crash-after-commit, crash-after-flush,
+  repeated recovery, unrelated-object rejection, and bounded allocation pass.
+- Run `35360800968` (`57cdd8991`) closed four review findings: direct file/mount
+  binding, WAL pathname replacement detection, retained commit-timeout logs,
+  and bounded stdout/stderr capture. The four tests were red in `35360471890`.
+- Real-volume engine identity `35358633104`: DuckDB 1.5.4, revision 08e34c447b,
+  extension SHA256 9135828981e3d0bdc346c10f663e353eb12de486d352edd4af89651a926967a9,
+  Python 3.11.16, x86_64, glibc 2.41. No database was opened for that check.
+- Real read-only inventory `35359997115` stayed within its 10s external limit
+  but timed out before returning the catalog. At 9.347s it recorded 537344 KiB
+  peak RSS, 1.848s CPU, 173740032 process read bytes, and 110309376 process write
+  bytes. These are process IO, NOT proof the source DB changed. Before-state
+  retained the original 15555375104-byte file and 45516621-byte WAL. This run's
+  post-kill file metadata has not yet been rechecked. No DROP was issued.
+- All disposable pilot machines were removed; the recovery volume and WAL are
+  retained. No unchanged WAL replay attempt has been resubmitted.
+- Production health `35359880765` at 15:01:52Z: serving, accepting queries,
+  zero active queries/OPS writes/delta publishes, both checks passing. League
+  fingerprint sha256:935b1b973ff578d5. Startup timestamp and OPS hash changed
+  externally during the turn; cause unknown. This work did not restart or
+  mutate production. Revalidate the deployed image before any offline handoff.
+- The real-file orchestration and actual isolated removal remain unfinished.
+  A process shutdown is required for exclusive production ownership with the
+  existing controls; there is no proven zero-downtime/hot-helper path.
 
 ## Real-file adapter continuation - 2026-09-18
 

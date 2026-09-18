@@ -213,3 +213,57 @@ def test_file_binding_rejects_symlink_even_on_approved_mount(tmp_path, monkeypat
         path.symlink_to(original)
         with pytest.raises(ValueError):
             a.validate_file_binding(path, tmp_path)
+
+
+def test_witness_orders_history_before_display_names_and_keeps_alias_config():
+    a = adapter()
+    with duckdb.connect(':memory:') as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'nyu_ffl' AS db_name, 'A' AS manager, 2026 AS year, i AS week, 1.0::DOUBLE AS points FROM range(20) t(i)")
+        conn.execute("INSERT INTO public.matchup VALUES ('nyu_ffl','M',2011,1,123.45),('nyu_ffl','Z',2026,1,2)")
+        conn.execute("INSERT INTO public.matchup SELECT 'nyu_ffl','Z',2026,i,2 FROM range(20) t(i)")
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT * FROM public.matchup')
+        conn.execute('CREATE TABLE public.league_context(db_name VARCHAR, manager_name_overrides_json VARCHAR, franchise_merges_json VARCHAR)')
+        conn.execute("INSERT INTO public.league_context VALUES ('nyu_ffl','{\"M\":\"Saved Alias\"}','{}')")
+        before = a.capture_witness(conn, 'nyu_ffl')
+        conn.execute("UPDATE public.matchup SET points=0 WHERE year=2011")
+        with pytest.raises(ValueError, match='witness'):
+            a.compare_witness(before, a.capture_witness(conn, 'nyu_ffl'))
+        conn.execute('UPDATE public.matchup SET points=123.45 WHERE year=2011')
+        conn.execute("UPDATE public.league_context SET manager_name_overrides_json='{}'")
+        with pytest.raises(ValueError, match='witness'):
+            a.compare_witness(before, a.capture_witness(conn, 'nyu_ffl'))
+
+
+def test_removal_uses_only_exact_objects_and_noops_only_after_all_five_absent(tmp_path):
+    a = adapter()
+    with duckdb.connect(str(tmp_path / '___leagues.duckdb')) as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL + a.QUARANTINED:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT 7 AS value')
+        assert a.remove_quarantined(conn) == 5
+        assert a.remove_quarantined(conn) == 0
+        for name in a.CANONICAL:
+            assert conn.execute(f'SELECT value FROM public."{name}"').fetchall() == [(7,)]
+        conn.execute(f'CREATE TABLE public."{a.QUARANTINED[0]}" AS SELECT 3 AS value')
+        with pytest.raises(ValueError, match='partial'):
+            a.remove_quarantined(conn)
+        assert conn.execute(f'SELECT value FROM public."{a.QUARANTINED[0]}"').fetchall() == [(3,)]
+
+
+def test_stock_verification_requires_no_quarantine_and_preserves_real_values(tmp_path):
+    a = adapter()
+    path = tmp_path / '___leagues.duckdb'
+    with duckdb.connect(str(path)) as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'nyu_ffl' AS db_name, 2011 AS year, 'Saved Alias' AS manager, 123.45 AS points")
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT * FROM public.matchup')
+        before = a.capture_witness(conn, 'nyu_ffl')
+    a.verify_stock(path, 'nyu_ffl', before)
+    with duckdb.connect(str(path)) as conn:
+        assert a.capture_witness(conn, 'nyu_ffl') == before
+        conn.execute(f'CREATE TABLE public."{a.QUARANTINED[0]}" AS SELECT 3 AS value')
+    with pytest.raises(ValueError, match='quarantined'):
+        a.verify_stock(path, 'nyu_ffl', before)

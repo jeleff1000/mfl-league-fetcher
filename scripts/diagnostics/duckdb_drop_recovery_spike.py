@@ -143,10 +143,14 @@ def child(path, mode):
                 assert conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name=?", [TABLE]).fetchall()
                 assert hook.lh_spike_count() == before_rollback
                 emit("rollback_verified")
-            conn.execute("BEGIN TRANSACTION")
-            for table in targets(path):
-                conn.execute(f'DROP TABLE public."{table}"')
-            conn.execute("COMMIT")
+            if len(targets(path)) == 5:
+                from duckdb_recovery_adapter import remove_quarantined
+                assert remove_quarantined(conn) == 5
+            else:
+                conn.execute("BEGIN TRANSACTION")
+                for table in targets(path):
+                    conn.execute(f'DROP TABLE public."{table}"')
+                conn.execute("COMMIT")
         elif mode != "recover":
             raise ValueError("aggregate absent before removal experiment")
         if hook:

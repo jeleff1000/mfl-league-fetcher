@@ -204,14 +204,39 @@ def capture_witness(conn, db_name):
         if "db_name" not in {row[0] for row in columns}:
             raise ValueError(f"witness {table} is missing its league identity")
         names = ", ".join(_quote(row[0]) for row in columns)
+        # Year must precede display names: alphabetical extremes alone can
+        # silently miss every old season when names change between seasons.
+        ordered = sorted((row[0] for row in columns), key=lambda name: (name not in {"year", "week"}, name != "year", name))
         samples = []
         for direction in ("ASC", "DESC"):
-            rows = conn.execute(f'SELECT {names} FROM public.{_quote(table)} WHERE db_name=? ORDER BY ALL {direction} NULLS LAST LIMIT 8', [db_name]).fetchall()
+            ordering = ', '.join(f'{_quote(name)} {direction} NULLS LAST' for name in ordered)
+            rows = conn.execute(f'SELECT {names} FROM public.{_quote(table)} WHERE db_name=? ORDER BY {ordering} LIMIT 8', [db_name]).fetchall()
             samples.append(rows)
         if not samples[0]:
             raise ValueError(f"witness {table} has no rows for the selected league")
         payload = json.dumps({"schema": columns, "values": samples}, default=str, separators=(",", ":"))
         result[table] = {"rows": len(samples[0]), "sha256": hashlib.sha256(payload.encode()).hexdigest()}
+    # Only public user preferences, never credentials or raw league_context.
+    for table, wanted in (("league_context", ("manager_name_overrides_json", "franchise_merges_json")),
+                          ("manager_overrides", None)):
+        columns = conn.execute("""SELECT column_name FROM duckdb_columns()
+            WHERE database_name=current_database() AND schema_name='public' AND table_name=?
+            ORDER BY column_index""", [table]).fetchall()
+        available = [r[0] for r in columns]
+        if not available:
+            result[table] = {"absent": True}
+            continue
+        if "db_name" not in available:
+            raise ValueError(f"preference witness {table} missing league identity")
+        selected = available if wanted is None else [name for name in wanted if name in available]
+        if not selected:
+            result[table] = {"columns": []}
+            continue
+        rows = conn.execute(f'SELECT {", ".join(_quote(n) for n in selected)} FROM public.{_quote(table)} WHERE db_name=? ORDER BY ALL LIMIT 257', [db_name]).fetchall()
+        if len(rows) > 256:
+            raise ValueError("preference witness exceeds 256-row ceiling")
+        payload = json.dumps({"columns": selected, "rows": rows}, default=str, separators=(",", ":"))
+        result[table] = {"rows": len(rows), "sha256": hashlib.sha256(payload.encode()).hexdigest()}
     return result
 
 
@@ -219,3 +244,58 @@ def compare_witness(before, after):
     if before != after:
         changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
         raise ValueError("preservation witness changed: " + ", ".join(changed))
+
+
+def object_inventory(conn):
+    return conn.execute("""SELECT database_name, schema_name, table_name FROM duckdb_tables()
+        WHERE database_name=current_database() AND schema_name='public'
+        AND table_name IN (SELECT unnest(?)) ORDER BY table_name""",
+        [list(CANONICAL + QUARANTINED)]).fetchall()
+
+
+def remove_quarantined(conn):
+    """One transaction, exact five-name scope; partial absence is not a retry."""
+    rows = object_inventory(conn)
+    names = {row[2] for row in rows}
+    if names == set(CANONICAL):
+        return 0  # Only a complete prior removal can be idempotently verified.
+    if names != set(CANONICAL + QUARANTINED):
+        raise ValueError("partial object set: reconcile before any removal")
+    validate_objects(rows)
+    conn.execute('BEGIN TRANSACTION')
+    try:
+        for name in QUARANTINED:
+            conn.execute(f'DROP TABLE public.{_quote(name)}')
+        conn.execute('COMMIT')
+    except BaseException:
+        # Caller records UNKNOWN if it cannot distinguish commit from failure.
+        # Never issue another DROP in this exception path.
+        try:
+            conn.execute('ROLLBACK')
+        except Exception:
+            pass
+        raise
+    return len(QUARANTINED)
+
+
+def verify_stock(path, db_name, before):
+    """Run in a fresh helper-free child. Ordinary write leaves no user rows."""
+    if os.environ.get('LD_PRELOAD'):
+        raise ValueError('stock verification must not load a recovery helper')
+    import duckdb
+    config = {'threads': '1', 'memory_limit': '512MB'}
+    with duckdb.connect(str(path), config=config) as conn:
+        conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+        if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
+            raise ValueError('quarantined objects remain or healthy replacements are missing')
+        compare_witness(before, capture_witness(conn, db_name))
+        conn.execute('CREATE TABLE public.__lh_recovery_write_probe (value INTEGER)')
+        conn.execute('INSERT INTO public.__lh_recovery_write_probe VALUES (7)')
+        conn.execute('CHECKPOINT')
+    with duckdb.connect(str(path), config=config) as conn:
+        conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+        if conn.execute('SELECT value FROM public.__lh_recovery_write_probe').fetchall() != [(7,)]:
+            raise ValueError('ordinary stock write did not survive reopen')
+        conn.execute('DROP TABLE public.__lh_recovery_write_probe')
+        conn.execute('CHECKPOINT')
+        compare_witness(before, capture_witness(conn, db_name))

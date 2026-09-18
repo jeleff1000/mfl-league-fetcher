@@ -79,7 +79,9 @@ def engine_inventory(path):
          read_only=True, wal_retained=True)
     try:
         with duckdb.connect(str(path), read_only=True,
-                            config={"threads": "1", "memory_limit": "512MB"}) as conn:
+                            config={"threads": "1", "memory_limit": "128MB",
+                                    "temp_directory": "/tmp/engine_inventory_spill",
+                                    "max_temp_directory_size": "16MB"}) as conn:
             objects = conn.execute("""
                 SELECT database_name, schema_name, table_name, estimated_size, index_count
                 FROM duckdb_tables()

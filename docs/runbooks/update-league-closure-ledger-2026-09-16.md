@@ -59,6 +59,17 @@ canaries and under-90-second end-to-end target remain open. A proven bounded
 storage remedy is still required; retrying the import or rebuilding aggregates
 alone does not supply one.
 
+Follow-up: code and tests are now on public `main` at `7e9a1b487`; the Fly
+deployment is deliberately NOT dispatched. Read-only diagnostic `35301672028`
+completed in 29 seconds, with all mutation options false. It found a current
+415 MB league WAL and the same historical quarantine files; no new quarantine
+file from the 02:49 failure appears in that inventory. Thus automatic quarantine
+is a proven code defect and a prior operational event, but is NOT established as
+the cause of the latest restart or this league's missing rows. No bundle artifact
+is available for run `35287522419`. Next: identify a supported, bounded remedy
+for the exact corrupt block and reconcile retained publication/WAL evidence
+before any deploy or retry; do not repeat an unchanged aggregate rebuild.
+
 ## Current checkpoint - 2026-09-17 09:02 UTC
 
 The stale/unknown-freshness control defect is fixed and live. App main

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import threading
@@ -86,6 +87,41 @@ def saved_original(current):
     raise ValueError('original production config missing from maintenance')
 
 
+def verify_retained_wal(source, retained):
+    """Complete a prior preservation, never recopy or overwrite its bytes."""
+    paths = (Path(source), Path(retained))
+    before = [p.lstat() for p in paths]
+    if (any(not stat.S_ISREG(s.st_mode) or s.st_nlink != 1 for s in before)
+            or (before[0].st_dev, before[0].st_ino) == (before[1].st_dev, before[1].st_ino)
+            or not 0 < before[0].st_size == before[1].st_size <= 1024**3):
+        raise ValueError('retained WAL is not a distinct bounded regular copy')
+    digest = hashlib.sha256()
+    with paths[0].open('rb') as active, paths[1].open('r+b') as saved:
+        for stream, named in zip((active, saved), before):
+            opened = os.fstat(stream.fileno())
+            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                raise ValueError('WAL pathname changed before comparison')
+        while chunk := active.read(1024*1024):
+            if saved.read(len(chunk)) != chunk:
+                raise ValueError('retained WAL byte mismatch')
+            digest.update(chunk)
+        if saved.read(1):
+            raise ValueError('retained WAL has unexpected trailing bytes')
+        os.fsync(saved.fileno())
+    if os.name == 'posix':
+        fd = os.open(paths[1].parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    for p, start in zip(paths, before):
+        end = p.lstat()
+        fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_nlink', 'st_mode')
+        if any(getattr(start,k) != getattr(end,k) for k in fields):
+            raise ValueError('WAL changed during verification')
+    return {'bytes': before[0].st_size, 'sha256': digest.hexdigest(), 'retained_path': str(paths[1])}
+
+
 def production_binding():
     if os.environ.get('FLY_MACHINE_ID') != MACHINE:
         raise ValueError('production repair is bound to the original machine')
@@ -139,7 +175,11 @@ def repair(args, folder):
     hook.lh_spike_reserved_masks.restype = ctypes.c_int
     hook.lh_spike_disarm()
     a.phase('preserve')
-    wal = a.preserve_wal(Path(str(PATH) + '.wal'), folder / 'original.wal', max_bytes=1024**3)
+    #35390545054 confirmed unchanged main/WAL and no remaining repair process.
+    # The previous copy reached full length; complete its durability proof
+    # instead of writing another484MiB copy.
+    wal = verify_retained_wal(Path(str(PATH) + '.wal'),
+        Path('/data/production_recovery_35390284697_1/original.wal'))
     a.write_receipt(folder / 'input.json', {'binding': binding, 'block': block, 'wal': wal,
                                           'helper_sha256': args.helper_sha256, 'db_name': args.db_name})
     if production_binding() != binding:
@@ -205,7 +245,7 @@ def remote(args):
     folder.mkdir()
     a.write_receipt(folder / 'original-machine.json', json.loads(Path('/tmp/original-machine.json').read_text()))
     env = dict(os.environ, LD_PRELOAD='/tmp/lh_five_drop.so', LH_RECOVERY_SUPERVISOR_PID=str(os.getpid()))
-    a.STAGE_LIMITS.update(inspect=5, preserve=25, replay=65, remove=5, verify=50)
+    a.STAGE_LIMITS.update(inspect=5, preserve=45, replay=65, remove=5, verify=50)
     with (folder / 'trace.jsonl').open('xb') as trace:
         result = a.run_stage('inspect', [sys.executable, '-u', __file__, '--mode', 'repair',
                     '--receipt-id', args.receipt_id, '--db-name', args.db_name,
@@ -271,7 +311,10 @@ def handoff(args):
     if observed != original:
         helper = next(f for f in observed['config']['files'] if f['guest_path'] == '/tmp/lh_five_drop.so')
         helper_sha = hashlib.sha256(base64.b64decode(helper['raw_value'], validate=True)).hexdigest()
-        run_handoff(fly, original, observed['config'], args, helper_sha, observed=observed)
+        refreshed = copy.deepcopy(observed['config'])
+        refreshed['files'] = [file_input(__file__, f['guest_path'])
+            if f['guest_path'] == '/tmp/duckdb_production_recovery.py' else f for f in refreshed['files']]
+        run_handoff(fly, original, refreshed, args, helper_sha, observed=observed)
         return
     root = Path(__file__).resolve().parents[2]
     files = [file_input(root / relative, '/tmp/' + Path(relative).name) for relative in
@@ -316,6 +359,11 @@ def run_handoff(fly, original, config, args, helper_sha, *, observed=None):
                           'skip_launch': True, 'skip_service_registration': True}, 'POST')
             fly.wait(('created', 'stopped'))
             fly.call('/start', {}, 'POST')
+        elif config != current['config']:
+            # Only maintenance is running here. Replace this small script,
+            # never the deployed server image or database/WAL files.
+            fly.call('', {'config': config, 'current_version': current['instance_id'],
+                          'skip_service_registration': True}, 'POST')
         elif current['state'] == 'stopped':
             fly.call('/start', {}, 'POST')
         fly.wait('started')

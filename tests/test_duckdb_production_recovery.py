@@ -95,6 +95,21 @@ def test_resume_maintenance_uses_embedded_original_not_sleep_config():
         recovery().saved_original(current)
 
 
+def test_reuse_wal_verifies_bytes_without_rewriting_retained_evidence(tmp_path):
+    source, retained = tmp_path/'active.wal', tmp_path/'original.wal'
+    source.write_bytes(b'valid-committed-wal')
+    retained.write_bytes(source.read_bytes())
+    before = retained.stat()
+    receipt = recovery().verify_retained_wal(source, retained)
+    assert receipt['bytes'] == 19
+    assert (retained.stat().st_ino, retained.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    retained.write_bytes(b'bad!!-committed-wal')
+    with pytest.raises(ValueError):
+        recovery().verify_retained_wal(source, retained)
+    with pytest.raises(ValueError):
+        recovery().verify_retained_wal(source, source)
+
+
 def test_wal_explicit_production_limit_preserves_bytes_and_default_stays_narrow(tmp_path):
     from duckdb_recovery_adapter import preserve_wal
     source = tmp_path / 'active.wal'

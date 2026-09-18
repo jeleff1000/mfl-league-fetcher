@@ -224,6 +224,12 @@ def test_file_inventory_does_not_open_duckdb_or_hide_wal(tmp_path, monkeypatch):
     assert wal.read_bytes() == b'committed'
 
 
+def test_inventory_replay_has_no_spill_and_fits_same_one_gib_machine():
+    from scripts import fly_table_storage_pilot as pilot
+    config = pilot.inventory_connect_config()
+    assert config == {'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}
+
+
 def test_retained_headers_distinguish_bad_original_from_intact_duplicate(tmp_path, monkeypatch):
     import hashlib
     import struct

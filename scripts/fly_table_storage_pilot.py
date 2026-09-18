@@ -90,6 +90,12 @@ def file_inventory(path):
     return result
 
 
+def inventory_connect_config():
+    # Retained-WAL replay only, on the same isolated 1 GiB VM. Fail explicitly
+    # if replay cannot fit; do not churn temporary disk until a timeout.
+    return {'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}
+
+
 def engine_inventory(path):
     """Read-only catalog and runtime inventory, retaining the original WAL."""
     import duckdb
@@ -119,10 +125,7 @@ def engine_inventory(path):
     monitor = threading.Thread(target=progress, daemon=True)
     monitor.start()
     try:
-        with duckdb.connect(str(path), read_only=True,
-                            config={"threads": "1", "memory_limit": "512MB",
-                                    "temp_directory": "/tmp/engine_inventory_spill",
-                                    "max_temp_directory_size": "16MB"}) as conn:
+        with duckdb.connect(str(path), read_only=True, config=inventory_connect_config()) as conn:
             stop.set()
             emit("wal_replay_finished")
             objects = conn.execute("""

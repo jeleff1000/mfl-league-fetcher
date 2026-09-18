@@ -25,7 +25,7 @@ MACHINE = '1781e011b69068'
 VOLUME = 'vol_rkg7mmd17llez224'
 IMAGE = 'registry.fly.io/league-history-duckdb:deployment-01M2S3CCAQK5KYEB807DK6C33Z'
 PATH = Path('/data/___leagues.duckdb')
-CONFIG = {'threads': '4', 'memory_limit': '8GB', 'temp_directory': '',
+CONFIG = {'threads': '4', 'memory_limit': '6GB', 'temp_directory': '',
           'max_vacuum_tasks': '0', 'checkpoint_threshold': '2GB'}
 
 
@@ -44,8 +44,9 @@ def maintenance_config(machine, files):
     config['checks'] = {}
     config['restart'] = {'policy': 'no'}
     # Confirmed host admission error35389697018: eight CPUs unavailable.
-    # Keep16GiB memory; use four CPUs for maintenance and service recovery.
+    # Fly's shared4CPU tier admits at most8GiB; reserve2GiB outside DuckDB.
     config['guest']['cpus'] = 4
+    config['guest']['memory_mb'] = 8192
     config['init'] = {'swap_size_mb': config.get('init', {}).get('swap_size_mb', 0),
                       'exec': ['/bin/sleep', '600']}
     config['files'] = list(config.get('files') or []) + files
@@ -299,6 +300,8 @@ def run_handoff(fly, original, config, args, helper_sha):
         event('restore_original_service')
         restored = copy.deepcopy(original['config'])
         restored['guest']['cpus'] = 4
+        restored['guest']['memory_mb'] = 8192
+        restored.setdefault('env', {})['DUCKDB_MEMORY_LIMIT'] = '6GB'
         fly.call('', {'config': restored, 'current_version': current['instance_id'],
                       'skip_service_registration': True}, 'POST')
         fly.wait('started')

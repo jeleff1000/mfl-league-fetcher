@@ -367,7 +367,7 @@ def verify_stock(path, db_name, before):
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
     import duckdb
-    config = {'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}
+    config = {'threads': '1', 'memory_limit': '768MB', 'temp_directory': ''}
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
@@ -450,6 +450,8 @@ def recovery_child(args):
     folder = Path('/data') / ('recovery_five_' + args.receipt_id)
     folder.mkdir()  # Create-only; an interrupted attempt is never overwritten.
     wal = preserve_wal(Path(str(path) + '.wal'), folder / 'original.wal')
+    if wal['sha256'] != 'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f':
+        raise ValueError('committed WAL differs from the retained first-attempt receipt')
     write_receipt(folder / 'input.json', {'binding': binding, 'files': files, 'wal': wal,
                                         'inventory_base64': args.inventory_base64,
                                         'helper_sha256': args.helper_sha256, 'db_name': args.db_name})
@@ -534,7 +536,7 @@ def main():
         from fly_duckdb_block_probe import probe
         import duckdb
         with duckdb.connect('/data/___leagues.duckdb', read_only=True,
-                            config={'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}) as conn:
+                            config={'threads': '1', 'memory_limit': '768MB', 'temp_directory': ''}) as conn:
             registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=346').fetchall())
         if registered and not probe('/data/___leagues.duckdb', 90714112)['checksum_valid']:
             raise ValueError('damaged metadata remains eligible for stock reuse')

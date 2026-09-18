@@ -93,7 +93,7 @@ def file_inventory(path):
 def inventory_connect_config():
     # Retained-WAL replay only, on the same isolated 1 GiB VM. Fail explicitly
     # if replay cannot fit; do not churn temporary disk until a timeout.
-    return {'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}
+    return {'threads': '1', 'memory_limit': '768MB', 'temp_directory': ''}
 
 
 def engine_inventory(path):

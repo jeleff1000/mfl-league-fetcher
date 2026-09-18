@@ -145,6 +145,13 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
     if code == 0 and transitions and phase['index'] != len(transitions):
         code = 126
         protocol_error.set()
+    if code == 0:
+        try:
+            charge_phase(spent, phase['name'], time.monotonic()-phase['since'])
+            if time.time() >= deadline:
+                raise ValueError('overall deadline exceeded before successful exit')
+        except ValueError:
+            code = 124
     stdout, stderr = (captured[name].decode("utf-8", errors="replace") for name in ("stdout", "stderr"))
     outcome = "PASS" if code == 0 else ("UNKNOWN" if phase['mutating'] else "FAILED")
     result = {"stage": stage, "outcome": outcome, "exit_code": code,
@@ -526,7 +533,8 @@ def main():
         verify_stock('/data/___leagues.duckdb', args.db_name, json.loads((folder / 'before.json').read_text()))
         from fly_duckdb_block_probe import probe
         import duckdb
-        with duckdb.connect('/data/___leagues.duckdb', read_only=True) as conn:
+        with duckdb.connect('/data/___leagues.duckdb', read_only=True,
+                            config={'threads': '1', 'memory_limit': '576MB', 'temp_directory': ''}) as conn:
             registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=346').fetchall())
         if registered and not probe('/data/___leagues.duckdb', 90714112)['checksum_valid']:
             raise ValueError('damaged metadata remains eligible for stock reuse')

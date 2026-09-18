@@ -337,6 +337,19 @@ def test_phase_transition_rejects_elapsed_budget_even_before_poll_observes_it():
         a.charge_phase(spent, 'preserve', 1.1)
 
 
+def test_successful_exit_charges_the_final_phase_budget(monkeypatch):
+    a = adapter()
+    charged = []
+    real_charge = a.charge_phase
+    def record_charge(spent, name, elapsed):
+        charged.append(name)
+        real_charge(spent, name, elapsed)
+    monkeypatch.setattr(a, 'charge_phase', record_charge)
+    result = a.run_stage('verify', [sys.executable, '-c', 'pass'], deadline=time.time()+2)
+    assert result['outcome'] == 'PASS'
+    assert charged == ['verify']
+
+
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux parent-death signal')
 def test_recovery_child_dies_if_supervisor_is_killed(tmp_path):
     import os

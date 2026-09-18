@@ -208,9 +208,15 @@ def test_scoring_schema_resolution_includes_registered_raw_and_all_precomputed_c
         "def_pass_defended",
         "pts_idp_pd",
         "bonus_pass_300yd",
+        "rank_qb_4pt",
+        "rank_alltime_qb_4pt",
+        "recon_correction_log",
     })
 
-    assert columns == ("bonus_pass_300yd", "def_pass_defended", "pts_idp_pd")
+    assert columns == (
+        "bonus_pass_300yd", "def_pass_defended", "pts_idp_pd",
+        "rank_alltime_qb_4pt", "rank_qb_4pt",
+    )
 
 
 def test_explicit_scoring_schema_changes_revision_for_precomputed_output():

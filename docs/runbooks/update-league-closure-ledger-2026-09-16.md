@@ -42,7 +42,43 @@ identity settings reject before any league mutation, including derived
 `all_play` rows. New leagues initialize configuration atomically.
 Main-agent worker tests:13passed6.61s. Independent reviewer HTTP tests:
 6passed in17.86s/17.57s chunks. Developer verified23distinctquickcases,
-all chunks below40s. Production deployment/recovery verification pending.
+all chunks below40s. Committed `fa5e172558832556651eb19638fe7ad656a8e8f5`;
+public-main deployment35400687538succeeded in38s at22:15:36UTC.
+Existing primary image changed; capacity/storage preserved. Post-deploy
+ready reports accepting_queries=true, active_queries=ops_writes=delta_publishes=0.
+Recovery runs and displayed-data verification remain pending.
+
+Historical-count drift check:35nonexcluded leagues from the existing
+September16 17:04:37UTC witness were queried against live Fly for every
+pre2026season in matchup,player_fantasy,draft,transactions,league_settings.
+No per-league/year row-count changes from that witness; total12.156s
+(queries1.422/6.281/1.406/1.438/1.609s). This is a preservation check only,
+not proof that the September16 baseline itself contained complete history
+or correct values. In particular, Agusta already lacked history in that witness.
+
+I-95 missing2019 recovery35401160125 completed onfa5e17255. Existing ESPN
+quick worker requested only2019 with the two exact saved franchise merges.
+Live Fly now has2013-2026, including204matchuprows/12franchises for2019;
+all previously witnessed years retain their counts, including2026's28rows.
+Homepage manager count40, savedmerges2. Import phase28s; bundle19tables,
+0.6MB built1.0s; publication52.2s(server50.4s,lockwait0); inventory1.9s;
+cache6URLs warmed in4s. Not an under90s end-to-end refresh proof. Provider
+score parity, full derived integrity and rank semantics remain open.
+
+Ranking review blocked the proposed career-rank serving-view change: current
+app rootmain d8ff2d6f70e describes individual games in league history and its
+producer ranks league-specific fantasy_points across the complete populated
+league history. Executing worker ddfcaf221 instead copied NFL career totals.
+Caleb rank1->career-rank216 would NOT resolve the game-ranking defect.
+No proposed rank-view or NFL aggregate data change has been applied. Restore
+the existing game-rank calculation in shared complete-chain publication.
+
+Cache hydration follow-up: shared import and weekly cache code now includes
+rank-only changes in revision comparisons, hydrates missing/latest weeks
+in-place, removes corrected/deleted keys transactionally, and permits only
+verified unplayed preseason shells. Main rerun18passed7.80s; independent
+review55passed in20.50s/3.37s chunks; developer141passed in18.61s/17.38s
+chunks. This does not resolve the separate game-rank semantic defect.
 
 ## Live continuation - 2026-09-18 21:25 UTC
 

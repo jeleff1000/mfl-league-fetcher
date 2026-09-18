@@ -123,6 +123,44 @@ def test_materializer_discovers_precomputed_scoring_columns_from_source_schema()
     assert corrected != original
 
 
+@pytest.mark.parametrize("rank_column", ["rank_qb_4pt", "rank_alltime_qb_4pt"])
+def test_materializer_changes_revision_for_rank_only_correction(rank_column):
+    """Rank-only view corrections must reach the existing compact UI receipt."""
+    with duckdb.connect(":memory:") as connection:
+        _source(connection)
+        connection.execute(
+            f'ALTER TABLE nfl_historical.nfl_player_stats_all ADD COLUMN "{rank_column}" INTEGER'
+        )
+        reader = ConnectionReader(connection)
+        writer = ConnectionWriter(connection)
+
+        def revision():
+            materialize_nfl_revisions(
+                reader, writer, year=2026, week=1, official_week_witness=_witness,
+            )
+            return connection.execute(
+                "SELECT revision FROM accounts.league_update_nfl_revisions"
+            ).fetchone()[0]
+
+        missing_rank = revision()
+        connection.execute(
+            f'UPDATE nfl_historical.nfl_player_stats_all SET "{rank_column}" = 7 '
+            "WHERE NFL_player_id = '00-1'"
+        )
+        first_rank = revision()
+        connection.execute(
+            f'UPDATE nfl_historical.nfl_player_stats_all SET "{rank_column}" = 2 '
+            "WHERE NFL_player_id = '00-1'"
+        )
+        corrected_rank = revision()
+
+        assert len({missing_rank, first_rank, corrected_rank}) == 3
+        assert revision() == corrected_rank
+        assert connection.execute(
+            "SELECT COUNT(*) FROM accounts.league_update_nfl_revisions"
+        ).fetchone()[0] == 1
+
+
 def test_materializer_refuses_a_partial_final_game_without_replacing_a_receipt():
     """One canonical player row cannot declare a two-team official game current."""
     connection = duckdb.connect(":memory:")

@@ -126,7 +126,8 @@ NFL_SCORING_INPUT_COLUMNS = (
     "fantasy_points_ppr",
 )
 
-NFL_PRECOMPUTED_SCORING_PREFIXES = ("pts_", "bonus_")
+# Rank corrections affect imported enrichments even when scoring stats do not change.
+NFL_PRECOMPUTED_SCORING_PREFIXES = ("pts_", "bonus_", "rank_")
 
 
 def resolve_nfl_scoring_input_columns(schema_columns: Iterable[str]) -> tuple[str, ...]:

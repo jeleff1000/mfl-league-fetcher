@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,71 @@ def upload_league_settings_to_database(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
+    """Hydrate missing weeks and refresh the latest played week in the import cache.
+
+    Only a skinny admission query and those weeks' cache-column projection are
+    read from Fly. Always refresh the latest week: identical keys (and even
+    scoring atoms) do not imply unchanged derived ranks after an OPS correction.
+    Rank values are copied, never recalculated here. Return False only for a
+    verified unplayed season, where an empty import shell is valid.
+    """
+    import duckdb
+
+    from multi_league.core.db_reader import get_reader
+    from multi_league.core.ops_cache import _patch_research_ops_cache_from_fly
+
+    keys = ["week", "NFL_player_id", "nfl_team", "opponent_nfl_team"]
+    projection = ", ".join(keys)
+    predicate = (
+        f"year = {int(year)} AND COALESCE(season_type, 'REG') = 'REG' "
+        "AND NFL_player_id IS NOT NULL AND nfl_team IS NOT NULL "
+        "AND opponent_nfl_team IS NOT NULL"
+    )
+    query = f"SELECT {projection} FROM nfl_historical.nfl_player_stats_all WHERE {predicate}"
+    reader = get_reader()
+    expected = reader.query_df(query, database="___ops")
+
+    def local_keys() -> set[tuple]:
+        with duckdb.connect(str(path), read_only=True) as cache:
+            local = cache.execute(query).fetchdf()
+        return set(local[keys].itertuples(index=False, name=None))
+
+    if expected.empty:
+        from multi_league.core.date_utils import get_nfl_state
+
+        state = get_nfl_state() or {}
+        season_type = state.get("season_type")
+        season = str(state.get("season", ""))
+        league_season = str(state.get("league_season", season))
+        unplayed = (
+            season_type == "pre" and season == str(year)
+        ) or (
+            season_type == "off" and state.get("league_season") is not None
+            and league_season == str(year) and season.isdecimal()
+            and 0 < int(season) <= year
+        )
+        if unplayed and not local_keys():
+            log(f"[TRACK 1] Verified unplayed NFL season {year}; no OPS weeks to hydrate")
+            return False
+        raise RuntimeError(f"No finalized Fly OPS inputs available for import year {year}")
+
+    expected_keys = set(expected[keys].itertuples(index=False, name=None))
+
+    def differing_weeks() -> list[int]:
+        return sorted({int(row[0]) for row in expected_keys.symmetric_difference(local_keys())})
+
+    weeks = sorted(set(differing_weeks()) | {int(expected["week"].max())})
+    log(f"[TRACK 1] Refreshing latest/mismatched finalized OPS weeks for {year}: {weeks}")
+    _patch_research_ops_cache_from_fly(
+        reader, expected, base=path, year=year, weeks=weeks,
+        work_dir=path.parent, in_place=True, authoritative_weeks=True,
+    )
+    if remaining := differing_weeks():
+        raise RuntimeError(f"OPS cache still differs from finalized inputs for {year} weeks {remaining}")
+    return True
+
+
 def run_track_1_verify(
     start_year: int,
     end_year: int,
@@ -81,7 +147,8 @@ def run_track_1_verify(
     """Verify NFL super table has required data for the given year range.
 
     Queries ___ops.nfl_historical.nfl_player_stats_all to check row counts.
-    Non-fatal — returns True even if verification fails (allows pipeline to continue).
+    Hydrate missing active-season OPS weeks before SQL enrichment. A configured
+    cache that cannot supply them raises: callers historically ignore False.
     """
     if dry_run:
         log("[TRACK 1][DRY-RUN] Would verify NFL super table")
@@ -121,9 +188,25 @@ def run_track_1_verify(
                     ).fetchdf()
                 finally:
                     conn.close()
+                from multi_league.core.date_utils import get_current_nfl_season_year
+
+                if end_year not in result["year"].values or end_year == get_current_nfl_season_year(
+                    reference_date=datetime.now()
+                ):
+                    if not _ensure_import_ops_weeks(path, end_year):
+                        return True
+                    with duckdb.connect(str(path), read_only=True) as cache:
+                        result = cache.execute(
+                            "SELECT year, COUNT(*) AS rows FROM nfl_historical.nfl_player_stats_all "
+                            "WHERE year BETWEEN ? AND ? GROUP BY year ORDER BY year",
+                            [start_year, end_year],
+                        ).fetchdf()
                 return _verify_result(result, "local ops cache")
             except Exception as e:
-                log(f"[TRACK 1] Local ops cache verify failed ({path}): {e}; falling back to Fly")
+                raise RuntimeError(
+                    f"Import OPS cache is unavailable for {end_year}; refusing to continue with missing rank inputs"
+                ) from e
+        raise RuntimeError(f"Import OPS cache is missing for {end_year}: {path}")
 
     try:
         from multi_league.core.db_reader import get_reader

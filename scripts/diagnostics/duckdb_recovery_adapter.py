@@ -112,6 +112,18 @@ def validate_block(block):
         raise ValueError("database does not match the exact known damaged block")
 
 
+def validate_engine(identity):
+    # Isolated receipt 35358633104, same deployed image as production.
+    # A matching version string alone is not an ABI/build identity.
+    expected = {"duckdb": "1.5.4", "engine_revision": "08e34c447b",
+                "engine_sha256": "9135828981e3d0bdc346c10f663e353eb12de486d352edd4af89651a926967a9",
+                "engine_bytes": 60210744, "python": "3.11.16",
+                "architecture": "x86_64", "libc": ["glibc", "2.41"]}
+    normalized = {**identity, "libc": list(identity.get("libc", []))}
+    if any(normalized.get(key) != value for key, value in expected.items()):
+        raise ValueError("engine artifact or runtime does not match isolated identity receipt")
+
+
 def _quote(name):
     return '"' + name.replace('"', '""') + '"'
 

@@ -140,3 +140,17 @@ def test_capture_witness_does_not_hide_duplicate_sampled_rows():
         conn.execute("INSERT INTO public.matchup SELECT * FROM public.matchup")
         with pytest.raises(ValueError, match="witness"):
             a.compare_witness(before, a.capture_witness(conn, "nyu_ffl"))
+
+
+def test_engine_gate_rejects_same_version_different_binary():
+    a = adapter()
+    identity = {"duckdb": "1.5.4", "engine_revision": "08e34c447b",
+                "engine_sha256": "9135828981e3d0bdc346c10f663e353eb12de486d352edd4af89651a926967a9",
+                "engine_bytes": 60210744, "python": "3.11.16",
+                "architecture": "x86_64", "libc": ["glibc", "2.41"]}
+    a.validate_engine(identity)
+    for field, value in [("engine_sha256", "other"), ("duckdb", "1.5.1"),
+                         ("engine_revision", "other"), ("architecture", "aarch64"),
+                         ("libc", ["glibc", "2.35"])]:
+        with pytest.raises(ValueError):
+            a.validate_engine({**identity, field: value})

@@ -91,11 +91,30 @@ def engine_inventory(path):
     emit("engine_inventory_start", files=before, duckdb=duckdb.__version__,
          python=platform.python_version(), libc=platform.libc_ver(),
          read_only=True, wal_retained=True)
+    stop = threading.Event()
+
+    def progress():
+        # Small /proc counters only. No DB calls or data scans in this thread.
+        import resource
+        while not stop.wait(0.5):
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            io = {}
+            for line in Path("/proc/self/io").read_text().splitlines():
+                key, value = line.split(":", 1)
+                if key in {"rchar", "read_bytes", "write_bytes"}:
+                    io[key] = int(value)
+            emit("wal_replay_progress", peak_rss_kib=usage.ru_maxrss,
+                 cpu_s=round(usage.ru_utime + usage.ru_stime, 3), **io)
+
+    monitor = threading.Thread(target=progress, daemon=True)
+    monitor.start()
     try:
         with duckdb.connect(str(path), read_only=True,
                             config={"threads": "1", "memory_limit": "512MB",
                                     "temp_directory": "/tmp/engine_inventory_spill",
                                     "max_temp_directory_size": "16MB"}) as conn:
+            stop.set()
+            emit("wal_replay_finished")
             objects = conn.execute("""
                 SELECT database_name, schema_name, table_name, estimated_size, index_count
                 FROM duckdb_tables()
@@ -106,6 +125,7 @@ def engine_inventory(path):
             """, [sorted(TARGETS), sorted("__corrupt_recovery_" + t for t in TARGETS)]).fetchall()
             emit("engine_inventory_catalog", objects=objects)
     finally:
+        stop.set()
         if file_state() != before:
             raise ValueError("read-only inventory changed database/WAL metadata")
         emit("engine_inventory_files_unchanged")

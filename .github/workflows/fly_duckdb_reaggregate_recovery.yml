@@ -163,10 +163,9 @@ jobs:
             *) stage_limit="$remaining" ;;
           esac
           if [ "$remaining" -gt "$stage_limit" ]; then remaining="$stage_limit"; fi
-          stage_deadline="$(( $(date +%s) + remaining ))"
           echo "stage=sql_pilot_start remaining_seconds=$remaining"
           flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
-            -C "/bin/sh -lc 'remaining=\$(( $stage_deadline - \$(date +%s) )); test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/fly_table_storage_pilot.py --action $PILOT_ACTION --target-table $TARGET_TABLE --db-name $WITNESS_DB_NAME --machine-id $machine_id --volume-id $RECOVERY_VOLUME_ID --deadline $PILOT_DEADLINE'"
+            -C "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); if [ \"\$remaining\" -gt $stage_limit ]; then remaining=$stage_limit; fi; test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/fly_table_storage_pilot.py --action $PILOT_ACTION --target-table $TARGET_TABLE --db-name $WITNESS_DB_NAME --machine-id $machine_id --volume-id $RECOVERY_VOLUME_ID --deadline $PILOT_DEADLINE'"
           echo "stage=pilot_finished utc=$(date -u +%FT%TZ)"
           PILOT
 

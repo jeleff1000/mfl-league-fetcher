@@ -401,10 +401,10 @@ def test_repeated_phase_cannot_reset_its_budget():
 
 def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
     a = adapter()
-    binding = {'size': 15555375104, 'mtime_ns': 1789750685202052088, 'inode': 14}
-    files = {'.wal': {'size': 45522076, 'mtime_ns': 1789750670218175673, 'inode': 64}}
+    binding = {'size': 15555375104, 'mtime_ns': 1789751396939092785, 'inode': 14}
+    files = {'.wal': {'size': 45522129, 'mtime_ns': 1789751386755047295, 'inode': 64}}
     header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
-    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '6be240c48f4ad466183c07ffb5e8f3acdbefc1317efa330ec398a3a827e3aa91'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '016b3debb96b9479e39dacd99aee29f6ad58bbd95dfc498a45ccf1cf5e1d61a7'
     with pytest.raises(ValueError):
         a.validate_recovery_baseline(binding, files, header, resume=False)
     for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):
@@ -510,6 +510,15 @@ def test_stock_verification_does_not_compact_unrelated_pending_deletes(tmp_path)
     with duckdb.connect(str(path), read_only=True) as conn:
         assert conn.execute("SELECT COUNT(*),SUM(score) FROM public.unrelated_history WHERE db_name='other'").fetchone() == (81920, 10074398720)
         assert conn.execute("SELECT COUNT(DISTINCT row_group_id) FROM pragma_storage_info('public.unrelated_history')").fetchone() == (2,), 'ordinary proof must not vacuum/rewrite unrelated history'
+
+
+def test_recovery_uses_the_four_available_threads_without_relaxing_memory_or_vacuum():
+    a = adapter()
+    with duckdb.connect(':memory:', config=a.recovery_connect_config()) as conn:
+        assert conn.execute("SELECT current_setting('threads')").fetchone() == (4,)
+        assert conn.execute("SELECT current_setting('max_vacuum_tasks')").fetchone() == (0,)
+        assert a.recovery_connect_config()['memory_limit'] == '3072MB'
+        assert conn.execute("SELECT current_setting('temp_directory')").fetchone() == ('',)
 
 
 def test_adapter_cli_refuses_wrong_machine_before_opening_any_file():

@@ -4,6 +4,22 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- `35372449206` on `5bdd4444d`: all six Linux groups passed, including all45
+  adapter tests8.65s and the no-compaction regression. Actual resume
+  `35372578623`: replay9.786s, original witnesses preserved, zero new drops or
+  inserts. CHECKPOINT1 was cut off after about10.45s by the OVERALL deadline
+  (startup consumed more time); outcome UNKNOWN, not evidence that CP needs
+  over15s. VM `e8204deb339178` destroyed17:10:07Z. No production changes.
+- No-engine reconciliation `35372875340` took0.953s. Header iteration12126,
+  block346 fingerprint, inode14 and size15555375104 unchanged; main mtime
+  1789751396939092785. WAL size45522129, mtime1789751386755047295,inode64,
+  SHA `016b3debb96b9479e39dacd99aee29f6ad58bbd95dfc498a45ccf1cf5e1d61a7`.
+  No alternate sidecars; VM `080d6e0b224708` removed17:12:08Z. Only this new
+  exact resume baseline is accepted. All prior WAL/evidence retained.
+  Next bounded optimization uses four already-available DuckDB worker threads
+  (previously one) with unchanged3072MB/no-spill and zero optional vacuum.
+  Synthetic native interruption tests also use four threads before real use.
+
 - Capacity attempts `35371924340` (performance8/16GiB) and `35372065094`
   (performance2/4GiB) were refused by the existing volume host before a VM or
   database process started. No data change or extra capacity remains. Resume

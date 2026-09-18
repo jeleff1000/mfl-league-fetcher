@@ -36,7 +36,7 @@ def emit(stage, **fields):
 
 def connect(path, read_only=False):
     import duckdb
-    config = {"threads": "1", "memory_limit": "256MB",
+    config = {"threads": "4", "memory_limit": "256MB",
               "storage_compatibility_version": "v1.4.0",
               "temp_directory": str(Path(path).parent / "spill")}
     if not Path(path).exists() and not read_only:

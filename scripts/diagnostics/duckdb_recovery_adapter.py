@@ -466,8 +466,8 @@ def remove_quarantined(conn, *, prepare=None):
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
     """Two observed isolated states only; never infer permission from a timestamp."""
     main_mtime, wal_size, wal_mtime, wal_sha = (
-        (1789750685202052088, 45522076, 1789750670218175673,
-         '6be240c48f4ad466183c07ffb5e8f3acdbefc1317efa330ec398a3a827e3aa91') if resume else
+        (1789751396939092785, 45522129, 1789751386755047295,
+         '016b3debb96b9479e39dacd99aee29f6ad58bbd95dfc498a45ccf1cf5e1d61a7') if resume else
         (1789662410048242836, 45516621, 1789662378556231033,
          'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
     if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime
@@ -491,7 +491,7 @@ def reconcile_committed_removal(conn, db_name, before):
 def recovery_connect_config():
     # Stock setting: persist WAL/catalog changes without optional row-group
     # compaction of unrelated tables. No checksum or durability setting changes.
-    return {'threads': '1', 'memory_limit': '3072MB', 'temp_directory': '',
+    return {'threads': '4', 'memory_limit': '3072MB', 'temp_directory': '',
             'max_vacuum_tasks': '0'}
 
 
@@ -644,6 +644,7 @@ def recovery_child(args):
     hook.lh_spike_reserved_masks.restype = ctypes.c_int
     hook.lh_spike_checkpoint(1)
     replay_started = time.monotonic()
+    print(json.dumps({'event': 'engine_open', **recovery_connect_config()}), flush=True)
     # Read-write replay can flush committed row groups normally; read-only
     # replay could not fit them in memory. WAL remains present for the engine.
     conn = duckdb.connect(str(path), config={**recovery_connect_config(), 'checkpoint_threshold': '1GB'})

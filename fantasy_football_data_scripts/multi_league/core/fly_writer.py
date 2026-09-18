@@ -7,6 +7,8 @@ import time
 
 import requests
 
+from multi_league.core.fly_errors import is_permanent_storage_error
+
 
 class FlyWriter:
     MAX_RETRIES = 6
@@ -65,7 +67,11 @@ class FlyWriter:
                     f"Query failed after {attempt + 1}/{self.max_retries} attempts: {last_error}"
                 ) from exc
 
-            if resp.status_code in self.RETRY_STATUS and attempt < self.max_retries - 1:
+            if (
+                resp.status_code in self.RETRY_STATUS
+                and attempt < self.max_retries - 1
+                and not is_permanent_storage_error(resp.text)
+            ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
                 time.sleep(self._retry_delay(attempt, resp))
                 continue

@@ -2,6 +2,47 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 05:40 UTC
+
+Fresh `/ready` is serving with zero active reads, OPS writes and publications;
+the league file hash is unchanged. A metadata-only `pragma_database_size()`
+read took 0.641s and confirms the WAL remains 480.4 MiB. Ordinary imports do
+not have the recovery client's 480 MiB stop. No new publication, restart,
+checkpoint, database replacement or snapshot restore was launched.
+
+Read-only pilot `35311156745`, public main
+`38aefcdf1499635aac9e630c23f1201652d086e1`, tested the previously untested
+single-bit corruption hypothesis against the existing oldest recovery volume.
+It read only 274,432 bytes and took five seconds including machine startup
+(helper elapsed 0.058s). The payload and checksum both have zero single-bit
+candidates. No bytes were modified. Machine `48ee5d1ced5638` was destroyed;
+the existing volume was retained. This rejects a single-bit repair, not every
+possible physical fault. The diagnostic explicitly never authorizes a repair,
+including when a candidate exists. Fifteen diagnostic/pilot tests passed in
+2.67s, including checksum ambiguity and file-preservation cases. Algorithm
+reference: DuckDB v1.5.4 `src/common/checksum.cpp`.
+
+Another bounded defect is now regression-tested: shared JSON reads, Parquet
+reads and SQL writes retried permanent storage failures six times, wasting
+30s read backoff or 60s writer backoff. Uploads already rejected checksum
+errors, but still spent 270s default backoff on an invalidated-database error.
+Ten new red cases reproduced the repeated requests. One shared string-only
+classifier now rejects identical retries for corruption/checksum mismatches
+and invalidated databases. It adds no requests and preserves transient retries.
+Both delta/fleet paths still reconcile COMMITTED receipts after an HTTP 500:
+one publication request, one receipt request, no republish/backoff. Sixty-one
+focused tests passed in 13.03s; independent review found no blockers. This is
+retry amplification containment, NOT physical storage recovery or successful
+production publication. The older root checkout's differing client APIs were
+not overwritten; executing public workers consume the canonical public copy.
+
+The prior 30 scoped aggregate repairs remain separate from the twelve pending
+aggregate repairs and absent-fact/credential cases. The one damaged metadata
+block still prevents checkpointing. No safe in-place physical repair has been
+established under the no-restore/no-rebuild/no-architecture-change constraints.
+An older isolated donor-block snapshot probe remains unapproved; do not perform
+it or repeat unchanged failing DROP/connect pilots.
+
 ## Bounded continuation - 2026-09-18 05:00 UTC
 
 Byte-only pilots `35308583724` and `35308584901` each took 11s including

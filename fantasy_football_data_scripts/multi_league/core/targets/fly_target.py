@@ -11,6 +11,8 @@ from pathlib import Path
 
 import requests
 
+from multi_league.core.fly_errors import is_permanent_storage_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -464,15 +466,10 @@ class FlyTarget:
     def _is_retryable_upload_response(self, resp: requests.Response) -> bool:
         if resp.status_code not in self.RETRY_STATUS:
             return False
-        detail = (resp.text or "").lower()
         # A checksum mismatch is persistent storage corruption, not a
         # transient proxy/server failure. Retrying only consumes the weekly
         # update deadline and cannot change the result.
-        if "corrupt database file" in detail or (
-            "computed checksum" in detail and "stored checksum" in detail
-        ):
-            return False
-        return True
+        return not is_permanent_storage_error(resp.text)
 
     def _sleep_before_retry(self, endpoint: str, attempt: int, reason: object) -> None:
         delay = self._retry_delay(attempt, reason if isinstance(reason, requests.Response) else None)

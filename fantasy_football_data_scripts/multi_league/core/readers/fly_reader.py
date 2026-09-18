@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import requests
 
+from multi_league.core.fly_errors import is_permanent_storage_error
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -100,6 +102,7 @@ class FlyReader:
                 resp.status_code in self.RETRY_STATUS
                 and attempt < self.MAX_RETRIES - 1
                 and not missing_catalog_table
+                and not is_permanent_storage_error(resp.text)
             ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
                 time.sleep(self._retry_delay(attempt, resp))
@@ -170,7 +173,11 @@ class FlyReader:
                 raise FlyReaderNetworkError(
                     f"{last_error} after {attempt + 1}/{self.MAX_RETRIES} attempts"
                 ) from exc
-            if resp.status_code in self.RETRY_STATUS and attempt < self.MAX_RETRIES - 1:
+            if (
+                resp.status_code in self.RETRY_STATUS
+                and attempt < self.MAX_RETRIES - 1
+                and not is_permanent_storage_error(resp.text)
+            ):
                 last_error = f"Parquet query failed ({resp.status_code}): {resp.text}"
                 time.sleep(self._retry_delay(attempt, resp))
                 continue

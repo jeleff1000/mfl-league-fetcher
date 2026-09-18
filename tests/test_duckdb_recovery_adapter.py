@@ -154,3 +154,62 @@ def test_engine_gate_rejects_same_version_different_binary():
                          ("libc", ["glibc", "2.35"])]:
         with pytest.raises(ValueError):
             a.validate_engine({**identity, field: value})
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux permits rename over an open WAL; Windows locks it")
+def test_wal_path_replacement_during_preservation_is_rejected(tmp_path, monkeypatch):
+    a = adapter()
+    source = tmp_path / "source.wal"
+    source.write_bytes(b"original committed WAL")
+    replacement = tmp_path / "replacement.wal"
+    replacement.write_bytes(b"different committed WAL")
+    real_fsync = a.os.fsync
+    swapped = False
+
+    def sync_then_swap(fd):
+        nonlocal swapped
+        real_fsync(fd)
+        if not swapped:
+            swapped = True
+            source.rename(tmp_path / "original-retained.wal")
+            replacement.rename(source)
+
+    monkeypatch.setattr(a.os, "fsync", sync_then_swap)
+    with pytest.raises(ValueError, match="WAL.*changed"):
+        a.preserve_wal(source, tmp_path / "evidence.wal")
+
+
+def test_timeout_retains_commit_marker():
+    a = adapter()
+    result = a.run_stage("remove", [sys.executable, "-u", "-c",
+        "import time; print('COMMIT started', flush=True); time.sleep(20)"], deadline=time.time()+0.5)
+    assert result["outcome"] == "UNKNOWN"
+    assert "COMMIT started" in result["stdout"]
+
+
+def test_excessive_output_terminates_child_with_bounded_capture():
+    a = adapter()
+    result = a.run_stage("preserve", [sys.executable, "-u", "-c",
+        "import os; [os.write(1,b'x'*4096) for _ in range(1000)]"], deadline=time.time()+2)
+    assert result["outcome"] == "FAILED"
+    assert result["output_limited"] is True
+    assert len(result["stdout"]) <= 65536
+
+
+def test_file_binding_rejects_symlink_even_on_approved_mount(tmp_path, monkeypatch):
+    a = adapter()
+    path = tmp_path / "___leagues.duckdb"
+    path.write_bytes(b"fixture")
+    monkeypatch.setattr(Path, "is_mount", lambda self: self == tmp_path)
+    before = a.validate_file_binding(path, tmp_path)
+    assert before["size"] == 7
+    with pytest.raises(ValueError):
+        a.validate_file_binding(path, tmp_path / "wrong")
+    # Symlink creation needs platform privileges; use real inode/path checks
+    # above on every OS and the real symlink case on Linux Actions.
+    if sys.platform == "linux":
+        original = tmp_path / "original.duckdb"
+        path.rename(original)
+        path.symlink_to(original)
+        with pytest.raises(ValueError):
+            a.validate_file_binding(path, tmp_path)

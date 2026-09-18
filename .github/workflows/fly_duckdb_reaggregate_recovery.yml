@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [normal, indexed, shared, budget, real_scope]
+        scenario: [normal, indexed, shared, budget, real_scope, adapter]
     # No Fly secret or volume: synthetic files only, removed by TemporaryDirectory.
     steps:
       - uses: actions/checkout@v5
@@ -70,7 +70,12 @@ jobs:
           timeout --signal=KILL 40s bash <<'PILOT' 2>&1 | tee engine-pilot.jsonl
           set -euo pipefail
           python -m pip install --disable-pip-version-check --no-deps duckdb==1.5.4
-          python -u scripts/diagnostics/duckdb_drop_recovery_spike.py --scenario "$PILOT_SCENARIO"
+          if [ "$PILOT_SCENARIO" = adapter ]; then
+            python -m pip install --disable-pip-version-check pytest==8.3.3
+            python -m pytest -q tests/test_duckdb_recovery_adapter.py --tb=short
+          else
+            python -u scripts/diagnostics/duckdb_drop_recovery_spike.py --scenario "$PILOT_SCENARIO"
+          fi
           PILOT
       - name: Upload only synthetic pilot receipt
         if: always()

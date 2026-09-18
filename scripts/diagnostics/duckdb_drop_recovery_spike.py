@@ -67,11 +67,13 @@ def child(path, mode):
     if mode == "verify":
         verify(path)
         return 0
-    hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover"} else None
+    hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover", "budget"} else None
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
         hook.lh_spike_allocations.restype = ctypes.c_int
         hook.lh_spike_arm()
+        if mode == "budget":
+            hook.lh_spike_allocation_limit(1)
         if mode == "recover":
             hook.lh_spike_checkpoint(1)
     conn = None
@@ -193,8 +195,8 @@ def verify(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover"], default="ordinary")
-    parser.add_argument("--scenario", choices=["normal", "indexed", "shared"], default="normal")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget"], default="ordinary")
+    parser.add_argument("--scenario", choices=["normal", "indexed", "shared", "budget"], default="normal")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
     args = parser.parse_args()
@@ -244,6 +246,15 @@ def main():
                 emit("binding_proved", production_repair_authorized=False)
                 if args.binding_only:
                     return 0
+            if args.scenario == "budget":
+                shutil.copyfile(baseline, candidate)
+                bounded = run_child(candidate, "budget", library)
+                if bounded.returncode != 97:
+                    raise ValueError("allocation ceiling did not fail closed at the tested limit")
+                if run_child(candidate, "verify").returncode:
+                    raise ValueError("allocation-ceiling exit did not preserve stock-engine recovery")
+                emit("allocation_ceiling_verified", metadata_block_budget=1)
+                return 0
             if args.scenario == "shared":
                 shutil.copyfile(baseline, candidate)
                 with candidate.open("r+b") as stream:

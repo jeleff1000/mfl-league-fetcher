@@ -2,6 +2,45 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 06:13 UTC
+
+Confirmed another prevention gap, distinct from physical repair: the delta and
+fleet merge watchdog remained armed during explicit COMMIT and was cancelled
+only before the later explicit CHECKPOINT. DuckDB v1.5.4 can automatically
+checkpoint inside CommitTransaction before COMMIT returns (official source:
+https://github.com/duckdb/duckdb/blob/v1.5.4/src/transaction/duck_transaction_manager.cpp).
+Two actual HTTP/DuckDB regressions reproduced the pending kill callback firing
+at that boundary. This establishes a hazardous ordering, NOT that it caused
+the existing block corruption.
+
+The scoped fix uses one shared commit helper to disarm before COMMIT, retaining
+the existing query-interrupt timeout and all worker deadlines. Review found
+that cancel alone misses an already-running callback. A regression reproduced
+that race. A join alternative was rejected: a deterministic logger-stall test
+proved it could block publication waiting for logging. The final small timer
+subclass serializes cancellation with the exit decision under one lock; logging
+remains outside it. No joins, waits, queries, I/O, changed deadlines, checkpoint
+settings or new dependency are added to normal publication.
+
+Nine focused checks pass (four in 4.13s, five in 6.18s), including real
+delta/fleet publication, in-flight callback cancellation, still-armed expiry,
+retained query interruption, post-commit receipt preservation, validation
+rollback and idempotent replay. Each validation subprocess has a 38s ceiling.
+Independent review has no remaining blocker. Root app copies receive only the
+narrow matching changes, not an overwrite with the public server's newer file.
+
+This closes only the explicit delta/fleet COMMIT watchdog window. Legacy and
+admin autocommit writes and pre-transaction state writes can still checkpoint
+while other process-exit watchdogs are armed; that broader policy remains OPEN.
+The prevention fix is not deployed: no restart is safe to infer from these
+local tests while the existing damaged checkpoint remains unresolved.
+
+Fresh readiness: serving, accepting queries, active queries/OPS writes/delta
+publications all zero, unchanged league fingerprint sha256:935b1b973ff578d5.
+The OPS fingerprint changed externally to sha256:c285f63fef646490 at 06:06:15;
+this continuation performed no production writes. No recovery VM, restore,
+rebuild, checkpoint, replacement, or deployment was launched in this continuation.
+
 ## Bounded continuation - 2026-09-18 06:00 UTC
 
 Production remains serving with zero active reads, OPS writes and publications

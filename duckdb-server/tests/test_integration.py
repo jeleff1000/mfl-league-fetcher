@@ -1630,6 +1630,89 @@ def test_post_merge_checkpoint_disarms_merge_kill_timer_first(tmp_path, monkeypa
     assert events == ["timer_cancelled", "checkpoint"]
 
 
+def test_uncancelled_merge_watchdog_still_exits_on_deadline(monkeypatch):
+    import threading
+    import main as main_mod
+
+    exited = threading.Event()
+    codes = []
+
+    def record_exit(code):
+        codes.append(code)
+        exited.set()
+
+    monkeypatch.setattr(main_mod.os, "_exit", record_exit)
+    watchdog = main_mod._start_merge_hard_exit_timer("fixture", seconds=0)
+    try:
+        assert exited.wait(1)
+        assert codes == [1]
+    finally:
+        watchdog.cancel()
+        watchdog.join(1)
+
+
+def test_commit_merge_disarms_inflight_watchdog_without_waiting_on_logging(monkeypatch):
+    import threading
+    import main as main_mod
+
+    entered = threading.Event()
+    release = threading.Event()
+    logging_released_by_commit = []
+    killed = []
+
+    def blocked_log(*args, **kwargs):
+        entered.set()
+        logging_released_by_commit.append(release.wait(1))
+
+    monkeypatch.setattr(main_mod.logger, "critical", blocked_log)
+    monkeypatch.setattr(main_mod.os, "_exit", killed.append)
+    watchdog = main_mod._start_merge_hard_exit_timer("fixture", seconds=0)
+    assert entered.wait(1)
+
+    def commit(conn, sql, *, step):
+        assert sql == "COMMIT"
+        release.set()
+        watchdog.join(1)
+        assert not watchdog.is_alive()
+        return "committed"
+
+    monkeypatch.setattr(main_mod, "_interrupting_execute", commit)
+    try:
+        assert main_mod._commit_merge(object(), step="commit fixture", hard_exit_timer=watchdog) == "committed"
+        assert logging_released_by_commit == [True], "Disarming must not wait on a stuck logger"
+        assert killed == [], "A cancelled watchdog must not exit after logging resumes"
+    finally:
+        release.set()
+        watchdog.join(1)
+
+
+def test_commit_merge_retains_duckdb_interrupt_deadline(monkeypatch):
+    import threading
+    import main as main_mod
+
+    interrupted = threading.Event()
+    execute = main_mod._interrupting_execute
+
+    class BlockingCommit:
+        def execute(self, sql):
+            assert sql == "COMMIT"
+            assert interrupted.wait(1), "COMMIT lost its query-interrupt deadline"
+            raise duckdb.InterruptException("interrupted")
+
+        def interrupt(self):
+            interrupted.set()
+
+    def short_deadline(conn, sql, *, step):
+        return execute(conn, sql, step=step, timeout_seconds=0.01)
+
+    monkeypatch.setattr(main_mod, "_interrupting_execute", short_deadline)
+    watchdog = threading.Timer(60, lambda: pytest.fail("process kill must be disarmed"))
+    with pytest.raises(TimeoutError, match="Merge step exceeded"):
+        main_mod._commit_merge(BlockingCommit(), step="commit fixture", hard_exit_timer=watchdog)
+    assert interrupted.is_set()
+    assert watchdog.finished.is_set()
+
+
 def test_checkpoint_admin_sql_is_not_subject_to_process_kill_watchdog():
     import main as main_mod
 
@@ -2097,6 +2180,36 @@ def test_merge_league_delta_commits_and_replays(data_dir, client):
     )
     assert resp.status_code == 200
     assert resp.json()[0] == {"cnt": 2}
+
+
+def test_delta_commit_cannot_fire_process_kill_watchdog(data_dir, client, monkeypatch):
+    import threading
+    import main as main_mod
+
+    killed = []
+    # Run the real Timer at the COMMIT boundary, without a real process exit.
+    watchdog = threading.Timer(0, lambda: killed.append(True))
+    monkeypatch.setattr(main_mod, "_start_merge_hard_exit_timer", lambda *a: watchdog)
+    execute = main_mod._interrupting_execute
+    commits = []
+
+    def commit_boundary(conn, sql, *args, **kwargs):
+        if kwargs.get("step") == "commit delta test_league":
+            commits.append(sql)
+            watchdog.run()
+        return execute(conn, sql, *args, **kwargs)
+
+    monkeypatch.setattr(main_mod, "_interrupting_execute", commit_boundary)
+    archive_path, manifest = _make_delta_bundle(data_dir, main_mod)
+    with open(archive_path, "rb") as fh:
+        response = client.post("/merge-league-delta", headers={
+            "Authorization": "Bearer test-admin", "x-db-name": "test_league",
+            "x-bundle-id": manifest["bundle_id"], "x-bundle-hash": manifest["bundle_hash"],
+        }, files={"file": (archive_path.name, fh, "application/gzip")})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMMITTED"
+    assert commits == ["COMMIT"]
+    assert killed == [], "COMMIT can checkpoint; the process-kill timer must already be disarmed"
 
 
 def test_error_after_delta_commit_preserves_receipt_and_replay(data_dir, client, monkeypatch):

@@ -152,6 +152,30 @@ def _fingerprint(client, table, where):  # noqa: F811
     return int(rows[0]["n"]), str(rows[0]["fp"])
 
 
+def test_fleet_commit_cannot_fire_process_kill_watchdog(data_dir, client, monkeypatch):  # noqa: F811
+    import threading
+    import main as main_mod
+
+    killed = []
+    watchdog = threading.Timer(0, lambda: killed.append(True))
+    monkeypatch.setattr(main_mod, "_start_merge_hard_exit_timer", lambda *a: watchdog)
+    execute = main_mod._interrupting_execute
+    commits = []
+
+    def commit_boundary(conn, sql, *args, **kwargs):
+        if kwargs.get("step") == "commit fleet partition":
+            commits.append(sql)
+            watchdog.run()
+        return execute(conn, sql, *args, **kwargs)
+
+    monkeypatch.setattr(main_mod, "_interrupting_execute", commit_boundary)
+    response = _post_bundle(client, _build_bundle(data_dir))
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMMITTED"
+    assert commits == ["COMMIT"]
+    assert killed == [], "COMMIT can checkpoint; the process-kill timer must already be disarmed"
+
+
 def test_fleet_partition_requires_admin(client):  # noqa: F811
     resp = client.post("/merge-fleet-partition", files={"file": ("x.tar.gz", b"junk", "application/gzip")})
     assert resp.status_code == 401

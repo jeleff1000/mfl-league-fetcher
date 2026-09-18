@@ -1160,6 +1160,33 @@ def _interrupting_execute(
         timer.cancel()
 
 
+class _MergeHardExitTimer(threading.Timer):
+    """Serialize cancellation with process exit, never with diagnostic logging."""
+
+    def __init__(self, interval, function):
+        self._exit_lock = threading.Lock()
+        super().__init__(interval, function)
+
+    def cancel(self):
+        with self._exit_lock:
+            super().cancel()
+
+    def exit_if_armed(self):
+        with self._exit_lock:
+            if not self.finished.is_set():
+                os._exit(1)
+
+
+def _commit_merge(conn, *, step: str, hard_exit_timer: threading.Timer):
+    """Disarm process termination before COMMIT can run an automatic checkpoint.
+
+    The statement still has its DuckDB interrupt timeout; worker deadlines are
+    unchanged. Cancelling only before the later explicit checkpoint is too late.
+    """
+    hard_exit_timer.cancel()
+    return _interrupting_execute(conn, "COMMIT", step=step)
+
+
 def _start_merge_hard_exit_timer(db_name: str, seconds: float | None = None) -> threading.Timer:
     """Restart the process if native DuckDB gets stuck inside a merge call."""
     budget = MERGE_HARD_EXIT_SECONDS if seconds is None else seconds
@@ -1170,9 +1197,9 @@ def _start_merge_hard_exit_timer(db_name: str, seconds: float | None = None) -> 
             db_name,
             budget,
         )
-        os._exit(1)
+        timer.exit_if_armed()
 
-    timer = threading.Timer(budget, hard_exit)
+    timer = _MergeHardExitTimer(budget, hard_exit)
     timer.daemon = True
     timer.start()
     return timer
@@ -3118,7 +3145,7 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
                 "elapsed_seconds": round(time.perf_counter() - total_start, 4),
             }
             _delta_upsert_state(conn, manifest, "COMMITTED", result=result)
-            _interrupting_execute(conn, "COMMIT", step=f"commit delta {db_name}")
+            _commit_merge(conn, step=f"commit delta {db_name}", hard_exit_timer=hard_exit_timer)
             in_transaction = False
             _checkpoint_after_merge(
                 conn,
@@ -3221,7 +3248,7 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             except fleet_merge.FleetGenerationConflict as exc:
                 raise DeltaConflictError(str(exc)) from exc
             _delta_upsert_state(conn, manifest, "COMMITTED", result=result)
-            _interrupting_execute(conn, "COMMIT", step="commit fleet partition")
+            _commit_merge(conn, step="commit fleet partition", hard_exit_timer=hard_exit_timer)
             in_transaction = False
             _checkpoint_after_merge(
                 conn,

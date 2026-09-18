@@ -615,10 +615,10 @@ def test_repeated_phase_cannot_reset_its_budget():
 
 def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
     a = adapter()
-    binding = {'size': 15555375104, 'mtime_ns': 1789755176638185818, 'inode': 14}
-    files = {'.wal': {'size': 45522288, 'mtime_ns': 1789755164142675724, 'inode': 64}}
+    binding = {'size': 15555375104, 'mtime_ns': 1789760116677575290, 'inode': 14}
+    files = {'.wal': {'size': 45522341, 'mtime_ns': 1789760101741571802, 'inode': 64}}
     header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
-    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '81f5df9726e7a1e4009e3de53e8ee9d13e6c9369ae52618b6d75e3666f991af3'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == 'c45382cd53958c6b66691371ff1c2de195427f1a3c06b29c5ae1286de8f11176'
     with pytest.raises(ValueError):
         a.validate_recovery_baseline(binding, files, header, resume=False)
     for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):
@@ -739,8 +739,8 @@ def test_recovery_leaves_memory_headroom_in_the_three_gib_pilot():
 
 def test_recovery_refuses_startup_starvation_before_engine_open():
     a = adapter()
-    a.require_recovery_window(140, now=110)
-    for now in (110.1, 125, 141):
+    a.require_recovery_window(140, now=105)
+    for now in (105.1, 110.1, 125, 141):
         with pytest.raises(ValueError, match='NOT_STARTED'):
             a.require_recovery_window(140, now=now)
 

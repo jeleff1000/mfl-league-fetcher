@@ -4,6 +4,15 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- User explicitly approved a longer checkpoint allowance and test writes,
+  retaining tight/light work. Set verify20s within unchanged40s total; bind
+  only the fresh35386902355 main/WAL fingerprint and reject stale inputs.
+  Both changed preflight regressions failed before implementation. No
+  checksum, WAL preservation, target-table or production-access gate relaxed.
+- Completion scope includes every affected failed worker/import and league
+  recovery, correct visible2026week1, retained history/aliases/merges and
+  ranks. A successful pilot or server health response is not completion.
+
 - Resume35386706937 on ecc328a27 reached the real engine. Replay9.894s;
   retained-value reconciliation passed, zero newDROP/fixture rows. First
   checkpoint advanced through41tables (last observedtransaction_player_career)

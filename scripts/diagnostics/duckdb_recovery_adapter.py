@@ -25,14 +25,14 @@ CANONICAL = ("homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_
              "player_fantasy_season_all", "standings_by_year")
 QUARANTINED = tuple("__corrupt_recovery_" + name for name in CANONICAL)
 RECOVERY_VOLUME = "vol_4919j2m0wzg0xw5r"
-STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 15}
+STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 20}
 
 
 def require_recovery_window(deadline, *, now=None):
-    # Observed pre-checkpoint work is ~14s; leave the full existing 15s proof
+    # Observed pre-checkpoint work is ~14s; leave the approved 20s proof
     # window BEFORE starting replay. Do not start an already-starved mutation.
-    if deadline - (time.time() if now is None else now) < 30:
-        raise ValueError('NOT_STARTED: less than 30s remains after startup')
+    if deadline - (time.time() if now is None else now) < 35:
+        raise ValueError('NOT_STARTED: less than 35s remains after startup')
 
 
 def emit_machine_exec_result(data, expected_event='isolated_recovery_verified'):
@@ -629,8 +629,8 @@ def remove_quarantined(conn, *, prepare=None, target=None, prior_removed=()):
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
     """Two observed isolated states only; never infer permission from a timestamp."""
     main_mtime, wal_size, wal_mtime, wal_sha = (
-        (1789755176638185818, 45522288, 1789755164142675724,
-         '81f5df9726e7a1e4009e3de53e8ee9d13e6c9369ae52618b6d75e3666f991af3') if resume else
+        (1789760116677575290, 45522341, 1789760101741571802,
+         'c45382cd53958c6b66691371ff1c2de195427f1a3c06b29c5ae1286de8f11176') if resume else
         (1789662410048242836, 45516621, 1789662378556231033,
          'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
     if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime
@@ -667,7 +667,7 @@ def checkpoint_progress(hook):
 
 
 def report_checkpoint_progress(hook, stopped):
-    # At most eight samples in the 15s verification window. No extra SQL,
+    # At most ten samples in the 20s verification window. No extra SQL,
     # database reads, native disk writes, or watchdog budget changes.
     while not stopped.wait(2):
         print(json.dumps(checkpoint_progress(hook)), flush=True)
@@ -889,10 +889,10 @@ def recovery_child(args):
     env.pop('LD_PRELOAD', None)
     env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())
     # This process is a member of the parent's killed process group. Its open,
-    # checks, write, checkpoint and reopen share the SAME 15s verify budget.
+    # checks, write, checkpoint and reopen share the SAME 20s verify budget.
     subprocess.run([sys.executable, '-u', __file__, '--stock-child', str(folder),
                     '--db-name', args.db_name, '--deadline', str(args.deadline)], env=env, check=True,
-                   timeout=max(.001, min(15, args.deadline-time.time())))
+                   timeout=max(.001, min(20, args.deadline-time.time())))
     write_receipt(folder / 'completed.json', {'removed': removed, 'stock_verified': True,
                                              'metadata_blocks': hook.lh_spike_allocations()})
     print(json.dumps({'event': 'isolated_recovery_verified', 'receipt': folder.name}), flush=True)

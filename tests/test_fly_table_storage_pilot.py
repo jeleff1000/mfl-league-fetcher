@@ -189,6 +189,13 @@ def test_retained_headers_can_inspect_existing_damaged_witness_without_sql():
         validate_target("donor_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_4919j2m0wzg0xw5r")
 
 
+def test_engine_inventory_requires_exact_existing_isolated_volume():
+    from scripts.fly_table_storage_pilot import validate_target
+    validate_target("engine_inventory", "player_fantasy_season", "nyu_ffl", "isolated", "vol_4919j2m0wzg0xw5r")
+    with pytest.raises(ValueError, match="isolated engine"):
+        validate_target("engine_inventory", "player_fantasy_season", "nyu_ffl", "isolated", "vol_other")
+
+
 def test_retained_headers_distinguish_bad_original_from_intact_duplicate(tmp_path, monkeypatch):
     import hashlib
     import struct

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
 import struct
 import tempfile
@@ -53,12 +54,45 @@ def validate_target(action, table, db_name, machine, volume, path=DATABASE_PATH)
         raise ValueError("donor volume is not the existing September 15 witness")
     if action == "retained_headers" and volume not in {"vol_vp26dp2g9x3167j4", "vol_4919j2m0wzg0xw5r"}:
         raise ValueError("donor volume is not an allowlisted existing witness")
-    if action not in {"inspect", "locate", "remove", "donor_headers", "retained_headers"} or table not in TARGETS:
+    if action == "engine_inventory" and volume != "vol_4919j2m0wzg0xw5r":
+        raise ValueError("isolated engine inventory requires its exact existing volume")
+    if action not in {"inspect", "locate", "remove", "donor_headers", "retained_headers", "engine_inventory"} or table not in TARGETS:
         raise ValueError("target table/action is not allowlisted")
     if not re.fullmatch(r"[a-z0-9_]+", db_name):
         raise ValueError("invalid witness league")
     if path != DATABASE_PATH:
         raise ValueError("database path is not allowlisted")
+
+
+def engine_inventory(path):
+    """Read-only catalog and runtime inventory, retaining the original WAL."""
+    import duckdb
+
+    def file_state():
+        return {suffix: (p.stat().st_size, p.stat().st_mtime_ns)
+                for suffix in ("", ".wal", ".checkpoint.wal")
+                if (p := Path(str(path) + suffix)).exists()}
+
+    before = file_state()
+    emit("engine_inventory_start", files=before, duckdb=duckdb.__version__,
+         python=platform.python_version(), libc=platform.libc_ver(),
+         read_only=True, wal_retained=True)
+    try:
+        with duckdb.connect(str(path), read_only=True,
+                            config={"threads": "1", "memory_limit": "512MB"}) as conn:
+            objects = conn.execute("""
+                SELECT database_name, schema_name, table_name, estimated_size, index_count
+                FROM duckdb_tables()
+                WHERE schema_name='public' AND
+                    (table_name IN (SELECT unnest(?)) OR
+                     table_name IN (SELECT unnest(?)))
+                ORDER BY table_name
+            """, [sorted(TARGETS), sorted("__corrupt_recovery_" + t for t in TARGETS)]).fetchall()
+            emit("engine_inventory_catalog", objects=objects)
+    finally:
+        if file_state() != before:
+            raise ValueError("read-only inventory changed database/WAL metadata")
+        emit("engine_inventory_files_unchanged")
 
 
 def probe_metadata_donor(path, expected_checksum):
@@ -175,6 +209,9 @@ def run(args):
             return 0
         if block["file_changed_during_read"] or block["block_sha256"] != "7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186":
             raise ValueError("target is not the exact previously observed damaged block")
+        if args.action == "engine_inventory":
+            engine_inventory(DATABASE_PATH)
+            return 0
         if args.action == "remove" and Path(str(DATABASE_PATH) + ".wal").exists():
             raise ValueError("retained WAL present: do not replay/checkpoint it as a table-removal pilot")
         emit("connect_start", read_only=args.action == "locate")
@@ -231,7 +268,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers", "retained_headers"])
+    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers", "retained_headers", "engine_inventory"])
     parser.add_argument("--target-table", required=True)
     parser.add_argument("--db-name", required=True)
     parser.add_argument("--machine-id", required=True)

@@ -13,6 +13,9 @@ static std::atomic<int> armed{0};
 static std::atomic<int> intercepted{0};
 static std::atomic<int> fresh_metadata{0};
 static std::atomic<int> fresh_allocations{0};
+// Never turn a narrow catalog experiment into an unbounded metadata rewrite.
+static constexpr int max_metadata_blocks = 128;
+static std::atomic<int> allocation_limit{max_metadata_blocks};
 static std::atomic<int> crash_after_flush{0};
 static std::atomic<int> entry_calls{0};
 static thread_local bool allowed_table_drop = false;
@@ -24,6 +27,10 @@ int lh_spike_count(void) { return atomic_load(&intercepted); }
 void lh_spike_disarm(void) { atomic_store(&armed, 0); }
 void lh_spike_checkpoint(int enable) { atomic_store(&fresh_metadata, enable); }
 int lh_spike_allocations(void) { return atomic_load(&fresh_allocations); }
+void lh_spike_allocation_limit(int limit) {
+    if (limit < 1 || limit > max_metadata_blocks) { _exit(97); }
+    atomic_store(&allocation_limit, limit);
+}
 int lh_spike_entry_calls(void) { return atomic_load(&entry_calls); }
 void lh_spike_crash_flush(void) { atomic_store(&crash_after_flush, 1); }
 
@@ -83,7 +90,9 @@ int64_t lh_metadata_peek(void *manager) {
     if (atomic_load(&fresh_metadata)) {
         /* AllocateHandle must allocate a new metadata block, not pin an old
          * partially free one. Normal allocation and checksums stay intact. */
-        atomic_fetch_add(&fresh_allocations, 1);
+        if (atomic_fetch_add(&fresh_allocations, 1) >= atomic_load(&allocation_limit)) {
+            _exit(97); // before the next metadata block is allocated
+        }
         return -1;
     }
     auto original = reinterpret_cast<int64_t (*)(void *)>(dlsym(RTLD_NEXT,

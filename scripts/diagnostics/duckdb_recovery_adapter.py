@@ -654,7 +654,7 @@ def reconcile_committed_removal(conn, db_name, before):
 def recovery_connect_config():
     # Stock setting: persist WAL/catalog changes without optional row-group
     # compaction of unrelated tables. No checksum or durability setting changes.
-    return {'threads': '4', 'memory_limit': '3072MB', 'temp_directory': '',
+    return {'threads': '4', 'memory_limit': '2560MB', 'temp_directory': '',
             'max_vacuum_tasks': '0'}
 
 

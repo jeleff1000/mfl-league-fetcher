@@ -726,12 +726,14 @@ def test_stock_verification_does_not_compact_unrelated_pending_deletes(tmp_path)
         assert conn.execute("SELECT COUNT(DISTINCT row_group_id) FROM pragma_storage_info('public.unrelated_history')").fetchone() == (2,), 'ordinary proof must not vacuum/rewrite unrelated history'
 
 
-def test_recovery_uses_the_four_available_threads_without_relaxing_memory_or_vacuum():
+def test_recovery_leaves_memory_headroom_in_the_three_gib_pilot():
     a = adapter()
     with duckdb.connect(':memory:', config=a.recovery_connect_config()) as conn:
         assert conn.execute("SELECT current_setting('threads')").fetchone() == (4,)
         assert conn.execute("SELECT current_setting('max_vacuum_tasks')").fetchone() == (0,)
-        assert a.recovery_connect_config()['memory_limit'] == '3072MB'
+        amount, unit = conn.execute("SELECT current_setting('memory_limit')").fetchone()[0].split()
+        memory_bytes = float(amount) * {'B': 1, 'KiB': 1024, 'MiB': 1024**2, 'GiB': 1024**3}[unit]
+        assert memory_bytes <= 2560 * 1000**2, 'reserve at least 512 MiB for the helper, Python and non-buffer allocations'
         assert conn.execute("SELECT current_setting('temp_directory')").fetchone() == ('',)
 
 

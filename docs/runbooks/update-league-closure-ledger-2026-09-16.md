@@ -4,6 +4,20 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Fresh publication failures: Yahoo full import35382170308 (`stk`), Sleeper
+  quick import35379651781 (`ifl_dynasty`) and refresh35383306930 all report
+  the same checkpoint checksum failure at90714112. The first two live bundle
+  status lookups return202/VALIDATED, notCOMMITTED. Their bundles were only
+  3.3MB/2.8s and0.2MB/1.1s respectively; provider work is not this blocker.
+  The Yahoo run lists no retained Actions artifacts. Do not claim its payload
+  is preserved or mark either import published from a health response.
+- One smaller isolated placement is prepared, not yet run: shared4/3072MiB,
+  engine2560MB, preserving4CPU volume throughput. Previous measured peakRSS
+  was2024476KiB, so this reduces requested host RAM with measured headroom.
+  It changes no helper behavior, table scope, deadlines or production config.
+  The real-connection memory regression failed against3072MB as expected.
+  Run existing tests before this single trial; no capacity retry ladder.
+
 - Blocked audit after the repeated capacity condition across the status turn
   and two goal continuations: the recovery host refused all three tested
   placements, there is no live recovery job, and the inspected inventory has

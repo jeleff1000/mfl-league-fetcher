@@ -363,7 +363,7 @@ def export_witness_fixture(db_name, query):
         raise ValueError('invalid fixture league')
     result = {'db_name': db_name, 'tables': {}}
     allowed = ','.join("'" + name + "'" for name in CANONICAL)
-    schema = query("SELECT table_name,column_name FROM duckdb_columns() "
+    schema = query("SELECT table_name,column_name,data_type FROM duckdb_columns() "
                    "WHERE database_name=current_database() AND schema_name='public' "
                    f"AND table_name IN ({allowed}) ORDER BY table_name,column_index")
     parts = []
@@ -377,7 +377,7 @@ def export_witness_fixture(db_name, query):
             f'({select} ORDER BY {", ".join(_quote(n) + " " + direction + " NULLS LAST" for n in order)} LIMIT 2)'
             for direction in ('ASC', 'DESC'))
         parts.append(f"SELECT '{table}' AS table_name,to_json(witness_sample) AS row_json FROM ({halves}) AS witness_sample")
-        result['tables'][table] = {'columns': names, 'rows': []}
+        result['tables'][table] = {'columns': names, 'types': [r['data_type'] for r in schema if r['table_name'] == table], 'rows': []}
     samples = query(' UNION ALL '.join(parts))
     for table, entry in result['tables'].items():
         unique = {}
@@ -412,14 +412,21 @@ def seed_witness_fixture(conn, bundle, db_name, machine, volume, runtime_machine
                 or not 1 <= len(rows) <= 4
                 or any(len(row) != len(names) or row[names.index('db_name')] != db_name for row in rows)):
             raise ValueError('fixture contains unexpected columns, rows or league identity')
-        columns = {r[0] for r in conn.execute("SELECT column_name FROM duckdb_columns() WHERE database_name=current_database() AND schema_name='public' AND table_name=?", [table]).fetchall()}
+        columns = dict(conn.execute("SELECT column_name,data_type FROM duckdb_columns() WHERE database_name=current_database() AND schema_name='public' AND table_name=?", [table]).fetchall())
         if not set(names).issubset(columns):
-            raise ValueError(f'fixture schema mismatch for {table}: {sorted(set(names)-columns)}')
+            raise ValueError(f'fixture schema mismatch for {table}: {sorted(set(names)-columns.keys())}')
+        if sample.get('types') != [columns[n] for n in names]:
+            raise ValueError(f'fixture type mismatch for {table}')
         if conn.execute(f'SELECT 1 FROM public.{_quote(table)} WHERE db_name=? LIMIT 1', [db_name]).fetchone():
             raise ValueError(f'fixture would modify existing rows in {table}')
     for table, sample in bundle['tables'].items():
         names = sample['columns']
         conn.executemany(f'INSERT INTO public.{_quote(table)} ({", ".join(_quote(n) for n in names)}) VALUES ({", ".join("?" for _ in names)})', sample['rows'])
+        rows = conn.execute(f'SELECT to_json(witness_sample) FROM (SELECT {", ".join(_quote(n) for n in names)} FROM public.{_quote(table)} WHERE db_name=?) AS witness_sample', [db_name]).fetchall()
+        actual = [[json.loads(row[0])[n] for n in names] for row in rows]
+        encode = lambda values: sorted(json.dumps(r, sort_keys=True, default=str) for r in values)
+        if encode(actual) != encode(sample['rows']):
+            raise ValueError(f'fixture value conversion in {table}; refusing a changed baseline')
 
 
 def object_inventory(conn):

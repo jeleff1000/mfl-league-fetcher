@@ -279,6 +279,7 @@ def test_real_value_fixture_and_drops_rollback_together_and_preserve_other_leagu
             conn.execute(f'INSERT INTO public."{name}" VALUES (?,?,?,?)', ['unrelated', 2011, 'Saved Alias', 123.45])
         bundle = {'db_name': 'nyu_ffl', 'tables': {name: {
             'columns': ['db_name', 'year', 'manager', 'points'],
+            'types': ['VARCHAR', 'INTEGER', 'VARCHAR', 'DOUBLE'],
             'rows': [['nyu_ffl', 2018, 'Preferred Alias', 91.23], ['nyu_ffl', 2026, 'Preferred Alias', 110.01]],
         } for name in a.CANONICAL}}
 
@@ -336,7 +337,7 @@ def test_fixture_refuses_wrong_scope_or_overwriting_existing_rows(tmp_path, defe
         conn.execute('CREATE SCHEMA public')
         for name in a.CANONICAL + a.QUARANTINED:
             conn.execute(f'CREATE TABLE public."{name}" (db_name VARCHAR, points DOUBLE)')
-        bundle = {'db_name': 'nyu_ffl', 'tables': {name: {'columns': ['db_name', 'points'], 'rows': [['nyu_ffl', 91.23]]} for name in a.CANONICAL}}
+        bundle = {'db_name': 'nyu_ffl', 'tables': {name: {'columns': ['db_name', 'points'], 'types': ['VARCHAR', 'DOUBLE'], 'rows': [['nyu_ffl', 91.23]]} for name in a.CANONICAL}}
         if defect == 'primary':
             machine['id'] = '1781e011b69068'
         elif defect == 'extra_table':
@@ -351,6 +352,25 @@ def test_fixture_refuses_wrong_scope_or_overwriting_existing_rows(tmp_path, defe
             a.remove_quarantined(conn, prepare=lambda: a.seed_witness_fixture(conn, bundle, 'nyu_ffl', machine, volume, machine['id']))
         assert len(a.object_inventory(conn)) == 10
         for name in a.CANONICAL[:-1]:
+            assert conn.execute(f'SELECT COUNT(*) FROM public."{name}"').fetchone() == (0,)
+
+
+@pytest.mark.parametrize('source_type', ['DOUBLE', 'INTEGER'])
+def test_fixture_rejects_type_mismatch_and_silent_value_rounding(tmp_path, source_type):
+    a = adapter()
+    machine, volume = inventory()
+    with duckdb.connect(str(tmp_path / '___leagues.duckdb')) as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL + a.QUARANTINED:
+            conn.execute(f'CREATE TABLE public."{name}" (db_name VARCHAR, points INTEGER)')
+        bundle = {'db_name': 'nyu_ffl', 'tables': {name: {
+            'columns': ['db_name', 'points'], 'types': ['VARCHAR', source_type],
+            'rows': [['nyu_ffl', 91.23]],
+        } for name in a.CANONICAL}}
+        with pytest.raises(ValueError, match='type|value'):
+            a.remove_quarantined(conn, prepare=lambda: a.seed_witness_fixture(conn, bundle, 'nyu_ffl', machine, volume, machine['id']))
+        assert len(a.object_inventory(conn)) == 10
+        for name in a.CANONICAL:
             assert conn.execute(f'SELECT COUNT(*) FROM public."{name}"').fetchone() == (0,)
 
 

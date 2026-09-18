@@ -2,6 +2,44 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 06:26 UTC
+
+The remaining retained-block donor hypothesis was tested, not assumed: an
+intact block might remain outside the registered metadata set on the existing
+September 15 recovery volume. Public main `cbf3721cd72313ab17fa77da270d27d66cfa1a2f`
+adds an exact-volume-allowlisted, read-only header mode to the existing pilot.
+It opens no DuckDB connection, creates no link/copy/volume, rejects primary,
+caps inspection at 65,536 block headers and two full candidates, and retains
+the 40-second external deadline including disposable-machine startup.
+
+Run `35314739529` inspected all 59,270 physical block headers of existing
+`vol_vp26dp2g9x3167j4`: 474,160 logical header bytes, plus two 274,432-byte
+validation probes. Filesystem physical I/O may exceed logical bytes. No block
+header matched the expected checksum `18392342689821271652`; `candidates=[]`.
+The helper took 18.584s, storage pilot 33s including startup, full job 49s.
+Machine `84ed45ece65578` was destroyed; the original volume and WAL remain.
+This rejects this donor, not every recovery method. It is NOT a repair or
+safe-publication proof. Do not repeat this search unchanged.
+
+Four new tests failed before implementation, then passed. The complete two-file
+selection passed 22 tests in 2.60s under a 38s subprocess ceiling; Ruff passed.
+Independent review found no critical/important issue. Both workflow/helper/test
+mirrors match. Public boundary guard `35314730441` passed on the exact revision.
+
+Production `/ready` after the pilot remains serving/accepting with zero active
+queries, OPS writes and publications. League fingerprint remains
+`sha256:935b1b973ff578d5`; OPS remains `sha256:c285f63fef646490`. Northern League
+overview returned HTTP 200 in 0.308s. No production writes, deployments,
+restarts, checkpoint attempts, restore, rebuild or architecture change occurred.
+Direct Fly snapshot listing is unavailable without a CLI token; this did not
+trigger a restore or any credential change. Actions authentication is intact.
+
+Physical recovery, twelve pending scoped aggregate repairs, and live publication
+canaries remain blocked. No verified in-place removal exists under current
+constraints. Inspecting a newly restored older isolated snapshot remains
+unapproved; do not treat repeated "keep going" as approval to restore, replace
+the live database, rewrite checksums, or change storage architecture.
+
 ## Bounded continuation - 2026-09-18 06:13 UTC
 
 Confirmed another prevention gap, distinct from physical repair: the delta and

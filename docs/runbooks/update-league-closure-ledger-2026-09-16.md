@@ -1,6 +1,205 @@
 # September Update League closure ledger
 
-State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+State: synthetic recovery tests passed; real-volume verification is awaiting Fly host capacity. Production physical recovery and update completion remain unproven. This ledger is for league updates, not SuperTable SOTA work.
+
+## Approved isolated engine-removal investigation - 2026-09-18
+
+User explicitly approved isolated database-engine recovery/removal pilots,
+with small tests before large writes. No production engine modification or
+table removal has been performed. The experimental helper accepts only its
+own synthetic temporary files, at most 8 MiB, and has no real-volume mode.
+
+Hypothesis: bypass only row-group storage reclamation for one explicitly
+armed DROP, leaving ordinary catalog transactions/checksums intact. This is
+not a production repair design. Independent source review identified metadata
+allocation, shared blocks, indexes, rollback and pre-checkpoint WAL replay as
+required safety tests before considering a real-volume experiment.
+
+The exact official Linux DuckDB 1.5.4 wheel exports the proposed function;
+bounded 2.922s inspection downloaded 21,451,698 bytes into memory, checked the
+published SHA256, and performed no installation or production access.
+Initial synthetic Actions run `35349153174`, main `595cd614e`, stopped after
+about three seconds because fortified C compilation rejects an ignored write
+result. The helper now checks that return value; warnings remain errors.
+
+A 2,633,728-byte generated fixture on local DuckDB 1.5.1 reproduces the right
+failure boundary in 4.578s: healthy facts/history/aliases are readable, target
+metadata reports checksum corruption, and ordinary DROP fails at COMMIT.
+This is deliberately injected corruption in a disposable test fixture, not
+a mutation or diagnosis of production data. Exact-version Linux execution
+subsequently reproduced the same boundary; no production repair claim is made.
+
+Exact Linux 1.5.4 run `35350290771` (`038c8347b`) passed in 1.844s:
+the scoped DROP plus fresh-metadata allocation checkpointed, reopened in a
+stock-engine process, preserved facts/history/aliases, and accepted another
+ordinary write/checkpoint/reopen. Skipping row-group reclamation alone had
+failed at checkpoint in `35349807881`, establishing the metadata-reuse gap.
+
+The strengthened matrix `35352321840` (`0ceb281a0`) passed: normal 3.543s,
+indexed 3.493s, shared-metadata refusal 2.543s. It covers exact catalog/schema
+targeting, unrelated DROP forwarding, rollback, crash after COMMIT, crash
+after metadata flush, replay without repeating DROP, repeated recovery,
+stock-engine reopen/write, and unchanged healthy values. Shared catalog
+corruption is refused with database and WAL sidecar hashes unchanged.
+Earlier scope tests failed because ToSQL includes the catalog; diagnostic
+run `35352238964` proved the exact `candidate.public` prefix before correction.
+
+Read-only inventory `35352594800` (`14d3620d3`) targeted only existing
+isolated volume `vol_4919j2m0wzg0xw5r`, with a 40s provisioning-plus-probe cap.
+It read 274,432 bytes for the known-block check and found a 45,516,621-byte
+retained WAL, DuckDB 1.5.4 / Python 3.11.16 / glibc 2.41. Opening read-only
+then exited before catalog inspection or the post-read file-metadata check.
+Read-only exit-log run `35352855026` proved an OS OOM kill at 409,048 KiB
+anonymous RSS on the disposable 512 MB VM. That VM was destroyed; its volume
+and WAL were not removed. Production was not involved.
+
+Attempt `35353006359` requested a 1 GB disposable VM to leave OS headroom;
+Fly refused startup with insufficient host resources. Attempt `35353155279`
+instead requested 512 MB with a 128 MB DuckDB cache and a 16 MB spill ceiling;
+Fly also refused that VM before database access. Neither attempted a DROP.
+Do not repeat unchanged launches or migrate/copy the whole database to evade
+this capacity condition. Wait for capacity on that existing volume's host.
+
+Allocation-limit regression `35353358752` first failed as expected before the
+limit existed. The final matrix `35353660883` (`4563c1c05`) passed with the
+limit applied at actual MetadataManager::GetNextBlockId allocation, not only
+the optional PeekNextBlockId branch. The synthetic helper allows at most 128
+new metadata blocks (32 MiB at the tested block size); its one-block test
+exits 97 before the next allocation and then passes stock-engine reopening.
+This ceiling is not a blanket bound on all database writes or a tested
+real-volume recovery budget.
+
+No real-volume removal has run. Required next gates: exact deployed ABI
+binding, retained WAL,
+sampled healthy values and replacement aggregates, bounded one-object removal,
+and fresh stock-engine checkpoint/reopen. Synthetic success is not approval
+for production engine modification or proof of production recovery.
+
+Sixteen guard/deadline tests passed in 2.48s; the unchanged hard-link
+test was excluded on the D: filesystem. Python compile, Ruff, YAML and diff
+checks passed. Both repository copies of the pilot workflow and helper match.
+The new engine-probe job has no Fly credentials or volume; the Fly job is
+excluded for that action. Installation plus experiment have an OS 40s cap.
+
+## Whole-table replacement evidence audit - 2026-09-18
+
+Independent read-only review distinguishes three different outcomes:
+
+- The five complete aggregate tables were logically regenerated in 122.98s,
+  as recorded below. That calculation was not the unresolved physical repair.
+- The empty-shell rename/drop transaction is recorded as failing at COMMIT,
+  but this continuation did not recover its original failure log. Do not
+  describe it as a verified failed upload of five fully rebuilt tables.
+- Removal pilot `35305006093` stopped at the retained-WAL guard before opening
+  DuckDB. It did not test DROP. Rename-only run `35170289421` succeeded but
+  did not prove checkpoint/reopen. The actual checkpoint failure is directly
+  present in ESPN `35287522419` attempt 5 at physical location 90714112.
+
+Application `_replace_canonical_table` already renames both tables, drops the
+old target, then commits. Official DuckDB v1.5.4 `DuckSchemaEntry::AddEntry`
+also implements CREATE OR REPLACE by dropping the existing entry; commit
+reclaims the old table through `CommitDropTable`, which traverses row groups.
+Thus this spelling does not establish an independent removal mechanism.
+A 0.016s in-memory EXPLAIN diagnostic on local DuckDB 1.5.1 found TRUNCATE
+and DELETE use identical DELETE/SEQ_SCAN plans. This is local-version evidence,
+not an executed production-version recovery test. No forced-drop recovery
+operation was established by this audit.
+
+Fly remained serving/accepting with zero active reads, writes or publications
+and league fingerprint `sha256:935b1b973ff578d5`. OPS fingerprint changed
+externally to `sha256:86a101efc7dddef9`; no cause is inferred. No production
+write, Actions dispatch, VM, restart, installation or database copy was made.
+Rebuilding the current canonical tables again would not itself remove the
+retained damaged objects. Physical repair and reliable updates remain open.
+
+## Snapshot-range and existing-local-donor check - 2026-09-18
+
+Investigated a distinct read-only possibility: accessing only the needed block
+from an existing Fly snapshot without restoring a volume. Fly's documented
+volume API exposes snapshot create/list and restore into a new volume, not a
+snapshot byte-range/file reader. Installed `flyctl volumes snapshots --help`
+also exposes only create/list; upstream export request superfly/flyctl#1296
+remains open. No restore, volume creation or database copy was initiated.
+
+Bounded metadata-only listings of known local recovery directories found no
+full league-database donor. The 7.9 MB KMFFL archive is a logical league export,
+not the original physical database. Previously created volume
+`vol_vjyqjyyeke02x8ov` came from `vs_LaBDVOpGBKAT9NYpNYMe`, dated September 17
+23:12 UTC, after the documented corruption; this is not evidence of an intact
+donor. Its original rebuild run `35295482265` was cancelled. No new VM or
+repeated damaged-block pilot was started. Direct Fly metadata access remains
+unavailable locally because the tool has no Fly access token.
+
+Readiness remains serving/accepting with zero active reads/writes/publications
+and unchanged league fingerprint. OPS attachment metadata changed externally
+to `sha256:2215b7a1cc1384bc`; its cause was not investigated or inferred.
+Physical recovery remains unverified. External posting remains unapproved.
+
+## Repeated storage blocker confirmed - 2026-09-18 12:13 UTC
+
+Fresh read-only checks: Fly serving/accepting, zero active queries/writes and
+unchanged league fingerprint; WAL remains 480.7 MiB (metadata query 0.719s).
+New alert `35341793840` corresponds to ESPN run `35287522419` attempt 5,
+job `105587328027`. Its 11:52:33 UTC upload error is the same checkpoint
+checksum mismatch at 90714112, with the same computed/stored checksums.
+This is new failure evidence, not a new recoverable condition. No rerun or
+production mutation was initiated in this continuation.
+
+The same physical-recovery blocker persists across the three latest goal turns.
+The bounded source investigations have not established a safe in-scope repair.
+The sanitized upstream question remains unsent: repeated keep-going instructions
+do not authorize external posting or override the no-rebuild/no-architecture
+constraints. Goal status is blocked, not complete. Resume meaningful recovery
+when an approved supported narrow procedure or explicit new authority exists;
+do not loop on identical repairs, readiness checks or adjacent code changes.
+
+## Upstream recovery-path check - 2026-09-18 12:12 UTC
+
+Checked official v1.5.5 release notes and PR #23714, including its full four-file
+diff. That patch prevents column-drop metadata-index corruption; it does not
+provide a recovery operation. The live writer's inspected code has no matching
+DROP COLUMN operation; two local staging operations and a keeper-config
+migration do not establish the incident's cause. No engine upgrade was applied.
+The v1.5.5 row-group drop implementation still traverses stored segments and
+the block reader still rejects checksum mismatches. Neither supplies evidence
+that upgrading would remove the current damaged reference.
+
+Readiness remained serving/accepting with zero reads/writes/publications and
+the same league fingerprint. No production mutation, pilot VM, build, install,
+snapshot or restart was performed. No repeated failed pilot was dispatched.
+Prepared `duckdb-storage-recovery-question-2026-09-18.md`, a sanitized, explicitly
+non-reproduction support question. Asked permission before external posting;
+it remains unsent. Recovery is still unverified; this source investigation is
+not a repair or a successful refresh.
+
+## Proven-repair claim reconciled - 2026-09-18 12:06 UTC
+
+Re-read the original GitHub logs, not just this ledger. Successful isolated
+run `35170289421` reports only the five `__corrupt_recovery_*` renames; it
+contains no checkpoint/reopen proof. ESPN run `35287522419`, attempt 4,
+explicitly reports checkpoint failure at location 90714112 with computed
+checksum 5168518579405463287 versus stored 18392342689821271652.
+The scoped reaggregation receipts' `checkpointed:false` is not itself a new
+checkpoint failure: `_scoped_recovery_checkpoint_result` deliberately defers
+checkpointing when disabled. Those receipts prove neither physical repair nor
+successful restart. The prior conclusion that quarantine/reaggregation alone
+resolved the storage blocker was too strong.
+
+Inspected official DuckDB v1.5.4 sources: `CommitState::CommitEntryDrop` invokes
+`DuckTableEntry::CommitDrop`, then `DataTable::CommitDropTable` traverses row
+groups to reclaim blocks. Rename avoids that path but retains the damaged
+storage. The proposed move-to-schema route is unavailable: the v1.5.4 parser
+has no AlterObjectSchema statement handler. No new safe SQL removal method
+was established; no repeated removal pilot was launched.
+
+Fly readiness still reports serving/accepting with zero active queries, OPS
+writes or publications and unchanged league fingerprint
+`sha256:935b1b973ff578d5`. Last bounded WAL metadata read was 480.7 MiB,
+above the existing recovery stop. No production mutation, restart, deployment,
+snapshot, new volume, raw-block modification or code fix occurred here.
+Remaining blocker: a verified durable repair of the damaged physical reference,
+not aggregate calculation speed. Do not retry the logical repair or claim
+completion without successful checkpoint/reopen evidence.
 
 ## Bounded continuation - 2026-09-18 07:44 UTC
 

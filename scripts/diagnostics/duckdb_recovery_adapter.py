@@ -367,7 +367,7 @@ def verify_stock(path, db_name, before):
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
     import duckdb
-    config = {'threads': '1', 'memory_limit': '768MB', 'temp_directory': ''}
+    config = {'threads': '1', 'memory_limit': '1536MB', 'temp_directory': ''}
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
@@ -536,7 +536,7 @@ def main():
         from fly_duckdb_block_probe import probe
         import duckdb
         with duckdb.connect('/data/___leagues.duckdb', read_only=True,
-                            config={'threads': '1', 'memory_limit': '768MB', 'temp_directory': ''}) as conn:
+                            config={'threads': '1', 'memory_limit': '1536MB', 'temp_directory': ''}) as conn:
             registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=346').fetchall())
         if registered and not probe('/data/___leagues.duckdb', 90714112)['checksum_valid']:
             raise ValueError('damaged metadata remains eligible for stock reuse')

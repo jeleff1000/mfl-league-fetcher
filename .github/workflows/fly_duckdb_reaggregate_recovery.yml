@@ -148,7 +148,7 @@ jobs:
           test -n "$image"
           vm_memory=512
           files=()
-          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then vm_memory=1024; fi
+          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then vm_memory=2048; fi
           if [ "$PILOT_ACTION" = engine_recover ]; then
             echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"
             timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE \

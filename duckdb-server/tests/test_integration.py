@@ -1201,7 +1201,7 @@ def test_reaggregate_damaged_derived_requires_admin(client):
     assert resp.status_code == 401
 
 
-def test_reaggregate_damaged_derived_uses_exact_allowlist(client, monkeypatch):
+def test_reaggregate_damaged_derived_rejects_database_wide_modes(client, monkeypatch):
     import main as main_mod
 
     calls = []
@@ -1216,19 +1216,20 @@ def test_reaggregate_damaged_derived_uses_exact_allowlist(client, monkeypatch):
         }
 
     monkeypatch.setattr(main_mod, "_reaggregate_damaged_derived_from_sources", fake_reaggregate)
-    payload = {
-        "mode": "quarantine_and_rebuild",
-        "confirm_targets": list(main_mod._DAMAGED_DERIVED_TARGETS),
-    }
-    resp = client.post(
-        "/reaggregate-damaged-derived",
-        json=payload,
-        headers={"Authorization": "Bearer test-admin"},
-    )
+    for mode in ("quarantine_and_rebuild", "resume_rebuild"):
+        resp = client.post(
+            "/reaggregate-damaged-derived",
+            json={
+                "mode": mode,
+                "confirm_targets": list(main_mod._DAMAGED_DERIVED_TARGETS),
+            },
+            headers={"Authorization": "Bearer test-admin"},
+        )
 
-    assert resp.status_code == 200
-    assert resp.json()["targets"] == list(main_mod._DAMAGED_DERIVED_TARGETS)
-    assert calls and calls[0][1] == "quarantine_and_rebuild"
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "only one-league scoped_rebuild is supported"
+
+    assert calls == []
 
 
 def test_reaggregate_damaged_derived_supports_one_league_scope(client, monkeypatch):

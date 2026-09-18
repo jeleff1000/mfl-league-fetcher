@@ -3675,29 +3675,15 @@ async def reaggregate_damaged_derived(request: Request):
     confirmed_targets = body.get("confirm_targets")
     if confirmed_targets != list(_DAMAGED_DERIVED_TARGETS):
         raise HTTPException(status_code=400, detail="confirm_targets must exactly match the recovery allowlist")
-    if mode not in {"quarantine_and_rebuild", "resume_rebuild", "scoped_rebuild"}:
-        raise HTTPException(status_code=400, detail="invalid recovery mode")
-    if mode == "scoped_rebuild" and (
-        not scoped_db_name or not _DB_NAME_PATTERN.fullmatch(scoped_db_name)
-    ):
+    if mode != "scoped_rebuild":
+        raise HTTPException(status_code=400, detail="only one-league scoped_rebuild is supported")
+    if not scoped_db_name or not _DB_NAME_PATTERN.fullmatch(scoped_db_name):
         raise HTTPException(status_code=400, detail="scoped_rebuild requires a valid db_name")
 
     database_path = db.get_data_dir() / "___leagues.duckdb"
     async with _merge_lock:
         _start_derived_recovery_progress()
-        pool_closed = False
         try:
-            if mode != "scoped_rebuild":
-                _state["status"] = "draining"
-                elapsed = 0.0
-                while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
-                    await asyncio.sleep(0.5)
-                    elapsed += 0.5
-                if db.get_active_count() > 0:
-                    await asyncio.sleep(HARD_DRAIN_TIMEOUT - SOFT_DRAIN_TIMEOUT)
-                db.close_pool()
-                pool_closed = True
-                _state["status"] = "writing"
             result = await asyncio.to_thread(
                 _reaggregate_damaged_derived_from_sources,
                 database_path,
@@ -3711,10 +3697,6 @@ async def reaggregate_damaged_derived(request: Request):
             _fail_derived_recovery_progress(exc)
             logger.error("Five-table derived recovery failed: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            if pool_closed:
-                await _reopen_pool_after_write("five-table derived recovery")
-                _set_serving_or_ops_writing()
 
     track_event(
         "damaged_derived_reaggregated",

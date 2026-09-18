@@ -87,57 +87,10 @@ def test_derived_recovery_defers_changed_leagues_to_source_rebuild():
     assert replace < rebuild
 
 
-def test_isolated_rebuild_cannot_mutate_or_promote_the_primary_volume():
-    source = (
+def test_isolated_full_database_rebuild_workflow_is_not_dispatchable():
+    assert not (
         ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
-    ).read_text(encoding="utf-8")
-
-    assert '--snapshot-id "$SNAPSHOT_ID"' in source
-    assert '"wkupd_rebuild_${GITHUB_RUN_ID}"' in source
-    assert "--target /data/___leagues.clean.duckdb" in source
-    assert "--empty-table public.homepage_manager_rankings" in source
-    assert "--empty-table public.standings_by_year" in source
-    assert "flyctl machine stop" not in source
-    assert "flyctl machine clone" not in source
-    assert "/replace-db" not in source
-    assert "flyctl deploy" not in source
-
-
-def test_isolated_rebuild_can_fork_current_volume_without_snapshot_restore():
-    source = (
-        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "source_mode:" in source
-    assert 'flyctl volumes fork "$source_volume_id"' in source
-    assert '--name "wkupd_rebuild_${GITHUB_RUN_ID}"' in source
-    assert "--vm-cpus 2 --vm-memory 4096" in source
-
-
-def test_isolated_rebuild_can_reuse_retained_unattached_volume():
-    source = (
-        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "existing_volume_id:" in source
-    assert '[[ "$EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]' in source
-    assert '[[ "$existing_name" == wkupd_rebuild_* ]]' in source
-    assert 'test "$existing_state" = "created"' in source
-    assert 'test "$existing_attachment" = "null"' in source
-
-
-def test_isolated_rebuild_installs_clean_file_only_after_validation():
-    source = (
-        ROOT / ".github" / "workflows" / "fly_duckdb_isolated_rebuild.yml"
-    ).read_text(encoding="utf-8")
-
-    validation = source.index("python /tmp/validate_isolated_rebuild.py")
-    install = source.index("python /tmp/install_isolated_rebuild.py")
-    assert validation < install
-    assert 'os.replace(source, backup)' in source
-    assert 'os.replace(clean, source)' in source
-    assert 'duckdb.connect(str(source), read_only=True)' in source
-    assert 'backup.unlink()' in source
+    ).exists()
 
 
 def test_isolated_reaggregation_is_limited_to_the_retained_recovery_volume():

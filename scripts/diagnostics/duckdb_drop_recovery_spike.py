@@ -221,6 +221,17 @@ def verify(path):
     with connect(path, read_only=True) as conn:
         assert conn.execute("SELECT value FROM public.write_witness").fetchall() == [(7,)]
         assert conn.execute(WITNESS).fetchall() == EXPECTED
+        marker = path.parent / "injected-block.json"
+        if marker.exists():
+            block_id = json.loads(marker.read_text())["block_id"]
+            registered = conn.execute("SELECT block_id FROM pragma_metadata_info() WHERE block_id=?", [block_id]).fetchall()
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from fly_duckdb_block_probe import probe
+            block = probe(path, 12288 + block_id * 262144)
+            if registered and not block["checksum_valid"]:
+                raise ValueError("damaged block remains registered as reusable metadata after stock reopen")
+            emit("damaged_metadata_reference_retired", block_id=block_id,
+                 registered=bool(registered), checksum_valid=block["checksum_valid"])
     emit("stock_engine_reopen_verified", fixture_bytes=path.stat().st_size)
 
 
@@ -331,6 +342,7 @@ def main():
                 result = run_child(candidate, "locate")
                 if result.returncode == 0:
                     chosen = candidate.read_bytes()
+                    (folder / "injected-block.json").write_text(json.dumps({"block_id": block}))
                     break
             if chosen is None:
                 raise ValueError("no representative lazy-metadata fixture found")

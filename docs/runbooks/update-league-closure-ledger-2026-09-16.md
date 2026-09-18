@@ -2,6 +2,41 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 06:51 UTC
+
+Tested a distinct remaining donor hypothesis: an intact duplicate of the damaged
+metadata block might remain at another offset on the already-existing September
+17 recovery volume, even though the September 15 witness had no matching header.
+Public main `c5dbdf2e41a6ec90da08e490d126875fc30ed8f1` permits only the byte-only
+`retained_headers` action on exact `vol_4919j2m0wzg0xw5r` /
+`wkupd_rebuild_35166181636`; the SQL donor action still rejects that volume.
+No new volume, restore, database copy, SQL connection or production mutation.
+
+Run `35316606712` inspected all 59,339 physical block headers. The only matching
+header was the known corrupt block 346: stored checksum 18392342689821271652,
+computed checksum 5168518579405463287. No intact duplicate was found. This rules
+out this donor hypothesis; it is NOT a repair. Do not repeat the same scan.
+The helper took 15.292s, pilot 26s including startup, full job 40s including
+cleanup/artifact/setup. It read 474,712 logical header bytes plus 548,864
+validation bytes and the initial 274,432-byte damaged-block probe. Physical
+filesystem I/O may be greater. Disposable machine `e8204deb3e1748` was destroyed;
+the original isolated volume and WAL were retained.
+
+The new action/volume authorization test failed before implementation. A real
+small DuckDB-file test also distinguishes an invalid original from a valid
+retained duplicate without opening SQL during the probe or modifying the file.
+The two-file test selection passed 24 tests in 1.99s under a 38s cap; Ruff,
+workflow YAML parsing, mirror equality and diff checks passed. Independent
+review found no blockers. Public boundary guard `35316597901` passed exact SHA.
+
+Afterward production remains serving/accepting with zero queries, OPS writes
+or publications; both database fingerprints are unchanged. Northern League's
+overview returned HTTP 200 in 0.134s. Availability is not refresh correctness.
+No deployment, restart, write, checkpoint retry, snapshot, restore, rebuild or
+architecture change was performed. Physical removal remains unproven; new
+snapshot-backed donor inspection and storage-boundary changes remain unapproved.
+Do not substitute more reaggregation or unchanged pilots for that blocker.
+
 ## Bounded continuation - 2026-09-18 06:41 UTC
 
 Current source inspection corrected a stale audit note: historical PPG already

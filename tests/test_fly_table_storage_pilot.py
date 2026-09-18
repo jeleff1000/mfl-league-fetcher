@@ -209,6 +209,21 @@ def test_engine_identity_inspection_never_opens_database(monkeypatch):
         pilot.validate_target("engine_identity", "player_fantasy_season", "nyu_ffl", "isolated", "vol_other")
 
 
+def test_file_inventory_does_not_open_duckdb_or_hide_wal(tmp_path, monkeypatch):
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.setattr(duckdb, 'connect', lambda *a, **k: pytest.fail('stat inventory opened DuckDB'))
+    path = tmp_path / '___leagues.duckdb'
+    path.write_bytes(b'fixture')
+    wal = Path(str(path) + '.wal')
+    wal.write_bytes(b'committed')
+    result = pilot.file_inventory(path)
+    assert result['']['size'] == 7
+    assert result['.wal']['size'] == 9
+    assert result['.wal']['mtime_ns'] == wal.stat().st_mtime_ns
+    assert wal.read_bytes() == b'committed'
+
+
 def test_retained_headers_distinguish_bad_original_from_intact_duplicate(tmp_path, monkeypatch):
     import hashlib
     import struct

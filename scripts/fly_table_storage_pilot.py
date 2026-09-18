@@ -78,14 +78,24 @@ def engine_identity():
             "architecture": platform.machine(), "database_opened": False}
 
 
+def file_inventory(path):
+    """Stat only the exact database/WAL sidecars, never open the engine."""
+    result = {}
+    for suffix in ('', '.wal', '.checkpoint.wal'):
+        candidate = Path(str(path) + suffix)
+        if candidate.exists():
+            item = candidate.stat()
+            result[suffix] = {'size': item.st_size, 'mtime_ns': item.st_mtime_ns,
+                              'inode': item.st_ino, 'device': item.st_dev}
+    return result
+
+
 def engine_inventory(path):
     """Read-only catalog and runtime inventory, retaining the original WAL."""
     import duckdb
 
     def file_state():
-        return {suffix: (p.stat().st_size, p.stat().st_mtime_ns)
-                for suffix in ("", ".wal", ".checkpoint.wal")
-                if (p := Path(str(path) + suffix)).exists()}
+        return file_inventory(path)
 
     before = file_state()
     emit("engine_inventory_start", files=before, duckdb=duckdb.__version__,
@@ -228,6 +238,7 @@ def run(args):
         if args.action == "inspect":
             if block["file_changed_during_read"]:
                 raise ValueError("candidate changed during read")
+            emit('files_without_engine_open', files=file_inventory(DATABASE_PATH))
             return 0
         if args.action == "retained_headers":
             if block["file_changed_during_read"]:

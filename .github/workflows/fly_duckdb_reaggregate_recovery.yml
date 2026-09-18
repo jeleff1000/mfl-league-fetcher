@@ -41,6 +41,10 @@ jobs:
     if: inputs.action == 'engine_probe'
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [normal, indexed, shared]
     # No Fly secret or volume: synthetic files only, removed by TemporaryDirectory.
     steps:
       - uses: actions/checkout@v5
@@ -55,18 +59,20 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
       - name: Tiny engine corruption and removal pilot - hard 40 seconds
+        env:
+          PILOT_SCENARIO: ${{ matrix.scenario }}
         run: |
           set -euo pipefail
           timeout --signal=KILL 40s bash <<'PILOT' 2>&1 | tee engine-pilot.jsonl
           set -euo pipefail
           python -m pip install --disable-pip-version-check --no-deps duckdb==1.5.4
-          python -u scripts/diagnostics/duckdb_drop_recovery_spike.py
+          python -u scripts/diagnostics/duckdb_drop_recovery_spike.py --scenario "$PILOT_SCENARIO"
           PILOT
       - name: Upload only synthetic pilot receipt
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: synthetic-engine-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          name: synthetic-engine-pilot-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.scenario }}
           path: engine-pilot.jsonl
           if-no-files-found: warn
   pilot:

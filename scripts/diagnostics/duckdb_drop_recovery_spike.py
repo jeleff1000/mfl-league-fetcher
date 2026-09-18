@@ -65,10 +65,13 @@ def child(path, mode):
     if mode == "verify":
         verify(path)
         return 0
-    hook = ctypes.CDLL(None) if mode == "hook" else None
+    hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover"} else None
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
         hook.lh_spike_allocations.restype = ctypes.c_int
+        hook.lh_spike_arm()
+        if mode == "recover":
+            hook.lh_spike_checkpoint(1)
     conn = None
     try:
         conn = connect(path)
@@ -79,10 +82,14 @@ def child(path, mode):
             raise ValueError("healthy witness changed before DROP")
         emit("healthy_witness_verified", mode=mode)
         if hook:
+            before_unrelated = hook.lh_spike_count()
             conn.execute("CREATE TABLE public.forwarding_witness AS SELECT 9 AS n")
             conn.execute("DROP TABLE public.forwarding_witness")
-            if hook.lh_spike_count() != 0:
-                raise ValueError("unarmed DROP was intercepted")
+            conn.execute("CREATE SCHEMA IF NOT EXISTS unrelated")
+            conn.execute(f'CREATE TABLE unrelated."{TABLE}" AS SELECT 9 AS n')
+            conn.execute(f'DROP TABLE unrelated."{TABLE}"')
+            if hook.lh_spike_count() != before_unrelated:
+                raise ValueError("unrelated table or schema DROP was intercepted")
             emit("ordinary_drop_forwarded")
         if mode == "locate":
             try:
@@ -93,18 +100,33 @@ def child(path, mode):
                 emit("fixture_corruption_located", error=str(exc).splitlines()[0])
                 return 0
             raise ValueError("candidate did not affect target metadata")
-        conn.execute("BEGIN TRANSACTION")
-        if hook:
-            hook.lh_spike_arm()
-        conn.execute(f'DROP TABLE public."{TABLE}"')
-        conn.execute("COMMIT")
+        present = conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name=?", [TABLE]).fetchall()
+        if present:
+            if hook:
+                before_rollback = hook.lh_spike_count()
+                conn.execute("BEGIN TRANSACTION")
+                conn.execute(f'DROP TABLE public."{TABLE}"')
+                conn.execute("ROLLBACK")
+                assert conn.execute(WITNESS).fetchall() == EXPECTED
+                assert conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name=?", [TABLE]).fetchall()
+                assert hook.lh_spike_count() == before_rollback
+                emit("rollback_verified")
+            conn.execute("BEGIN TRANSACTION")
+            conn.execute(f'DROP TABLE public."{TABLE}"')
+            conn.execute("COMMIT")
+        elif mode != "recover":
+            raise ValueError("aggregate absent before removal experiment")
         if hook:
             hook.lh_spike_disarm()
-            if hook.lh_spike_count() != 1:
+            if hook.lh_spike_count() != 1 and mode != "recover":
                 raise ValueError("removal hook did not intercept exactly one call")
         emit("drop_committed", intercepted=hook.lh_spike_count() if hook else 0)
+        if mode == "crash_commit":
+            os._exit(23)
         if hook:
             hook.lh_spike_checkpoint(1)
+            if mode == "crash_flush":
+                hook.lh_spike_crash_flush()
         conn.execute("CHECKPOINT")
         if hook:
             # A second checkpoint retires metadata no longer referenced by
@@ -150,7 +172,7 @@ def verify(path):
             raise ValueError("dropped aggregate still exists after reopen")
     # Exercise an ordinary independent write and a second checkpoint/reopen.
     with connect(path) as conn:
-        conn.execute("CREATE TABLE public.write_witness AS SELECT 7 AS value")
+        conn.execute("CREATE OR REPLACE TABLE public.write_witness AS SELECT 7 AS value")
         conn.execute("CHECKPOINT")
     with connect(path, read_only=True) as conn:
         assert conn.execute("SELECT value FROM public.write_witness").fetchall() == [(7,)]
@@ -161,7 +183,8 @@ def verify(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify"], default="ordinary")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover"], default="ordinary")
+    parser.add_argument("--scenario", choices=["normal", "indexed", "shared"], default="normal")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
     args = parser.parse_args()
@@ -172,7 +195,7 @@ def main():
         if args.child:
             return child(args.child, args.mode)
         import duckdb
-        emit("start", version=duckdb.__version__, production_access=False)
+        emit("start", version=duckdb.__version__, scenario=args.scenario, production_access=False)
         if not args.fixture_only and (sys.platform != "linux" or duckdb.__version__ != "1.5.4"):
             raise ValueError("engine experiment requires Linux and production DuckDB 1.5.4")
         with tempfile.TemporaryDirectory(prefix="lh_drop_spike_") as temp:
@@ -181,9 +204,13 @@ def main():
             candidate = folder / "candidate.duckdb"
             with connect(baseline) as conn:
                 conn.execute("CREATE SCHEMA public")
-                cols = ", ".join(f"(i//2048)+{i} AS c{i}" for i in range(2 if args.binding_only else 64))
-                rows = 16 if args.binding_only else 262144
+                cols = ", ".join(f"(i//2048)+{i} AS c{i}" for i in range(2 if args.binding_only or args.scenario == "shared" else 64))
+                rows = 16 if args.binding_only or args.scenario == "shared" else 262144
+                if args.scenario == "indexed":
+                    cols += ", i AS row_id"
                 conn.execute(f'CREATE TABLE public."{TABLE}" AS SELECT {cols} FROM range({rows}) t(i)')
+                if args.scenario == "indexed":
+                    conn.execute(f'CREATE UNIQUE INDEX target_idx ON public."{TABLE}" (row_id)')
                 conn.execute("CHECKPOINT")
                 conn.execute("CREATE TABLE public.facts (db_name VARCHAR, year INTEGER, franchise_id VARCHAR, manager VARCHAR, points DOUBLE)")
                 conn.executemany("INSERT INTO public.facts VALUES (?, ?, ?, ?, ?)", EXPECTED)
@@ -195,8 +222,8 @@ def main():
             emit("fixture_built", bytes=baseline.stat().st_size, metadata_blocks=old_blocks)
             library = folder / "drop_spike.so"
             if not args.fixture_only:
-                subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-Wall", "-Werror",
-                                str(Path(__file__).with_suffix(".c")), "-ldl", "-o", str(library)],
+                subprocess.run(["c++", "-shared", "-fPIC", "-O2", "-Wall", "-Werror",
+                                str(Path(__file__).with_suffix(".cpp")), "-ldl", "-o", str(library)],
                                check=True, timeout=5)
                 shutil.copyfile(baseline, candidate)
                 binding = run_child(candidate, "hook", library)
@@ -207,6 +234,22 @@ def main():
                 emit("binding_proved", production_repair_authorized=False)
                 if args.binding_only:
                     return 0
+            if args.scenario == "shared":
+                shutil.copyfile(baseline, candidate)
+                with candidate.open("r+b") as stream:
+                    offset = 12288 + old_blocks[0] * 262144 + 32
+                    stream.seek(offset)
+                    original = stream.read(1)
+                    stream.seek(offset)
+                    stream.write(bytes([original[0] ^ 1]))
+                damaged_hash = hashlib.sha256(candidate.read_bytes()).hexdigest()
+                rejected = run_child(candidate, "hook", library)
+                if rejected.returncode == 0 or "checksum" not in rejected.stdout.lower():
+                    raise ValueError("shared metadata corruption was not rejected")
+                if hashlib.sha256(candidate.read_bytes()).hexdigest() != damaged_hash:
+                    raise ValueError("rejected shared-metadata fixture changed")
+                emit("shared_metadata_rejected_without_write", production_repair_authorized=False)
+                return 0
             chosen = None
             for block in old_blocks[:8]:
                 # This byte flip is exclusively fault injection in a synthetic file.
@@ -241,6 +284,23 @@ def main():
                 raise ValueError("experimental removal failed; not safe for a real volume")
             if run_child(candidate, "verify").returncode:
                 raise ValueError("stock-engine recovery verification failed")
+            if args.scenario == "normal":
+                for crash_mode, exit_code in [("crash_commit", 23), ("crash_flush", 24)]:
+                    candidate.write_bytes(chosen)
+                    for suffix in (".wal", ".checkpoint.wal"):
+                        generated_wal = Path(str(candidate) + suffix)
+                        if generated_wal.exists():
+                            generated_wal.unlink()  # exclusively owned synthetic fixture
+                    crashed = run_child(candidate, crash_mode, library)
+                    if crashed.returncode != exit_code:
+                        raise ValueError(f"{crash_mode} did not reach its injected boundary")
+                    if run_child(candidate, "recover", library).returncode:
+                        raise ValueError(f"{crash_mode} replay recovery failed")
+                    if run_child(candidate, "verify").returncode:
+                        raise ValueError(f"{crash_mode} stock-engine verification failed")
+                    if run_child(candidate, "recover", library).returncode or run_child(candidate, "verify").returncode:
+                        raise ValueError(f"{crash_mode} same-input recovery was not idempotent")
+                    emit("crash_recovery_verified", boundary=crash_mode)
             if hashlib.sha256(baseline.read_bytes()).hexdigest() != baseline_hash:
                 raise ValueError("baseline changed")
             emit("synthetic_pilot_passed", production_repair_authorized=False)

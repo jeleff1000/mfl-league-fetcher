@@ -180,3 +180,37 @@ def test_retained_header_action_requires_exact_isolated_witness():
     with pytest.raises(ValueError, match="donor volume"):
         validate_target("retained_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_test")
     validate_target("retained_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_vp26dp2g9x3167j4")
+
+
+def test_retained_headers_can_inspect_existing_damaged_witness_without_sql():
+    from scripts.fly_table_storage_pilot import validate_target
+    validate_target("retained_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_4919j2m0wzg0xw5r")
+    with pytest.raises(ValueError, match="donor volume"):
+        validate_target("donor_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_4919j2m0wzg0xw5r")
+
+
+def test_retained_headers_distinguish_bad_original_from_intact_duplicate(tmp_path, monkeypatch):
+    import hashlib
+    import struct
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    path = tmp_path / "damaged.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE facts AS SELECT i FROM range(10) t(i)")
+    with path.open("r+b") as stream:
+        stream.seek(12288)
+        original = stream.read(262144)
+        stream.seek(0, 2)
+        duplicate_offset = stream.tell()
+        stream.write(original)
+        stream.seek(12288 + 24)
+        stream.write(bytes([original[24] ^ 3]))
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: pytest.fail("header probe opened DuckDB"))
+    result = pilot.probe_retained_donor(path, struct.unpack_from("<Q", original)[0])
+    assert [(c["offset"], c["checksum_valid"]) for c in result["candidates"]] == [
+        (12288, False), (duplicate_offset, True),
+    ]
+    assert result["repair_authorized"] is False
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before

@@ -80,8 +80,14 @@ jobs:
           flyctl machines list --app "$FLY_APP" --json > machines.json
           flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > volume.json
           if [ "$PILOT_ACTION" = donor_headers ] || [ "$PILOT_ACTION" = retained_headers ]; then
-            test "$RECOVERY_VOLUME_ID" = vol_vp26dp2g9x3167j4
-            jq -e '.state == "created" and .name == "wkupd_35290038040" and ((.attached_machine_id // "") == "")' volume.json
+            case "$PILOT_ACTION:$RECOVERY_VOLUME_ID" in
+              donor_headers:vol_vp26dp2g9x3167j4|retained_headers:vol_vp26dp2g9x3167j4)
+                witness_name=wkupd_35290038040 ;;
+              retained_headers:vol_4919j2m0wzg0xw5r)
+                witness_name=wkupd_rebuild_35166181636 ;;
+              *) exit 2 ;;
+            esac
+            jq -e --arg name "$witness_name" '.state == "created" and .name == $name and ((.attached_machine_id // "") == "")' volume.json
           else
             jq -e '.state == "created" and (.name | startswith("wkupd_rebuild_")) and ((.attached_machine_id // "") == "")' volume.json
           fi

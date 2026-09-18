@@ -49,8 +49,10 @@ def validate_target(action, table, db_name, machine, volume, path=DATABASE_PATH)
         raise ValueError("primary target forbidden")
     if not machine or not volume.startswith("vol_"):
         raise ValueError("isolated machine and volume are required")
-    if action in {"donor_headers", "retained_headers"} and volume != "vol_vp26dp2g9x3167j4":
+    if action == "donor_headers" and volume != "vol_vp26dp2g9x3167j4":
         raise ValueError("donor volume is not the existing September 15 witness")
+    if action == "retained_headers" and volume not in {"vol_vp26dp2g9x3167j4", "vol_4919j2m0wzg0xw5r"}:
+        raise ValueError("donor volume is not an allowlisted existing witness")
     if action not in {"inspect", "locate", "remove", "donor_headers", "retained_headers"} or table not in TARGETS:
         raise ValueError("target table/action is not allowlisted")
     if not re.fullmatch(r"[a-z0-9_]+", db_name):

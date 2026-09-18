@@ -657,6 +657,8 @@ def test_ops_writer_drains_reference_readers_before_opening_write_handle(client,
     def connect(path, *args, **kwargs):
         if str(path).endswith('___ops.duckdb') and not kwargs.get('read_only', False):
             assert main_mod._ops_attachment_users == 0, 'OPS writer opened during a fleet reference read'
+            assert main_mod._ops_write_count == 1
+            assert main_mod._state['status'] == 'ops_writing'
         return original_connect(path, *args, **kwargs)
 
     monkeypatch.setattr(main_mod, '_drain_ops_attachments_for_snapshot', drain)
@@ -665,11 +667,41 @@ def test_ops_writer_drains_reference_readers_before_opening_write_handle(client,
         future = pool.submit(main_mod._execute_ops_query_rw, 'CREATE TABLE main.handoff_write (id INTEGER)')
         try:
             assert draining.wait(1), 'OPS writer must wait for reference readers'
+            assert main_mod._ops_write_count == 0, 'A queued writer is not an exclusive OPS write'
+            assert client.get('/ready').json()['accepting_queries'] is True
+            response = client.post('/query', headers={'Authorization': 'Bearer test-read'},
+                                   json={'sql': 'SELECT COUNT(*) AS n FROM public.matchup'})
+            assert response.status_code == 200, response.text
+            assert response.json() == [{'n': 2}]
         finally:
             main_mod._release_ops_attachment(reader)
             reader.close()
         future.result(timeout=3)
     assert main_mod._execute_ops_query('SELECT COUNT(*) AS n FROM main.handoff_write') == [{'n': 0}]
+
+
+def test_ops_writer_drain_timeout_leaves_read_connections_and_state_untouched(client, monkeypatch):
+    import db as db_mod
+    import main as main_mod
+
+    reader = db_mod.connect_database(db_mod.get_data_dir() / '___leagues.duckdb')
+    main_mod._acquire_ops_attachment(reader)
+    existing_ops_reader = db_mod.get_ops_connection()
+    monkeypatch.setattr(main_mod, 'PUBLIC_QUERY_TIMEOUT', 0.02)
+    try:
+        with pytest.raises(RuntimeError, match='attachment.*drain'):
+            main_mod._execute_ops_query_rw('CREATE TABLE main.must_not_write (id INTEGER)')
+        assert db_mod.get_ops_connection() is existing_ops_reader
+        assert existing_ops_reader.execute('SELECT 42').fetchone() == (42,)
+        assert existing_ops_reader.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='must_not_write'"
+        ).fetchone() == (0,)
+        assert main_mod._ops_attachment_users == 1
+        assert main_mod._ops_write_count == 0
+        assert client.get('/ready').json()['accepting_queries'] is True
+    finally:
+        main_mod._release_ops_attachment(reader)
+        reader.close()
 
 
 def test_ops_attachment_timeout_finishes_worker_before_connection_can_return(client, monkeypatch):

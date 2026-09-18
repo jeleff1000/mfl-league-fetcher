@@ -1261,12 +1261,12 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
     # Interrupt queries, but never terminate the server inside those writes.
     checkpoint_sql = _sql_requests_checkpoint(sql)
     with _db._ops_lock:
+        # Pending writers must not advertise a site outage while a fleet
+        # reader holds OPS. Keep the attachment gate locked, but enter the
+        # exclusive-write state/cleanup only after existing references drain.
+        _drain_ops_attachments_for_snapshot(timeout_seconds=min(PUBLIC_QUERY_TIMEOUT, ADMIN_QUERY_TIMEOUT / 2))
         _begin_ops_write_state()
         try:
-            # Fleet writers are not borrowed public-pool connections. Drain
-            # actual OPS references while holding the gate against new ones;
-            # unrelated league reads need not stop for a metadata write.
-            _drain_ops_attachments_for_snapshot(timeout_seconds=min(PUBLIC_QUERY_TIMEOUT, ADMIN_QUERY_TIMEOUT / 2))
             _db.close_ops_connection()
             last_connect_error: Exception | None = None
             for attempt in range(8):

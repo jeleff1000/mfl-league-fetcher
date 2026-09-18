@@ -474,20 +474,33 @@ def object_inventory(conn):
         [list(CANONICAL + QUARANTINED)]).fetchall()
 
 
-def remove_quarantined(conn, *, prepare=None):
-    """One transaction, exact five-name scope; partial absence is not a retry."""
+def remove_quarantined(conn, *, prepare=None, target=None, prior_removed=()):
+    """Commit only the requested object; partial progress must be explicit.
+
+    The legacy five-object call remains for its already-committed WAL receipt.
+    A single-object retry is a no-op only when precisely that target is absent.
+    The caller must bind prior_removed to retained evidence before calling.
+    """
     rows = object_inventory(conn)
-    names = {row[2] for row in rows}
-    if names == set(CANONICAL):
-        return 0  # Only a complete prior removal can be idempotently verified.
-    if names != set(CANONICAL + QUARANTINED):
+    targets = QUARANTINED if target is None else (target,)
+    if (target is not None and target not in QUARANTINED
+            or len(set(prior_removed)) != len(prior_removed)
+            or not set(prior_removed).issubset(QUARANTINED)
+            or target is None and prior_removed):
+        raise ValueError('removal scope must contain only approved exact objects')
+    expected = set(CANONICAL + QUARANTINED) - set(prior_removed)
+    actual = {tuple(row[:3]) for row in rows}
+    def identities(objects):
+        return {('___leagues', 'public', name) for name in objects}
+    if actual == identities(expected - set(targets)):
+        return 0
+    if actual != identities(expected) or len(actual) != len(rows):
         raise ValueError("partial object set: reconcile before any removal")
-    validate_objects(rows)
     conn.execute('BEGIN TRANSACTION')
     try:
         if prepare is not None:
             prepare()
-        for name in QUARANTINED:
+        for name in targets:
             conn.execute(f'DROP TABLE public.{_quote(name)}')
         conn.execute('COMMIT')
     except BaseException:
@@ -498,7 +511,7 @@ def remove_quarantined(conn, *, prepare=None):
         except Exception:
             pass
         raise
-    return len(QUARANTINED)
+    return len(targets)
 
 
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):

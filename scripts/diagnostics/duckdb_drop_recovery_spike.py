@@ -209,14 +209,21 @@ def child(path, mode):
         if duckdb.__version__ != '1.5.4':
             raise ValueError('Mark-origin proof requires stock DuckDB 1.5.4')
         return mark_origin_child(path, verify_only=mode == 'mark_verify')
-    if mode in {"verify", "verify_wal"}:
-        verify(path)
+    if mode in {"verify", "verify_wal", "verify_step"}:
+        remaining = ()
+        if mode == 'verify_step':
+            removed = json.loads((path.parent / 'single-progress.json').read_text())
+            if (not removed or len(set(removed)) != len(removed)
+                    or not set(removed).issubset(REAL_TABLES)):
+                raise ValueError('invalid synthetic single-step progress')
+            remaining = tuple(t for t in REAL_TABLES if t not in removed)
+        verify(path, remaining=remaining)
         if mode == "verify_wal":
             with connect(path, read_only=True) as conn:
                 assert conn.execute("SELECT value FROM public.wal_fact").fetchall() == [("committed before recovery",)]
             emit("prior_committed_wal_preserved")
         return 0
-    hook = ctypes.CDLL(None) if mode in {"hook", "crash_commit", "crash_flush", "recover", "budget", "forbidden"} else None
+    hook = ctypes.CDLL(None) if mode in {"hook", "single", "crash_commit", "crash_flush", "recover", "budget", "forbidden"} else None
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
         hook.lh_spike_allocations.restype = ctypes.c_int
@@ -262,6 +269,40 @@ def child(path, mode):
             conn.execute("CREATE TABLE public.must_keep AS SELECT 11 AS n")
             conn.execute("DROP TABLE public.must_keep")
             raise ValueError("real-file helper permitted an unrelated armed DROP")
+        if mode == 'single':
+            from duckdb_recovery_adapter import remove_quarantined
+            if len(targets(path)) != 5:
+                raise ValueError('single-step proof requires the five-object fixture')
+            removed = []
+            # The known damaged object's owner first; subsequent objects must
+            # remain present until their own separately committed step.
+            for table in (TABLE,) + tuple(t for t in REAL_TABLES if t != TABLE):
+                hook.lh_spike_arm()
+                intercepted_before = hook.lh_spike_count()
+                assert remove_quarantined(conn, target=table, prior_removed=removed) == 1
+                if hook.lh_spike_count() - intercepted_before != 1:
+                    raise ValueError('single-object native drop scope mismatch')
+                removed.append(table)
+                hook.lh_spike_disarm()
+                hook.lh_spike_checkpoint(1)
+                conn.execute('CHECKPOINT')
+                conn.execute('CHECKPOINT')
+                conn.close()
+                conn = None
+                (path.parent / 'single-progress.json').write_text(json.dumps(removed))
+                if run_child(path, 'verify_step').returncode:
+                    raise ValueError(f'helper-free verification failed after only {table}')
+                conn = connect(path)
+                conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+                assert remove_quarantined(conn, target=table, prior_removed=removed) == 0
+                emit('single_object_durable', removed=table, completed=len(removed),
+                     remaining=5-len(removed), repeated_drops=0,
+                     metadata_blocks=hook.lh_spike_allocations())
+            conn.close()
+            conn = None
+            emit('single_sequence_verified', targets=removed, stock_processes=5,
+                 repeated_drops=0, metadata_blocks=hook.lh_spike_allocations())
+            return 0
         if hook and len(targets(path)) == 1:
             before_unrelated = hook.lh_spike_count()
             conn.execute("CREATE TABLE public.forwarding_witness AS SELECT 9 AS n")
@@ -360,12 +401,13 @@ def fixture_files(path):
             if (file := Path(str(path) + suffix)).exists()}
 
 
-def verify(path):
+def verify(path, *, remaining=()):
     with connect(path, read_only=True) as conn:
         if conn.execute(WITNESS).fetchall() != EXPECTED:
             raise ValueError("healthy facts/aliases changed after reopen")
-        if conn.execute("SELECT table_name FROM duckdb_tables() WHERE table_name IN (SELECT unnest(?))", [list(targets(path))]).fetchall():
-            raise ValueError("dropped aggregate still exists after reopen")
+        present = conn.execute("SELECT table_name FROM duckdb_tables() WHERE table_name IN (SELECT unnest(?))", [list(targets(path))]).fetchall()
+        if {r[0] for r in present} != set(remaining):
+            raise ValueError("unexpected aggregate inventory after reopen")
         if len(targets(path)) == 5:
             for table in REAL_TABLES:
                 canonical = table.removeprefix("__corrupt_recovery_")
@@ -385,17 +427,18 @@ def verify(path):
             sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
             from fly_duckdb_block_probe import probe
             block = probe(path, 12288 + block_id * 262144)
-            if registered and not block["checksum_valid"]:
+            if registered and not block["checksum_valid"] and not remaining:
                 raise ValueError("damaged block remains registered as reusable metadata after stock reopen")
-            emit("damaged_metadata_reference_retired", block_id=block_id,
+            emit("remaining_metadata_state" if remaining else "damaged_metadata_reference_retired", block_id=block_id,
                  registered=bool(registered), checksum_valid=block["checksum_valid"])
-    emit("stock_engine_reopen_verified", fixture_bytes=path.stat().st_size)
+    emit("stock_step_verified" if remaining else "stock_engine_reopen_verified",
+         fixture_bytes=path.stat().st_size, remaining=len(remaining))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden", "seed_wal", "verify_wal", "mark_origin", "mark_verify"], default="ordinary")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "single", "verify_step", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden", "seed_wal", "verify_wal", "mark_origin", "mark_verify"], default="ordinary")
     parser.add_argument("--scenario", choices=["normal", "indexed", "shared", "budget", "real_scope"], default="normal")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
@@ -526,7 +569,7 @@ def main():
             wal = Path(str(candidate) + ".wal")
             if wal.exists():
                 wal.unlink()  # synthetic failed-test WAL only, under owned temp folder
-            hooked = run_child(candidate, "hook", library)
+            hooked = run_child(candidate, "single" if args.scenario == 'real_scope' else "hook", library)
             if hooked.returncode:
                 raise ValueError("experimental removal failed; not safe for a real volume")
             if run_child(candidate, "verify").returncode:

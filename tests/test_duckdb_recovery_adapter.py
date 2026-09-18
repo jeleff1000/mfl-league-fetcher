@@ -269,6 +269,54 @@ def test_stock_verification_requires_no_quarantine_and_preserves_real_values(tmp
         a.verify_stock(path, 'nyu_ffl', before)
 
 
+def test_single_removal_keeps_other_targets_and_resumes_only_known_progress(tmp_path):
+    a = adapter()
+    path = tmp_path / '___leagues.duckdb'
+    first = '__corrupt_recovery_homepage_manager_rankings'
+    second = '__corrupt_recovery_matchup_h2h_career'
+    with duckdb.connect(str(path)) as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL + a.QUARANTINED:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT 7 AS value')
+        assert a.remove_quarantined(conn, target=first) == 1
+        conn.execute('CHECKPOINT')
+    with duckdb.connect(str(path)) as conn:
+        assert a.remove_quarantined(conn, target=first, prepare=lambda: pytest.fail('repeat mutation')) == 0
+        with pytest.raises(ValueError, match='reconcile'):
+            a.remove_quarantined(conn, target=second)
+
+        def refused():
+            raise ValueError('second preservation refused')
+
+        with pytest.raises(ValueError, match='second preservation refused'):
+            a.remove_quarantined(conn, target=second, prior_removed=[first], prepare=refused)
+        remaining = {r[2] for r in a.object_inventory(conn)}
+        assert first not in remaining
+        assert second in remaining
+        assert a.remove_quarantined(conn, target=second, prior_removed=[first]) == 1
+        conn.execute('CHECKPOINT')
+    with duckdb.connect(str(path), read_only=True) as conn:
+        assert {r[2] for r in a.object_inventory(conn)} == set(a.CANONICAL + a.QUARANTINED) - {first, second}
+        for name in a.CANONICAL + a.QUARANTINED[2:]:
+            assert conn.execute(f'SELECT value FROM public."{name}"').fetchall() == [(7,)]
+
+
+@pytest.mark.parametrize('target,prior', [
+    ('homepage_manager_rankings', []),
+    ('__corrupt_recovery_homepage_manager_rankings', ['matchup']),
+    ('__corrupt_recovery_homepage_manager_rankings', ['__corrupt_recovery_matchup_h2h_career'] * 2),
+])
+def test_single_removal_rejects_wrong_scope_before_any_write(tmp_path, target, prior):
+    a = adapter()
+    with duckdb.connect(str(tmp_path / '___leagues.duckdb')) as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL + a.QUARANTINED:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT 7 AS value')
+        with pytest.raises(ValueError, match='scope'):
+            a.remove_quarantined(conn, target=target, prior_removed=prior)
+        assert len(a.object_inventory(conn)) == 10
+
+
 def test_real_value_fixture_and_drops_rollback_together_and_preserve_other_leagues(tmp_path):
     a = adapter()
     machine, volume = inventory()

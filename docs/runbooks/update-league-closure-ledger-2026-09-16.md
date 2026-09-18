@@ -4,6 +4,20 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- User amendment: allow one approved quarantined object at a time; do not
+  require all five removals to succeed together. Temporary capacity increases
+  are authorized, with cleanup afterward. Existing actual isolated WAL already
+  contains all five committed removals: never undo or repeat those drops to
+  manufacture a single-object trial. Durable checkpoint remains unverified.
+- Single-object primitive now requires the exact target plus explicitly known
+  prior removals. Unexpected partial absence still refuses mutation. Four red
+  regressions preceded implementation; local50passed/3Linuxskipped10.61s.
+  The small real_scope synthetic pilot now tests individual commits with a
+  checkpoint, fresh helper-free reopen/write/checkpoint, and no-op repeat after
+  EACH object. Pinned Linux evidence pending; production and real-volume resume
+  remain unchanged. No claim that table-by-table DROP reduces WAL replay or
+  database-checkpoint cost. Latest /ready is serving, zero active writes.
+
 - Latest revision `125ef1649`: direct Machines-API inspection `35373965485`
   passed, including deliberately failing remote exit7. Startup+inspection
   completed about8s; fingerprint query0.932s, exact current main/WAL unchanged.

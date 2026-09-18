@@ -25,7 +25,9 @@ No new queries, dependencies, hydration, pipeline or publication format changes.
 The eight new tests passed in 19.10s. Existing timer/commit/receipt regression
 selection: seven passed in 5.63s. Existing replay, generation and older-bundle
 selection: six passed in 11.88s. Each command had a 38s subprocess cap. Ruff and
-diff checks passed; independent review found no blocker. The root-app mirror
+diff checks passed after removing a trailing blank in the new test; independent
+review found no blocker. Public main `5a6288db733a5001ad8d4feade6d194f8dca5633`
+passed boundary guard `35317470542`. The root-app mirror
 received only the same narrow hunks and new test, preserving unrelated changes.
 
 Deadline qualification: the server process-kill budget now starts after BEGIN,

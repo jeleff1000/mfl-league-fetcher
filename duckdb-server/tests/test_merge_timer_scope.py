@@ -75,4 +75,3 @@ def test_merge_kill_timer_is_confined_to_transaction(data_dir, client, monkeypat
     assert killed == (["process_exit"] if boundary == "STAGED" else [])
     assert len(timers) == 1
     assert timers[0].finished.is_set()
-

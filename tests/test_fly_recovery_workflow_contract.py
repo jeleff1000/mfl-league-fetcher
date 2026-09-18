@@ -73,14 +73,17 @@ def test_derived_recovery_defers_changed_leagues_to_source_rebuild():
     assert 'if [ "$RECOVER_SETTINGS" = "true" ]; then' in source
     assert '"snapshot_overlay_rows": snapshot_overlay_rows' in source
     assert '"calculated_final_rows"' in source
-    assert "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" in source
-    assert "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" in source
-    assert "X-Expected-Overlay-Rows: ${table_overlay_rows}" in source
-    assert "X-Skip-Live-Overlay: true" in source
     assert '"live_overlay_rows": 0' in source
-    assert ".overlay_rows == $overlay_rows" in source
-    replace = source.index("X-Skip-Live-Overlay: true")
+    replace = source.index("X-Table-Name: ${table}")
+    derived_start = source.rfind(
+        "for table in homepage_manager_rankings matchup_h2h_career", 0, replace
+    )
     rebuild = source.index("/rebuild-league-derived")
+    derived_replacement = source[derived_start:rebuild]
+    assert "X-Recovery-Since" not in derived_replacement
+    assert "X-Expected-Overlay-Rows" not in derived_replacement
+    assert ".overlay_leagues == 0" in derived_replacement
+    assert ".overlay_rows == 0" in derived_replacement
     assert replace < rebuild
 
 

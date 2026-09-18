@@ -1685,7 +1685,6 @@ def _replace_canonical_table(
     recovery_since: str | None = None,
     expected_overlay_leagues: int | None = None,
     expected_overlay_rows: int | None = None,
-    skip_live_overlay: bool = False,
 ) -> dict[str, Any]:
     """Atomically replace one explicitly allowlisted canonical table.
 
@@ -1841,29 +1840,23 @@ def _replace_canonical_table(
                     f"actual={len(overlay_names)}, expected={expected_overlay_leagues}"
                 )
 
-            if skip_live_overlay:
-                if table_name == "league_settings":
-                    raise ValueError("league_settings recovery cannot skip its live overlay")
-                if expected_overlay_rows != 0:
-                    raise ValueError("skipped live overlay requires x-expected-overlay-rows=0")
-            else:
-                for db_name in overlay_names:
+            for db_name in overlay_names:
+                conn.execute(
+                    f"DELETE FROM {replacement_ref} WHERE db_name = ?",
+                    [db_name],
+                )
+                current_rows = int(
                     conn.execute(
-                        f"DELETE FROM {replacement_ref} WHERE db_name = ?",
+                        f"SELECT COUNT(*) FROM {target_ref} WHERE db_name = ?",
                         [db_name],
-                    )
-                    current_rows = int(
-                        conn.execute(
-                            f"SELECT COUNT(*) FROM {target_ref} WHERE db_name = ?",
-                            [db_name],
-                        ).fetchone()[0]
-                    )
-                    conn.execute(
-                        f"INSERT INTO {replacement_ref} BY NAME "
-                        f"SELECT * FROM {target_ref} WHERE db_name = ?",
-                        [db_name],
-                    )
-                    overlay_rows += current_rows
+                    ).fetchone()[0]
+                )
+                conn.execute(
+                    f"INSERT INTO {replacement_ref} BY NAME "
+                    f"SELECT * FROM {target_ref} WHERE db_name = ?",
+                    [db_name],
+                )
+                overlay_rows += current_rows
             if overlay_rows != expected_overlay_rows:
                 raise ValueError(
                     "recovery overlay row count does not match expectation: "
@@ -3208,7 +3201,6 @@ async def replace_canonical_table(
     x_recovery_since: str | None = Header(None),
     x_expected_overlay_leagues: str | None = Header(None),
     x_expected_overlay_rows: str | None = Header(None),
-    x_skip_live_overlay: str | None = Header(None),
 ):
     """Atomically replace one allowlisted canonical table from a DuckDB bundle."""
     try:
@@ -3231,12 +3223,6 @@ async def replace_canonical_table(
         raise HTTPException(status_code=400, detail="x-expected-rows must be positive")
     expected_overlay_leagues = None
     expected_overlay_rows = None
-    skip_live_overlay = str(x_skip_live_overlay or "").strip().lower() == "true"
-    if skip_live_overlay and not x_recovery_since:
-        raise HTTPException(
-            status_code=400,
-            detail="x-skip-live-overlay requires x-recovery-since",
-        )
     if x_recovery_since:
         try:
             expected_overlay_leagues = int(str(x_expected_overlay_leagues))
@@ -3295,7 +3281,6 @@ async def replace_canonical_table(
                     recovery_since=x_recovery_since,
                     expected_overlay_leagues=expected_overlay_leagues,
                     expected_overlay_rows=expected_overlay_rows,
-                    skip_live_overlay=skip_live_overlay,
                 )
             except ValueError as exc:
                 await _reopen_pool_after_write("rejected canonical table replacement")

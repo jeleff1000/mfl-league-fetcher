@@ -481,7 +481,6 @@ jobs:
           if [ "$RECOVER_DERIVED_ROLLUPS" = "true" ]; then
             for table in homepage_manager_rankings matchup_h2h_career player_fantasy_season player_fantasy_season_all standings_by_year; do
               table_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].calculated_final_rows')"
-              table_overlay_rows="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].live_overlay_rows')"
               table_sha="$(grep '^{' snapshot-export.log | tail -1 | jq -r --arg table "$table" '.derived_bundles[$table].sha256')"
               curl --fail-with-body --silent --show-error \
                 -X POST "${DATABASE_SERVER_URL%/}/replace-canonical-table" \
@@ -490,18 +489,12 @@ jobs:
                 -H "X-Table-Name: ${table}" \
                 -H "X-Expected-Rows: ${table_rows}" \
                 -H "X-Content-Sha256: ${table_sha}" \
-                -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
-                -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
-                -H "X-Expected-Overlay-Rows: ${table_overlay_rows}" \
-                -H "X-Skip-Live-Overlay: true" \
                 -F "file=@${table}_snapshot.duckdb;type=application/octet-stream" \
                 | tee "recovery-response-${table}.json"
               jq -e --arg table "$table" --argjson rows "$table_rows" \
-                --argjson overlay_leagues "$EXPECTED_OVERLAY_LEAGUES" \
-                --argjson overlay_rows "$table_overlay_rows" \
                 '.status == "replaced" and .table == $table and .rows == $rows and
-                 .distinct_keys == $rows and .overlay_leagues == $overlay_leagues and
-                 .overlay_rows == $overlay_rows and
+                 .distinct_keys == $rows and .overlay_leagues == 0 and
+                 .overlay_rows == 0 and
                  (.checkpointed == true or
                   ((.checkpoint_error // "") | test("checksum"; "i")))' \
                 "recovery-response-${table}.json" >/dev/null

@@ -4,6 +4,21 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Public main `23348a5cd`, Linux matrix `35375537024`: all six groups PASS.
+  Actual fault-injected synthetic fixture3,944,448bytes: first single-object
+  commit/checkpoint/stock-process verification finished0.384s; five independent
+  steps finished1.587s,18 fresh metadata blocks,zero repeated drops. Every step
+  reopened in a separate helper-free process and performed an ordinary write,
+  checkpoint and reopen before advancing. Full real_scope pilot6.708s; adapter
+  53tests passed6.08s. Prior steps survive a later refused transaction (local
+  regression). Read-only independent review found no must-fix defect.
+- This is SYNTHETIC proof, not live repair. Actual real-volume CLI was not
+  rerun or broadened: its existing all-five WAL commit still needs durable
+  checkpoint/stock proof. No production changes, new volume copies, resized
+  machines or new Fly allocations. Production /ready remains serving/accepting
+  with zero active writes. Next real operation must reconcile and persist
+  existing commits, not issue duplicate drops or recreate removed tables.
+
 - User amendment: allow one approved quarantined object at a time; do not
   require all five removals to succeed together. Temporary capacity increases
   are authorized, with cleanup afterward. Existing actual isolated WAL already

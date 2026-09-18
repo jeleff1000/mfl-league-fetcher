@@ -4,6 +4,23 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Latest revision `125ef1649`: direct Machines-API inspection `35373965485`
+  passed, including deliberately failing remote exit7. Startup+inspection
+  completed about8s; fingerprint query0.932s, exact current main/WAL unchanged.
+  VM `78452e4b6627e8` removed17:23:08Z. Full Linux matrix `35373994603`
+  passed all six groups. Real resume `35374104719` was refused by Fly BEFORE
+  machine/database startup: even shared4/4GiB now lacks host capacity. No
+  unchanged retry, no file mutation, no extra capacity left allocated.
+- Its 3,329-byte machine-inventory artifact contains only production machine
+  `1781e011b69068`, started, shared8/16GiB, production volume. No disposable
+  pilot remains. Production sizing has not been changed by this work.
+  Latest /ready serving/accepting, zero active writes/publications; OPS startup
+  timestamp changed externally17:25:03Z (not this work). Actual isolated
+  durable checkpoint/stock proof, exclusive production handoff and import/
+  refresh canaries remain UNVERIFIED. Goal stays active; this is progress,
+  not a completion claim. Next viable real attempt requires available volume-
+  host capacity and the >=30s remaining-window guard, retaining all caps.
+
 - Four-thread matrix `35373115939` on `f3e65e0d4` passed all six groups.
   Actual `35373221048` again exhausted the overall startup-inclusive window
   during first checkpoint. Last process counters:862,777,344 read bytes,

@@ -33,10 +33,16 @@ def emit(stage, **fields):
 
 def connect(path, read_only=False):
     import duckdb
-    return duckdb.connect(str(path), read_only=read_only,
-                          config={"threads": "1", "memory_limit": "256MB",
-                                  "storage_compatibility_version": "v1.4.0",
-                                  "temp_directory": str(Path(path).parent / "spill")})
+    config = {"threads": "1", "memory_limit": "256MB",
+              "storage_compatibility_version": "v1.4.0",
+              "temp_directory": str(Path(path).parent / "spill")}
+    if not Path(path).exists() and not read_only:
+        conn = duckdb.connect(":memory:", config=config)
+        safe_path = Path(path).as_posix().replace("'", "''")
+        conn.execute(f"ATTACH '{safe_path}' AS fixture (ROW_GROUP_SIZE 2048, STORAGE_VERSION 'v1.4.0')")
+        conn.execute("USE fixture")
+        return conn
+    return duckdb.connect(str(path), read_only=read_only, config=config)
 
 
 def assert_fixture(path):
@@ -56,6 +62,9 @@ def child(path, mode):
         sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     import duckdb
     path = assert_fixture(path)
+    if mode == "verify":
+        verify(path)
+        return 0
     hook = ctypes.CDLL(None) if mode == "hook" else None
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
@@ -68,6 +77,12 @@ def child(path, mode):
         if conn.execute(WITNESS).fetchall() != EXPECTED:
             raise ValueError("healthy witness changed before DROP")
         emit("healthy_witness_verified", mode=mode)
+        if hook:
+            conn.execute("CREATE TABLE public.forwarding_witness AS SELECT 9 AS n")
+            conn.execute("DROP TABLE public.forwarding_witness")
+            if hook.lh_spike_count() != 0:
+                raise ValueError("unarmed DROP was intercepted")
+            emit("ordinary_drop_forwarded")
         if mode == "locate":
             try:
                 conn.execute(f"SELECT column_name FROM pragma_storage_info('public.{TABLE}')").fetchall()
@@ -134,7 +149,7 @@ def verify(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook"], default="ordinary")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify"], default="ordinary")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
     args = parser.parse_args()
@@ -154,8 +169,9 @@ def main():
             candidate = folder / "candidate.duckdb"
             with connect(baseline) as conn:
                 conn.execute("CREATE SCHEMA public")
-                cols = ", ".join(f"i+{i} AS c{i}" for i in range(2 if args.binding_only else 1600))
-                conn.execute(f'CREATE TABLE public."{TABLE}" AS SELECT {cols} FROM range(16) t(i)')
+                cols = ", ".join(f"(i//2048)+{i} AS c{i}" for i in range(2 if args.binding_only else 64))
+                rows = 16 if args.binding_only else 262144
+                conn.execute(f'CREATE TABLE public."{TABLE}" AS SELECT {cols} FROM range({rows}) t(i)')
                 conn.execute("CHECKPOINT")
                 conn.execute("CREATE TABLE public.facts (db_name VARCHAR, year INTEGER, franchise_id VARCHAR, manager VARCHAR, points DOUBLE)")
                 conn.executemany("INSERT INTO public.facts VALUES (?, ?, ?, ?, ?)", EXPECTED)
@@ -174,7 +190,8 @@ def main():
                 binding = run_child(candidate, "hook", library)
                 if binding.returncode:
                     raise ValueError("engine does not support this interposition; do not use on a volume")
-                verify(candidate)
+                if run_child(candidate, "verify").returncode:
+                    raise ValueError("stock-engine binding verification failed")
                 emit("binding_proved", production_repair_authorized=False)
                 if args.binding_only:
                     return 0
@@ -210,7 +227,8 @@ def main():
             hooked = run_child(candidate, "hook", library)
             if hooked.returncode:
                 raise ValueError("experimental removal failed; not safe for a real volume")
-            verify(candidate)
+            if run_child(candidate, "verify").returncode:
+                raise ValueError("stock-engine recovery verification failed")
             if hashlib.sha256(baseline.read_bytes()).hexdigest() != baseline_hash:
                 raise ValueError("baseline changed")
             emit("synthetic_pilot_passed", production_repair_authorized=False)

@@ -54,13 +54,13 @@ jobs:
           test "$GITHUB_REPOSITORY" = "jeleff1000/mfl-league-fetcher"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
-      - name: Tiny engine binding and persistence pilot - hard 40 seconds
+      - name: Tiny engine corruption and removal pilot - hard 40 seconds
         run: |
           set -euo pipefail
           timeout --signal=KILL 40s bash <<'PILOT' 2>&1 | tee engine-pilot.jsonl
           set -euo pipefail
           python -m pip install --disable-pip-version-check --no-deps duckdb==1.5.4
-          python -u scripts/diagnostics/duckdb_drop_recovery_spike.py --binding-only
+          python -u scripts/diagnostics/duckdb_drop_recovery_spike.py
           PILOT
       - name: Upload only synthetic pilot receipt
         if: always()

@@ -24,7 +24,9 @@ void lh_collection_drop(void *collection) {
         "_ZN6duckdb18RowGroupCollection15CommitDropTableEv");
     if (!original) {
         const char message[] = "spike: original drop symbol unavailable\n";
-        (void)write(2, message, sizeof(message) - 1);
+        if (write(2, message, sizeof(message) - 1) < 0) {
+            _exit(92);
+        }
         _exit(91);
     }
     original(collection);

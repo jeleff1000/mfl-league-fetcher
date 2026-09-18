@@ -563,12 +563,16 @@ def recovery_child(args):
 
     phase('replay')
     hook.lh_spike_replay()
+    hook.lh_spike_avoid_block(ctypes.c_int64(346))
+    hook.lh_spike_reserved_masks.restype = ctypes.c_int
     hook.lh_spike_checkpoint(1)
     replay_started = time.monotonic()
     # Read-write replay can flush committed row groups normally; read-only
     # replay could not fit them in memory. WAL remains present for the engine.
     conn = duckdb.connect(str(path), config={**inventory_connect_config(), 'checkpoint_threshold': '1GB'})
     conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+    if hook.lh_spike_reserved_masks() < 1:
+        raise ValueError('verified engine did not reserve the exact damaged metadata block')
     print(json.dumps({'event': 'wal_replayed', 'elapsed_s': round(time.monotonic()-replay_started, 3),
                       'wal_source_bytes': wal['bytes'], 'metadata_blocks': hook.lh_spike_allocations()}), flush=True)
     phase('preserve')
@@ -602,8 +606,10 @@ def recovery_child(args):
     print(json.dumps({'event': 'commit_returned', 'removed': removed}), flush=True)
 
     phase('verify')
-    conn.execute('CHECKPOINT')
-    conn.execute('CHECKPOINT')
+    for index in (1, 2):
+        print(json.dumps({'event': 'checkpoint_start', 'index': index}), flush=True)
+        conn.execute('CHECKPOINT')
+        print(json.dumps({'event': 'checkpoint_end', 'index': index}), flush=True)
     conn.close()
     hook.lh_spike_checkpoint(0)
     print(json.dumps({'event': 'checkpoint_returned', 'metadata_blocks': hook.lh_spike_allocations(),

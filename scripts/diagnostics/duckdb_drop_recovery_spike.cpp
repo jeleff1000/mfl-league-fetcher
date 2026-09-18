@@ -19,6 +19,8 @@ static constexpr int max_metadata_blocks = 128;
 static std::atomic<int> allocation_limit{max_metadata_blocks};
 static std::atomic<int> crash_after_flush{0};
 static std::atomic<int> entry_calls{0};
+static std::atomic<int64_t> reserved_metadata_block{-1};
+static std::atomic<int> reserved_mask_calls{0};
 static thread_local bool allowed_table_drop = false;
 
 extern "C" {
@@ -37,6 +39,35 @@ void lh_spike_allocation_limit(int limit) {
 }
 int lh_spike_entry_calls(void) { return atomic_load(&entry_calls); }
 void lh_spike_crash_flush(void) { atomic_store(&crash_after_flush, 1); }
+void lh_spike_avoid_block(int64_t id) {
+    if (id < -1 || id >= (int64_t(1) << 62)) { _exit(90); }
+    atomic_store(&reserved_metadata_block, id);
+}
+int lh_spike_reserved_masks(void) { return atomic_load(&reserved_mask_calls); }
+
+void lh_metadata_free_mask(void *block, uint64_t mask)
+    __asm__("_ZN6duckdb13MetadataBlock21FreeBlocksFromIntegerEm");
+
+void lh_metadata_free_mask(void *block, uint64_t mask) {
+    auto original = reinterpret_cast<void (*)(void *, uint64_t)>(dlsym(RTLD_NEXT,
+        "_ZN6duckdb13MetadataBlock21FreeBlocksFromIntegerEm"));
+    if (!original) { _exit(89); }
+    const auto reserved = atomic_load(&reserved_metadata_block);
+    if (reserved >= 0) {
+        auto describe = reinterpret_cast<std::string (*)(void *)>(dlsym(RTLD_NEXT,
+            "_ZNK6duckdb13MetadataBlock8ToStringB5cxx11Ev"));
+        if (!describe) { _exit(88); }
+        const auto prefix = std::string("block_id: ") + std::to_string(reserved) + " [";
+        if (describe(block).compare(0, prefix.size(), prefix) == 0) {
+            // Reserve this block's free subslots without pinning/reading it.
+            // Live pointers remain live; normal all-unreferenced retirement
+            // happens before FreeBlocksFromInteger in MarkBlocksAsModified.
+            mask = 0;
+            atomic_fetch_add(&reserved_mask_calls, 1);
+        }
+    }
+    original(block, mask);
+}
 
 void lh_table_drop(void *table)
     __asm__("_ZN6duckdb14DuckTableEntry10CommitDropEv");
@@ -124,11 +155,8 @@ int64_t lh_metadata_peek(void *manager)
     __asm__("_ZNK6duckdb15MetadataManager15PeekNextBlockIdEv");
 
 int64_t lh_metadata_peek(void *manager) {
-    if (atomic_load(&fresh_metadata)) {
-        /* AllocateHandle must allocate a new metadata block, not pin an old
-         * partially free one. Normal allocation and checksums stay intact. */
-        return -1;
-    }
+    // Keep normal 64-subslot packing on healthy blocks. The exact damaged
+    // block's free mask is reserved separately, never globally force -1 here.
     auto original = reinterpret_cast<int64_t (*)(void *)>(dlsym(RTLD_NEXT,
         "_ZNK6duckdb15MetadataManager15PeekNextBlockIdEv"));
     if (!original) {

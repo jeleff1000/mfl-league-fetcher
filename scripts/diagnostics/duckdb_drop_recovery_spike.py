@@ -82,6 +82,10 @@ def child(path, mode):
     if hook:
         hook.lh_spike_count.restype = ctypes.c_int
         hook.lh_spike_allocations.restype = ctypes.c_int
+        hook.lh_spike_reserved_masks.restype = ctypes.c_int
+        marker = path.parent / 'injected-block.json'
+        if marker.exists():
+            hook.lh_spike_avoid_block(ctypes.c_int64(json.loads(marker.read_text())['block_id']))
         hook.lh_spike_arm()
         if len(targets(path)) == 5:
             hook.lh_spike_replay()
@@ -92,6 +96,10 @@ def child(path, mode):
     conn = None
     try:
         conn = connect(path)
+        if hook and marker.exists():
+            if hook.lh_spike_reserved_masks() < 1:
+                raise ValueError('engine Read did not invoke the selective metadata reservation')
+            emit('metadata_read_mask_bound', calls=hook.lh_spike_reserved_masks())
         if hook:
             hook.lh_spike_arm()
         emit("connected", mode=mode)
@@ -173,6 +181,7 @@ def child(path, mode):
             if hook.lh_spike_allocations() < 1 and mode != "recover":
                 raise ValueError("fresh metadata allocation hook was not exercised")
             emit("fresh_metadata_checkpoints", allocations=hook.lh_spike_allocations())
+            emit('selective_metadata_reservation', calls=hook.lh_spike_reserved_masks())
         conn.close()
         conn = None
         # New process without LD_PRELOAD verifies the actual persisted file.
@@ -330,6 +339,7 @@ def main():
                     stream.seek(offset)
                     stream.write(bytes([original[0] ^ 1]))
                 damaged_files = fixture_files(candidate)
+                (folder / 'injected-block.json').write_text(json.dumps({'block_id': old_blocks[0]}))
                 rejected = run_child(candidate, "hook", library)
                 if rejected.returncode == 0 or "checksum" not in rejected.stdout.lower():
                     raise ValueError("shared metadata corruption was not rejected")

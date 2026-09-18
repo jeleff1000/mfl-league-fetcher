@@ -227,10 +227,10 @@ def test_file_inventory_does_not_open_duckdb_or_hide_wal(tmp_path, monkeypatch):
     assert result['.wal.checkpoint']['size'] == 20
 
 
-def test_inventory_replay_has_no_spill_and_fits_bounded_two_gib_machine():
+def test_inventory_replay_has_no_spill_and_fits_bounded_four_gib_machine():
     from scripts import fly_table_storage_pilot as pilot
     config = pilot.inventory_connect_config()
-    assert config == {'threads': '1', 'memory_limit': '1536MB', 'temp_directory': ''}
+    assert config == {'threads': '1', 'memory_limit': '3072MB', 'temp_directory': ''}
 
 
 def test_retained_headers_distinguish_bad_original_from_intact_duplicate(tmp_path, monkeypatch):

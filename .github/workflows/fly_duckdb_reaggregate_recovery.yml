@@ -147,8 +147,12 @@ jobs:
           image="$(jq -r '.[] | select(.id == "1781e011b69068" and .state == "started") | .config.image' machines.json)"
           test -n "$image"
           vm_memory=512
+          vm_cpu_kind=shared
           files=()
-          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then vm_memory=2048; fi
+          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then
+            vm_memory=4096
+            vm_cpu_kind=performance
+          fi
           if [ "$PILOT_ACTION" = engine_recover ]; then
             echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"
             timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE \
@@ -161,7 +165,7 @@ jobs:
           echo "stage=isolated_machine_start utc=$(date -u +%FT%TZ)"
           flyctl machine run "$image" --app "$FLY_APP" --region "$region" \
             --name "$PILOT_MACHINE_NAME" --volume "$RECOVERY_VOLUME_ID:/data" \
-            --entrypoint /bin/sh --restart no --detach --vm-cpus 1 --vm-memory "$vm_memory" \
+            --entrypoint /bin/sh --restart no --detach --vm-cpu-kind "$vm_cpu_kind" --vm-cpus 1 --vm-memory "$vm_memory" \
             --file-local "/tmp/fly_table_storage_pilot.py=scripts/fly_table_storage_pilot.py" \
             --file-local "/tmp/fly_duckdb_block_probe.py=scripts/fly_duckdb_block_probe.py" \
             "${files[@]}" \

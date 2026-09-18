@@ -33,6 +33,22 @@ def charge_phase(spent, name, elapsed):
         raise ValueError(f'{name} phase budget exceeded')
 
 
+def process_usage(pid, *, proc_root=Path('/proc')):
+    folder = proc_root / str(pid)
+    result = {}
+    for line in (folder / 'status').read_text().splitlines():
+        if line.startswith('VmHWM:'):
+            result['peak_rss_kib'] = int(line.split()[1])
+    for line in (folder / 'io').read_text().splitlines():
+        key, value = line.split(':', 1)
+        if key in {'read_bytes', 'write_bytes', 'rchar'}:
+            result[key] = int(value)
+    stats = (folder / 'stat').read_text().rsplit(')', 1)[1].split()
+    hz = os.sysconf('SC_CLK_TCK') if hasattr(os, 'sysconf') else 100
+    result['cpu_s'] = round((int(stats[11]) + int(stats[12])) / hz, 3)
+    return result
+
+
 def protect_parent(expected_pid):
     """Arm Linux parent-death termination before opening any engine file."""
     if sys.platform != 'linux' or expected_pid < 2:
@@ -59,9 +75,11 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     limited = threading.Event()
     protocol_error = threading.Event()
+    budget_expired = threading.Event()
     phase_lock = threading.Lock()
     phase = {"name": stage, "since": started, "index": 0, "mutating": stage in {'remove', 'verify'}}
     spent = {name: 0.0 for name in STAGE_LIMITS}
+    last_usage = started
 
     def phase_event(line):
         try:
@@ -82,7 +100,7 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
                 if time.time() >= deadline:
                     raise ValueError('overall deadline exceeded')
             except ValueError:
-                protocol_error.set()
+                budget_expired.set()
                 stop_child()
                 return
             phase.update(name=next_phase, since=now, index=index+1,
@@ -126,6 +144,13 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
             budget = min(budget, deadline-time.time())
             if budget <= 0:
                 raise subprocess.TimeoutExpired(command, remaining)
+            if sys.platform == 'linux' and transitions and time.monotonic()-last_usage >= 2:
+                last_usage = time.monotonic()
+                try:
+                    print(json.dumps({'event': 'child_resources', 'stage': phase['name'],
+                                      'elapsed_s': round(last_usage-started, 3), **process_usage(child.pid)}), flush=True)
+                except (OSError, ValueError, IndexError):
+                    pass  # Process may exit between poll and /proc read.
             try:
                 child.wait(timeout=min(0.02, budget))
             except subprocess.TimeoutExpired:
@@ -142,6 +167,8 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
         code = 125
     if protocol_error.is_set():
         code = 126
+    if budget_expired.is_set():
+        code = 124
     if code == 0 and transitions and phase['index'] != len(transitions):
         code = 126
         protocol_error.set()
@@ -367,7 +394,7 @@ def verify_stock(path, db_name, before):
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
     import duckdb
-    config = {'threads': '1', 'memory_limit': '1536MB', 'temp_directory': ''}
+    config = {'threads': '1', 'memory_limit': '3072MB', 'temp_directory': ''}
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
@@ -536,7 +563,7 @@ def main():
         from fly_duckdb_block_probe import probe
         import duckdb
         with duckdb.connect('/data/___leagues.duckdb', read_only=True,
-                            config={'threads': '1', 'memory_limit': '1536MB', 'temp_directory': ''}) as conn:
+                            config={'threads': '1', 'memory_limit': '3072MB', 'temp_directory': ''}) as conn:
             registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=346').fetchall())
         if registered and not probe('/data/___leagues.duckdb', 90714112)['checksum_valid']:
             raise ValueError('damaged metadata remains eligible for stock reuse')

@@ -271,9 +271,10 @@ def test_stock_verification_requires_no_quarantine_and_preserves_real_values(tmp
 
 def test_parent_enforces_phase_deadlines_and_rejects_unexpected_transitions():
     a = adapter()
+    a.STAGE_LIMITS['remove'] = .2
     code = "import json,time; print(json.dumps({'event':'phase','stage':'remove'}),flush=True); print('COMMIT started',flush=True); time.sleep(5)"
     result = a.run_stage('preserve', [sys.executable, '-u', '-c', code],
-                         deadline=time.time()+0.5, transitions=('remove', 'verify'))
+                         deadline=time.time()+3, transitions=('remove', 'verify'))
     assert result['outcome'] == 'UNKNOWN'
     assert result['last_phase'] == 'remove'
     assert 'COMMIT started' in result['stdout']
@@ -323,9 +324,10 @@ def test_early_success_without_required_phases_is_not_a_passing_repair():
 
 def test_writable_replay_timeout_is_unknown_not_failed():
     a = adapter()
+    a.STAGE_LIMITS['replay'] = .2
     code = "import json,time; print(json.dumps({'event':'phase','stage':'replay'}),flush=True); time.sleep(5)"
     result = a.run_stage('preserve', [sys.executable, '-u', '-c', code],
-                         deadline=time.time()+.5, transitions=('replay',))
+                         deadline=time.time()+3, transitions=('replay',))
     assert result['exit_code'] == 124
     assert result['outcome'] == 'UNKNOWN'
 
@@ -348,6 +350,28 @@ def test_successful_exit_charges_the_final_phase_budget(monkeypatch):
     result = a.run_stage('verify', [sys.executable, '-c', 'pass'], deadline=time.time()+2)
     assert result['outcome'] == 'PASS'
     assert charged == ['verify']
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux process counters')
+def test_process_progress_uses_only_current_process_counters():
+    import os
+    a = adapter()
+    usage = a.process_usage(os.getpid())
+    assert usage['peak_rss_kib'] > 0
+    assert usage['read_bytes'] >= 0
+    assert usage['write_bytes'] >= 0
+    assert usage['cpu_s'] >= 0
+
+
+def test_process_usage_reads_bounded_fields(tmp_path):
+    a = adapter()
+    folder = tmp_path / '123'
+    folder.mkdir()
+    (folder / 'status').write_text('Name:\tpython\nVmHWM:\t128 kB\n')
+    (folder / 'io').write_text('read_bytes: 11\nwrite_bytes: 12\nrchar: 13\n')
+    (folder / 'stat').write_text('123 (python) ' + ' '.join(['0'] * 22))
+    result = a.process_usage(123, proc_root=tmp_path)
+    assert result == {'peak_rss_kib': 128, 'read_bytes': 11, 'write_bytes': 12, 'rchar': 13, 'cpu_s': 0.0}
 
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux parent-death signal')

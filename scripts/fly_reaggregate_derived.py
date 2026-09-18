@@ -136,9 +136,16 @@ def drop_complete_quarantine(conn) -> list[str]:
         for table in expected:
             conn.execute(f"DROP TABLE public.{_quote_identifier(table)}")
         conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+    except Exception as exc:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.exception(
+                "derived_recovery stage=drop_quarantine status=rollback_failed"
+            )
+        raise RuntimeError(
+            f"drop quarantine failed: {type(exc).__name__}: {exc}"
+        ) from exc
     return expected
 
 

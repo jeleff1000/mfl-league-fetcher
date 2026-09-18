@@ -369,6 +369,28 @@ def test_drop_complete_quarantine_rejects_partial_set(monkeypatch):
     assert not any(sql.startswith("DROP TABLE") for sql in conn.sql)
 
 
+def test_drop_complete_quarantine_preserves_original_error_when_rollback_is_gone(monkeypatch):
+    expected = {
+        f"__corrupt_recovery_{table}" for table in repair.TARGET_TABLES
+    }
+
+    class FailedConnection(_Connection):
+        def execute(self, sql, params=None):
+            normalized = " ".join(sql.split())
+            self.sql.append(normalized)
+            if normalized.startswith("DROP TABLE"):
+                raise RuntimeError("checksum mismatch in corrupt block")
+            if normalized == "ROLLBACK":
+                raise RuntimeError("no transaction is active")
+            return _Result([])
+
+    conn = FailedConnection()
+    monkeypatch.setattr(repair, "_public_table_names", lambda actual_conn: expected)
+
+    with pytest.raises(RuntimeError, match="checksum mismatch in corrupt block"):
+        repair.drop_complete_quarantine(conn)
+
+
 def test_quarantine_or_resume_reuses_complete_existing_quarantine(monkeypatch):
     conn = _Connection()
     expected = {

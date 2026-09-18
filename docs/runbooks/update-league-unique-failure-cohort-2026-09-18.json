@@ -1,0 +1,2127 @@
+{
+  "schema_version": 1,
+  "repository": "jeleff1000/mfl-league-fetcher",
+  "reviewed_at_utc": "2026-09-18T21:09:00Z",
+  "scope": "Original 95 failed import/refresh workflow run IDs since 2026-09-16, plus six subsequently observed failed refresh run IDs. No dispatch authority implied.",
+  "counts": {
+    "original_failed_run_ids": 95,
+    "original_unique_league_platform_pairs": 35,
+    "original_unique_dbnames": 34,
+    "tracked_failed_run_ids": 101,
+    "tracked_unique_league_platform_pairs": 36,
+    "tracked_unique_dbnames": 35
+  },
+  "caveats": [
+    "Counts are failed workflow run IDs, not every rerun attempt; GitHub lists the latest attempt conclusion.",
+    "Initial refresh census was 83 failed runs; import census was 12. Latest workflow metadata checked via bounded gh run list/view; identities came from lock-key/input log lines, Ops mapping, and existing runbook identity evidence.",
+    "Workflow success is not independently verified data completeness. Explicit user live checks are labeled as user evidence.",
+    "Ops dispatch rows overwrite earlier attempts and can retain old commit/cache timestamps or stale running status; correlate receipt run IDs.",
+    "No production mutation or dispatch was performed by this inventory task.",
+    "Quick publication currently uses destructive replace_league; regression-only work remains red, with no production fix. Historical leagues must not receive blind quick-import retries.",
+    "Not a replacement for the user's closure ledger; preserves original failures even after recovery."
+  ],
+  "sources": [
+    "docs/runbooks/update-league-cohort-all-attempts-2026-09-16.json",
+    "docs/runbooks/update-league-cohort-continuation-2026-09-18.csv",
+    "Live read-only ___ops.accounts.league_update_dispatches",
+    "Bounded gh run list and run metadata; input/lock-key-only log extraction, parallelism <=4",
+    "User recovery confirmations in conversation"
+  ],
+  "leagues": [
+    {
+      "db_name": "afi_data",
+      "platform": "espn",
+      "original_failure_count": 7,
+      "tracked_failure_count": 7,
+      "failure_run_ids": [
+        35047344186,
+        35048668267,
+        35048916783,
+        35191649364,
+        35192173584,
+        35194592869,
+        35194807980
+      ],
+      "latest_failed_run_id": 35194807980,
+      "latest_failed_created_at": "2026-09-17T07:29:47Z",
+      "prior_latest_refresh": {
+        "run_id": 35195123650,
+        "conclusion": "success",
+        "created_at": "2026-09-17T07:33:29Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35195123650,
+        "updated_at": "2026-09-17T07:35:06.516239",
+        "committed_at": "2026-09-16T12:55:02.302081",
+        "cache_verified_at": "2026-09-16T12:55:05.709984"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "always_sunny_in_emmitsburg",
+      "platform": "espn",
+      "original_failure_count": 2,
+      "tracked_failure_count": 4,
+      "failure_run_ids": [
+        35269896177,
+        35274460701,
+        35393719342,
+        35393945475
+      ],
+      "latest_failed_run_id": 35393945475,
+      "latest_failed_created_at": "2026-09-18T20:54:10Z",
+      "prior_latest_refresh": {
+        "run_id": 35274460701,
+        "conclusion": "failure",
+        "created_at": "2026-09-17T21:03:16Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "running",
+        "run_id": 35393945475,
+        "updated_at": "2026-09-18T20:55:11.605146",
+        "committed_at": null,
+        "cache_verified_at": null
+      },
+      "recovery": null,
+      "disposition": "Post-repair retries 35393719342 and 35393945475 failed. Current Ops row is stale running; awaiting main's separate OPS-lock fix/recovery."
+    },
+    {
+      "db_name": "chuck_noris_is_god",
+      "platform": "espn",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35135776578
+      ],
+      "latest_failed_run_id": 35135776578,
+      "latest_failed_created_at": "2026-09-16T18:39:39Z",
+      "prior_latest_refresh": {
+        "run_id": 35142355475,
+        "conclusion": "success",
+        "created_at": "2026-09-16T19:44:18Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35142355475,
+        "updated_at": "2026-09-16T19:45:45.230649",
+        "committed_at": "2026-09-16T19:45:40.598306",
+        "cache_verified_at": "2026-09-16T19:45:45.230649"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "i_95_gridlock_league_2k27",
+      "platform": "espn",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35287522419
+      ],
+      "latest_failed_run_id": 35287522419,
+      "latest_failed_created_at": "2026-09-17T23:35:30Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": {
+        "run_id": 35394063919,
+        "verification": "github_success",
+        "github": {
+          "conclusion": "success",
+          "createdAt": "2026-09-18T20:55:32Z",
+          "databaseId": 35394063919,
+          "status": "completed",
+          "updatedAt": "2026-09-18T21:06:08Z",
+          "workflowName": "ESPN Full Import Worker (Paid ESPN)"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35394063919"
+      },
+      "disposition": "Full import; direct live completeness not independently checked by reviewer."
+    },
+    {
+      "db_name": "kings_of_the_north_2026",
+      "platform": "espn",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35386680066
+      ],
+      "latest_failed_run_id": 35386680066,
+      "latest_failed_created_at": "2026-09-18T19:34:19Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": {
+        "run_id": 35394059669,
+        "verification": "github_success_user_reports_no_prior_matchups",
+        "github": {
+          "conclusion": "success",
+          "createdAt": "2026-09-18T20:55:29Z",
+          "databaseId": 35394059669,
+          "status": "completed",
+          "updatedAt": "2026-09-18T20:57:23Z",
+          "workflowName": "ESPN Quick Import Worker (Current Year Only)"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35394059669"
+      },
+      "disposition": "Quick import; user confirmed no existing matchup rows before retry."
+    },
+    {
+      "db_name": "live_draft_beer_league",
+      "platform": "espn",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35041982033,
+        35042426172,
+        35101976587
+      ],
+      "latest_failed_run_id": 35101976587,
+      "latest_failed_created_at": "2026-09-16T13:26:57Z",
+      "prior_latest_refresh": {
+        "run_id": 35197992410,
+        "conclusion": "success",
+        "created_at": "2026-09-17T08:07:19Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35197992410,
+        "updated_at": "2026-09-17T08:08:55.005548",
+        "committed_at": "2026-09-16T13:46:14.887780",
+        "cache_verified_at": "2026-09-16T13:46:19.078823"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "not_for_long",
+      "platform": "espn",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35268004825
+      ],
+      "latest_failed_run_id": 35268004825,
+      "latest_failed_created_at": "2026-09-17T19:58:19Z",
+      "prior_latest_refresh": {
+        "run_id": 35268004825,
+        "conclusion": "failure",
+        "created_at": "2026-09-17T19:58:19Z",
+        "ops_status": "running"
+      },
+      "ops_evidence": {
+        "status": "running",
+        "run_id": 35268004825,
+        "updated_at": "2026-09-17T19:59:31.495826",
+        "committed_at": null,
+        "cache_verified_at": null
+      },
+      "recovery": null,
+      "disposition": "GitHub failed; Ops remains stale running. Last inspected error was repaired checksum fault; retain claim gate."
+    },
+    {
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "platform": "espn",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35057665071,
+        35058032294,
+        35096876781
+      ],
+      "latest_failed_run_id": 35096876781,
+      "latest_failed_created_at": "2026-09-16T12:37:08Z",
+      "prior_latest_refresh": {
+        "run_id": 35187431277,
+        "conclusion": "success",
+        "created_at": "2026-09-17T05:52:06Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35187431277,
+        "updated_at": "2026-09-17T05:53:37.645179",
+        "committed_at": "2026-09-16T12:51:23.885167",
+        "cache_verified_at": "2026-09-16T12:51:27.443717"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "the_beata_cup",
+      "platform": "espn",
+      "original_failure_count": 2,
+      "tracked_failure_count": 2,
+      "failure_run_ids": [
+        35164666247,
+        35167587520
+      ],
+      "latest_failed_run_id": 35167587520,
+      "latest_failed_created_at": "2026-09-17T00:41:39Z",
+      "prior_latest_refresh": {
+        "run_id": 35174111587,
+        "conclusion": "success",
+        "created_at": "2026-09-17T02:21:37Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35174111587,
+        "updated_at": "2026-09-17T02:23:00.963449",
+        "committed_at": "2026-09-17T02:22:56.581845",
+        "cache_verified_at": "2026-09-17T02:23:00.963449"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "the_league_ff5e",
+      "platform": "espn",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35327758277
+      ],
+      "latest_failed_run_id": 35327758277,
+      "latest_failed_created_at": "2026-09-18T09:06:03Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": null,
+      "disposition": "Import failed Retrieve ESPN cookies."
+    },
+    {
+      "db_name": "a_good_day_to_dynasty",
+      "platform": "sleeper",
+      "original_failure_count": 2,
+      "tracked_failure_count": 2,
+      "failure_run_ids": [
+        35267142338,
+        35268962597
+      ],
+      "latest_failed_run_id": 35268962597,
+      "latest_failed_created_at": "2026-09-17T20:07:56Z",
+      "prior_latest_refresh": {
+        "run_id": 35268962597,
+        "conclusion": "failure",
+        "created_at": "2026-09-17T20:07:56Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "failed",
+        "run_id": 35268962597,
+        "updated_at": "2026-09-17T20:09:50.719210",
+        "committed_at": null,
+        "cache_verified_at": null
+      },
+      "recovery": null,
+      "disposition": "Latest inspected failure hit repaired checksum fault; refresh retry candidate."
+    },
+    {
+      "db_name": "agusta_fantasy_league",
+      "platform": "sleeper",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35051533368,
+        35052703365,
+        35104260898
+      ],
+      "latest_failed_run_id": 35104260898,
+      "latest_failed_created_at": "2026-09-16T13:48:07Z",
+      "prior_latest_refresh": {
+        "run_id": 35202656669,
+        "conclusion": "success",
+        "created_at": "2026-09-17T08:59:25Z",
+        "ops_status": "no_change"
+      },
+      "ops_evidence": {
+        "status": "no_change",
+        "run_id": 35202656669,
+        "updated_at": "2026-09-17T09:00:08.555109",
+        "committed_at": "2026-09-16T13:55:40.301196",
+        "cache_verified_at": "2026-09-16T13:55:43.630127"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "bffl",
+      "platform": "sleeper",
+      "original_failure_count": 0,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35392455344
+      ],
+      "latest_failed_run_id": 35392455344,
+      "latest_failed_created_at": "2026-09-18T20:37:21Z",
+      "prior_latest_refresh": {
+        "run_id": 35392455344,
+        "conclusion": "failure",
+        "created_at": "2026-09-18T20:37:21Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "failed",
+        "run_id": 35392455344,
+        "updated_at": "2026-09-18T20:37:53.963734",
+        "committed_at": null,
+        "cache_verified_at": null
+      },
+      "recovery": {
+        "run_id": 35392672211,
+        "verification": "github_upload_and_cache_success",
+        "github": {
+          "conclusion": "success",
+          "updatedAt": "2026-09-18T20:43:47Z"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35392672211"
+      },
+      "disposition": "Full import supersedes failed refresh; upload and cache warming both succeeded. Old refresh Ops row remains failed."
+    },
+    {
+      "db_name": "choccy_championship",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35379275951
+      ],
+      "latest_failed_run_id": 35379275951,
+      "latest_failed_created_at": "2026-09-18T18:17:04Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": null,
+      "disposition": "Quick import failed upload; no later matching success found. Do not quick-retry a historical league before preservation fix."
+    },
+    {
+      "db_name": "clemson_fantasy_league",
+      "platform": "sleeper",
+      "original_failure_count": 5,
+      "tracked_failure_count": 5,
+      "failure_run_ids": [
+        35101291332,
+        35102035881,
+        35110193415,
+        35174392522,
+        35174746199
+      ],
+      "latest_failed_run_id": 35174746199,
+      "latest_failed_created_at": "2026-09-17T02:31:31Z",
+      "prior_latest_refresh": {
+        "run_id": 35196396596,
+        "conclusion": "success",
+        "created_at": "2026-09-17T07:48:37Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35196396596,
+        "updated_at": "2026-09-17T07:49:55.473774",
+        "committed_at": "2026-09-17T02:40:47.199168",
+        "cache_verified_at": "2026-09-17T02:40:50.215992"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "cmon_man",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35369254975
+      ],
+      "latest_failed_run_id": 35369254975,
+      "latest_failed_created_at": "2026-09-18T16:34:16Z",
+      "prior_latest_refresh": {
+        "run_id": 35369254975,
+        "conclusion": "failure",
+        "created_at": "2026-09-18T16:34:16Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "failed",
+        "run_id": 35369254975,
+        "updated_at": "2026-09-18T16:35:20.604580",
+        "committed_at": null,
+        "cache_verified_at": null
+      },
+      "recovery": null,
+      "disposition": "Latest inspected failure hit repaired checksum fault; refresh retry candidate."
+    },
+    {
+      "db_name": "fanball_3e8d",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35174395048
+      ],
+      "latest_failed_run_id": 35174395048,
+      "latest_failed_created_at": "2026-09-17T02:26:04Z",
+      "prior_latest_refresh": {
+        "run_id": 35196526584,
+        "conclusion": "success",
+        "created_at": "2026-09-17T07:50:09Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35196526584,
+        "updated_at": "2026-09-17T07:52:14.910261",
+        "committed_at": "2026-09-17T02:32:51.810593",
+        "cache_verified_at": "2026-09-17T02:32:56.526684"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "franchise_mode_fantasy",
+      "platform": "sleeper",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35174397590,
+        35175355839,
+        35177926890
+      ],
+      "latest_failed_run_id": 35177926890,
+      "latest_failed_created_at": "2026-09-17T03:22:33Z",
+      "prior_latest_refresh": {
+        "run_id": 35195804889,
+        "conclusion": "success",
+        "created_at": "2026-09-17T07:41:35Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35195804889,
+        "updated_at": "2026-09-17T07:42:52.458586",
+        "committed_at": "2026-09-17T07:42:49.278073",
+        "cache_verified_at": "2026-09-17T07:42:52.458586"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "group_chat_foosball",
+      "platform": "sleeper",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35102286423,
+        35175409335,
+        35177927137
+      ],
+      "latest_failed_run_id": 35177927137,
+      "latest_failed_created_at": "2026-09-17T03:22:33Z",
+      "prior_latest_refresh": {
+        "run_id": 35195569313,
+        "conclusion": "success",
+        "created_at": "2026-09-17T07:38:47Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35195569313,
+        "updated_at": "2026-09-17T07:40:36.854071",
+        "committed_at": "2026-09-17T07:40:32.864159",
+        "cache_verified_at": "2026-09-17T07:40:36.854071"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "handegg_dynasty_league",
+      "platform": "sleeper",
+      "original_failure_count": 2,
+      "tracked_failure_count": 2,
+      "failure_run_ids": [
+        35175410598,
+        35177926957
+      ],
+      "latest_failed_run_id": 35177926957,
+      "latest_failed_created_at": "2026-09-17T03:22:33Z",
+      "prior_latest_refresh": {
+        "run_id": 35188931922,
+        "conclusion": "success",
+        "created_at": "2026-09-17T06:13:57Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35188931922,
+        "updated_at": "2026-09-17T06:15:23.996937",
+        "committed_at": "2026-09-17T06:15:19.833537",
+        "cache_verified_at": "2026-09-17T06:15:23.996937"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "ifl_dynasty",
+      "platform": "sleeper",
+      "original_failure_count": 4,
+      "tracked_failure_count": 4,
+      "failure_run_ids": [
+        35359808743,
+        35360730124,
+        35379395396,
+        35379651781
+      ],
+      "latest_failed_run_id": 35379651781,
+      "latest_failed_created_at": "2026-09-18T18:20:56Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": {
+        "run_id": 35393674252,
+        "verification": "user_live_verified",
+        "github": {
+          "conclusion": "success",
+          "createdAt": "2026-09-18T20:51:06Z",
+          "databaseId": 35393674252,
+          "status": "completed",
+          "updatedAt": "2026-09-18T20:53:21Z",
+          "workflowName": "Sleeper Full Import Worker (All Years)"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35393674252"
+      },
+      "disposition": "User verified 2025:204 matchups, 2026:12 matchups and two-season live rankings. Supersedes quick 35393384101, which succeeded but removed 2025 history."
+    },
+    {
+      "db_name": "mawhinney_s_vixens",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35047801539
+      ],
+      "latest_failed_run_id": 35047801539,
+      "latest_failed_created_at": "2026-09-16T02:23:36Z",
+      "prior_latest_refresh": {
+        "run_id": 35187667737,
+        "conclusion": "success",
+        "created_at": "2026-09-17T05:55:41Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35187667737,
+        "updated_at": "2026-09-17T05:57:16.917098",
+        "committed_at": "2026-09-16T12:55:12.063082",
+        "cache_verified_at": "2026-09-16T12:55:15.592543"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "nyu_ffl",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35126173284
+      ],
+      "latest_failed_run_id": 35126173284,
+      "latest_failed_created_at": "2026-09-16T17:07:08Z",
+      "prior_latest_refresh": {
+        "run_id": 35279080170,
+        "conclusion": "success",
+        "created_at": "2026-09-17T21:52:43Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35279080170,
+        "updated_at": "2026-09-17T21:53:58.985440",
+        "committed_at": "2026-09-16T12:40:13.511821",
+        "cache_verified_at": "2026-09-16T12:40:17.552642"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "original_failure_count": 7,
+      "tracked_failure_count": 7,
+      "failure_run_ids": [
+        35175414396,
+        35177927035,
+        35186133413,
+        35186173573,
+        35186396970,
+        35186702918,
+        35186841716
+      ],
+      "latest_failed_run_id": 35186841716,
+      "latest_failed_created_at": "2026-09-17T05:43:13Z",
+      "prior_latest_refresh": {
+        "run_id": 35187016632,
+        "conclusion": "success",
+        "created_at": "2026-09-17T05:45:49Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35187016632,
+        "updated_at": "2026-09-17T05:47:06.878581",
+        "committed_at": "2026-09-17T05:23:56.248456",
+        "cache_verified_at": "2026-09-17T05:45:27.086222"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "rva_d_league_770f",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35146300439
+      ],
+      "latest_failed_run_id": 35146300439,
+      "latest_failed_created_at": "2026-09-16T20:23:47Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": null,
+      "disposition": "Quick import failed upload; no later matching success found. Do not quick-retry a historical league before preservation fix."
+    },
+    {
+      "db_name": "stk",
+      "platform": "sleeper",
+      "original_failure_count": 1,
+      "tracked_failure_count": 2,
+      "failure_run_ids": [
+        35383306930,
+        35392635420
+      ],
+      "latest_failed_run_id": 35392635420,
+      "latest_failed_created_at": "2026-09-18T20:39:23Z",
+      "prior_latest_refresh": {
+        "run_id": 35392635420,
+        "conclusion": "failure",
+        "created_at": "2026-09-18T20:39:23Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35393264981,
+        "updated_at": "2026-09-18T20:47:45.093243",
+        "committed_at": "2026-09-18T20:47:41.478983",
+        "cache_verified_at": "2026-09-18T20:47:45.093243"
+      },
+      "recovery": {
+        "run_id": 35394124227,
+        "verification": "github_success_user_reports_approved_chain",
+        "github": {
+          "conclusion": "success",
+          "createdAt": "2026-09-18T20:56:14Z",
+          "databaseId": 35394124227,
+          "status": "completed",
+          "updatedAt": "2026-09-18T21:06:07Z",
+          "workflowName": "Multi-Platform Full Import Worker"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35394124227"
+      },
+      "disposition": "User-approved Yahoo 2019-2023 plus Sleeper 2024-2026 multi-platform import. STK refresh 35393264981 also committed and cache-verified in Ops."
+    },
+    {
+      "db_name": "the_dfb_league_ii",
+      "platform": "sleeper",
+      "original_failure_count": 2,
+      "tracked_failure_count": 2,
+      "failure_run_ids": [
+        35175415839,
+        35177926921
+      ],
+      "latest_failed_run_id": 35177926921,
+      "latest_failed_created_at": "2026-09-17T03:22:33Z",
+      "prior_latest_refresh": {
+        "run_id": 35190161742,
+        "conclusion": "cancelled",
+        "created_at": "2026-09-17T06:30:52Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35190161742,
+        "updated_at": "2026-09-17T06:32:54.822998",
+        "committed_at": "2026-09-17T06:32:51.301389",
+        "cache_verified_at": "2026-09-17T06:32:54.822998"
+      },
+      "recovery": null,
+      "disposition": "Mixed evidence: GitHub cancelled 35190161742 but Ops succeeded with commit/cache receipts. Reconcile receipt before retry."
+    },
+    {
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "original_failure_count": 17,
+      "tracked_failure_count": 17,
+      "failure_run_ids": [
+        35038407724,
+        35038707199,
+        35038992701,
+        35039319882,
+        35039638601,
+        35039927714,
+        35040208661,
+        35040579022,
+        35041756458,
+        35042028054,
+        35042384641,
+        35045896312,
+        35046095128,
+        35046336000,
+        35046547004,
+        35105228797,
+        35108159916
+      ],
+      "latest_failed_run_id": 35108159916,
+      "latest_failed_created_at": "2026-09-16T14:23:09Z",
+      "prior_latest_refresh": {
+        "run_id": 35191159674,
+        "conclusion": "success",
+        "created_at": "2026-09-17T06:44:16Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35191159674,
+        "updated_at": "2026-09-17T06:45:45.739634",
+        "committed_at": "2026-09-16T00:40:28.984982",
+        "cache_verified_at": "2026-09-16T00:40:32.430066"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "bitter_a_old_guys",
+      "platform": "yahoo",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35169879873
+      ],
+      "latest_failed_run_id": 35169879873,
+      "latest_failed_created_at": "2026-09-17T01:15:57Z",
+      "prior_latest_refresh": {
+        "run_id": 35173625953,
+        "conclusion": "success",
+        "created_at": "2026-09-17T02:14:07Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35173625953,
+        "updated_at": "2026-09-17T02:15:28.093039",
+        "committed_at": "2026-09-17T02:15:23.895926",
+        "cache_verified_at": "2026-09-17T02:15:28.093039"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "fight_club_except_we_do_talk",
+      "platform": "yahoo",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35058034929,
+        35107492217,
+        35109769080
+      ],
+      "latest_failed_run_id": 35109769080,
+      "latest_failed_created_at": "2026-09-16T14:37:14Z",
+      "prior_latest_refresh": {
+        "run_id": 35111436541,
+        "conclusion": "success",
+        "created_at": "2026-09-16T14:51:54Z",
+        "ops_status": "succeeded"
+      },
+      "ops_evidence": {
+        "status": "succeeded",
+        "run_id": 35111436541,
+        "updated_at": "2026-09-16T14:53:24.950013",
+        "committed_at": "2026-09-16T14:53:19.945901",
+        "cache_verified_at": "2026-09-16T14:53:24.950013"
+      },
+      "recovery": null,
+      "disposition": "Later successful refresh found; do not blanket retry."
+    },
+    {
+      "db_name": "kmffl",
+      "platform": "yahoo",
+      "original_failure_count": 2,
+      "tracked_failure_count": 4,
+      "failure_run_ids": [
+        35139531195,
+        35285059831,
+        35393716977,
+        35393945545
+      ],
+      "latest_failed_run_id": 35393945545,
+      "latest_failed_created_at": "2026-09-18T20:54:10Z",
+      "prior_latest_refresh": {
+        "run_id": 35285059831,
+        "conclusion": "failure",
+        "created_at": "2026-09-17T23:03:41Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "running",
+        "run_id": 35393945545,
+        "updated_at": "2026-09-18T20:55:10.190156",
+        "committed_at": "2026-09-16T19:26:01.259606",
+        "cache_verified_at": "2026-09-16T19:26:08.109264"
+      },
+      "recovery": null,
+      "disposition": "Post-repair retries 35393716977 and 35393945545 failed. Current Ops row is stale running; awaiting main's separate OPS-lock fix/recovery, not presumed same corruption."
+    },
+    {
+      "db_name": "nfl14",
+      "platform": "yahoo",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35362464551
+      ],
+      "latest_failed_run_id": 35362464551,
+      "latest_failed_created_at": "2026-09-18T15:26:51Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": null,
+      "disposition": "Import failed Run aggregations; not established storage failure."
+    },
+    {
+      "db_name": "pass_interferance",
+      "platform": "yahoo",
+      "original_failure_count": 3,
+      "tracked_failure_count": 3,
+      "failure_run_ids": [
+        35047345702,
+        35048669674,
+        35191559030
+      ],
+      "latest_failed_run_id": 35191559030,
+      "latest_failed_created_at": "2026-09-17T06:49:24Z",
+      "prior_latest_refresh": {
+        "run_id": 35191559030,
+        "conclusion": "failure",
+        "created_at": "2026-09-17T06:49:24Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "failed",
+        "run_id": 35191559030,
+        "updated_at": "2026-09-17T06:50:09.180758",
+        "committed_at": null,
+        "cache_verified_at": null
+      },
+      "recovery": null,
+      "disposition": "Missing stored Yahoo credentials; not blind retry."
+    },
+    {
+      "db_name": "stk",
+      "platform": "yahoo",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35382170308
+      ],
+      "latest_failed_run_id": 35382170308,
+      "latest_failed_created_at": "2026-09-18T18:46:52Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": {
+        "run_id": 35394124227,
+        "verification": "github_success_user_reports_approved_chain",
+        "github": {
+          "conclusion": "success",
+          "createdAt": "2026-09-18T20:56:14Z",
+          "databaseId": 35394124227,
+          "status": "completed",
+          "updatedAt": "2026-09-18T21:06:07Z",
+          "workflowName": "Multi-Platform Full Import Worker"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35394124227"
+      },
+      "disposition": "User-approved Yahoo 2019-2023 plus Sleeper 2024-2026 multi-platform import. STK refresh 35393264981 also committed and cache-verified in Ops."
+    },
+    {
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "original_failure_count": 6,
+      "tracked_failure_count": 6,
+      "failure_run_ids": [
+        35051396580,
+        35055957817,
+        35056657131,
+        35057070359,
+        35095696367,
+        35173026092
+      ],
+      "latest_failed_run_id": 35173026092,
+      "latest_failed_created_at": "2026-09-17T02:04:56Z",
+      "prior_latest_refresh": {
+        "run_id": 35173026092,
+        "conclusion": "failure",
+        "created_at": "2026-09-17T02:04:56Z",
+        "ops_status": "failed"
+      },
+      "ops_evidence": {
+        "status": "failed",
+        "run_id": 35173026092,
+        "updated_at": "2026-09-17T02:05:34.882579",
+        "committed_at": "2026-09-16T04:57:08.437613",
+        "cache_verified_at": "2026-09-16T04:57:12.320811"
+      },
+      "recovery": null,
+      "disposition": "Yahoo refresh was deliberately wrong provider; saved active 2026 target is Sleeper. Do not force Yahoo."
+    },
+    {
+      "db_name": "ultimate_fantasy_football",
+      "platform": "yahoo",
+      "original_failure_count": 1,
+      "tracked_failure_count": 1,
+      "failure_run_ids": [
+        35366142240
+      ],
+      "latest_failed_run_id": 35366142240,
+      "latest_failed_created_at": "2026-09-18T16:03:16Z",
+      "prior_latest_refresh": null,
+      "ops_evidence": null,
+      "recovery": {
+        "run_id": 35394055897,
+        "verification": "github_success_user_reports_no_prior_matchups",
+        "github": {
+          "conclusion": "success",
+          "createdAt": "2026-09-18T20:55:26Z",
+          "databaseId": 35394055897,
+          "status": "completed",
+          "updatedAt": "2026-09-18T21:02:00Z",
+          "workflowName": "Yahoo Quick Import Worker (Free Tier)"
+        },
+        "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35394055897"
+      },
+      "disposition": "Quick import; user confirmed no existing matchup rows before retry."
+    }
+  ],
+  "failures": [
+    {
+      "run_id": 35392635420,
+      "db_name": "stk",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-18T20:39:23Z",
+      "conclusion": "failure",
+      "original_95": false,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35392635420"
+    },
+    {
+      "run_id": 35392455344,
+      "db_name": "bffl",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-18T20:37:21Z",
+      "conclusion": "failure",
+      "original_95": false,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35392455344"
+    },
+    {
+      "run_id": 35386680066,
+      "db_name": "kings_of_the_north_2026",
+      "platform": "espn",
+      "kind": "import",
+      "workflow": "ESPN Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-18T19:34:19Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35386680066"
+    },
+    {
+      "run_id": 35383306930,
+      "db_name": "stk",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-18T18:58:49Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35383306930"
+    },
+    {
+      "run_id": 35382170308,
+      "db_name": "stk",
+      "platform": "yahoo",
+      "kind": "import",
+      "workflow": "Yahoo Full Import Worker (Paid Tier)",
+      "created_at": "2026-09-18T18:46:52Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35382170308"
+    },
+    {
+      "run_id": 35379651781,
+      "db_name": "ifl_dynasty",
+      "platform": "sleeper",
+      "kind": "import",
+      "workflow": "Sleeper Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-18T18:20:56Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35379651781"
+    },
+    {
+      "run_id": 35379395396,
+      "db_name": "ifl_dynasty",
+      "platform": "sleeper",
+      "kind": "import",
+      "workflow": "Sleeper Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-18T18:18:19Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35379395396"
+    },
+    {
+      "run_id": 35379275951,
+      "db_name": "choccy_championship",
+      "platform": "sleeper",
+      "kind": "import",
+      "workflow": "Sleeper Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-18T18:17:04Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35379275951"
+    },
+    {
+      "run_id": 35369254975,
+      "db_name": "cmon_man",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-18T16:34:16Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35369254975"
+    },
+    {
+      "run_id": 35366142240,
+      "db_name": "ultimate_fantasy_football",
+      "platform": "yahoo",
+      "kind": "import",
+      "workflow": "Yahoo Quick Import Worker (Free Tier)",
+      "created_at": "2026-09-18T16:03:16Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35366142240"
+    },
+    {
+      "run_id": 35362464551,
+      "db_name": "nfl14",
+      "platform": "yahoo",
+      "kind": "import",
+      "workflow": "Yahoo Quick Import Worker (Free Tier)",
+      "created_at": "2026-09-18T15:26:51Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35362464551"
+    },
+    {
+      "run_id": 35360730124,
+      "db_name": "ifl_dynasty",
+      "platform": "sleeper",
+      "kind": "import",
+      "workflow": "Sleeper Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-18T15:09:58Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35360730124"
+    },
+    {
+      "run_id": 35359808743,
+      "db_name": "ifl_dynasty",
+      "platform": "sleeper",
+      "kind": "import",
+      "workflow": "Sleeper Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-18T15:01:01Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35359808743"
+    },
+    {
+      "run_id": 35327758277,
+      "db_name": "the_league_ff5e",
+      "platform": "espn",
+      "kind": "import",
+      "workflow": "ESPN Full Import Worker (Paid ESPN)",
+      "created_at": "2026-09-18T09:06:03Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35327758277"
+    },
+    {
+      "run_id": 35287522419,
+      "db_name": "i_95_gridlock_league_2k27",
+      "platform": "espn",
+      "kind": "import",
+      "workflow": "ESPN Full Import Worker (Paid ESPN)",
+      "created_at": "2026-09-17T23:35:30Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35287522419"
+    },
+    {
+      "run_id": 35285059831,
+      "db_name": "kmffl",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-17T23:03:41Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35285059831"
+    },
+    {
+      "run_id": 35274460701,
+      "db_name": "always_sunny_in_emmitsburg",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T21:03:16Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35274460701"
+    },
+    {
+      "run_id": 35269896177,
+      "db_name": "always_sunny_in_emmitsburg",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T20:17:18Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35269896177"
+    },
+    {
+      "run_id": 35268962597,
+      "db_name": "a_good_day_to_dynasty",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T20:07:56Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35268962597"
+    },
+    {
+      "run_id": 35268004825,
+      "db_name": "not_for_long",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T19:58:19Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35268004825"
+    },
+    {
+      "run_id": 35267142338,
+      "db_name": "a_good_day_to_dynasty",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T19:49:21Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35267142338"
+    },
+    {
+      "run_id": 35194807980,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T07:29:47Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35194807980"
+    },
+    {
+      "run_id": 35194592869,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T07:27:10Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35194592869"
+    },
+    {
+      "run_id": 35192173584,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T06:57:17Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35192173584"
+    },
+    {
+      "run_id": 35191649364,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T06:50:34Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35191649364"
+    },
+    {
+      "run_id": 35191559030,
+      "db_name": "pass_interferance",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-17T06:49:24Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35191559030"
+    },
+    {
+      "run_id": 35186841716,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T05:43:13Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35186841716"
+    },
+    {
+      "run_id": 35186702918,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T05:41:07Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35186702918"
+    },
+    {
+      "run_id": 35186396970,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T05:36:23Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35186396970"
+    },
+    {
+      "run_id": 35186173573,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T05:33:00Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35186173573"
+    },
+    {
+      "run_id": 35186133413,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T05:32:22Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35186133413"
+    },
+    {
+      "run_id": 35177926921,
+      "db_name": "the_dfb_league_ii",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T03:22:33Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35177926921"
+    },
+    {
+      "run_id": 35177927035,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T03:22:33Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35177927035"
+    },
+    {
+      "run_id": 35177927137,
+      "db_name": "group_chat_foosball",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T03:22:33Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35177927137"
+    },
+    {
+      "run_id": 35177926890,
+      "db_name": "franchise_mode_fantasy",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T03:22:33Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35177926890"
+    },
+    {
+      "run_id": 35177926957,
+      "db_name": "handegg_dynasty_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T03:22:33Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35177926957"
+    },
+    {
+      "run_id": 35175415839,
+      "db_name": "the_dfb_league_ii",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:42:14Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35175415839"
+    },
+    {
+      "run_id": 35175414396,
+      "db_name": "playing_for_keeps_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:42:12Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35175414396"
+    },
+    {
+      "run_id": 35175410598,
+      "db_name": "handegg_dynasty_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:42:09Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35175410598"
+    },
+    {
+      "run_id": 35175409335,
+      "db_name": "group_chat_foosball",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:42:07Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35175409335"
+    },
+    {
+      "run_id": 35175355839,
+      "db_name": "franchise_mode_fantasy",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:41:15Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35175355839"
+    },
+    {
+      "run_id": 35174746199,
+      "db_name": "clemson_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:31:31Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35174746199"
+    },
+    {
+      "run_id": 35174397590,
+      "db_name": "franchise_mode_fantasy",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:26:07Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35174397590"
+    },
+    {
+      "run_id": 35174395048,
+      "db_name": "fanball_3e8d",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:26:04Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35174395048"
+    },
+    {
+      "run_id": 35174392522,
+      "db_name": "clemson_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:26:02Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35174392522"
+    },
+    {
+      "run_id": 35173026092,
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-17T02:04:56Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35173026092"
+    },
+    {
+      "run_id": 35169879873,
+      "db_name": "bitter_a_old_guys",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-17T01:15:57Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35169879873"
+    },
+    {
+      "run_id": 35167587520,
+      "db_name": "the_beata_cup",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-17T00:41:39Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35167587520"
+    },
+    {
+      "run_id": 35164666247,
+      "db_name": "the_beata_cup",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T23:59:46Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35164666247"
+    },
+    {
+      "run_id": 35146300439,
+      "db_name": "rva_d_league_770f",
+      "platform": "sleeper",
+      "kind": "import",
+      "workflow": "Sleeper Quick Import Worker (Current Year Only)",
+      "created_at": "2026-09-16T20:23:47Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35146300439"
+    },
+    {
+      "run_id": 35139531195,
+      "db_name": "kmffl",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T19:16:08Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35139531195"
+    },
+    {
+      "run_id": 35135776578,
+      "db_name": "chuck_noris_is_god",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T18:39:39Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35135776578"
+    },
+    {
+      "run_id": 35126173284,
+      "db_name": "nyu_ffl",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T17:07:08Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35126173284"
+    },
+    {
+      "run_id": 35110193415,
+      "db_name": "clemson_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T14:41:00Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35110193415"
+    },
+    {
+      "run_id": 35109769080,
+      "db_name": "fight_club_except_we_do_talk",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T14:37:14Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35109769080"
+    },
+    {
+      "run_id": 35108159916,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T14:23:09Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35108159916"
+    },
+    {
+      "run_id": 35107492217,
+      "db_name": "fight_club_except_we_do_talk",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T14:17:19Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35107492217"
+    },
+    {
+      "run_id": 35105228797,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T13:57:02Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35105228797"
+    },
+    {
+      "run_id": 35104260898,
+      "db_name": "agusta_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T13:48:07Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35104260898"
+    },
+    {
+      "run_id": 35102286423,
+      "db_name": "group_chat_foosball",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T13:29:53Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35102286423"
+    },
+    {
+      "run_id": 35102035881,
+      "db_name": "clemson_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T13:27:31Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35102035881"
+    },
+    {
+      "run_id": 35101976587,
+      "db_name": "live_draft_beer_league",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T13:26:57Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35101976587"
+    },
+    {
+      "run_id": 35101291332,
+      "db_name": "clemson_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T13:20:33Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35101291332"
+    },
+    {
+      "run_id": 35096876781,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T12:37:08Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35096876781"
+    },
+    {
+      "run_id": 35095696367,
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T12:25:04Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35095696367"
+    },
+    {
+      "run_id": 35058034929,
+      "db_name": "fight_club_except_we_do_talk",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T05:04:04Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35058034929"
+    },
+    {
+      "run_id": 35058032294,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T05:04:02Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35058032294"
+    },
+    {
+      "run_id": 35057665071,
+      "db_name": "tfl_of_extraordinary_gentleman",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T04:58:23Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35057665071"
+    },
+    {
+      "run_id": 35057070359,
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T04:49:07Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35057070359"
+    },
+    {
+      "run_id": 35056657131,
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T04:42:45Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35056657131"
+    },
+    {
+      "run_id": 35055957817,
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T04:31:53Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35055957817"
+    },
+    {
+      "run_id": 35052703365,
+      "db_name": "agusta_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T03:40:49Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35052703365"
+    },
+    {
+      "run_id": 35051533368,
+      "db_name": "agusta_fantasy_league",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T03:22:14Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35051533368"
+    },
+    {
+      "run_id": 35051396580,
+      "db_name": "the_league",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T03:20:05Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35051396580"
+    },
+    {
+      "run_id": 35048916783,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:40:56Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35048916783"
+    },
+    {
+      "run_id": 35048669674,
+      "db_name": "pass_interferance",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:37:00Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35048669674"
+    },
+    {
+      "run_id": 35048668267,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:36:59Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35048668267"
+    },
+    {
+      "run_id": 35047801539,
+      "db_name": "mawhinney_s_vixens",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:23:36Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35047801539"
+    },
+    {
+      "run_id": 35047345702,
+      "db_name": "pass_interferance",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:16:25Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35047345702"
+    },
+    {
+      "run_id": 35047344186,
+      "db_name": "afi_data",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:16:24Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35047344186"
+    },
+    {
+      "run_id": 35046547004,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:04:16Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35046547004"
+    },
+    {
+      "run_id": 35046336000,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T02:01:01Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35046336000"
+    },
+    {
+      "run_id": 35046095128,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T01:57:22Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35046095128"
+    },
+    {
+      "run_id": 35045896312,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T01:54:17Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35045896312"
+    },
+    {
+      "run_id": 35042426172,
+      "db_name": "live_draft_beer_league",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T01:01:39Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35042426172"
+    },
+    {
+      "run_id": 35042384641,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T01:01:04Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35042384641"
+    },
+    {
+      "run_id": 35042028054,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:55:58Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35042028054"
+    },
+    {
+      "run_id": 35041982033,
+      "db_name": "live_draft_beer_league",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:55:17Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35041982033"
+    },
+    {
+      "run_id": 35041756458,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:51:58Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35041756458"
+    },
+    {
+      "run_id": 35040579022,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:34:34Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35040579022"
+    },
+    {
+      "run_id": 35040208661,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:29:22Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35040208661"
+    },
+    {
+      "run_id": 35039927714,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:25:21Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35039927714"
+    },
+    {
+      "run_id": 35039638601,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:21:16Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35039638601"
+    },
+    {
+      "run_id": 35039319882,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:16:41Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35039319882"
+    },
+    {
+      "run_id": 35038992701,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:12:11Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35038992701"
+    },
+    {
+      "run_id": 35038707199,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:08:17Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35038707199"
+    },
+    {
+      "run_id": 35038407724,
+      "db_name": "the_fucking_catalina_wine_mixer",
+      "platform": "sleeper",
+      "kind": "refresh",
+      "workflow": "Sleeper Active-Season Refresh Worker",
+      "created_at": "2026-09-16T00:04:17Z",
+      "conclusion": "failure",
+      "original_95": true,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35038407724"
+    },
+    {
+      "run_id": 35393945545,
+      "db_name": "kmffl",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-18T20:54:10Z",
+      "conclusion": "failure",
+      "original_95": false,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35393945545"
+    },
+    {
+      "run_id": 35393945475,
+      "db_name": "always_sunny_in_emmitsburg",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-18T20:54:10Z",
+      "conclusion": "failure",
+      "original_95": false,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35393945475"
+    },
+    {
+      "run_id": 35393719342,
+      "db_name": "always_sunny_in_emmitsburg",
+      "platform": "espn",
+      "kind": "refresh",
+      "workflow": "ESPN Active-Season Refresh Worker",
+      "created_at": "2026-09-18T20:51:37Z",
+      "conclusion": "failure",
+      "original_95": false,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35393719342"
+    },
+    {
+      "run_id": 35393716977,
+      "db_name": "kmffl",
+      "platform": "yahoo",
+      "kind": "refresh",
+      "workflow": "Yahoo Active-Season Refresh Worker",
+      "created_at": "2026-09-18T20:51:35Z",
+      "conclusion": "failure",
+      "original_95": false,
+      "url": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/35393716977"
+    }
+  ]
+}

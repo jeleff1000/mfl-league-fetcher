@@ -95,6 +95,7 @@ def claim_manual_attempt(
         f"workflow_run_id = {run_id}, workflow_file = NULL, "
         "heartbeat_at = NULL, observed_manifest_digest = NULL, "
         "base_generation = NULL, bundle_id = NULL, publication_receipt_json = NULL, "
+        "committed_at = NULL, cache_verified_at = NULL, "
         "cache_state = 'dispatching', source_year = NULL, source_week = NULL, "
         "source_fingerprint = NULL, publish_generation = NULL, healthy = FALSE, "
         "dispatched_at = NULL, started_at = NULL, completed_at = NULL, "

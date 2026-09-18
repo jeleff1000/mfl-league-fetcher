@@ -183,7 +183,9 @@ def test_real_duckdb_paid_claim_terminal_rerun_and_unpaid_rejection():
     connection.execute("""
       UPDATE accounts.league_update_dispatches
       SET status='succeeded', publication_receipt_json='old-commit',
-          bundle_id='old-bundle', source_fingerprint='old-digest'
+          bundle_id='old-bundle', source_fingerprint='old-digest',
+          committed_at=TIMESTAMP '2026-09-16 19:26:01',
+          cache_verified_at=TIMESTAMP '2026-09-16 19:26:08'
       WHERE database_name='paid_league'
     """)
     with pytest.raises(RuntimeError, match="no longer owns"):
@@ -196,10 +198,11 @@ def test_real_duckdb_paid_claim_terminal_rerun_and_unpaid_rejection():
     assert second == {"dispatch_token": "manual-42-2", "attempt_id": "manual-42-2",
                       "claim_version": 2}
     row = connection.execute("""
-      SELECT status, publication_receipt_json, bundle_id, source_fingerprint
+      SELECT status, publication_receipt_json, bundle_id, source_fingerprint,
+             committed_at, cache_verified_at
       FROM accounts.league_update_dispatches WHERE database_name='paid_league'
     """).fetchone()
-    assert row == ("dispatching", None, None, None)
+    assert row == ("dispatching", None, None, None, None, None)
     connection.execute("""
       UPDATE accounts.league_update_dispatches
       SET status='running', lease_expires_at=NULL,

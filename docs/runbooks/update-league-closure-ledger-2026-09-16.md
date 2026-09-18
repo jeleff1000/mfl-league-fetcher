@@ -2,6 +2,45 @@
 
 State: production storage repair PASSED in35390732009; both checkpoints and a fresh unmodified-engine write/checkpoint/reopen/second write passed. Fly restored at2026-09-18T20:20:12Z. Failed league import/refresh recovery and displayed-data verification remain ACTIVE. This ledger is for league updates, not SuperTable SOTA work.
 
+## Live continuation - 2026-09-18 21:25 UTC
+
+- OPS attachment fix is on public main `33a89ef946cb0122b55f7c503b262c8d03c1200c`.
+  Deployment `35395767436` updated only the existing primary image, keeping
+  its volume and capacity. Build18s; deploy job100s; ready serving/accepting.
+  Real-engine regression rerun:21passed14.15s. Independent review approved.
+- Yahoo OAuth KMFFL `35395975770` committed and verified hot caches. Worker
+ 68.019s, Fly publication27.068s, workflow110s. All2015-2025 matchup counts
+  unchanged;2026week1 retained10franchises. Live homepage shows historical
+  LAMAR and clutch leaders, not only2026. Under120s, NOT under90s end-to-end.
+- AlwaysSunny `35393945475` DID COMMIT: durable fleet receipt
+ `fleet-4fba01325275952c5c9f0723e4b629260773dba9d701d26a274b94c3dc21b79e`,
+  committed20:55:43Z, server19.5288s. OPS status stillrunning without receipt;
+  recover cache/status from durable receipt, do not blindly refetch/reimport.
+  New manual claims also retain old committed/cache timestamps (KMFFL shows
+  Sep16 timestamps after Sep18 commit); focused lifecycle fix in progress.
+- I95missing2019 is NOT proven expired credentials. Verified same stored pair:
+  modern2019endpoint401, ESPNleagueHistory2019endpoint200 with12teams,
+ 103scheduleentries and16rosterentries/team forweek1. Provider routing fix
+  under test; fullimport green alone was insufficient.
+- Theleague_ff5e (ESPN1145529590) has no savedcookies, but payloadexplicitly
+  is_private=false and unauthenticated2026settings returns200. Existing full
+  workflow incorrectly requiredcookies. Actualworkflow-step regression
+  failed before an explicit-public guard;4cases pass0.97s. Not yet pushed.
+- Ranked-output verification remains OPEN:2026week1 player_fantasy has zero
+  nonnull position_alltime_rank for STK171rows andIFL410rows. KMFFL426rows
+  andAlwaysSunny407rows have suspicious maxranks148/152; compare against
+  precomputedOPS ranks before declaring incorrect. Shared-rank investigation
+  owns this; no ad hoc rank writes or fullNFL download.
+- Unique failure inventory:
+  docs/runbooks/update-league-unique-failure-cohort-2026-09-18.json.
+ 101trackedfailedrunIDs,35uniqueleague names. Later successful runs are
+  not blanket-retried. Remaining refresh candidates include not_for_long,
+  cmon_man,a_good_day_to_dynasty; missing imports choccy_championship,
+  rva_d_league_770f; NFL14failed8unmirroredtradevaluations. Four missingimport
+  names (includingNFL14,the_league_ff5e) currently have no matchup rows.
+- pass_interferance has no savedYahooOAuth credential, including similarly
+  spelled database names. Owner reconnection requested while other work proceeds.
+
 ## Current bounded-recovery receipts - 2026-09-18
 
 - PRODUCTION SUCCESS35390732009, publicmain c91e854d7: supervisor71.13s,

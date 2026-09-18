@@ -9,6 +9,22 @@ import pytest
 ROOT = Path(__file__).parents[1]
 
 
+def test_recovery_trace_reads_only_bounded_named_evidence(tmp_path):
+    from scripts.fly_table_storage_pilot import read_recovery_trace
+    receipt = '35375944871_1'
+    trace = tmp_path / ('recovery_trace_' + receipt + '.jsonl')
+    assert read_recovery_trace(tmp_path, receipt)['exists'] is False
+    trace.write_bytes(b'{"event":"checkpoint_start","index":1}\n{"event":')
+    result = read_recovery_trace(tmp_path, receipt)
+    assert result['events'] == [{'event': 'checkpoint_start', 'index': 1}]
+    assert result['incomplete_tail'] is True
+    with pytest.raises(ValueError, match='receipt'):
+        read_recovery_trace(tmp_path, '../elsewhere')
+    trace.write_bytes(b'x' * 65537)
+    with pytest.raises(ValueError, match='bounded'):
+        read_recovery_trace(tmp_path, receipt)
+
+
 def test_pilot_refuses_primary_before_opening_a_database():
     result = subprocess.run(
         [sys.executable, "scripts/fly_table_storage_pilot.py", "--action", "remove",

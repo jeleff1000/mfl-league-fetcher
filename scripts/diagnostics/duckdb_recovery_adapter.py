@@ -12,6 +12,7 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import signal
 import stat
@@ -95,15 +96,73 @@ def protect_parent(expected_pid):
         os.kill(os.getpid(), signal.SIGKILL)  # Parent exited before prctl: close race.
 
 
-def run_stage(stage, command, *, deadline, env=None, transitions=()):
+def run_stage(stage, command, *, deadline, env=None, transitions=(), trace=None):
     """Parent-enforced stage cap; timeout never implies transaction rollback."""
     started = time.monotonic()
     remaining = min(STAGE_LIMITS[stage], deadline - time.time())
     if remaining <= 0:
         return {"stage": stage, "outcome": "NOT_STARTED", "exit_code": 124, "elapsed_s": 0}
-    print(json.dumps({"stage": stage, "event": "start", "limit_s": remaining}), flush=True)
-    child = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             start_new_session=os.name == "posix")
+    trace_lock = threading.Lock()
+    trace_failed = threading.Event()
+    trace_queue = queue.Queue(maxsize=64)
+    trace_bytes = trace.tell() if trace is not None else 0
+    trace_writer = None
+    if trace is not None:
+        # Own the duplicate descriptor: a stalled fsync must neither block the
+        # watchdog nor race reuse of the caller's descriptor after it closes.
+        trace_fd = os.dup(trace.fileno())
+
+        def persist_trace():
+            try:
+                while (raw := trace_queue.get()) is not None:
+                    view = memoryview(raw)
+                    while view:
+                        written = os.write(trace_fd, view)
+                        if written <= 0:
+                            raise OSError('short trace write')
+                        view = view[written:]
+                    os.fsync(trace_fd)
+            except (OSError, ValueError):
+                trace_failed.set()
+            finally:
+                os.close(trace_fd)
+
+        trace_writer = threading.Thread(target=persist_trace, daemon=True)
+        trace_writer.start()
+
+    def emit_event(event):
+        nonlocal trace_bytes
+        # Retain stage evidence even when the remote exec API loses its buffered
+        # response. Exclude raw stdout/stderr; never turn this into a DB dump.
+        with trace_lock:
+            if trace is not None:
+                receipt = {k: v for k, v in event.items() if k not in {'stdout', 'stderr'}}
+                if receipt.get('event') == 'end' and receipt.get('outcome') == 'PASS':
+                    # A recorded zero child exit is not proof that this log's
+                    # own final fsync succeeded. Completion lives in the
+                    # independently written, stock-verified completed.json.
+                    receipt.update(outcome='PROVISIONAL', requires_completed_receipt=True)
+                raw = (json.dumps(receipt, separators=(',', ':')) + '\n').encode()
+                if trace_bytes + len(raw) > 65536:
+                    trace_failed.set()
+                    raise ValueError('stage trace exceeds 64 KiB ceiling')
+                try:
+                    trace_queue.put_nowait(raw)
+                except queue.Full:
+                    trace_failed.set()
+                    raise ValueError('stage trace queue exhausted')
+                trace_bytes += len(raw)
+            print(json.dumps(event), flush=True)
+
+    try:
+        emit_event({"stage": stage, "event": "start", "limit_s": remaining})
+        child = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 start_new_session=os.name == "posix")
+    except BaseException:
+        if trace_writer is not None:
+            trace_queue.put_nowait(None)
+            trace_writer.join(timeout=max(0, min(.1, deadline-time.time())))
+        raise
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     limited = threading.Event()
     protocol_error = threading.Event()
@@ -124,7 +183,7 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
             if event.get('event') in {'engine_open', 'wal_preserved', 'wal_replayed', 'prior_commit_reconciled',
                     'commit_returned', 'checkpoint_start', 'checkpoint_end', 'checkpoint_returned',
                     'stock_reopen_write_verified', 'isolated_recovery_verified', 'adapter_failed'}:
-                print(json.dumps({'event': 'child_event', 'child': event}), flush=True)
+                emit_event({'event': 'child_event', 'child': event})
             return
         with phase_lock:
             index, next_phase = phase['index'], event.get('stage')
@@ -143,8 +202,8 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
                 return
             phase.update(name=next_phase, since=now, index=index+1,
                          mutating=phase['mutating'] or next_phase in {'replay', 'remove', 'verify'})
-            print(json.dumps({'event': 'child_phase', 'stage': next_phase,
-                              'elapsed_s': round(now-started, 3)}), flush=True)
+        emit_event({'event': 'child_phase', 'stage': next_phase,
+                    'elapsed_s': round(now-started, 3)})
 
     def stop_child():
         try:
@@ -169,7 +228,12 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
                     pending += chunk
                     while b'\n' in pending:
                         line, pending = pending.split(b'\n', 1)
-                        phase_event(line)
+                        try:
+                            phase_event(line)
+                        except (OSError, ValueError):
+                            protocol_error.set()
+                            stop_child()
+                            return
 
     readers = [threading.Thread(target=drain, args=(name, getattr(child, name)), daemon=True)
                for name in captured]
@@ -177,6 +241,8 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
         reader.start()
     try:
         while child.poll() is None:
+            if trace_failed.is_set():
+                raise OSError('stage trace persistence failed')
             with phase_lock:
                 budget = STAGE_LIMITS[phase['name']] - spent[phase['name']] - (time.monotonic() - phase['since'])
             budget = min(budget, deadline-time.time())
@@ -185,10 +251,12 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
             if sys.platform == 'linux' and transitions and time.monotonic()-last_usage >= 2:
                 last_usage = time.monotonic()
                 try:
-                    print(json.dumps({'event': 'child_resources', 'stage': phase['name'],
-                                      'elapsed_s': round(last_usage-started, 3), **process_usage(child.pid)}), flush=True)
+                    usage = process_usage(child.pid)
                 except (OSError, ValueError, IndexError):
                     pass  # Process may exit between poll and /proc read.
+                else:
+                    emit_event({'event': 'child_resources', 'stage': phase['name'],
+                                'elapsed_s': round(last_usage-started, 3), **usage})
             try:
                 child.wait(timeout=min(0.02, budget))
             except subprocess.TimeoutExpired:
@@ -198,6 +266,19 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
         stop_child()
         child.wait(timeout=1)
         code = 124
+    except (OSError, ValueError):
+        stop_child()
+        child.wait(timeout=1)
+        code = 125
+    except BaseException:
+        stop_child()
+        child.wait(timeout=1)
+        if trace_writer is not None:
+            try:
+                trace_queue.put_nowait(None)
+            except queue.Full:
+                pass
+        raise
     finally:
         for reader in readers:
             reader.join(timeout=1)
@@ -219,11 +300,31 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
             code = 124
     stdout, stderr = (captured[name].decode("utf-8", errors="replace") for name in ("stdout", "stderr"))
     outcome = "PASS" if code == 0 else ("UNKNOWN" if phase['mutating'] else "FAILED")
+    mutable_child = phase['mutating'] or any(name in {'replay', 'remove', 'verify'} for name in transitions)
+    if trace_failed.is_set():
+        code, outcome = 125, 'UNKNOWN' if mutable_child else 'FAILED'
     result = {"stage": stage, "outcome": outcome, "exit_code": code,
               "elapsed_s": round(time.monotonic() - started, 3),
               "stdout": stdout, "stderr": stderr, "output_limited": limited.is_set(),
               "last_phase": phase['name'], "protocol_error": protocol_error.is_set()}
-    print(json.dumps({"event": "end", **result}), flush=True)
+    try:
+        emit_event({"event": "end", **result})
+    except (OSError, ValueError) as exc:
+        # Evidence persistence failure after mutable work is UNKNOWN, never
+        # a plain preflight failure or a successful remote completion.
+        result.update(exit_code=125, outcome='UNKNOWN' if mutable_child else 'FAILED',
+                      trace_error=str(exc)[:200])
+        print(json.dumps({'event': 'end', **result}), flush=True)
+    if trace_writer is not None:
+        try:
+            trace_queue.put_nowait(None)
+        except queue.Full:
+            trace_failed.set()
+        trace_writer.join(timeout=max(0, min(.1, deadline-time.time())))
+        if trace_writer.is_alive() or trace_failed.is_set():
+            result.update(exit_code=125, outcome='UNKNOWN' if mutable_child else 'FAILED',
+                          trace_error='trace persistence failed or exceeded remaining deadline')
+            print(json.dumps({'event': 'trace_incomplete', **result}), flush=True)
     return result
 
 
@@ -517,8 +618,8 @@ def remove_quarantined(conn, *, prepare=None, target=None, prior_removed=()):
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
     """Two observed isolated states only; never infer permission from a timestamp."""
     main_mtime, wal_size, wal_mtime, wal_sha = (
-        (1789751759807751374, 45522182, 1789751748307783731,
-         '6a14b987e064f8854b3027971171d98d670c8e3fd8486645ab5425567bdd08ef') if resume else
+        (1789753408168174644, 45522235, 1789753395532165342,
+         '37130c73a403e3a951bd7ea978d226456f77b2ffbfa68272f39c500f7a60f5d3') if resume else
         (1789662410048242836, 45516621, 1789662378556231033,
          'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
     if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime
@@ -851,9 +952,12 @@ def main():
     env = dict(os.environ)
     env['LD_PRELOAD'] = '/tmp/lh_five_drop.so'
     env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())
-    result = run_stage('inspect', [sys.executable, '-u', __file__, *sys.argv[1:], '--recovery-child'],
-                       deadline=args.deadline, env=env,
-                       transitions=('preserve', 'replay', 'preserve', 'remove', 'verify'))
+    preflight_identity(args.inventory_base64, os.environ.get('FLY_MACHINE_ID', ''))
+    trace_path = Path('/data') / ('recovery_trace_' + args.receipt_id + '.jsonl')
+    with trace_path.open('xb') as trace:
+        result = run_stage('inspect', [sys.executable, '-u', __file__, *sys.argv[1:], '--recovery-child'],
+                           deadline=args.deadline, env=env, trace=trace,
+                           transitions=('preserve', 'replay', 'preserve', 'remove', 'verify'))
     return result['exit_code'] if result['exit_code'] >= 0 else 128-result['exit_code']
 
 

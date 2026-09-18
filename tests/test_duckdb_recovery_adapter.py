@@ -187,6 +187,96 @@ def test_timeout_retains_commit_marker():
     assert "COMMIT started" in result["stdout"]
 
 
+def test_timeout_retains_bounded_stage_trace_on_disk(tmp_path):
+    import json
+    a = adapter()
+    a.STAGE_LIMITS['verify'] = .3
+    path = tmp_path / 'trace.jsonl'
+    with path.open('xb') as trace:
+        result = a.run_stage('verify', [sys.executable, '-u', '-c',
+            "import time; print('unstructured detail', flush=True); time.sleep(20)"],
+            deadline=time.time()+2, trace=trace)
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert events[0]['event'] == 'start'
+    assert events[-1]['outcome'] == 'UNKNOWN'
+    assert events[-1]['exit_code'] == 124
+    assert all('stdout' not in event and 'stderr' not in event for event in events)
+    assert path.stat().st_size <= 65536
+    assert result['exit_code'] == 124
+
+
+@pytest.mark.parametrize('stage,transitions', [('verify', ('verify',)), ('preserve', ('replay',))])
+def test_trace_failure_terminates_mutable_child_and_returns_unknown(tmp_path, monkeypatch, stage, transitions):
+    a = adapter()
+    original = a.os.fsync
+    syncs = 0
+
+    def fail_after_start(fd):
+        nonlocal syncs
+        syncs += 1
+        if syncs > 1:
+            raise OSError('simulated trace disk failure')
+        original(fd)
+
+    monkeypatch.setattr(a.os, 'fsync', fail_after_start)
+    with (tmp_path / 'trace.jsonl').open('xb') as trace:
+        result = a.run_stage(stage, [sys.executable, '-u', '-c',
+            "import time; print('{\"event\":\"checkpoint_start\"}', flush=True); time.sleep(20)"],
+            deadline=time.time()+2, transitions=transitions, trace=trace)
+    assert result['outcome'] == 'UNKNOWN'
+    assert result['exit_code'] != 0
+    assert result['elapsed_s'] < 2
+
+
+def test_slow_trace_cannot_delay_replay_deadline(tmp_path, monkeypatch):
+    a = adapter()
+    a.STAGE_LIMITS['replay'] = .1
+    original = a.os.fsync
+    syncs = 0
+
+    def slow_sync(fd):
+        nonlocal syncs
+        syncs += 1
+        if syncs == 2:
+            time.sleep(.65)
+        original(fd)
+
+    monkeypatch.setattr(a.os, 'fsync', slow_sync)
+    marker = tmp_path / 'late-write'
+    code = ("import pathlib,time; print('{\"event\":\"phase\",\"stage\":\"replay\"}',flush=True); "
+            f"time.sleep(.3); pathlib.Path({str(marker)!r}).write_text('too late'); time.sleep(5)")
+    with (tmp_path / 'trace.jsonl').open('xb') as trace:
+        result = a.run_stage('preserve', [sys.executable, '-u', '-c', code],
+                            deadline=time.time()+2, transitions=('replay',), trace=trace)
+    assert result['outcome'] == 'UNKNOWN'
+    assert result['exit_code'] != 0
+    assert not marker.exists()
+
+
+def test_final_fsync_failure_cannot_leave_authoritative_pass_in_trace(tmp_path, monkeypatch):
+    import json
+    a = adapter()
+    original = a.os.fsync
+    syncs = 0
+
+    def fail_final(fd):
+        nonlocal syncs
+        syncs += 1
+        if syncs == 2:
+            raise OSError('final fsync failure')
+        original(fd)
+
+    monkeypatch.setattr(a.os, 'fsync', fail_final)
+    path = tmp_path / 'trace.jsonl'
+    with path.open('xb') as trace:
+        result = a.run_stage('verify', [sys.executable, '-c', 'pass'],
+                            deadline=time.time()+2, trace=trace)
+    assert result['outcome'] == 'UNKNOWN'
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert events[-1]['outcome'] == 'PROVISIONAL'
+    assert events[-1]['requires_completed_receipt'] is True
+
+
 def test_excessive_output_terminates_child_with_bounded_capture():
     a = adapter()
     result = a.run_stage("preserve", [sys.executable, "-u", "-c",
@@ -449,10 +539,10 @@ def test_repeated_phase_cannot_reset_its_budget():
 
 def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
     a = adapter()
-    binding = {'size': 15555375104, 'mtime_ns': 1789751759807751374, 'inode': 14}
-    files = {'.wal': {'size': 45522182, 'mtime_ns': 1789751748307783731, 'inode': 64}}
+    binding = {'size': 15555375104, 'mtime_ns': 1789753408168174644, 'inode': 14}
+    files = {'.wal': {'size': 45522235, 'mtime_ns': 1789753395532165342, 'inode': 64}}
     header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
-    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '6a14b987e064f8854b3027971171d98d670c8e3fd8486645ab5425567bdd08ef'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '37130c73a403e3a951bd7ea978d226456f77b2ffbfa68272f39c500f7a60f5d3'
     with pytest.raises(ValueError):
         a.validate_recovery_baseline(binding, files, header, resume=False)
     for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):

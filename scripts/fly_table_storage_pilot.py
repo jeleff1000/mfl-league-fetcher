@@ -11,6 +11,7 @@ import json
 import os
 import platform
 import re
+import stat
 import struct
 import tempfile
 import threading
@@ -88,6 +89,34 @@ def file_inventory(path):
             result[suffix] = {'size': item.st_size, 'mtime_ns': item.st_mtime_ns,
                               'inode': item.st_ino, 'device': item.st_dev}
     return result
+
+
+def read_recovery_trace(folder, receipt):
+    """Read only one bounded event log; no database open or directory scan."""
+    if len(receipt) > 40 or not re.fullmatch(r'[0-9]+_[0-9]+', receipt):
+        raise ValueError('invalid recovery receipt')
+    path = Path(folder) / ('recovery_trace_' + receipt + '.jsonl')
+    if not path.exists() and not path.is_symlink():
+        return {'receipt': receipt, 'exists': False}
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > 65536:
+        raise ValueError('trace must be a bounded unique regular file')
+    with path.open('rb') as stream:
+        opened = os.fstat(stream.fileno())
+        if (opened.st_ino, opened.st_dev) != (before.st_ino, before.st_dev):
+            raise ValueError('trace identity changed')
+        raw = stream.read(65537)
+    after = path.lstat()
+    if (len(raw) > 65536 or len(raw) != before.st_size
+            or (before.st_ino, before.st_dev, before.st_size, before.st_mtime_ns) !=
+               (after.st_ino, after.st_dev, after.st_size, after.st_mtime_ns)):
+        raise ValueError('trace changed or exceeded bounded read')
+    lines = raw.splitlines(keepends=True)
+    complete = [line for line in lines if line.endswith(b'\n')]
+    return {'receipt': receipt, 'exists': True, 'bytes': len(raw),
+            'sha256': hashlib.sha256(raw).hexdigest(),
+            'incomplete_tail': len(complete) != len(lines),
+            'events': [json.loads(line) for line in complete]}
 
 
 def wal_fingerprints(path, *, max_bytes=64 * 1024 * 1024):
@@ -268,6 +297,9 @@ def run(args):
             if block["file_changed_during_read"]:
                 raise ValueError("candidate changed during read")
             emit('files_without_engine_open', files=file_inventory(DATABASE_PATH))
+            if getattr(args, 'recovery_receipt', None):
+                emit('recovery_trace_without_engine_open',
+                     **read_recovery_trace(DATABASE_PATH.parent, args.recovery_receipt))
             emit('wal_fingerprints_without_engine_open', files=wal_fingerprints(DATABASE_PATH))
             return 0
         if args.action == "retained_headers":
@@ -354,6 +386,7 @@ def main():
     parser.add_argument("--machine-id", required=True)
     parser.add_argument("--volume-id", required=True)
     parser.add_argument("--deadline", type=float, required=True)
+    parser.add_argument("--recovery-receipt")
     args = parser.parse_args()
     try:
         return run(args)

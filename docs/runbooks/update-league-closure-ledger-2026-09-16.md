@@ -4,6 +4,37 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Trace changes: independent review closed all findings. Fresh local targeted
+  suite:75passed,3Linuxskipped,2legacy-metadata-donor-deselected in14.32s.
+  A trace's zero-exit end remains PROVISIONAL; authoritative completion needs
+  the separate stock-verified completed.json. Slow/disk-failed logging cannot
+  extend replay's deadline or report a potentially mutable attempt as FAILED.
+  These changes are locally verified, not yet Linux/live verified or pushed.
+- Lightweight priority: retain useful evidence from one bounded attempt rather
+  than repeat blind replay/checkpoint attempts. Four explicit checkpoints are
+  present in the proof path; do not remove any without fresh durability proof.
+  Earlier failures occurred during the FIRST checkpoint, so deleting later
+  verification checkpoints would not resolve that observed blocker. Production
+  /ready checked serving/accepting with zero active queries/writes.
+
+- Real resume `35375944871` on `d7a270eb7`: shared4/3.5GiB DID start; no
+  host-capacity refusal. The Machines API command exhausted its31s remaining
+  deadline and returned no child output. Actual outcome UNKNOWN. Temporary
+  VM `d895d17b006648` destroyed17:43:40Z; production unchanged.
+- No-engine reconciliation `35376088686` completed0.854s. Header still12126,
+  exact bad-block fingerprint unchanged. Main size15555375104,inode14,
+  mtime1789753408168174644. WAL45522235bytes,inode64,
+  mtime1789753395532165342,SHA
+  `37130c73a403e3a951bd7ea978d226456f77b2ffbfa68272f39c500f7a60f5d3`.
+  No alternate sidecars. Inspection VM `e8204deb337728` destroyed17:44:35Z.
+  Resume accepts only this observed baseline; no committed WAL was discarded.
+- Closing the missing-output gap before another mutable run: create-only,
+  <=64KiB structured per-attempt trace, asynchronous fsync isolated from the
+  phase watchdog, exact-ID read-only trace inspection without DuckDB open.
+  Disk-failure and slow-fsync regressions were red before fixes; failure after
+  a potentially mutable child starts is UNKNOWN even if phase logs lag. No
+  deadline increase, full-file copy, engine change or new production write.
+
 - Public main `23348a5cd`, Linux matrix `35375537024`: all six groups PASS.
   Actual fault-injected synthetic fixture3,944,448bytes: first single-object
   commit/checkpoint/stock-process verification finished0.384s; five independent

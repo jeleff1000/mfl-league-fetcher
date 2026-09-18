@@ -21,6 +21,10 @@ on:
         description: Isolated pilot machine for read-only exit diagnostics
         required: false
         type: string
+      diagnostic_receipt_id:
+        description: Optional exact run_attempt event trace for read-only inspection
+        required: false
+        type: string
       target_table:
         description: One confirmed blocker
         required: true
@@ -115,6 +119,7 @@ jobs:
           PILOT_ACTION: ${{ inputs.action }}
           TARGET_TABLE: ${{ inputs.target_table }}
           WITNESS_DB_NAME: ${{ inputs.witness_db_name }}
+          DIAGNOSTIC_RECEIPT_ID: ${{ inputs.diagnostic_receipt_id }}
           DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
         run: |
@@ -126,6 +131,12 @@ jobs:
           [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]
           test "$RECOVERY_VOLUME_ID" != vol_rkg7mmd17llez224
           [[ "$WITNESS_DB_NAME" =~ ^[a-z0-9_]+$ ]]
+          diagnostic_args=""
+          if [ -n "$DIAGNOSTIC_RECEIPT_ID" ]; then
+            [[ "$DIAGNOSTIC_RECEIPT_ID" =~ ^[0-9]{1,20}_[0-9]{1,3}$ ]]
+            test "$PILOT_ACTION" = inspect
+            diagnostic_args="--recovery-receipt $DIAGNOSTIC_RECEIPT_ID"
+          fi
           case "$PILOT_ACTION" in inspect|locate|remove|donor_headers|retained_headers|engine_inventory|engine_identity|engine_recover|engine_resume) ;; *) exit 2 ;; esac
           if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_identity ] || [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
             test "$RECOVERY_VOLUME_ID" = vol_4919j2m0wzg0xw5r
@@ -229,7 +240,7 @@ jobs:
               test "$?" -eq 7
             fi
             flyctl machine exec "$machine_id" --app "$FLY_APP" --timeout 5 --json \
-              "/bin/sh -lc 'exec timeout --signal=KILL 5s python -u /tmp/fly_table_storage_pilot.py --action inspect --target-table $TARGET_TABLE --db-name $WITNESS_DB_NAME --machine-id $machine_id --volume-id $RECOVERY_VOLUME_ID --deadline $PILOT_DEADLINE'" > machine-exec.json
+              "/bin/sh -lc 'exec timeout --signal=KILL 5s python -u /tmp/fly_table_storage_pilot.py --action inspect --target-table $TARGET_TABLE --db-name $WITNESS_DB_NAME --machine-id $machine_id --volume-id $RECOVERY_VOLUME_ID --deadline $PILOT_DEADLINE $diagnostic_args'" > machine-exec.json
             python scripts/diagnostics/duckdb_recovery_adapter.py --machine-exec-result machine-exec.json --expect-event wal_fingerprints_without_engine_open --db-name "$WITNESS_DB_NAME"
             echo "stage=api_inspection_finished utc=$(date -u +%FT%TZ)"
             exit 0

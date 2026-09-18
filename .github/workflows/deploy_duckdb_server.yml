@@ -19,7 +19,30 @@ jobs:
           curl -sL https://fly.io/install.sh | sh
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
-      - name: Deploy DuckDB server
+      - name: Build bounded server image
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl deploy --config duckdb-server/fly.toml --dockerfile duckdb-server/Dockerfile --ignorefile duckdb-server/Dockerfile.dockerignore --build-context-warn-size 20MB --remote-only
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          timeout 300s flyctl deploy --config duckdb-server/fly.toml --dockerfile duckdb-server/Dockerfile --ignorefile duckdb-server/Dockerfile.dockerignore --build-context-warn-size 20MB --remote-only --build-only --push --image-label "server-${GITHUB_SHA}"
+
+      - name: Update existing primary image without resetting capacity or storage
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Image-only update preserves the live guest/env/mount configuration;
+          # fly.toml must not undo a temporary, verified recovery capacity change.
+          machines="$(flyctl machines list --app league-history-duckdb --json)"
+          echo "$machines" | jq -e 'length == 1 and .[0].id == "1781e011b69068" and .[0].state == "started"' >/dev/null
+          for attempt in 1 2 3 4 5; do
+            state="$(curl --fail --silent --max-time 5 https://league-history-duckdb.fly.dev/ready)"
+            if echo "$state" | jq -e '.accepting_queries == true and .ops_writes == 0 and .delta_publishes == 0' >/dev/null; then
+              break
+            fi
+            test "$attempt" != 5
+            sleep 1
+          done
+          timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes
+          curl --fail --silent --max-time 10 https://league-history-duckdb.fly.dev/ready | jq -e '.accepting_queries == true'

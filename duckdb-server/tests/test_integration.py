@@ -603,6 +603,122 @@ def test_query_converts_non_finite_duckdb_values_to_json_null(client):
     assert resp.json() == [{"value": None}, {"value": None}, {"value": None}]
 
 
+def test_ops_attachment_waits_for_metadata_writer_without_file_handle_conflict(client, monkeypatch):
+    """A fleet/reference read cannot ATTACH while OPS has a writable handle."""
+    import db as db_mod
+    import main as main_mod
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    reader = db_mod.acquire_connection()
+    started = Event()
+    original_acquire = main_mod._acquire_ops_attachment
+
+    def acquire(conn):
+        started.set()
+        return original_acquire(conn)
+
+    monkeypatch.setattr(main_mod, '_acquire_ops_attachment', acquire)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            with db_mod._ops_lock:
+                db_mod.close_ops_connection()
+                writer = db_mod.connect_database(db_mod.get_data_dir() / '___ops.duckdb')
+                try:
+                    writer.execute('CREATE TABLE main.handoff_receipt (value INTEGER)')
+                    future = pool.submit(main_mod._execute_query, reader,
+                                         'SELECT value FROM ___ops.main.handoff_receipt')
+                    assert started.wait(1)
+                    with pytest.raises(FutureTimeout):
+                        future.result(timeout=0.1)
+                    writer.execute('INSERT INTO main.handoff_receipt VALUES (7)')
+                finally:
+                    writer.close()
+                    db_mod.reopen_ops_connection()
+            assert future.result(timeout=2) == [{'value': 7}]
+        finally:
+            db_mod.release_connection(reader)
+
+
+def test_ops_writer_drains_reference_readers_before_opening_write_handle(client, monkeypatch):
+    """Fleet attachments are not counted as borrowed public-pool connections."""
+    import db as db_mod
+    import main as main_mod
+
+    reader = db_mod.connect_database(db_mod.get_data_dir() / '___leagues.duckdb')
+    main_mod._acquire_ops_attachment(reader)
+    draining = Event()
+    original_drain = main_mod._drain_ops_attachments_for_snapshot
+    original_connect = db_mod.connect_database
+
+    def drain(*args, **kwargs):
+        draining.set()
+        return original_drain(*args, **kwargs)
+
+    def connect(path, *args, **kwargs):
+        if str(path).endswith('___ops.duckdb') and not kwargs.get('read_only', False):
+            assert main_mod._ops_attachment_users == 0, 'OPS writer opened during a fleet reference read'
+        return original_connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(main_mod, '_drain_ops_attachments_for_snapshot', drain)
+    monkeypatch.setattr(db_mod, 'connect_database', connect)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(main_mod._execute_ops_query_rw, 'CREATE TABLE main.handoff_write (id INTEGER)')
+        try:
+            assert draining.wait(1), 'OPS writer must wait for reference readers'
+        finally:
+            main_mod._release_ops_attachment(reader)
+            reader.close()
+        future.result(timeout=3)
+    assert main_mod._execute_ops_query('SELECT COUNT(*) AS n FROM main.handoff_write') == [{'n': 0}]
+
+
+def test_ops_attachment_timeout_finishes_worker_before_connection_can_return(client, monkeypatch):
+    import db as db_mod
+    import main as main_mod
+
+    reader = db_mod.acquire_connection()
+    monkeypatch.setattr(main_mod, 'PUBLIC_QUERY_TIMEOUT', 0.05)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            with db_mod._ops_lock:
+                future = pool.submit(main_mod._execute_query, reader, 'SELECT 1 FROM ___ops.main.no_table')
+                with pytest.raises(TimeoutError, match='OPS attachment'):
+                    future.result(timeout=0.3)
+                assert future.done()
+            assert main_mod._ops_attachment_users == 0
+            assert reader.execute('SELECT 42').fetchone() == (42,)
+        finally:
+            db_mod.release_connection(reader)
+
+
+def test_metadata_writer_can_wait_beyond_public_admission_budget(client, monkeypatch):
+    import db as db_mod
+    import main as main_mod
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    reader = db_mod.connect_database(db_mod.get_data_dir() / '___leagues.duckdb')
+    main_mod._acquire_ops_attachment(reader)
+    original_drain = main_mod._drain_ops_attachments_for_snapshot
+    started = Event()
+
+    def drain(timeout_seconds=0.01):
+        started.set()
+        return original_drain(timeout_seconds)
+
+    monkeypatch.setattr(main_mod, '_drain_ops_attachments_for_snapshot', drain)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(main_mod._execute_ops_query_rw, 'CREATE TABLE main.longer_handoff (id INTEGER)')
+        try:
+            assert started.wait(1)
+            with pytest.raises(FutureTimeout):
+                future.result(timeout=0.1)
+        finally:
+            main_mod._release_ops_attachment(reader)
+            reader.close()
+        future.result(timeout=3)
+    assert main_mod._execute_ops_query('SELECT COUNT(*) AS n FROM main.longer_handoff') == [{'n': 0}]
+
+
 def test_query_rw_retries_pool_reopen_file_handle_conflict(client, monkeypatch):
     import db as db_mod
     import main as main_mod

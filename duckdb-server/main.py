@@ -1260,10 +1260,10 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
     with _db._ops_lock:
         _begin_ops_write_state()
         try:
-            elapsed = 0
-            while _db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
-                time.sleep(0.5)
-                elapsed += 0.5
+            # Fleet writers are not borrowed public-pool connections. Drain
+            # actual OPS references while holding the gate against new ones;
+            # unrelated league reads need not stop for a metadata write.
+            _drain_ops_attachments_for_snapshot(timeout_seconds=min(PUBLIC_QUERY_TIMEOUT, ADMIN_QUERY_TIMEOUT / 2))
             _db.close_ops_connection()
             last_connect_error: Exception | None = None
             for attempt in range(8):
@@ -1280,9 +1280,6 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
                     # ___ops attached while idle, so rebuilding the pool is a
                     # rare fallback rather than the normal path.
                     time.sleep(0.25 * (attempt + 1))
-                    while _db.get_active_count() > 0 and elapsed < HARD_DRAIN_TIMEOUT:
-                        time.sleep(0.5)
-                        elapsed += 0.5
                     _db.close_ops_connection()
                     if attempt >= 3 and not pool_closed:
                         logger.warning("Closing public pool during ___ops write after repeated handle conflicts")
@@ -1474,9 +1471,19 @@ def _acquire_ops_attachment(conn) -> None:
     ops_path = db.get_data_dir() / "___ops.duckdb"
     if not ops_path.exists():
         raise RuntimeError("___ops database is unavailable")
-    with _ops_attachment_lock:
-        conn.execute(f'ATTACH IF NOT EXISTS {_sql_literal(ops_path)} AS "___ops" (READ_ONLY)')
-        _ops_attachment_users += 1
+    # Match the OPS writer's lock order. A new read cannot ATTACH read-only
+    # between the writer closing its read handle and finishing its RW handle.
+    # Release needs only the attachment lock so existing readers can drain.
+    # Keep lock waiting inside the HTTP query's existing five-second margin;
+    # a timed-out thread must not resume using a connection returned to the pool.
+    if not db._ops_lock.acquire(timeout=min(2.0, PUBLIC_QUERY_TIMEOUT)):
+        raise TimeoutError("OPS attachment is busy with a metadata writer")
+    try:
+        with _ops_attachment_lock:
+            conn.execute(f'ATTACH IF NOT EXISTS {_sql_literal(ops_path)} AS "___ops" (READ_ONLY)')
+            _ops_attachment_users += 1
+    finally:
+        db._ops_lock.release()
 
 
 def _release_ops_attachment(conn) -> None:

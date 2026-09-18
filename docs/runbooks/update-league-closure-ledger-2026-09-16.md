@@ -1,8 +1,55 @@
 # September Update League closure ledger
 
-State: isolated real-file repair PASSED in35387584221: both checkpoints, fresh unmodified engine write/checkpoint/reopen, and block346 retirement verified. Production repair is prepared but not yet executed. This ledger is for league updates, not SuperTable SOTA work.
+State: production storage repair PASSED in35390732009; both checkpoints and a fresh unmodified-engine write/checkpoint/reopen/second write passed. Fly restored at2026-09-18T20:20:12Z. Failed league import/refresh recovery and displayed-data verification remain ACTIVE. This ledger is for league updates, not SuperTable SOTA work.
 
 ## Current bounded-recovery receipts - 2026-09-18
+
+- PRODUCTION SUCCESS35390732009, publicmain c91e854d7: supervisor71.13s,
+  retained-WAL replay11.338s, exactly five quarantined aggregate relations
+  removed, canonical replacements preserved, both CHECKPOINTs returned.
+  Fresh stock engine proved write/commit/checkpoint/reopen/second write;
+  old_block_registered=false, zero new metadata allocations. Existing
+  nyu_ffl history/value/preferences witness matched before and after.
+  Receipt directory /data/production_recovery_35390732009_1/ contains
+  input.json, before.json, stock.json, completed.json and trace.jsonl.
+- Original506655396-byte WAL retained at
+  /data/production_recovery_35390284697_1/original.wal, SHA256
+  872c5f409af3e7e6b7681f39deced062a5b6dcd2cfb1ab34f7305ae3915296b9.
+  No16GB copy/rebuild, WAL discard, checksum suppression or MotherDuck.
+  Do NOT rerun production recovery: its pre-repair bindings are obsolete.
+- Fly host rejected8CPU placement; maintenance and restored service use
+  temporary4sharedCPU/8192MiB. Service memory report still says8GB/8threads
+  despite restoration override6GB: reconcile actual runtime configuration
+  before claiming capacity restored. Service handoff was offline roughly
+ 20:04-20:20Z;71.13s measures repair itself, not the entire outage.
+- STK manual refresh35392635420 failed BEFORE claim/publication: production
+  freshness HTTP probe exceeded20s. No new checksum failure observed.
+  Subsequent identical probe returned healthy manifest in13.188s; canonical
+  manual refresh35393264981 committed with verified cache finalization:
+  processing50.269s, publication21.372s, workflow job79s/dispatch85s. Direct
+  query retained2020-2025 matchup counts and Ahablumpkin->Hart preference.
+- IFLquick35393384101 uploaded in1.7s but direct verification caught an
+  existing quick-publication defect: replace_league removed2025. NOT accepted
+  as recovered. Existing fullimport35393674252 restored2025 (204matchups)
+  plus2026week1 (12). Live homepage ranks now span bothseasons. Quick
+  preservation fix has a failing real-HTTP regression and is in progress.
+- User confirmed STK boundary: Yahoo2019-2023 and Sleeper2024-2026. Existing
+  multi-platform worker35394124227 succeeded; directFly+liveoverview show
+  all8years, savedHartalias unchanged and no oldAhablumpkin matchup rows.
+- Existing imports recovered: ESPNKings35394059669, YahooUltimate35394055897,
+  ESPNI95full35394063919. DirectFly+overview confirm2026 data and homepage
+  rankings. I95has2013-2026 except2019; investigate source coverage before
+  claiming full historical completeness. Rankings beyond homepage, provider
+  score comparisons and complete failed-league cohort reconciliation remain.
+- ConcurrentYahooKMFFL35393945545/ESPNAlwaysSunny35393945475 exposed a
+  separateOPSattachment race: metadata RW handle overlaps a fleet read-only
+  attachment. RealDuckDB tests reproduced exactUniqueFileHandleConflict.
+  Scoped lock-order change plus bounded acquisition and reference drain has
+ 21focusedtests passing13.88s, review/deployment pending. No checksum error.
+  Broad suite106passed; seven existingcanonical-table-replacement tests fail
+  from closing their own pool before acquiring it (first failure reproduced
+  with unchangedHEADlock functions), plus intentionalquick-import redtest.
+  Do not report the broad suite as green or rerun obsolete table-repair lane.
 
 - SUCCESS35387584221, publicmain058db42e9: isolated replay9.854s,
   both CHECKPOINTs returned, zero newly allocated metadata blocks, fresh

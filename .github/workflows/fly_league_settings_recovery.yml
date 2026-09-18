@@ -223,19 +223,6 @@ jobs:
           names = sorted(context_names | dispatch_names)
           overlay_rows = 0
           overlay_keys = 0
-          derived_keys = {
-              "homepage_manager_rankings": ("db_name", "franchise_id"),
-              "matchup_h2h_career": (
-                  "db_name", "franchise_id", "opponent_franchise_id",
-              ),
-              "player_fantasy_season": ("db_name", "NFL_player_id", "year"),
-              "player_fantasy_season_all": ("db_name", "NFL_player_id", "year"),
-              "standings_by_year": ("db_name", "franchise_id", "year"),
-          }
-          derived_overlay = {
-              table: {"rows": 0, "keys": 0}
-              for table in derived_keys
-          } if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true" else {}
           for db_name in names:
               db_literal = "'" + db_name.replace("'", "''") + "'"
               scope = query(
@@ -245,24 +232,6 @@ jobs:
               )[0]
               overlay_rows += int(scope["rows"])
               overlay_keys += int(scope["keys"])
-              if os.environ.get("RECOVER_DERIVED_ROLLUPS", "").lower() == "true":
-                  for table, key_columns in derived_keys.items():
-                      key_sql = ", ".join(key_columns)
-                      table_scope = query(
-                          "___leagues",
-                          "SELECT COUNT(*) AS rows, "
-                          f"COUNT(DISTINCT ({key_sql})) AS keys "
-                          f"FROM public.{table} WHERE db_name = {db_literal}",
-                      )[0]
-                      table_rows = int(table_scope["rows"])
-                      table_keys = int(table_scope["keys"])
-                      if table_rows != table_keys:
-                          raise RuntimeError(
-                              f"live {table} overlay has duplicate keys: "
-                              f"rows={table_rows}, keys={table_keys}"
-                          )
-                      derived_overlay[table]["rows"] += table_rows
-                      derived_overlay[table]["keys"] += table_keys
           expected_leagues = int(os.environ["EXPECTED_OVERLAY_LEAGUES"])
           expected_rows = int(os.environ["EXPECTED_OVERLAY_ROWS"])
           if len(names) != expected_leagues or overlay_rows != expected_rows:
@@ -279,7 +248,6 @@ jobs:
               "names": names,
               "overlay_rows": overlay_rows,
               "overlay_keys": overlay_keys,
-              "derived_overlay": derived_overlay,
           }
           Path("recovery-overlay-manifest.json").write_text(
               json.dumps(manifest, sort_keys=True), encoding="utf-8"
@@ -382,15 +350,6 @@ jobs:
                       f'SELECT COUNT(*), COUNT(*) - COUNT(DISTINCT ({quoted_keys})) '
                       f'FROM public."{table}"'
                   ).fetchone()
-                  snapshot_overlay_rows = 0
-                  overlay_names = list(overlay_manifest["names"])
-                  if overlay_names:
-                      placeholders = ",".join("?" for _ in overlay_names)
-                      snapshot_overlay_rows = int(source.execute(
-                          f'SELECT COUNT(*) FROM public."{table}" '
-                          f'WHERE db_name IN ({placeholders})',
-                          overlay_names,
-                      ).fetchone()[0])
                   source.close()
                   if int(expected[0]) <= 0 or int(expected[1]) != 0:
                       raise RuntimeError(
@@ -420,15 +379,9 @@ jobs:
                       "rows": int(verified[0]),
                       "sha256": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
                       "bytes": bundle_path.stat().st_size,
-                      "snapshot_overlay_rows": snapshot_overlay_rows,
-                      "live_overlay_rows": int(
-                          overlay_manifest["derived_overlay"][table]["rows"]
-                      ),
-                      "calculated_final_rows": (
-                          int(verified[0])
-                          - snapshot_overlay_rows
-                          + int(overlay_manifest["derived_overlay"][table]["rows"])
-                      ),
+                      "snapshot_overlay_rows": 0,
+                      "live_overlay_rows": 0,
+                      "calculated_final_rows": int(verified[0]),
                   }
           print(json.dumps({
               "checks": results,
@@ -540,6 +493,7 @@ jobs:
                 -H "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" \
                 -H "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" \
                 -H "X-Expected-Overlay-Rows: ${table_overlay_rows}" \
+                -H "X-Skip-Live-Overlay: true" \
                 -F "file=@${table}_snapshot.duckdb;type=application/octet-stream" \
                 | tee "recovery-response-${table}.json"
               jq -e --arg table "$table" --argjson rows "$table_rows" \

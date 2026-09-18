@@ -66,18 +66,22 @@ def test_settings_recovery_can_reuse_a_retained_unattached_volume():
     assert 'if [ "$owns_recovery_volume" = "true" ]' in source
 
 
-def test_derived_recovery_preserves_every_post_snapshot_publication_at_swap_time():
+def test_derived_recovery_defers_changed_leagues_to_source_rebuild():
     source = WORKFLOWS[1].read_text(encoding="utf-8")
 
     assert "recover_settings:" in source
     assert 'if [ "$RECOVER_SETTINGS" = "true" ]; then' in source
-    assert '"derived_overlay": derived_overlay' in source
     assert '"snapshot_overlay_rows": snapshot_overlay_rows' in source
     assert '"calculated_final_rows"' in source
     assert "X-Recovery-Since: ${SNAPSHOT_CREATED_AT}" in source
     assert "X-Expected-Overlay-Leagues: ${EXPECTED_OVERLAY_LEAGUES}" in source
     assert "X-Expected-Overlay-Rows: ${table_overlay_rows}" in source
+    assert "X-Skip-Live-Overlay: true" in source
+    assert '"live_overlay_rows": 0' in source
     assert ".overlay_rows == $overlay_rows" in source
+    replace = source.index("X-Skip-Live-Overlay: true")
+    rebuild = source.index("/rebuild-league-derived")
+    assert replace < rebuild
 
 
 def test_isolated_rebuild_cannot_mutate_or_promote_the_primary_volume():

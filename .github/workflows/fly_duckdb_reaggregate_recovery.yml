@@ -112,7 +112,7 @@ jobs:
           curl --fail --max-time 15 -sL https://fly.io/install.sh | sh
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
-      - name: One-table pilot - 40 second hard ceiling including machine startup
+      - name: One-table pilot - 60 second hard ceiling including machine startup
         if: inputs.action != 'engine_logs' && inputs.action != 'service_health'
         env:
           RECOVERY_VOLUME_ID: ${{ inputs.recovery_volume_id }}
@@ -124,10 +124,10 @@ jobs:
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
         run: |
           set -euo pipefail
-          # The outer timeout remains the hard40s wall-clock ceiling. Flooring
+          # User approved60s for this complete isolated trial. Flooring
           # this deadline to seconds already reserves up to1s for termination.
-          export PILOT_DEADLINE="$(( $(date +%s) + 40 ))"
-          timeout --signal=KILL 40s bash <<'PILOT' 2>&1 | tee table-pilot.jsonl
+          export PILOT_DEADLINE="$(( $(date +%s) + 60 ))"
+          timeout --signal=KILL 60s bash <<'PILOT' 2>&1 | tee table-pilot.jsonl
           set -euo pipefail
           echo "stage=pilot_start utc=$(date -u +%FT%TZ) hard_deadline=$PILOT_DEADLINE"
           [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]
@@ -217,7 +217,7 @@ jobs:
             --file-local "/tmp/fly_table_storage_pilot.py=scripts/fly_table_storage_pilot.py" \
             --file-local "/tmp/fly_duckdb_block_probe.py=scripts/fly_duckdb_block_probe.py" \
             "${files[@]}" \
-            -- -lc 'sleep 45'
+            -- -lc 'sleep 65'
           flyctl machines list --app "$FLY_APP" --json > started-machines.json &
           inventory_pid=$!
           flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > attached-volume.json &

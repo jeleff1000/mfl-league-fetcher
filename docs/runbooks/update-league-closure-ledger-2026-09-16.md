@@ -4,6 +4,14 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Trial35387352711 stopped before engine open with34s remaining, so the
+ 35s startup guard was the artificial blocker; no DB mutation occurred.
+  User then explicitly approved increasing the limit and test writes.
+  Use ONE60s total trial including startup;30s for checkpoint+fresh stock
+  verification, with all other stage, memory, checksum and metadata caps
+  unchanged. This replaces the previously approved40s total, not the120s
+  refresh cap. Do not repeat fractional deadline tuning or add new machinery.
+
 - User explicitly approved a longer checkpoint allowance and test writes,
   retaining tight/light work. Set verify20s within unchanged40s total; bind
   only the fresh35386902355 main/WAL fingerprint and reject stale inputs.

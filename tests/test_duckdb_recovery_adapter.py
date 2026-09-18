@@ -739,10 +739,10 @@ def test_recovery_leaves_memory_headroom_in_the_three_gib_pilot():
 
 def test_recovery_refuses_startup_starvation_before_engine_open():
     a = adapter()
-    a.require_recovery_window(140, now=105)
-    for now in (105.1, 110.1, 125, 141):
+    a.require_recovery_window(160, now=115)
+    for now in (115.1, 125, 145, 161):
         with pytest.raises(ValueError, match='NOT_STARTED'):
-            a.require_recovery_window(140, now=now)
+            a.require_recovery_window(160, now=now)
 
 
 def test_checkpoint_marker_is_forwarded_before_a_timeout(capsys):

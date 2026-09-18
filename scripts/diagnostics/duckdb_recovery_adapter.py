@@ -25,14 +25,14 @@ CANONICAL = ("homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_
              "player_fantasy_season_all", "standings_by_year")
 QUARANTINED = tuple("__corrupt_recovery_" + name for name in CANONICAL)
 RECOVERY_VOLUME = "vol_4919j2m0wzg0xw5r"
-STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 20}
+STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 30}
 
 
 def require_recovery_window(deadline, *, now=None):
-    # Observed pre-checkpoint work is ~14s; leave the approved 20s proof
+    # Observed pre-checkpoint work is ~14s; leave the approved 30s proof
     # window BEFORE starting replay. Do not start an already-starved mutation.
-    if deadline - (time.time() if now is None else now) < 35:
-        raise ValueError('NOT_STARTED: less than 35s remains after startup')
+    if deadline - (time.time() if now is None else now) < 45:
+        raise ValueError('NOT_STARTED: less than 45s remains after startup')
 
 
 def emit_machine_exec_result(data, expected_event='isolated_recovery_verified'):
@@ -667,7 +667,7 @@ def checkpoint_progress(hook):
 
 
 def report_checkpoint_progress(hook, stopped):
-    # At most ten samples in the 20s verification window. No extra SQL,
+    # At most fifteen samples in the 30s verification window. No extra SQL,
     # database reads, native disk writes, or watchdog budget changes.
     while not stopped.wait(2):
         print(json.dumps(checkpoint_progress(hook)), flush=True)
@@ -889,10 +889,10 @@ def recovery_child(args):
     env.pop('LD_PRELOAD', None)
     env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())
     # This process is a member of the parent's killed process group. Its open,
-    # checks, write, checkpoint and reopen share the SAME 20s verify budget.
+    # checks, write, checkpoint and reopen share the SAME 30s verify budget.
     subprocess.run([sys.executable, '-u', __file__, '--stock-child', str(folder),
                     '--db-name', args.db_name, '--deadline', str(args.deadline)], env=env, check=True,
-                   timeout=max(.001, min(20, args.deadline-time.time())))
+                   timeout=max(.001, min(30, args.deadline-time.time())))
     write_receipt(folder / 'completed.json', {'removed': removed, 'stock_verified': True,
                                              'metadata_blocks': hook.lh_spike_allocations()})
     print(json.dumps({'event': 'isolated_recovery_verified', 'receipt': folder.name}), flush=True)
@@ -967,7 +967,7 @@ def main():
             raise ValueError('damaged metadata remains eligible for stock reuse')
         print(json.dumps({'event': 'stock_reopen_write_verified', 'old_block_registered': registered}), flush=True)
         return 0
-    if (not args.deadline or not 0 < args.deadline-time.time() <= 40
+    if (not args.deadline or not 0 < args.deadline-time.time() <= 60
             or not re.fullmatch(r'[0-9]+_[0-9]+', args.receipt_id or '')
             or not re.fullmatch(r'[0-9a-f]{64}', args.helper_sha256 or '')):
         raise ValueError('exact receipt, helper fingerprint and bounded deadline required')

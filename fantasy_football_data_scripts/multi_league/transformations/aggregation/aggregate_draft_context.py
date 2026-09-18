@@ -144,12 +144,14 @@ def _build_keeper_expr(cols: set) -> str:
     return " OR ".join(parts) if parts else "FALSE"
 
 
-def aggregate_draft_manager_season(conn, db_name: str) -> int:
+def aggregate_draft_manager_season(conn, db_name: str, *, year: int | None = None) -> int:
     """Aggregate draft table to manager-season totals."""
     configure_table_catalog(conn)
+    season_scope = league_db_filter(db_name, year=year)
+    draft_scope = league_db_filter(db_name, "d", year=year)
     execute_scoped(
         conn,
-        f"DELETE FROM {central_table('draft_manager_season')} WHERE db_name = '{db_name}'",
+        f"DELETE FROM {central_table('draft_manager_season')} WHERE {season_scope}",
         db_name,
         label="draft_manager_season:delete",
     )
@@ -218,7 +220,7 @@ def aggregate_draft_manager_season(conn, db_name: str) -> int:
             SELECT d.*, {cat_expr} as _cat
             FROM {central_table("draft")} d
             WHERE NOT ({is_keeper_expr})
-              AND {league_db_filter(db_name, "d")}
+              AND {draft_scope}
               AND d.manager IS NOT NULL AND TRIM(d.manager) <> ''
               AND d.franchise_id IS NOT NULL AND TRIM(CAST(d.franchise_id AS VARCHAR)) <> ''
         ),
@@ -228,7 +230,7 @@ def aggregate_draft_manager_season(conn, db_name: str) -> int:
                    d.year, {cat_expr} as _cat, COUNT(*) as cnt
             FROM {central_table("draft")} d
             WHERE ({is_keeper_expr})
-              AND {league_db_filter(db_name, "d")}
+              AND {draft_scope}
               AND d.manager IS NOT NULL AND TRIM(d.manager) <> ''
               AND d.franchise_id IS NOT NULL AND TRIM(CAST(d.franchise_id AS VARCHAR)) <> ''
             GROUP BY d.franchise_id, d.year, {cat_expr}
@@ -284,7 +286,7 @@ def aggregate_draft_manager_season(conn, db_name: str) -> int:
     """
     execute_scoped(conn, sql, db_name, label="draft_manager_season:insert")
     count = conn.execute(
-        f"SELECT COUNT(*) FROM {central_table('draft_manager_season')} WHERE db_name = '{db_name}'"
+        f"SELECT COUNT(*) FROM {central_table('draft_manager_season')} WHERE {season_scope}"
     ).fetchone()[0]
     log(f"  draft_manager_season: {count} rows")
     return count

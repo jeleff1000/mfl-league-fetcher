@@ -122,12 +122,14 @@ def create_transaction_player_career_table(conn, db_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def aggregate_transaction_manager_season(conn, db_name: str) -> int:
+def aggregate_transaction_manager_season(conn, db_name: str, *, year: int | None = None) -> int:
     """Aggregate transactions table to manager-season totals."""
     configure_table_catalog(conn)
+    season_scope = league_db_filter(db_name, year=year)
+    transaction_scope = league_db_filter(db_name, "t", year=year)
     execute_scoped(
         conn,
-        f"DELETE FROM {central_table('transaction_manager_season')} WHERE db_name = '{db_name}'",
+        f"DELETE FROM {central_table('transaction_manager_season')} WHERE {season_scope}",
         db_name,
         label="transaction_manager_season:delete",
     )
@@ -193,7 +195,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
                 MAX(COALESCE(t.{add_lamar_col}, 0)) as lamar
             FROM {central_table("transactions")} t
             WHERE t.transaction_type IN {_ADD_TRANSACTION_TYPES_SQL} AND t.player IS NOT NULL
-              AND {league_db_filter(db_name, "t")}
+              AND {transaction_scope}
             GROUP BY {grp_key}, t.year
         )"""
     worst_drop_cte = ""
@@ -205,7 +207,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
                 MAX(COALESCE(t.{regret_col}, 0)) as regret
             FROM {central_table("transactions")} t
             WHERE t.transaction_type = 'drop' AND t.player IS NOT NULL
-              AND {league_db_filter(db_name, "t")}
+              AND {transaction_scope}
             GROUP BY {grp_key}, t.year
         )"""
 
@@ -246,7 +248,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
             WHERE t.transaction_type IN ('trade', 'trade_pick')
               AND t.manager IS NOT NULL
               AND TRIM(t.manager) <> ''
-              AND {league_db_filter(db_name, "t")}
+              AND {transaction_scope}
               {trade_received_filter}
             GROUP BY t.transaction_id, {grp_key}, t.year
         ),
@@ -261,7 +263,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
             WHERE t.transaction_type IN ('trade', 'trade_pick')
               AND t.manager IS NOT NULL
               AND TRIM(t.manager) <> ''
-              AND {league_db_filter(db_name, "t")}
+              AND {transaction_scope}
               {trade_sent_filter}
             GROUP BY t.transaction_id, {grp_key}, t.year
         ),
@@ -339,7 +341,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
             WHERE t.transaction_type IN {_ADD_DROP_TRANSACTION_TYPES_SQL}
               AND t.manager IS NOT NULL AND TRIM(t.manager) <> ''
               AND t.{fid_col} IS NOT NULL
-              AND {league_db_filter(db_name, "t")}
+              AND {transaction_scope}
             GROUP BY {grp_key}, t.year
         )
         {best_pickup_cte}
@@ -390,7 +392,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
             SELECT {gpa_join_col} as _join_key, year,
                 (1.0 - PERCENT_RANK() OVER (PARTITION BY year ORDER BY total_transaction_score DESC)) * 4.0 as transaction_gpa
             FROM {central_table("transaction_manager_season")}
-            WHERE db_name = '{db_name}'
+            WHERE {season_scope}
         ) sub
         WHERE s.{gpa_join_col} = sub._join_key AND s.year = sub.year AND s.db_name = '{db_name}'
     """,
@@ -399,7 +401,7 @@ def aggregate_transaction_manager_season(conn, db_name: str) -> int:
     )
 
     count = conn.execute(
-        f"SELECT COUNT(*) FROM {central_table('transaction_manager_season')} WHERE db_name = '{db_name}'"
+        f"SELECT COUNT(*) FROM {central_table('transaction_manager_season')} WHERE {season_scope}"
     ).fetchone()[0]
     log(f"  transaction_manager_season: {count} rows")
     return count
@@ -665,15 +667,16 @@ def create_transaction_report_card_table(conn, db_name: str) -> bool:
     return True
 
 
-def aggregate_transaction_report_card(conn, db_name: str) -> int:
+def aggregate_transaction_report_card(conn, db_name: str, *, year: int | None = None) -> int:
     """Build per-manager per-year report card data with JSON detail columns."""
     import json as _json
 
     configure_table_catalog(conn)
+    season_scope = league_db_filter(db_name, year=year)
     cols = get_available_columns(conn, db_name, "transactions")
     execute_scoped(
         conn,
-        f"DELETE FROM {central_table('transaction_report_card')} WHERE db_name = '{db_name}'",
+        f"DELETE FROM {central_table('transaction_report_card')} WHERE {season_scope}",
         db_name,
         label="transaction_report_card:delete",
     )
@@ -706,7 +709,7 @@ def aggregate_transaction_report_card(conn, db_name: str) -> int:
     manager_years = conn.execute(f"""
         SELECT franchise_id, manager, year
         FROM {central_table("transaction_manager_season")}
-        WHERE db_name = '{db_name}'
+        WHERE {season_scope}
           AND franchise_id IS NOT NULL
           AND TRIM(CAST(franchise_id AS VARCHAR)) <> ''
         ORDER BY manager, year, franchise_id

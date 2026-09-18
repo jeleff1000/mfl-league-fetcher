@@ -32,6 +32,25 @@ def data_dir(tmp_path, request):
             VALUES ('test_league',2025,1,'Shared Alias','f1','Opponent','f2','Team',140,100,1,0,0,0,0,0),
                    ('test_league',2026,1,'Shared Alias','f1','Opponent','f2','Team',110,120,0,1,0,0,0,0)
         """)
+        if getattr(request, 'param', None) in {'missing_historical_franchise', 'recovery_source', 'recovery_empty'}:
+            from fleet_merge import ensure_generation_tables
+
+            ensure_generation_tables(conn)
+            conn.execute("INSERT INTO merge_admin.league_publish_generations (db_name,generation) VALUES ('test_league',7)")
+        if getattr(request, 'param', None) == 'recovery_source':
+            conn.execute("""
+                INSERT INTO public.player_fantasy
+                    (db_name,year,week,NFL_player_id,player_week,player,manager,franchise_id,
+                     fantasy_points,is_started,win,loss)
+                VALUES ('test_league',2025,1,'p1','p1_2025_1','Player','Shared Alias','f1',20,1,1,0),
+                       ('test_league',2026,1,'p1','p1_2026_1','Player','Shared Alias','f1',30,1,0,1)
+            """)
+        if getattr(request, 'param', None) == 'missing_historical_franchise':
+            conn.execute("DELETE FROM public.matchup_season WHERE year=2025")
+            conn.execute("""
+                INSERT INTO public.matchup_season (db_name,franchise_id,manager,year,games)
+                VALUES ('test_league','unrelated','Unrelated',2025,14)
+            """)
         if getattr(request, 'param', None) == 'missing_source':
             conn.execute('DROP TABLE public.player_fantasy')
         if getattr(request, 'param', None) == 'missing_homepage_source':
@@ -70,7 +89,7 @@ def data_dir(tmp_path, request):
     return tmp_path
 
 
-def _bundle(tmp_path, *, homepage=False):
+def _bundle(tmp_path, *, homepage=False, generation=0):
     with duckdb.connect(':memory:') as conn:
         conn.execute('CREATE SCHEMA public')
         conn.execute("""
@@ -79,7 +98,7 @@ def _bundle(tmp_path, *, homepage=False):
                    2026 AS year, 2 AS games, 2 AS wins, 0 AS losses
         """)
         return build_fleet_partition_bundle(
-            conn, active_year=2026, league_generations={'test_league': 0},
+            conn, active_year=2026, league_generations={'test_league': generation},
             tables=['matchup_season'], output_dir=tmp_path / 'bundle',
             import_run_id='9001', publish_sequence=1, rebuild_career_rollups=True,
             rebuild_homepage_rollups=homepage,
@@ -103,14 +122,16 @@ def _query(http_client, sql):
 
 @pytest.mark.parametrize('homepage', [False, True])
 def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(client, tmp_path, homepage):  # noqa: F811
+    historical = _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025")
     bundle = _bundle(tmp_path, homepage=homepage)
     response = _publish(client, bundle)
     assert response.status_code == 200, response.text
     assert response.json()['career_rollups']['test_league']['matchup_career'] == 1
-    expected_games = 2 if homepage else 16
+    expected_games = 15 if homepage else 16
     assert _query(client, "SELECT games, seasons FROM public.matchup_career WHERE db_name='test_league'") == [{'games': expected_games, 'seasons': 2}]
     if homepage:
-        assert response.json()['season_rollups']['test_league']['matchup_season'] == 2
+        assert response.json()['season_rollups']['test_league']['matchup_season'] == 1
+        assert response.json()['season_rollup_years']['test_league'] == [2026]
         assert response.json()['homepage_rollups']['test_league']['homepage_manager_rankings'] == 1
         assert _query(client, "SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'") == [{'highest_score_points': 140.0}]
         assert _query(client, "SELECT manager,seasons,wins,losses FROM public.homepage_manager_rankings WHERE db_name='test_league'") == [{'manager':'Shared Alias','seasons':2,'wins':1,'losses':1}]
@@ -118,6 +139,18 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     assert replay.status_code == 200, replay.text
     assert replay.json()['idempotent_replay'] is True
     assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 1}]
+    assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == historical
+
+
+@pytest.mark.parametrize('data_dir', ['missing_historical_franchise'], indirect=True)
+def test_http_missing_historical_franchise_rejects_publication_without_advancing_generation(client, tmp_path):  # noqa: F811
+    before = _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year")
+    response = _publish(client, _bundle(tmp_path, homepage=True, generation=7))
+    assert response.status_code == 422, response.text
+    assert 'matchup_season' in response.text and '2025' in response.text
+    assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year") == before
+    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 7}]
+    assert _query(client, "SELECT COUNT(*) n FROM public.matchup_career WHERE db_name='test_league'") == [{'n': 0}]
 
 
 @pytest.mark.parametrize('data_dir', ['legacy_trade_mirror'], indirect=True)
@@ -183,3 +216,28 @@ def test_target_does_not_retry_deterministic_homepage_rejection(client, tmp_path
         FlyTarget().merge_fleet_partition(bundle.path, bundle_id=bundle.bundle_id, bundle_hash=bundle.bundle_hash)
     assert len(requests_seen) == 1
     assert _query(client, "SELECT season_best_pickup_player FROM public.homepage_league_summary WHERE db_name='test_league'") == [{'season_best_pickup_player':'Missing Pickup'}]
+
+
+@pytest.mark.parametrize('data_dir', ['recovery_source', 'recovery_empty'], indirect=True)
+def test_scoped_recovery_invalidates_stale_bundles_only_when_committed(client, tmp_path, monkeypatch, request):  # noqa: F811
+    from pathlib import Path
+    import main
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / 'scripts'))
+    before = _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year")
+    response = client.post('/reaggregate-damaged-derived',
+        headers={'Authorization': 'Bearer test-admin'},
+        json={'mode':'scoped_rebuild', 'db_name':'test_league', 'confirm_targets':list(main._DAMAGED_DERIVED_TARGETS)})
+    success = request.node.callspec.params['data_dir'] == 'recovery_source'
+    assert response.status_code == (200 if success else 500), response.text
+    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 8 if success else 7}]
+    assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year") == before
+    if success:
+        assert _query(client, "SELECT year,fantasy_points,clutch_equity FROM public.player_fantasy_season WHERE db_name='test_league' ORDER BY year") == [
+            {'year':2025,'fantasy_points':20.0,'clutch_equity':0.0},
+            {'year':2026,'fantasy_points':30.0,'clutch_equity':0.0},
+        ]
+        stale = _publish(client, _bundle(tmp_path, generation=7, homepage=True))
+        assert stale.status_code == 409, stale.text
+    else:
+        assert _query(client, "SELECT COUNT(*) n FROM public.standings_by_year WHERE db_name='test_league'") == [{'n':0}]

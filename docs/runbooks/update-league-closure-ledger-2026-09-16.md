@@ -2,6 +2,63 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Current checkpoint - 2026-09-18 03:00 UTC
+
+**The storage defect is OPEN. This checkpoint supersedes earlier claims that
+reaggregating the five tables established durable recovery.**
+
+ESPN full import `35287522419`, attempt 4, for
+`i_95_gridlock_league_2k27` failed at publication on public-worker revision
+`83cd41dbd1cc0d7c90fcd1ff045206577d5f4dfb`. Provider fetching, expected
+records, playoff odds and aggregate processing completed. The delta contained
+38 tables / 6.6 MB and took 5.1 seconds to build. Fly rejected publication with
+a fatal checkpoint checksum mismatch at physical block 90714112 (computed
+5168518579405463287, stored 18392342689821271652). This is the same known
+physical block, not a new ESPN fetch defect or a full-database upload.
+
+Read-only reconciliation found the exact bundle
+`i_95_gridlock_league_2k27-35287522419-4-280a80409000-b77fa581`
+still `VALIDATED`, with `committed_at=null`. League-filtered checks of matchup,
+league_settings and player_fantasy_season each returned no rows (about 1 second
+per query). Cache finalization was skipped. No unchanged rerun was dispatched.
+Fly `/ready` subsequently returned serving, but that is not durability evidence.
+
+A related startup defect is reproduced locally: an exception opening/replaying
+the WAL caused automatic WAL quarantine and startup against the older database;
+a checkpoint exception was separately swallowed. Existing diagnostic run
+`35295551400` lists multiple preserved league WAL quarantines, including 111 MB,
+563 MB and 65 MB files. These prove quarantine has occurred, not which specific
+publications each file contains. The latest restart has not yet been reconciled.
+The pending patch removes automatic quarantine, preserves the WAL in place,
+propagates startup checkpoint errors, and prevents pool initialization afterward.
+Three regressions failed before the fix; all 9 targeted startup/checkpoint tests
+pass in 4.65 seconds afterward. This prevents silent rollback; it does not repair
+the block. Deployment is held because fail-closed startup could leave the current
+unrepaired production database unavailable. No WAL was moved or deleted here.
+
+Other pending, reviewed weekly changes scope identity reapplication and the six
+season rollups to the selected year(s), retain complete history for career and
+homepage outputs, reject missing historical rollup keys, and atomically advance
+publication generations after the existing five-table scoped recovery. The 56
+HTTP/transformation regressions pass (116.33 seconds locally). Related tests
+previously passed 35/35. Ruff and diff checks pass. These are not deployed and
+their production latency is unverified. The retained-key guard checks coverage,
+not numeric correctness; its same-connection production cost is still unmeasured.
+
+Fresh bounded live checks contradict the older recovery baseline:
+`tfl_of_extraordinary_gentleman` is missing player-season keys for 2012-2025;
+`nyu_ffl` is missing them for 2018-2025. NYU's 2025 season-player table is empty
+although its weekly source still includes, for example, Christian McCaffrey's
+386.1 points. Yahoo `monsters_of_the_midway` passed retained-key coverage.
+Do not deploy the strict guard as if these missing baselines were recovered.
+
+No production writes, database/volume copies, full downloads, snapshots, restarts,
+or deployments were performed during this checkpoint. The physical corruption,
+retained-history recovery, complete cohort verification, live changed-data
+canaries and under-90-second end-to-end target remain open. A proven bounded
+storage remedy is still required; retrying the import or rebuilding aggregates
+alone does not supply one.
+
 ## Current checkpoint - 2026-09-17 09:02 UTC
 
 The stale/unknown-freshness control defect is fixed and live. App main

@@ -1167,7 +1167,18 @@ class MatchupEnrichmentsMixin:
                 resolved[source] = target
         return resolved
 
-    def _apply_saved_manager_name_overrides(self) -> int:
+    def _identity_scope_filter(self, alias: str = "", *, season_years: set[int] | None = None) -> str:
+        scope = self._db_filter(alias)
+        if season_years is not None:
+            if any(type(year) is not int or year <= 0 for year in season_years):
+                raise ValueError("Identity season years must be positive integers")
+            if not season_years:
+                return "FALSE"
+            prefix = f"{alias}." if alias else ""
+            scope += f" AND {prefix}year IN ({', '.join(str(year) for year in sorted(season_years))})"
+        return scope
+
+    def _apply_saved_manager_name_overrides(self, *, season_years: set[int] | None = None) -> int:
         """Apply persisted display aliases to every source identity surface."""
         overrides = self._resolved_saved_name_overrides()
         if not overrides:
@@ -1203,13 +1214,13 @@ class MatchupEnrichmentsMixin:
                     UPDATE {table_ref} t
                     SET {name_col} = aliases.target
                     FROM (VALUES {values_sql}) AS aliases(source, target)
-                    WHERE {self._db_filter('t')}
+                    WHERE {self._identity_scope_filter('t', season_years=season_years)}
                       AND LOWER(TRIM(CAST(t.{name_col} AS VARCHAR))) = aliases.source
                 """
                 total += self._execute(sql, f"resolve_managers: saved alias {table}.{name_col}")
         return total
 
-    def _link_schedule_opponent_identities(self) -> int:
+    def _link_schedule_opponent_identities(self, *, season_years: set[int] | None = None) -> int:
         """Resolve schedule opponent IDs from its paired manager rows."""
         if not self._table_exists("schedule"):
             return 0
@@ -1234,7 +1245,7 @@ class MatchupEnrichmentsMixin:
                        MIN(franchise_id) AS franchise_id
                        {guid_select}
                 FROM {schedule_table}
-                WHERE {self._db_filter()}
+                WHERE {self._identity_scope_filter(season_years=season_years)}
                   AND franchise_id IS NOT NULL
                   AND NULLIF(TRIM(COALESCE(manager, '')), '') IS NOT NULL
                 GROUP BY year, week, LOWER(TRIM(manager))
@@ -1243,15 +1254,16 @@ class MatchupEnrichmentsMixin:
             WHERE s.year = lkp.year
               AND s.week = lkp.week
               AND LOWER(TRIM(COALESCE(s.opponent, ''))) = lkp.manager_norm
-              AND {self._db_filter('s')}
+              AND {self._identity_scope_filter('s', season_years=season_years)}
         """
         return self._execute(sql, "resolve_managers: schedule opponent identity")
 
-    def reapply_saved_identity_settings(self) -> int:
+    def reapply_saved_identity_settings(self, *, season_years: set[int] | None = None) -> int:
         """Reconcile saved identities after a provider source table is restored."""
-        total = self._apply_saved_franchise_merges()
-        total += self._apply_saved_manager_name_overrides()
-        total += self._link_schedule_opponent_identities()
+        self._identity_scope_filter(season_years=season_years)
+        total = self._apply_saved_franchise_merges(season_years=season_years)
+        total += self._apply_saved_manager_name_overrides(season_years=season_years)
+        total += self._link_schedule_opponent_identities(season_years=season_years)
         return total
 
     def _canonicalize_preseason_manager_names(self) -> int:
@@ -1327,7 +1339,7 @@ class MatchupEnrichmentsMixin:
                 )
         return total
 
-    def _apply_saved_franchise_merges(self) -> int:
+    def _apply_saved_franchise_merges(self, *, season_years: set[int] | None = None) -> int:
         """Reapply persisted identity merges before rebuilding derived manager data."""
         merges = getattr(self, "franchise_merges", None) or []
         if not merges:
@@ -1386,7 +1398,7 @@ class MatchupEnrichmentsMixin:
                     sql = f"""
                         UPDATE {table_ref} t
                         SET {', '.join(assignments)}
-                        WHERE {self._db_filter('t')}
+                        WHERE {self._identity_scope_filter('t', season_years=season_years)}
                           AND t.{identity_col} IN ({member_sql})
                     """
                     total += self._execute(sql, f"resolve_managers: saved merge {table}.{identity_col}")

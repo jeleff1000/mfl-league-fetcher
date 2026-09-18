@@ -459,6 +459,7 @@ def apply_fleet_merge(
     merged: dict[str, int] = {}
     season_rollups: dict[str, dict[str, int]] = {}
     season_seconds: dict[str, float] = {}
+    season_rollup_years: dict[str, list[int]] = {}
     career_rollups: dict[str, dict[str, int]] = {}
     career_seconds: dict[str, float] = {}
     homepage_rollups: dict[str, dict[str, int]] = {}
@@ -613,6 +614,8 @@ def apply_fleet_merge(
             from multi_league.transformations.aggregation.aggregation_utils import (
                 aggregate_career_rollups,
                 aggregate_complete_chain_season_rollups,
+                assert_retained_season_rollup_coverage,
+                HomepageValidationError,
             )
 
             # The source and season partitions are now merged, but still
@@ -622,9 +625,20 @@ def apply_fleet_merge(
             for db_name in sorted(merged_db_names):
                 if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
                     season_start = time.perf_counter()
-                    season_rollups[db_name] = aggregate_complete_chain_season_rollups(
-                        aggregation_conn, db_name
-                    )
+                    # Validated source partitions have exactly this season.
+                    # Unchanged historical seasons remain materialized; careers
+                    # and homepage outputs still read the complete live chain.
+                    changed_years = {manifest["active_year"]}
+                    try:
+                        season_rollups[db_name] = aggregate_complete_chain_season_rollups(
+                            aggregation_conn, db_name, season_years=changed_years
+                        )
+                        assert_retained_season_rollup_coverage(
+                            aggregation_conn, db_name, season_years=changed_years
+                        )
+                    except HomepageValidationError as exc:
+                        raise FleetValidationError(str(exc)) from exc
+                    season_rollup_years[db_name] = sorted(changed_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
                 career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)
@@ -669,6 +683,7 @@ def apply_fleet_merge(
         "tables": merged,
         "season_rollups": season_rollups,
         "season_seconds": season_seconds,
+        "season_rollup_years": season_rollup_years,
         "career_rollups": career_rollups,
         "career_seconds": career_seconds,
         "homepage_rollups": homepage_rollups,

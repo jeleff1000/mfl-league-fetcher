@@ -116,13 +116,18 @@ def central_table(table_name: str) -> str:
     return f"{_ACTIVE_TABLE_CATALOG}.public.{table_name}"
 
 
-def league_db_filter(db_name: str, alias: str = "") -> str:
-    """Return a ``db_name = '...'`` SQL fragment for scoping a single league."""
+def league_db_filter(db_name: str, alias: str = "", *, year: int | None = None) -> str:
+    """Scope one league, optionally restricting both reads and writes to a season."""
     prefix = f"{alias}." if alias else ""
-    return f"{prefix}db_name = '{db_name}'"
+    predicate = f"{prefix}db_name = '{db_name}'"
+    if year is not None:
+        if type(year) is not int or year <= 0:
+            raise ValueError("year must be a positive integer")
+        predicate += f" AND {prefix}year = {year}"
+    return predicate
 
 
-def reapply_persisted_manager_identities(conn, db_name: str) -> int:
+def reapply_persisted_manager_identities(conn, db_name: str, *, season_years: set[int] | None = None) -> int:
     """Reapply saved aliases and franchise merges before rebuilding rollups."""
     if not table_exists_in_catalog(conn, "league_context"):
         return 0
@@ -161,21 +166,22 @@ def reapply_persisted_manager_identities(conn, db_name: str) -> int:
         franchise_merges=franchise_merges,
     )
     try:
-        return enricher.reapply_saved_identity_settings()
+        return enricher.reapply_saved_identity_settings(season_years=season_years)
     finally:
         enricher.close()
 
 
-def aggregate_complete_chain_season_rollups(conn, db_name: str) -> dict[str, int]:
+def aggregate_complete_chain_season_rollups(
+    conn, db_name: str, *, season_years: set[int] | None = None,
+) -> dict[str, int]:
     """Rebuild season-derived dependencies from the complete persisted chain.
 
-    Weekly workers publish only changed source partitions.  Career and homepage
-    outputs are then rebuilt inside the same Fly transaction.  Their season
-    dependencies must be rebuilt there as well: retaining an older season
-    aggregate can mix superseded aggregation semantics with a newly rebuilt
-    career row even though the underlying historical source facts are intact.
+    ``season_years`` limits reads and writes to affected seasons. Omit it only
+    for an explicit full-chain aggregation. Careers and homepage outputs still
+    consume the complete persisted chain on the same connection.
 
-    This function never fetches provider data and never rewrites source tables.
+    This function never fetches provider data. Saved identity settings are
+    reapplied only within the requested source seasons before aggregation.
     The caller owns the transaction, so any failure rolls the source partition
     merge and every derived table back together.
     """
@@ -195,6 +201,11 @@ def aggregate_complete_chain_season_rollups(conn, db_name: str) -> dict[str, int
     )
 
     validate_db_name(db_name)
+    if season_years is not None:
+        for year in season_years:
+            league_db_filter(db_name, year=year)
+        if not season_years:
+            return {}
     if current_catalog(conn) != CENTRAL_DB_NAME:
         raise RuntimeError(
             "Complete-chain season publication requires the complete ___leagues connection, "
@@ -204,19 +215,80 @@ def aggregate_complete_chain_season_rollups(conn, db_name: str) -> dict[str, int
     for source in ("matchup", "league_settings", "player_fantasy", "draft", "transactions"):
         if not table_exists_in_catalog(conn, source):
             raise RuntimeError(f"Complete-chain season publication source is missing: {source}")
-    reapply_persisted_manager_identities(conn, db_name)
+    reapply_persisted_manager_identities(conn, db_name, season_years=season_years)
     for table in COMPLETE_CHAIN_SEASON_ROLLUP_TABLES:
         ensure_aggregate_table(conn, get_active_catalog(), table)
 
-    result = {
-        "matchup_season": aggregate_matchup_season(conn, db_name),
-        "player_fantasy_season": aggregate_fantasy_season(conn, db_name),
-        "player_fantasy_season_all": aggregate_fantasy_season_all(conn, db_name),
-        "draft_manager_season": aggregate_draft_manager_season(conn, db_name),
-        "transaction_manager_season": aggregate_transaction_manager_season(conn, db_name),
-    }
-    result["transaction_report_card"] = aggregate_transaction_report_card(conn, db_name)
+    result = dict.fromkeys(COMPLETE_CHAIN_SEASON_ROLLUP_TABLES, 0)
+    builders = (
+        aggregate_matchup_season, aggregate_fantasy_season,
+        aggregate_fantasy_season_all, aggregate_draft_manager_season,
+        aggregate_transaction_manager_season, aggregate_transaction_report_card,
+    )
+    for year in ([None] if season_years is None else sorted(season_years)):
+        for table, builder in zip(COMPLETE_CHAIN_SEASON_ROLLUP_TABLES, builders, strict=True):
+            result[table] += builder(conn, db_name, year=year)
     return result
+
+
+def assert_retained_season_rollup_coverage(conn, db_name: str, *, season_years: set[int]) -> None:
+    """Reject missing historical keys without recomputing historical values.
+
+    This is a narrow coverage check, not proof of historical value correctness.
+    Known stale values require an explicitly scoped correction/recovery run.
+    """
+    from multi_league.transformations.aggregation.aggregate_draft_context import _build_keeper_expr
+    from multi_league.transformations.aggregation.aggregate_transaction_context import _ADD_DROP_TRANSACTION_TYPES_SQL
+
+    configure_table_catalog(conn)
+    source_scope = league_db_filter(db_name, 'd')
+    for year in season_years:
+        league_db_filter(db_name, year=year)
+    if season_years:
+        source_scope += f" AND d.year NOT IN ({', '.join(map(str, sorted(season_years)))})"
+    draft_columns = get_available_columns(conn, 'draft')
+    keeper = _build_keeper_expr(draft_columns)
+    draft_category = "COALESCE(CAST(d.draft_category AS VARCHAR), 'standard')" if 'draft_category' in draft_columns else "'standard'"
+    matchup_columns = get_available_columns(conn, 'matchup')
+    placeholder_filter = 'AND COALESCE(d.is_placeholder, 0)=0' if 'is_placeholder' in matchup_columns else ''
+    regular_nfl = '((d.year >= 2021 AND d.week <= 18) OR (d.year < 2021 AND d.week <= 17))'
+    named_franchise = "d.franchise_id IS NOT NULL AND NULLIF(TRIM(d.manager), '') IS NOT NULL"
+    checks = (
+        ('matchup_season', 'matchup', 'year, franchise_id', 'd.year, d.franchise_id', f"""
+            d.franchise_id IS NOT NULL AND d.manager IS NOT NULL AND d.opponent IS NOT NULL
+            AND COALESCE(d.is_playoffs, 0)=0 AND COALESCE(d.is_consolation, 0)=0
+            AND COALESCE(d.is_bye_week, 0)=0 {placeholder_filter}
+            AND (COALESCE(d.team_points, 0)>0 OR COALESCE(d.opponent_points, 0)>0
+                 OR COALESCE(d.win, 0)=1 OR COALESCE(d.loss, 0)=1 OR COALESCE(d.tie, 0)=1)
+            AND d.week < COALESCE((SELECT MAX(ls.playoff_start_week)
+                FROM {central_table('league_settings')} ls
+                WHERE ls.db_name=d.db_name AND ls.year=d.year), 99)
+        """),
+        ('player_fantasy_season', 'player_fantasy', 'year, NFL_player_id', 'd.year, d.NFL_player_id',
+         f'd.NFL_player_id IS NOT NULL AND {regular_nfl}'),
+        ('player_fantasy_season_all', 'player_fantasy', 'year, NFL_player_id', 'd.year, d.NFL_player_id',
+         'd.NFL_player_id IS NOT NULL'),
+        ('draft_manager_season', 'draft', 'year, franchise_id, draft_category',
+         f"d.year, d.franchise_id, {draft_category}",
+         f"{named_franchise} AND TRIM(d.franchise_id)<>'' AND NOT ({keeper})"),
+        ('transaction_manager_season', 'transactions', 'year, franchise_id', 'd.year, d.franchise_id',
+         f'{named_franchise} AND d.transaction_type IN {_ADD_DROP_TRANSACTION_TYPES_SQL}'),
+        ('transaction_report_card', 'transaction_manager_season', 'year, franchise_id', 'd.year, d.franchise_id',
+         "d.franchise_id IS NOT NULL AND TRIM(d.franchise_id)<>''"),
+    )
+    for target, source, target_keys, source_keys, predicate in checks:
+        missing = conn.execute(f"""
+            SELECT {source_keys} FROM {central_table(source)} d
+            WHERE {source_scope} AND {predicate}
+            EXCEPT
+            SELECT {target_keys} FROM {central_table(target)} WHERE {league_db_filter(db_name)}
+            LIMIT 5
+        """).fetchall()
+        if missing:
+            raise HomepageValidationError(
+                f"Incomplete retained {target} for {db_name}: missing historical keys {missing}. "
+                "Recover the identified seasons before publishing this refresh."
+            )
 
 
 def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:

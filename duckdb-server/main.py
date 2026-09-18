@@ -476,28 +476,9 @@ def _wal_path(db_path: Path) -> Path:
     return db_path.with_name(f"{db_path.name}.wal")
 
 
-def _quarantine_wal(db_path: Path, *, reason: str) -> Path | None:
-    wal_path = _wal_path(db_path)
-    if not wal_path.exists():
-        return None
-    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    target = wal_path.with_name(f"{wal_path.name}.quarantine.{timestamp}")
-    counter = 1
-    while target.exists():
-        counter += 1
-        target = wal_path.with_name(f"{wal_path.name}.quarantine.{timestamp}.{counter}")
-    logger.error(
-        "Quarantining DuckDB WAL for %s after %s: %s -> %s",
-        db_path.name,
-        reason,
-        wal_path,
-        target,
-    )
-    wal_path.rename(target)
-    return target
-
-
-def _checkpoint_connection_if_wal_large(conn, db_path: Path, *, reason: str, force: bool = False) -> bool:
+def _checkpoint_connection_if_wal_large(
+    conn, db_path: Path, *, reason: str, force: bool = False, raise_on_error: bool = False
+) -> bool:
     if DUCKDB_CHECKPOINT_WAL_MB <= 0:
         return False
     before_mb = _wal_size_mb(db_path)
@@ -521,6 +502,8 @@ def _checkpoint_connection_if_wal_large(conn, db_path: Path, *, reason: str, for
         )
     except Exception as exc:
         logger.warning("DuckDB checkpoint failed for %s: %s", reason, exc, exc_info=True)
+        if raise_on_error:
+            raise
         return False
     after_mb = _wal_size_mb(db_path)
     logger.info(
@@ -575,24 +558,12 @@ def _checkpoint_database_if_wal_exists(db_path: Path, *, data_dir: Path, reason:
     conn = None
     try:
         conn = db.connect_database(db_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
-        return _checkpoint_connection_if_wal_large(conn, db_path, reason=reason, force=True)
+        return _checkpoint_connection_if_wal_large(
+            conn, db_path, reason=reason, force=True, raise_on_error=True
+        )
     finally:
         if conn is not None:
             conn.close()
-
-
-def _checkpoint_database_with_wal_quarantine(db_path: Path, *, data_dir: Path, reason: str) -> bool:
-    """Replay/checkpoint a startup WAL, preserving it if DuckDB cannot replay it."""
-    try:
-        return _checkpoint_database_if_wal_exists(db_path, data_dir=data_dir, reason=reason)
-    except Exception:
-        if _wal_size_mb(db_path) <= 0:
-            raise
-        logger.exception("DuckDB startup: %s WAL replay failed; quarantining WAL", db_path.name)
-        quarantined = _quarantine_wal(db_path, reason=f"{reason} WAL replay failure")
-        if quarantined is None:
-            raise
-        return False
 
 
 def _startup_db_sync(data_dir: Path) -> None:
@@ -601,12 +572,14 @@ def _startup_db_sync(data_dir: Path) -> None:
     logger.info("DuckDB startup: cleanup begin")
     cleanup_stale_uploads(data_dir)
     logger.info("DuckDB startup: checkpoint begin")
-    _checkpoint_database_with_wal_quarantine(
+    # A WAL may contain acknowledged publications. Never hide it on a replay
+    # or checkpoint failure and then serve the older checkpoint as current.
+    _checkpoint_database_if_wal_exists(
         data_dir / "___leagues.duckdb",
         data_dir=data_dir,
         reason="startup ___leagues",
     )
-    _checkpoint_database_with_wal_quarantine(
+    _checkpoint_database_if_wal_exists(
         data_dir / "___ops.duckdb",
         data_dir=data_dir,
         reason="startup ___ops",
@@ -2305,6 +2278,11 @@ def _reaggregate_damaged_derived_from_sources(
                             f"{table} has duplicate scoped keys for {db_name}: "
                             f"rows={row_count}, distinct={distinct_keys}"
                         )
+                fleet_merge.ensure_generation_tables(conn)
+                fleet_merge.bump_generations(
+                    conn, [db_name], lane="derived-recovery", run_id="scoped-rebuild"
+                )
+                generation = fleet_merge.current_generations(conn, [db_name])[db_name]
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -2328,6 +2306,7 @@ def _reaggregate_damaged_derived_from_sources(
             "leagues": 1,
             "targets": list(_DAMAGED_DERIVED_TARGETS),
             "target_counts": target_counts,
+            "generation": generation,
             "elapsed_seconds": elapsed_seconds,
             "checkpointed": False,
         }

@@ -158,7 +158,7 @@ def _build_seed_snapshot_select(
     return f",\n        {seed_expr} AS playoff_seed_to_date"
 
 
-def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False) -> int:
+def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False, *, year: int | None = None) -> int:
     """Build matchup_season table from weekly matchup data.
 
     One row per (manager, year) with:
@@ -167,6 +167,7 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False) -> int:
     - Playoff detection from post-regular-season rows
     """
     log("Building matchup_season table...")
+    season_scope = league_db_filter(db_name, year=year)
     configure_table_catalog(conn)
 
     existing_cols = get_available_columns(conn, db_name, "matchup")
@@ -184,12 +185,20 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False) -> int:
     years = [
         r[0]
         for r in conn.execute(
-            f"SELECT DISTINCT year FROM {central_table('matchup')} WHERE {league_db_filter(db_name)} AND year IS NOT NULL ORDER BY year"
+            f"SELECT DISTINCT year FROM {central_table('matchup')} WHERE {season_scope} AND year IS NOT NULL ORDER BY year"
         ).fetchall()
     ]
 
     if not years:
         log("  No years found in matchup table")
+        if year is not None and not dry_run:
+            ensure_aggregate_table(conn, get_active_catalog(), "matchup_season")
+            execute_scoped(
+                conn,
+                f"DELETE FROM {central_table('matchup_season')} WHERE {season_scope}",
+                db_name,
+                label="matchup_season:delete",
+            )
         return 0
 
     # Fill in missing year boundaries with fallback (max week where all managers present)
@@ -229,7 +238,7 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False) -> int:
     if not dry_run:
         execute_scoped(
             conn,
-            f"DELETE FROM {central_table('matchup_season')} WHERE db_name = '{db_name}'",
+            f"DELETE FROM {central_table('matchup_season')} WHERE {season_scope}",
             db_name,
             label="matchup_season:delete",
         )

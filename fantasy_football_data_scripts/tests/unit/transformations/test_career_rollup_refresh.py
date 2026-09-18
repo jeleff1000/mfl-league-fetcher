@@ -318,6 +318,82 @@ def test_complete_chain_rollups_reapply_saved_manager_merges_before_aggregation(
     ]
 
 
+@pytest.mark.parametrize('changed_year', [2025, 2026])
+def test_scoped_season_rollups_preserve_other_years_and_keep_full_careers(homepage_chain, changed_year):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.draft
+            (db_name, year, round, pick, manager, franchise_id, player,
+             NFL_player_id, manager_lamar, cost)
+        VALUES ('test_league',2025,1,1,'Shared Alias','f1','Player','p1',5,10),
+               ('test_league',2026,1,1,'Shared Alias','f1','Player','p1',8,10)
+    """)
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name, transaction_id, year, week, manager, franchise_id,
+             player, NFL_player_id, transaction_type, manager_lamar_ros_managed)
+        VALUES ('test_league','old',2025,1,'Shared Alias','f1','Player','p1','add',5),
+               ('test_league','new',2026,1,'Shared Alias','f1','Player','p1','add',8)
+    """)
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    tables = aggregation_utils.COMPLETE_CHAIN_SEASON_ROLLUP_TABLES
+    historical = {
+        table: conn.execute(
+            f'SELECT * FROM public.{table} WHERE db_name=? AND year<>? ORDER BY year',
+            ['test_league', changed_year],
+        ).fetchall()
+        for table in tables
+    }
+    other_league = conn.execute("SELECT * FROM public.player_fantasy WHERE db_name='another_league'").fetchall()
+    conn.execute("UPDATE public.player_fantasy SET fantasy_points=40 WHERE db_name='test_league' AND year=?", [changed_year])
+    conn.execute("UPDATE public.matchup SET team_points=150.25 WHERE db_name='test_league' AND year=?", [changed_year])
+    conn.execute("UPDATE public.draft SET manager_lamar=12 WHERE db_name='test_league' AND year=?", [changed_year])
+    conn.execute("UPDATE public.transactions SET manager_lamar_ros_managed=12 WHERE db_name='test_league' AND year=?", [changed_year])
+
+    for _ in range(2):
+        counts = aggregation_utils.aggregate_complete_chain_season_rollups(
+            conn, 'test_league', season_years={changed_year},
+        )
+        aggregation_utils.aggregate_career_rollups(conn, 'test_league')
+        assert counts == {table: 1 for table in tables}
+        for table, before in historical.items():
+            assert conn.execute(
+                f'SELECT * FROM public.{table} WHERE db_name=? AND year<>? ORDER BY year',
+                ['test_league', changed_year],
+            ).fetchall() == before, table
+        assert conn.execute(
+            "SELECT fantasy_points FROM public.player_fantasy_season WHERE db_name='test_league' AND year=?",
+            [changed_year],
+        ).fetchone() == (40,)
+        assert conn.execute(
+            "SELECT total_team_points FROM public.matchup_season WHERE db_name='test_league' AND year=?",
+            [changed_year],
+        ).fetchone() == (150.25,)
+        assert conn.execute(
+            "SELECT total_manager_lamar FROM public.draft_manager_season WHERE db_name='test_league' AND year=?",
+            [changed_year],
+        ).fetchone() == (12,)
+        assert conn.execute(
+            "SELECT total_lamar FROM public.transaction_report_card WHERE db_name='test_league' AND year=?",
+            [changed_year],
+        ).fetchone() == (12,)
+        assert conn.execute(
+            "SELECT fantasy_points, years_active FROM public.player_fantasy_career WHERE db_name='test_league'",
+        ).fetchone() == ((70 if changed_year == 2025 else 60), 2)
+        assert conn.execute(
+            "SELECT manager, games, seasons FROM public.matchup_career WHERE db_name='test_league'",
+        ).fetchone() == ('Shared Alias', 2, 2)
+    assert conn.execute("SELECT * FROM public.player_fantasy WHERE db_name='another_league'").fetchall() == other_league
+
+
+def test_empty_season_scope_does_not_rewrite_existing_rollups(homepage_chain):
+    conn = homepage_chain
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    before = conn.execute('SELECT * FROM public.matchup_season ORDER BY db_name,year').fetchall()
+    assert aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league', season_years=set()) == {}
+    assert conn.execute('SELECT * FROM public.matchup_season ORDER BY db_name,year').fetchall() == before
+
+
 def test_shared_career_rebuild_does_not_commit_the_callers_transaction(merged_chain):
     conn = merged_chain
     conn.execute('BEGIN TRANSACTION')
@@ -394,7 +470,7 @@ def test_homepage_coverage_ignores_historical_placeholder_franchises(homepage_ch
     """).fetchall() == [('f1',)]
 
 
-def test_homepage_fleet_merge_rebuilds_complete_chain_season_dependencies(
+def test_homepage_fleet_merge_preserves_unaffected_season_dependencies(
     homepage_chain, tmp_path
 ):
     server = _fleet_server()
@@ -405,12 +481,8 @@ def test_homepage_fleet_merge_rebuilds_complete_chain_season_dependencies(
         VALUES ('test_league', 2025, 'yahoo', 'old', 2, 15, 0),
                ('test_league', 2026, 'sleeper', 'new', 2, 15, 0)
     """)
-    conn.execute("""
-        INSERT INTO public.player_fantasy_season
-            (db_name, NFL_player_id, year, player, fantasy_points,
-             games_started, games_rostered, wins, losses)
-        VALUES ('test_league', 'p1', 2025, 'Player', 20, 1, 1, 99, 99)
-    """)
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    historical = conn.execute("SELECT * FROM public.player_fantasy_season WHERE year=2025").fetchall()
     before_source = conn.execute("""
         SELECT COUNT(*), bit_xor(hash(t))
         FROM public.player_fantasy t
@@ -420,8 +492,9 @@ def test_homepage_fleet_merge_rebuilds_complete_chain_season_dependencies(
 
     receipt = server.apply_fleet_merge(conn, bundle.manifest, extracted)
 
-    assert receipt['season_rollups']['test_league']['matchup_season'] == 2
-    assert receipt['season_rollups']['test_league']['player_fantasy_season'] == 2
+    assert receipt['season_rollups']['test_league']['matchup_season'] == 1
+    assert receipt['season_rollups']['test_league']['player_fantasy_season'] == 1
+    assert conn.execute("SELECT * FROM public.player_fantasy_season WHERE year=2025").fetchall() == historical
     assert receipt['season_seconds']['test_league'] >= 0
     assert conn.execute("""
         SELECT year, wins, losses
@@ -604,6 +677,7 @@ def test_weekly_publication_rebuilds_homepage_on_same_full_chain(merged_chain, t
         VALUES ('test_league',2025,1,'Shared Alias','f1','Team',140,100,1,0,0,0,0,0),
                ('test_league',2026,1,'Shared Alias','f1','Team',110,120,0,1,0,0,0,0)
     """)
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
     bundle, extracted = _weekly_bundle(tmp_path, homepage=True)
     assert [entry['table'] for entry in bundle.manifest['tables']] == ['matchup_season']
     server = _fleet_server()
@@ -620,6 +694,7 @@ def test_weekly_publication_rebuilds_homepage_on_same_full_chain(merged_chain, t
 
 def test_homepage_failure_rolls_back_careers_and_partition_changes(merged_chain, tmp_path):
     conn = merged_chain
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
     bundle, extracted = _weekly_bundle(tmp_path, homepage=True)
     conn.execute('DROP TABLE public.league_context')
     before = conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall()
@@ -629,3 +704,85 @@ def test_homepage_failure_rolls_back_careers_and_partition_changes(merged_chain,
     assert conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall() == before
     assert conn.execute("SELECT COUNT(*) FROM public.matchup_career WHERE db_name='test_league'").fetchone() == (0,)
     assert server.current_generations(conn, ['test_league']) == {'test_league': 0}
+
+
+def test_scoped_season_rollups_do_not_rewrite_identity_outside_selected_year(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.league_context
+            (db_name,manager_name_overrides_json,franchise_merges_json)
+        VALUES ('test_league','{"Shared Alias":"Preferred Alias"}',
+                '[{"from_franchise_id":"f1","into_franchise_id":"canonical","name":"Preferred Alias"}]')
+    """)
+    before = conn.execute("""
+        SELECT * FROM public.player_fantasy WHERE db_name='test_league' AND year=2025
+    """).fetchall()
+
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league', season_years={2026})
+
+    assert conn.execute("""
+        SELECT manager,franchise_id FROM public.player_fantasy
+        WHERE db_name='test_league' AND year=2026
+    """).fetchall() == [('Preferred Alias', 'canonical')]
+    assert conn.execute("""
+        SELECT * FROM public.player_fantasy WHERE db_name='test_league' AND year=2025
+    """).fetchall() == before
+
+
+def test_scoped_matchup_rollup_clears_removed_season_without_erasing_other_years(homepage_chain):
+    conn = homepage_chain
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    before = conn.execute("SELECT * FROM public.matchup_season WHERE year=2025").fetchall()
+    conn.execute("DELETE FROM public.matchup WHERE db_name='test_league' AND year=2026")
+
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league', season_years={2026})
+
+    assert conn.execute("SELECT COUNT(*) FROM public.matchup_season WHERE db_name='test_league' AND year=2026").fetchone() == (0,)
+    assert conn.execute("SELECT * FROM public.matchup_season WHERE year=2025").fetchall() == before
+
+
+@pytest.mark.parametrize('table', aggregation_utils.COMPLETE_CHAIN_SEASON_ROLLUP_TABLES)
+def test_retained_season_coverage_rejects_missing_keys_not_just_empty_tables(homepage_chain, table):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.draft (db_name,year,manager,franchise_id,player,manager_lamar)
+        VALUES ('test_league',2025,'Shared Alias','f1','Player',5),
+               ('test_league',2026,'Shared Alias','f1','Player',8)
+    """)
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name,year,week,transaction_id,transaction_type,manager,franchise_id,player)
+        VALUES ('test_league',2025,1,'old','add','Shared Alias','f1','Player'),
+               ('test_league',2026,1,'new','add','Shared Alias','f1','Player')
+    """)
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    key = 'NFL_player_id' if table.startswith('player_fantasy') else 'franchise_id'
+    # Keep the row count and season present, but lose the actual required key.
+    conn.execute(f"UPDATE public.{table} SET {key}='unrelated' WHERE db_name='test_league' AND year=2025")
+    before = conn.execute(f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year").fetchall()
+
+    with pytest.raises(RuntimeError, match=f'{table}.*2025'):
+        aggregation_utils.assert_retained_season_rollup_coverage(conn, 'test_league', season_years={2026})
+
+    assert conn.execute(f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year").fetchall() == before
+
+
+def test_retained_coverage_supports_draft_without_category(homepage_chain):
+    conn = homepage_chain
+    conn.execute('ALTER TABLE public.draft DROP COLUMN draft_category')
+    conn.execute("""
+        INSERT INTO public.draft (db_name,year,manager,franchise_id,player,manager_lamar)
+        VALUES ('test_league',2025,'Shared Alias','f1','Player',5)
+    """)
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    aggregation_utils.assert_retained_season_rollup_coverage(conn, 'test_league', season_years={2026})
+    assert conn.execute("SELECT picks,draft_category FROM public.draft_manager_season WHERE db_name='test_league'").fetchall() == [(1, 'standard')]
+
+
+def test_retained_coverage_does_not_drop_blank_manager_franchises(homepage_chain):
+    conn = homepage_chain
+    conn.execute("UPDATE public.matchup SET manager='' WHERE db_name='test_league' AND year=2025")
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    conn.execute("DELETE FROM public.matchup_season WHERE db_name='test_league' AND year=2025")
+    with pytest.raises(RuntimeError, match='matchup_season.*2025'):
+        aggregation_utils.assert_retained_season_rollup_coverage(conn, 'test_league', season_years={2026})

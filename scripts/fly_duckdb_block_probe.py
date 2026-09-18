@@ -43,6 +43,19 @@ def probe(path, offset):
         raise ValueError("Short block read")
     stored = struct.unpack_from("<Q", block)[0]
     computed = checksum(block[8:])
+    syndrome = stored ^ computed
+    # Multiplication by an odd constant preserves the lowest changed bit.
+    # Thus a single-bit fault can only flip the lowest set bit of the syndrome.
+    # Count every matching word: the XOR checksum cannot identify an offset
+    # uniquely in general, and even a single candidate is not a repair witness.
+    payload_candidates = 0
+    if syndrome:
+        bit = syndrome & -syndrome
+        mask = (1 << 64) - 1
+        multiplier = 0xBF58476D1CE4E5B9
+        for (word,) in struct.iter_unpack("<Q", block[8:]):
+            difference = ((word * multiplier) & mask) ^ (((word ^ bit) * multiplier) & mask)
+            payload_candidates += difference == syndrome
     return {
         "offset": offset,
         "block_id": (offset - 12288) // block_size,
@@ -55,6 +68,9 @@ def probe(path, offset):
         "stored_checksum": stored,
         "computed_checksum": computed,
         "checksum_valid": stored == computed,
+        "single_bit_payload_candidates": payload_candidates,
+        "single_bit_checksum_candidate": bool(syndrome and syndrome.bit_count() == 1),
+        "repair_authorized": False,
     }
 
 

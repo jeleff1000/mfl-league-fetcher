@@ -357,6 +357,71 @@ def compare_witness(before, after):
         raise ValueError("preservation witness changed: " + ", ".join(changed))
 
 
+def export_witness_fixture(db_name, query):
+    """At most twenty real aggregate rows; no facts/configuration/credentials."""
+    if not re.fullmatch(r'[a-z0-9_]+', db_name):
+        raise ValueError('invalid fixture league')
+    result = {'db_name': db_name, 'tables': {}}
+    allowed = ','.join("'" + name + "'" for name in CANONICAL)
+    schema = query("SELECT table_name,column_name FROM duckdb_columns() "
+                   "WHERE database_name=current_database() AND schema_name='public' "
+                   f"AND table_name IN ({allowed}) ORDER BY table_name,column_index")
+    parts = []
+    for table in CANONICAL:
+        names = [r['column_name'] for r in schema if r['table_name'] == table]
+        if not 1 <= len(names) <= 128 or 'db_name' not in names or len(set(names)) != len(names):
+            raise ValueError('fixture schema is missing, duplicate or oversized')
+        order = sorted(names, key=lambda n: (n not in {'year', 'week', 'first_year'}, n != 'year', n))
+        select = f'SELECT {", ".join(_quote(n) for n in names)} FROM public.{_quote(table)} WHERE db_name=\'{db_name}\''
+        halves = ' UNION ALL '.join(
+            f'({select} ORDER BY {", ".join(_quote(n) + " " + direction + " NULLS LAST" for n in order)} LIMIT 2)'
+            for direction in ('ASC', 'DESC'))
+        parts.append(f"SELECT '{table}' AS table_name,to_json(witness_sample) AS row_json FROM ({halves}) AS witness_sample")
+        result['tables'][table] = {'columns': names, 'rows': []}
+    samples = query(' UNION ALL '.join(parts))
+    for table, entry in result['tables'].items():
+        unique = {}
+        for sample in samples:
+            if sample['table_name'] != table:
+                continue
+            row = json.loads(sample['row_json'])
+            values = [row[n] for n in entry['columns']]
+            unique[json.dumps(values, sort_keys=True, default=str)] = values
+        if not 1 <= len(unique) <= 4:
+            raise ValueError(f'fixture source {table} is empty or oversized')
+        entry['rows'] = list(unique.values())
+    if len(json.dumps(result, default=str).encode()) > 65536:
+        raise ValueError('fixture exceeds 64 KiB ceiling')
+    return result
+
+
+def seed_witness_fixture(conn, bundle, db_name, machine, volume, runtime_machine_id):
+    """Isolated test rows only, inside the caller's removal transaction.
+
+    Never overwrite existing rows. Validate every table before any insert.
+    This is fixture setup, not a production recovery or aggregation path.
+    """
+    validate_inventory(machine, volume, runtime_machine_id, '/data/___leagues.duckdb')
+    if (conn.execute('SELECT current_database()').fetchone()[0] != '___leagues'
+            or bundle.get('db_name') != db_name or set(bundle.get('tables', {})) != set(CANONICAL)
+            or len(json.dumps(bundle, default=str).encode()) > 65536):
+        raise ValueError('fixture scope does not match the isolated five-table test')
+    for table, sample in bundle['tables'].items():
+        names, rows = sample['columns'], sample['rows']
+        if (not 1 <= len(names) <= 128 or len(set(names)) != len(names) or 'db_name' not in names
+                or not 1 <= len(rows) <= 4
+                or any(len(row) != len(names) or row[names.index('db_name')] != db_name for row in rows)):
+            raise ValueError('fixture contains unexpected columns, rows or league identity')
+        columns = {r[0] for r in conn.execute("SELECT column_name FROM duckdb_columns() WHERE database_name=current_database() AND schema_name='public' AND table_name=?", [table]).fetchall()}
+        if not set(names).issubset(columns):
+            raise ValueError(f'fixture schema mismatch for {table}: {sorted(set(names)-columns)}')
+        if conn.execute(f'SELECT 1 FROM public.{_quote(table)} WHERE db_name=? LIMIT 1', [db_name]).fetchone():
+            raise ValueError(f'fixture would modify existing rows in {table}')
+    for table, sample in bundle['tables'].items():
+        names = sample['columns']
+        conn.executemany(f'INSERT INTO public.{_quote(table)} ({", ".join(_quote(n) for n in names)}) VALUES ({", ".join("?" for _ in names)})', sample['rows'])
+
+
 def object_inventory(conn):
     return conn.execute("""SELECT database_name, schema_name, table_name FROM duckdb_tables()
         WHERE database_name=current_database() AND schema_name='public'
@@ -364,7 +429,7 @@ def object_inventory(conn):
         [list(CANONICAL + QUARANTINED)]).fetchall()
 
 
-def remove_quarantined(conn):
+def remove_quarantined(conn, *, prepare=None):
     """One transaction, exact five-name scope; partial absence is not a retry."""
     rows = object_inventory(conn)
     names = {row[2] for row in rows}
@@ -375,6 +440,8 @@ def remove_quarantined(conn):
     validate_objects(rows)
     conn.execute('BEGIN TRANSACTION')
     try:
+        if prepare is not None:
+            prepare()
         for name in QUARANTINED:
             conn.execute(f'DROP TABLE public.{_quote(name)}')
         conn.execute('COMMIT')
@@ -481,7 +548,8 @@ def recovery_child(args):
         raise ValueError('committed WAL differs from the retained first-attempt receipt')
     write_receipt(folder / 'input.json', {'binding': binding, 'files': files, 'wal': wal,
                                         'inventory_base64': args.inventory_base64,
-                                        'helper_sha256': args.helper_sha256, 'db_name': args.db_name})
+                                        'helper_sha256': args.helper_sha256, 'db_name': args.db_name,
+                                        'fixture_sha256': args.fixture_sha256})
     if preflight_identity(args.inventory_base64, os.environ.get('FLY_MACHINE_ID', '')) != binding:
         raise ValueError('database identity changed while preserving WAL')
     print(json.dumps({'event': 'wal_preserved', **wal}), flush=True)
@@ -498,13 +566,29 @@ def recovery_child(args):
                       'wal_source_bytes': wal['bytes'], 'metadata_blocks': hook.lh_spike_allocations()}), flush=True)
     phase('preserve')
     validate_objects(object_inventory(conn))
-    before = capture_witness(conn, args.db_name)
-    write_receipt(folder / 'before.json', before)
-
-    phase('remove')
-    hook.lh_spike_arm()
     prior = hook.lh_spike_count()
-    removed = remove_quarantined(conn)
+
+    def prepare():
+        if args.witness_fixture:
+            sample_path = Path(args.witness_fixture)
+            if (sample_path != Path('/tmp/lh_recovery_witness.json') or sample_path.is_symlink()
+                    or sample_path.stat().st_size > 65536):
+                raise ValueError('fixture is not the bounded isolated input')
+            raw = sample_path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != args.fixture_sha256:
+                raise ValueError('fixture fingerprint mismatch')
+            inventory = json.loads(base64.b64decode(args.inventory_base64))
+            sample = json.loads(raw)
+            write_receipt(folder / 'fixture.json', sample)
+            seed_witness_fixture(conn, sample, args.db_name, inventory['machine'], inventory['volume'], os.environ['FLY_MACHINE_ID'])
+            print(json.dumps({'event': 'isolated_fixture_staged', 'rows': sum(len(t['rows']) for t in sample['tables'].values()),
+                              'bytes': len(raw), 'sha256': args.fixture_sha256}), flush=True)
+        before = capture_witness(conn, args.db_name)
+        write_receipt(folder / 'before.json', before)
+        phase('remove')
+        hook.lh_spike_arm()
+
+    removed = remove_quarantined(conn, prepare=prepare)
     hook.lh_spike_disarm()
     if removed != 5 or hook.lh_spike_count() - prior != 5:
         raise ValueError('unexpected native removal count; outcome UNKNOWN')
@@ -539,11 +623,31 @@ def main():
     parser.add_argument('--deadline', type=float)
     parser.add_argument('--recovery-child', action='store_true')
     parser.add_argument('--stock-child')
+    parser.add_argument('--export-fixture')
+    parser.add_argument('--witness-fixture')
+    parser.add_argument('--fixture-sha256')
     args = parser.parse_args()
     if args.recovery_child or args.stock_child:
         protect_parent(int(os.environ.get('LH_RECOVERY_SUPERVISOR_PID', '0')))
     if not re.fullmatch(r'[a-z0-9_]+', args.db_name):
         raise ValueError('invalid witness league')
+    if args.export_fixture:
+        import urllib.request
+
+        def query(sql):
+            request = urllib.request.Request(os.environ['DATABASE_SERVER_URL'].rstrip('/') + '/query',
+                data=json.dumps({'database': '___leagues', 'sql': sql}).encode(),
+                headers={'Authorization': 'Bearer ' + os.environ['DATABASE_READ_TOKEN'], 'Content-Type': 'application/json'})
+            with urllib.request.urlopen(request, timeout=2) as response:
+                data = response.read(65537)
+            if len(data) > 65536:
+                raise ValueError('fixture response exceeds 64 KiB ceiling')
+            return json.loads(data)
+
+        bundle = export_witness_fixture(args.db_name, query)
+        write_receipt(Path(args.export_fixture), bundle)
+        print(json.dumps({'event': 'fixture_exported', 'rows': sum(len(t['rows']) for t in bundle['tables'].values())}), flush=True)
+        return 0
     if args.stock_child:
         if not args.deadline or not 0 < args.deadline-time.time() <= 40:
             raise ValueError('stock verification requires the original bounded deadline')
@@ -576,6 +680,12 @@ def main():
     if args.recovery_child:
         recovery_child(args)
         return 0
+    if args.witness_fixture:
+        if not re.fullmatch(r'[0-9a-f]{64}', args.fixture_sha256 or ''):
+            raise ValueError('fixture requires its exact fingerprint')
+        # Export has its own 5s ceiling inside the SAME 40s workflow deadline.
+        # Reserve that full allowance from the cumulative 10s preservation cap.
+        STAGE_LIMITS['preserve'] = 5
     env = dict(os.environ)
     env['LD_PRELOAD'] = '/tmp/lh_five_drop.so'
     env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())

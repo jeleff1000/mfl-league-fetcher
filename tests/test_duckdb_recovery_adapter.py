@@ -269,6 +269,91 @@ def test_stock_verification_requires_no_quarantine_and_preserves_real_values(tmp
         a.verify_stock(path, 'nyu_ffl', before)
 
 
+def test_real_value_fixture_and_drops_rollback_together_and_preserve_other_leagues(tmp_path):
+    a = adapter()
+    machine, volume = inventory()
+    with duckdb.connect(str(tmp_path / '___leagues.duckdb')) as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL + a.QUARANTINED:
+            conn.execute(f'CREATE TABLE public."{name}" (db_name VARCHAR, year INTEGER, manager VARCHAR, points DOUBLE)')
+            conn.execute(f'INSERT INTO public."{name}" VALUES (?,?,?,?)', ['unrelated', 2011, 'Saved Alias', 123.45])
+        bundle = {'db_name': 'nyu_ffl', 'tables': {name: {
+            'columns': ['db_name', 'year', 'manager', 'points'],
+            'rows': [['nyu_ffl', 2018, 'Preferred Alias', 91.23], ['nyu_ffl', 2026, 'Preferred Alias', 110.01]],
+        } for name in a.CANONICAL}}
+
+        def prepare(fail=False):
+            a.seed_witness_fixture(conn, bundle, 'nyu_ffl', machine, volume, machine['id'])
+            if fail:
+                raise ValueError('preservation refused')
+
+        with pytest.raises(ValueError, match='preservation refused'):
+            a.remove_quarantined(conn, prepare=lambda: prepare(True))
+        assert len(a.object_inventory(conn)) == 10
+        for name in a.CANONICAL:
+            assert conn.execute(f'SELECT * FROM public."{name}"').fetchall() == [('unrelated', 2011, 'Saved Alias', 123.45)]
+        assert a.remove_quarantined(conn, prepare=prepare) == 5
+        # A repeated removal must not rerun fixture insertion or duplicate rows.
+        assert a.remove_quarantined(conn, prepare=lambda: pytest.fail('repeated seed')) == 0
+        for name in a.CANONICAL:
+            assert conn.execute(f'SELECT year,manager,points FROM public."{name}" WHERE db_name=? ORDER BY year', ['nyu_ffl']).fetchall() == [(2018, 'Preferred Alias', 91.23), (2026, 'Preferred Alias', 110.01)]
+            assert conn.execute(f'SELECT points FROM public."{name}" WHERE db_name=?', ['unrelated']).fetchall() == [(123.45,)]
+
+
+def test_fixture_export_is_twenty_rows_at_most_with_old_and_recent_real_values():
+    a = adapter()
+    queries = []
+    with duckdb.connect(':memory:') as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT \'nyu_ffl\' AS db_name, 2010+i AS year, \'Saved Alias\' AS manager, (90+i)::DOUBLE AS points FROM range(20) t(i)')
+            conn.execute(f'INSERT INTO public."{name}" VALUES (?,?,?,?)', ['other', 1990, 'Private Other', 500])
+
+        def query(sql):
+            queries.append(sql)
+            # Live Fly /query rejects a leading parenthesis as a non-read.
+            if not sql.lstrip().lower().startswith('select '):
+                raise ValueError('read endpoint requires SELECT')
+            rows = conn.execute(sql).fetchall()
+            names = [c[0] for c in conn.description]
+            return [dict(zip(names, row)) for row in rows]
+
+        bundle = a.export_witness_fixture('nyu_ffl', query)
+        assert len(queries) <= 2, 'ten network round trips exceed the bounded read budget'
+        assert sum(len(t['rows']) for t in bundle['tables'].values()) == 20
+        for table in bundle['tables'].values():
+            records = [dict(zip(table['columns'], r)) for r in table['rows']]
+            assert sorted(r['year'] for r in records) == [2010, 2011, 2028, 2029]
+            assert {r['manager'] for r in records} == {'Saved Alias'}
+            assert {r['db_name'] for r in records} == {'nyu_ffl'}
+
+
+@pytest.mark.parametrize('defect', ['primary', 'extra_table', 'other_league', 'too_many_rows', 'existing_rows'])
+def test_fixture_refuses_wrong_scope_or_overwriting_existing_rows(tmp_path, defect):
+    a = adapter()
+    machine, volume = inventory()
+    with duckdb.connect(str(tmp_path / '___leagues.duckdb')) as conn:
+        conn.execute('CREATE SCHEMA public')
+        for name in a.CANONICAL + a.QUARANTINED:
+            conn.execute(f'CREATE TABLE public."{name}" (db_name VARCHAR, points DOUBLE)')
+        bundle = {'db_name': 'nyu_ffl', 'tables': {name: {'columns': ['db_name', 'points'], 'rows': [['nyu_ffl', 91.23]]} for name in a.CANONICAL}}
+        if defect == 'primary':
+            machine['id'] = '1781e011b69068'
+        elif defect == 'extra_table':
+            bundle['tables']['matchup'] = bundle['tables'][a.CANONICAL[0]]
+        elif defect == 'other_league':
+            bundle['tables'][a.CANONICAL[-1]]['rows'][0][0] = 'other'
+        elif defect == 'too_many_rows':
+            bundle['tables'][a.CANONICAL[-1]]['rows'] *= 5
+        else:
+            conn.execute(f'INSERT INTO public."{a.CANONICAL[-1]}" VALUES (?,?)', ['nyu_ffl', 7])
+        with pytest.raises(ValueError):
+            a.remove_quarantined(conn, prepare=lambda: a.seed_witness_fixture(conn, bundle, 'nyu_ffl', machine, volume, machine['id']))
+        assert len(a.object_inventory(conn)) == 10
+        for name in a.CANONICAL[:-1]:
+            assert conn.execute(f'SELECT COUNT(*) FROM public."{name}"').fetchone() == (0,)
+
+
 def test_parent_enforces_phase_deadlines_and_rejects_unexpected_transitions():
     a = adapter()
     a.STAGE_LIMITS['remove'] = .2

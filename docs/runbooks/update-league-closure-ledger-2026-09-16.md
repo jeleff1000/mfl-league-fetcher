@@ -2,6 +2,46 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded physical-block evidence - 2026-09-18 03:14 UTC
+
+Previous turn classification: progress (published regression-tested safeguards
+and reconciled the actual failed import). This turn tested a different bounded
+hypothesis: an existing recovery volume might contain the exact intact block.
+
+Public main `0e64967e1` adds a read-only diagnostic to the existing diagnostics
+workflow, not a recovery writer. Six tests against a small real DuckDB file pass,
+including intentional corruption and unchanged-file checks. The two local
+workflow copies match; the app-repository mirror is currently uncommitted.
+The diagnostic reads 274,432 bytes per file (headers plus one 256 KiB block),
+never opens a DuckDB connection, and outputs only hashes/checksums. Its mode
+rejects snapshot creation/restoration, restart and cleanup inputs.
+
+- Run `35302239058` completed in 42 seconds. Existing
+  `vol_rnzedj36djy0nzpr`, sourced from `vs_vaV5mX0ZV1AT2yyvy0gz`, has exactly
+  the same corrupt block 346 as primary: SHA256
+  `7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186`.
+- Run `35302351182` completed in 44 seconds. Existing
+  `vol_vp26dp2g9x3167j4`, sourced from the September 15 snapshot
+  `vs_PAq3Q9kRqKnfnAJNXyOb`, has a valid block at that offset, but its checksum
+  is `4489825339806310033`, NOT the primary's expected
+  `18392342689821271652`. It is therefore not an established donor for the
+  live block; copying it would be unjustified. Its SHA256 is
+  `a88410212183c07947a2544a118730218dfad981eb317719fbd249eceac96aff`.
+
+Both probe machines were destroyed after the read. No database bytes, WAL,
+production configuration or league rows were changed. No volume was created,
+copied, restored or deleted. The snapshot metadata was read to identify the
+already-existing volumes, not used to initiate a restore.
+
+The user's isolation requirement is unmet: `db_name` scopes logical rows, but
+all leagues still share the same physical file/checkpoint. An unrelated ESPN
+upload failing on that block is direct evidence of the shared failure boundary.
+Neither repeating the import, replacing a checksum, nor substituting a different
+historical block is an acceptable remedy. A safe supported way to remove/repair
+the corrupt physical reference remains unproven; storage recovery and all live
+publication acceptance checks remain open. Do not expand into a storage migration
+or a full database copy without a new user decision.
+
 ## Current checkpoint - 2026-09-18 03:00 UTC
 
 **The storage defect is OPEN. This checkpoint supersedes earlier claims that

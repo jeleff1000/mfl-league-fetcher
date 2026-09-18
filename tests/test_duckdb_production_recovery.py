@@ -127,6 +127,8 @@ def test_handoff_restores_exact_config_only_after_proof_and_uncordons_after_heal
         def wait(self, state, seconds=30):
             self.calls.append(('wait', state, None))
             self.current['state'] = state
+            if state == 'stopped':
+                self.current['instance_id'] = 'stopped-version'
             return copy.deepcopy(self.current)
 
     api = API()

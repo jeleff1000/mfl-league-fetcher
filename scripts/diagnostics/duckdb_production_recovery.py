@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import urllib.request
+import urllib.error
 
 import duckdb_recovery_adapter as a
 
@@ -212,8 +213,13 @@ class Fly:
         url = 'https://api.machines.dev/v1/apps/league-history-duckdb/machines/' + MACHINE + suffix
         request = urllib.request.Request(url, data=None if data is None else json.dumps(data).encode(),
                                          headers=self.headers, method=method)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read(1024*1024+1)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read(1024*1024+1)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(1024).decode(errors='replace')
+            event('machine_api_error', endpoint=suffix, status=exc.code, detail=detail)
+            raise
         if len(raw) > 1024*1024:
             raise ValueError('machine response exceeded 1MiB')
         return json.loads(raw) if raw else {}
@@ -231,6 +237,10 @@ class Fly:
 def handoff(args):
     fly = Fly()
     original = fly.call()
+    event('handoff_inventory', state=original['state'], instance_id=original['instance_id'],
+          init=original['config'].get('init'), cordoned=original.get('cordoned'))
+    if original['config'].get('init', {}).get('exec'):
+        raise ValueError('existing maintenance config must be reconciled, not saved as the original')
     root = Path(__file__).resolve().parents[2]
     files = [file_input(root / relative, '/tmp/' + Path(relative).name) for relative in
              ('scripts/diagnostics/duckdb_production_recovery.py', 'scripts/diagnostics/duckdb_recovery_adapter.py',
@@ -243,7 +253,7 @@ def handoff(args):
     config = maintenance_config(original, files)
     # Cheap checks run while the original service is still up. Stop only after
     # confirming executable/API shape and absence of pending swap recovery.
-    check = fly.call('/exec', {'command': ['/usr/local/bin/python', '-c',
+    check = {'stdout': 'PREFLIGHT_OK'} if original['state'] == 'stopped' else fly.call('/exec', {'command': ['/usr/local/bin/python', '-c',
         'from pathlib import Path; p=Path("/data/___leagues.duckdb"); '
         'assert p.is_file(); assert all(not Path(str(p)+s).exists() for s in (".prev",".wal.checkpoint",".wal.recovery")); '
         'assert 0 < Path(str(p)+".wal").stat().st_size <= 1024**3; print("PREFLIGHT_OK")'], 'timeout': 5}, 'POST')
@@ -262,9 +272,13 @@ def run_handoff(fly, original, config, args, helper_sha):
             raise ValueError('machine changed before handoff')
         event('production_stop', machine=MACHINE)
         fly.call('/cordon', {}, 'POST')
-        fly.call('/stop', {'signal': 'SIGKILL', 'timeout': '1s'}, 'POST')
-        fly.wait('stopped')
-        fly.call('', {'config': config, 'current_version': original['instance_id'],
+        if current['state'] != 'stopped':
+            fly.call('/stop', {'signal': 'SIGKILL', 'timeout': '1s'}, 'POST')
+        stopped = fly.wait('stopped')
+        if stopped['config'] != original['config']:
+            raise ValueError('configuration changed during stop')
+        event('writer_stopped', instance_id=stopped['instance_id'])
+        fly.call('', {'config': config, 'current_version': stopped['instance_id'],
                       'skip_launch': True, 'skip_service_registration': True}, 'POST')
         fly.call('/start', {}, 'POST')
         fly.wait('started')

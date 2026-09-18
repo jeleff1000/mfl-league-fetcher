@@ -2,6 +2,45 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 07:37 UTC
+
+Fly readiness remains serving/accepting, with zero active queries, OPS writes
+and publications; league and OPS fingerprints remain unchanged. This turn used
+no production write, deployment, restart, snapshot, restore or diagnostic VM.
+The known physical block fault and last verified 480.4 MiB league WAL remain
+the production recovery/publication blockers; readiness does not prove repair.
+
+Confirmed and removed process-exit watchdogs from the two existing admin query
+writers. Ordinary autocommit DDL/DML can checkpoint without CHECKPOINT appearing
+in SQL, so exempting explicit checkpoint SQL alone did not protect those writes.
+Query interruption, locking, cleanup, OPS reopening/state restoration and
+checkpoint behavior remain intact. The unused RW_HARD_EXIT_SECONDS setting is
+removed. No extra query, fetch, pipeline, dependency or schema change was added.
+
+Two real HTTP/tiny DuckDB tests reproduced an armed kill callback immediately
+before an INSERT that actually checkpointed (test-only 1-byte threshold, WAL
+empty afterward). This proves the unsafe armed window, NOT execution inside
+DuckDB's checkpoint and NOT the original corruption's cause. Two positive
+tests prove real slow queries still return HTTP 504, roll back the statement
+and recover readiness. Initial harness Timer.run incorrectly waited its full
+interval and was stopped by the 38s subprocess cap; setting the injected timer
+interval to zero produced the intended two failures/two passes in 4.03s.
+After the fix, all four passed in 3.71s. Ten existing admin-write/cleanup/lock/
+checkpoint checks passed in 7.10s. Root-app mirror tests: four passed in 8.73s.
+Ruff and diff checks pass; independent read-only review found no merge blocker.
+
+Only equivalent narrow hunks were applied to the dirty root-app server file,
+preserving its other differences; the test is mirrored. Canonical executing
+repository is verified public jeleff1000/mfl-league-fetcher, default main.
+Server deployment remains manual and was NOT dispatched. This is prevention
+source verification, not deployed verification or physical storage recovery.
+
+Open limitations: a native call that ignores interruption can outlive the
+external 120s worker cap and retain server locks. Legacy merge, OPS snapshot
+and cross-connection process-kill hazards are not closed by this patch.
+Full provider/UI canaries, the remaining recovery cohort, weekless draft
+routing and physical checkpoint recovery remain unverified/unresolved.
+
 ## Bounded continuation - 2026-09-18 07:19 UTC
 
 Fly remains serving/accepting with zero active queries, OPS writes and

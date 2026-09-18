@@ -120,7 +120,6 @@ MERGE_HARD_EXIT_SECONDS = _env_float("MERGE_HARD_EXIT_SECONDS", 360.0, min_value
 # they get their own (larger) budgets than single-league delta merges.
 FLEET_MERGE_STEP_TIMEOUT_SECONDS = _env_float("FLEET_MERGE_STEP_TIMEOUT_SECONDS", 300.0, min_value=10.0)
 FLEET_MERGE_HARD_EXIT_SECONDS = _env_float("FLEET_MERGE_HARD_EXIT_SECONDS", 900.0, min_value=60.0)
-RW_HARD_EXIT_SECONDS = _env_float("RW_HARD_EXIT_SECONDS", ADMIN_QUERY_TIMEOUT + 60.0, min_value=30.0)
 # /merge-ops replaces whole ___ops reference tables (the ~1.2M x 820 super table takes minutes to
 # CREATE OR REPLACE), so it needs its own generous ceilings independent of the 120s admin default.
 OPS_MERGE_TIMEOUT = _env_float("OPS_MERGE_TIMEOUT", 900.0, min_value=120.0)  # per-table statement
@@ -1255,97 +1254,74 @@ def _execute_ops_query_rw(sql: str) -> list[dict]:
     conn = None
     pool_closed = False
 
-    def hard_exit() -> None:
-        logger.critical(
-            "___ops read-write query exceeded %.1fs; exiting so Fly restarts the writer: %s",
-            RW_HARD_EXIT_SECONDS,
-            sql[:500],
-        )
-        os._exit(1)
-
+    # Autocommit DDL/DML and connection close can checkpoint implicitly.
+    # Interrupt queries, but never terminate the server inside those writes.
     checkpoint_sql = _sql_requests_checkpoint(sql)
-    hard_timer = None
-    if not checkpoint_sql:
-        hard_timer = threading.Timer(RW_HARD_EXIT_SECONDS, hard_exit)
-        hard_timer.daemon = True
-        hard_timer.start()
-    try:
-        with _db._ops_lock:
-            _begin_ops_write_state()
+    with _db._ops_lock:
+        _begin_ops_write_state()
+        try:
+            elapsed = 0
+            while _db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
+                time.sleep(0.5)
+                elapsed += 0.5
+            _db.close_ops_connection()
+            last_connect_error: Exception | None = None
+            for attempt in range(8):
+                try:
+                    conn = _db.connect_database(ops_path, data_dir=data_dir)
+                    break
+                except _duckdb.BinderException as exc:
+                    last_connect_error = exc
+                    if "unique file handle conflict" not in str(exc).lower() or attempt == 7:
+                        raise
+                    # A public query can still be detaching ___ops while the
+                    # ops write starts. Give DuckDB a short moment to release
+                    # the read-only handle. The public pool no longer keeps
+                    # ___ops attached while idle, so rebuilding the pool is a
+                    # rare fallback rather than the normal path.
+                    time.sleep(0.25 * (attempt + 1))
+                    while _db.get_active_count() > 0 and elapsed < HARD_DRAIN_TIMEOUT:
+                        time.sleep(0.5)
+                        elapsed += 0.5
+                    _db.close_ops_connection()
+                    if attempt >= 3 and not pool_closed:
+                        logger.warning("Closing public pool during ___ops write after repeated handle conflicts")
+                        _db.close_pool()
+                        pool_closed = True
+            if conn is None:
+                raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
+            _db._attach_ops_nfl(conn)  # so admin writes (e.g. the one-time view cutover) can bind ___ops_nfl
+            result = _execute_script_with_timeout(
+                conn,
+                sql,
+                DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
+            )
+            _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
+            return result
+        finally:
+            cleanup_error: Exception | None = None
             try:
-                elapsed = 0
-                while _db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
-                    time.sleep(0.5)
-                    elapsed += 0.5
-                _db.close_ops_connection()
-                last_connect_error: Exception | None = None
-                for attempt in range(8):
-                    try:
-                        conn = _db.connect_database(ops_path, data_dir=data_dir)
-                        break
-                    except _duckdb.BinderException as exc:
-                        last_connect_error = exc
-                        if "unique file handle conflict" not in str(exc).lower() or attempt == 7:
-                            raise
-                        # A public query can still be detaching ___ops while the
-                        # ops write starts. Give DuckDB a short moment to release
-                        # the read-only handle. The public pool no longer keeps
-                        # ___ops attached while idle, so rebuilding the pool is a
-                        # rare fallback rather than the normal path.
-                        time.sleep(0.25 * (attempt + 1))
-                        while _db.get_active_count() > 0 and elapsed < HARD_DRAIN_TIMEOUT:
-                            time.sleep(0.5)
-                            elapsed += 0.5
-                        _db.close_ops_connection()
-                        if attempt >= 3 and not pool_closed:
-                            logger.warning("Closing public pool during ___ops write after repeated handle conflicts")
-                            _db.close_pool()
-                            pool_closed = True
-                if conn is None:
-                    raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
-                _db._attach_ops_nfl(conn)  # so admin writes (e.g. the one-time view cutover) can bind ___ops_nfl
-                result = _execute_script_with_timeout(
-                    conn,
-                    sql,
-                    DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
-                )
-                if hard_timer is None:
-                    _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
-                else:
-                    _checkpoint_after_merge(
-                        conn,
-                        ops_path,
-                        reason="___ops write",
-                        hard_exit_timer=hard_timer,
-                    )
-                return result
-            finally:
-                cleanup_error: Exception | None = None
+                if conn is not None:
+                    conn.close()
+            except Exception as exc:
+                cleanup_error = exc
+                logger.exception("Failed closing ___ops writer")
+            reopen_actions = [("reopen ___ops connection", _db.reopen_ops_connection)]
+            if pool_closed:
+                reopen_actions.append(("reopen ___leagues pool", _db.reopen_pool))
+            reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
+            for label, action in reopen_actions:
                 try:
-                    if conn is not None:
-                        conn.close()
+                    action()
                 except Exception as exc:
-                    cleanup_error = exc
-                    logger.exception("Failed closing ___ops writer")
-                reopen_actions = [("reopen ___ops connection", _db.reopen_ops_connection)]
-                if pool_closed:
-                    reopen_actions.append(("reopen ___leagues pool", _db.reopen_pool))
-                reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
-                for label, action in reopen_actions:
-                    try:
-                        action()
-                    except Exception as exc:
-                        if cleanup_error is None:
-                            cleanup_error = exc
-                        logger.exception("Failed to %s after ___ops write", label)
-                try:
-                    if cleanup_error is not None:
-                        raise cleanup_error
-                finally:
-                    _end_ops_write_state()
-    finally:
-        if hard_timer is not None:
-            hard_timer.cancel()
+                    if cleanup_error is None:
+                        cleanup_error = exc
+                    logger.exception("Failed to %s after ___ops write", label)
+            try:
+                if cleanup_error is not None:
+                    raise cleanup_error
+            finally:
+                _end_ops_write_state()
 
 
 def _execute_ops_query_rw_serialized(sql: str) -> list[dict]:
@@ -1570,20 +1546,8 @@ def _execute_query_rw(sql: str, database: str = "___leagues") -> list[dict]:
     db_path = data_dir / f"{database}.duckdb"
     conn = None
 
-    def hard_exit() -> None:
-        logger.critical(
-            "Read-write query exceeded %.1fs; exiting so Fly restarts the writer: %s",
-            RW_HARD_EXIT_SECONDS,
-            sql[:500],
-        )
-        os._exit(1)
-
+    # Ordinary autocommit writes can checkpoint too; retain only interruption.
     checkpoint_sql = _sql_requests_checkpoint(sql)
-    hard_timer = None
-    if not checkpoint_sql:
-        hard_timer = threading.Timer(RW_HARD_EXIT_SECONDS, hard_exit)
-        hard_timer.daemon = True
-        hard_timer.start()
     try:
         # This endpoint can run while the public pool is open. Use the same
         # DuckDB connection config as the pool so concurrent connections to
@@ -1597,8 +1561,6 @@ def _execute_query_rw(sql: str, database: str = "___leagues") -> list[dict]:
         )
         return result
     finally:
-        if hard_timer is not None:
-            hard_timer.cancel()
         if conn is not None:
             conn.close()
 

@@ -5,7 +5,7 @@ Fetches weekly matchup data from ESPN Fantasy API.
 
 Two paths depending on era:
 - 2019+: box_scores(week) provides full player-level data with scores
-- Pre-2019: scoreboard(week) provides team-level matchup scores only
+- Pre-2019 or provider-archived seasons: scoreboard(week) provides team-level scores
 
 Output columns match CanonicalMatchupColumns for downstream pipeline compatibility.
 """
@@ -299,6 +299,9 @@ def fetch_espn_matchups_modern(
         log(f"  [MATCHUPS] Failed to load league for {year}: {e}")
         return None
 
+    if getattr(league, "_uses_league_history", False):
+        return fetch_espn_matchups_legacy(ctx, year, weeks=weeks, client=client, league=league)
+
     max_weeks = _get_max_weeks(year)
     playoff_start = _detect_playoff_start(ctx, year)
     playoff_seed_map = _get_playoff_seed_map(client, year)
@@ -581,19 +584,24 @@ def fetch_espn_matchups_legacy(
     ctx: "ESPNContext",
     year: int,
     weeks: list[int] | None = None,
+    *,
+    client=None,
+    league=None,
 ) -> pd.DataFrame | None:
     """
-    Fetch matchups for pre-2019 using scoreboard.
+    Fetch pre-2019 or provider-archived matchups using scoreboard.
 
     scoreboard(week) provides Matchup objects with team scores.
     matchup_type (from playoffTierType) IS available on Matchup objects for all years.
     """
     from .espn_api_client import ESPNAPIClient
 
-    client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
+    if client is None:
+        client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
 
     try:
-        league = client.get_league(year)
+        if league is None:
+            league = client.get_league(year)
     except Exception as e:
         log(f"  [MATCHUPS] Failed to load league for {year}: {e}")
         return None

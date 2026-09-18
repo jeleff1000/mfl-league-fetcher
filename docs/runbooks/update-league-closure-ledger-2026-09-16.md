@@ -4,6 +4,22 @@ State: production storage repair PASSED in35390732009; both checkpoints and a fr
 
 ## Live continuation - 2026-09-18 21:25 UTC
 
+- User explicitly excluded `the_league` from recovery. Do not dispatch it.
+- ESPN archive routing fix reuses the provider/library-selected history route
+  for rawviews and existing historical matchup/roster/transaction fetchers.
+  LiveI95year2019week1proof returned12distinctmanagerrows and192draftpicks
+  in19.72s. Archivehasno weeklylineup andno native transactions response;
+  existing full-import estimator remains explicitlyestimated, withnotrades
+  invented. Active refresh remains strict. Independentreview43tests4.45sPASS.
+- Cache reconciliation fix pushed public main `8b9083c9c` after53focusedtests.
+  AlwaysSunny's original9KBreceipt matched durablecommit/run/claimversion3/
+  generation3. Existing recovery command completed13.359s withno datafetch
+  or republish. Five requiredpageshot,0failures,p95repeat155ms. OPSsucceeded,
+  originalrun35393945475retained;generation3unchanged. Liveoverview2026week1,
+ 16managercareerrows andnonzerohistoricclutch. NFLalltimeranksstillopen.
+  OPScommitted_atcurrentlyrecordsreconciliationtime21:34 ratherthanatomic
+  commit20:55; determinewhetherconsumerusesitaswatermarkbeforeclaimingclosed.
+
 - OPS attachment fix is on public main `33a89ef946cb0122b55f7c503b262c8d03c1200c`.
   Deployment `35395767436` updated only the existing primary image, keeping
   its volume and capacity. Build18s; deploy job100s; ready serving/accepting.

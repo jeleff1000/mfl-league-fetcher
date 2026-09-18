@@ -7,8 +7,8 @@ Three paths depending on era and transaction type:
 1. 2019+ Waivers/FA: Library's transactions() method per scoring period
 2. 2019+ Trades: Raw ESPN API (mTransactions2 view) because library crashes
    on TRADE_ACCEPT records missing 'status' key
-3. Pre-2019: Roster-diff workaround (compare draft vs final rosters)
-   All pre-2019 transactions get is_estimated=True
+3. Pre-2019 or provider-archived full imports: Roster-diff workaround
+   (compare draft vs final rosters), with is_estimated=True
 
 Output columns match CanonicalTransactionColumns for pipeline compatibility.
 """
@@ -93,6 +93,9 @@ def fetch_espn_transactions_modern(
             raise RuntimeError(f"ESPN transactions league for {year} could not be verified") from e
         log(f"  [TRANSACTIONS] Failed to load league for {year}: {e}")
         return None
+
+    if not strict_active_scope and getattr(league, "_uses_league_history", False):
+        return fetch_espn_transactions_legacy(ctx, year, client=client, league=league)
 
     season_max_weeks = _get_max_weeks(year)
     if max_week is None:
@@ -281,26 +284,30 @@ def fetch_espn_transactions_modern(
     return df
 
 
-def fetch_espn_transactions_legacy(ctx: "ESPNContext", year: int) -> pd.DataFrame | None:
+def fetch_espn_transactions_legacy(
+    ctx: "ESPNContext", year: int, *, client=None, league=None
+) -> pd.DataFrame | None:
     """
-    Pre-2019 transaction estimation via roster-diff workaround.
+    Historical transaction estimation via the existing roster-diff workaround.
 
     Compare draft rosters vs final rosters:
-    - Players on different team than drafted = "trade" (week 6)
+    - Players on different team than drafted = "drop" + "add" (week 6)
     - Undrafted players on final roster = "add" (week 6)
     - Drafted players not on any final roster = "drop" (week 6)
 
     All transactions marked is_estimated=True.
 
-    PENDING FUTURE IMPROVEMENT: Pre-2019 transaction data unavailable via API.
+    PENDING FUTURE IMPROVEMENT: Archived transaction history is unavailable via API.
     These are estimated from draft vs final roster comparison.
     """
     from .espn_api_client import ESPNAPIClient
 
-    client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
+    if client is None:
+        client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
 
     try:
-        league = client.get_league(year)
+        if league is None:
+            league = client.get_league(year)
     except Exception as e:
         log(f"  [TRANSACTIONS] Failed to load league for {year}: {e}")
         return None

@@ -5,8 +5,7 @@ Fetches weekly roster and player data from ESPN Fantasy API.
 
 Two paths depending on era:
 - 2019+: box_scores(week) provides BoxPlayer objects with weekly points
-- Pre-2019: load_roster_week(week) returns final roster with season totals only
-  (weekly points NOT available pre-2019)
+- Pre-2019 or provider-archived seasons: final roster only (no weekly lineup)
 
 Output columns match CanonicalPlayerColumns for downstream pipeline compatibility.
 """
@@ -343,6 +342,11 @@ def fetch_espn_rosters_modern(
         log(f"  [ROSTERS] Failed to load league for {year}: {e}")
         return None
 
+    if getattr(league, "_uses_league_history", False):
+        return fetch_espn_rosters_legacy(
+            ctx, year, max_weeks=max_weeks, weeks=weeks, client=client, league=league
+        )
+
     if max_weeks is None:
         max_weeks = _get_max_weeks(year)
     from multi_league.core.league_refresh import provider_weeks_to_fetch
@@ -442,20 +446,25 @@ def fetch_espn_rosters_legacy(
     year: int,
     max_weeks: int = None,
     weeks: list[int] | None = None,
+    *,
+    client=None,
+    league=None,
 ) -> pd.DataFrame | None:
     """
-    Fetch roster data for pre-2019 using load_roster_week.
+    Fetch final roster data for pre-2019 or provider-archived seasons.
 
-    LIMITATION: Pre-2019, load_roster_week returns the FINAL roster only,
-    with season total points. Weekly points are NOT available.
+    LIMITATION: These payloads contain the FINAL roster only.
+    Weekly lineup slots and points are NOT available.
     All players show same roster regardless of week.
     """
     from .espn_api_client import ESPNAPIClient
 
-    client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
+    if client is None:
+        client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
 
     try:
-        league = client.get_league(year)
+        if league is None:
+            league = client.get_league(year)
     except Exception as e:
         log(f"  [ROSTERS] Failed to load league for {year}: {e}")
         return None

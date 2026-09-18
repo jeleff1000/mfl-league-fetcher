@@ -223,6 +223,7 @@ class ESPNAPIClient:
         self.espn_s2 = espn_s2
         self.swid = swid
         self._league_cache: dict[int, Any] = {}
+        self._history_routes: dict[int, bool] = {}
         self._session = requests.Session()
 
         # Set cookies for private league access
@@ -277,6 +278,12 @@ class ESPNAPIClient:
                     log(f"  [ESPN] Legacy {year} initialization traceback:\n{traceback.format_exc()}")
                     raise
 
+            # espn_api can discover an archive after a modern endpoint's 401.
+            # Raw views must reuse that route; archive rosters are season
+            # snapshots, so fetchers must use their existing historical paths.
+            self._history_routes[year] = "/leagueHistory/" in league.espn_request.LEAGUE_ENDPOINT
+            league._uses_league_history = self._history_routes[year]
+
             # Patch inactive/historical leagues where ESPN returns scoringPeriodId=0
             # The espn_api library sets current_week=0 for these, which causes
             # box_scores(week) to always send scoringPeriodId=0 (the guard
@@ -330,14 +337,11 @@ class ESPNAPIClient:
         Returns:
             List of raw transaction dicts from ESPN API
         """
-        url = self._build_league_url(year)
         params = self._build_league_params(year, "mTransactions2")
         params["scoringPeriodId"] = scoring_period
 
         try:
-            resp = self._session.get(url, params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._request_league(year, params)
             if strict and (
                 not isinstance(data, dict)
                 or not isinstance(data.get("transactions"), list)
@@ -371,7 +375,6 @@ class ESPNAPIClient:
         This preserves ESPN-only fields like commissioner adjustments and
         tiebreak values that the BoxScore abstraction drops.
         """
-        url = self._build_league_url(year)
         params = self._build_league_params(year)
         params["view"] = ["mScoreboard", "mMatchupScore"]
         params["scoringPeriodId"] = scoring_period
@@ -380,11 +383,7 @@ class ESPNAPIClient:
         }
 
         try:
-            resp = self._session.get(url, params=params, headers=headers, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            if year < 2018 and isinstance(data, list):
-                data = data[0] if data else {}
+            data = self._request_league(year, params, headers=headers)
             if not isinstance(data, dict):
                 return []
             schedule = data.get("schedule", [])
@@ -672,26 +671,51 @@ class ESPNAPIClient:
                 continue
         raise ESPNAPIError(f"League {self.league_id} not found on ESPN.", status_code=404)
 
-    def _build_league_url(self, year: int) -> str:
-        """Build the correct ESPN API URL based on year.
-
-        Pre-2018: ESPN uses the leagueHistory endpoint.
-        2018+: ESPN uses the modern seasons/segments endpoint.
-        """
-        if year < 2018:
+    def _build_league_url(self, year: int, *, history: bool | None = None) -> str:
+        """Use the verified route, with the library's era rule as the initial guess."""
+        if history is None:
+            history = self._history_routes.get(year, year < 2018)
+        if history:
             return f"{ESPN_FANTASY_BASE_URL}/leagueHistory/{self.league_id}"
         return f"{ESPN_FANTASY_BASE_URL}/seasons/{year}/segments/0/leagues/{self.league_id}"
 
     def _build_league_params(self, year: int, view: str = "mSettings") -> dict:
-        """Build query params, adding seasonId for pre-2018 leagueHistory endpoint."""
+        """Build query params for the selected league endpoint."""
         params = {"view": view}
-        if year < 2018:
+        if self._history_routes.get(year, year < 2018):
             params["seasonId"] = str(year)
         return params
 
+    def _request_league(self, year: int, params: dict, *, headers=None) -> dict:
+        """Share ESPN's 401 route fallback and archive envelope across all views."""
+        preferred = self._history_routes.get(year, year < 2018)
+        for history in (preferred, not preferred):
+            query = dict(params)
+            query.pop("seasonId", None)
+            if history:
+                query["seasonId"] = str(year)
+            resp = self._session.get(
+                self._build_league_url(year, history=history),
+                params=query, headers=headers, timeout=30,
+            )
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as exc:
+                if history == preferred and getattr(exc.response, "status_code", None) == 401:
+                    continue
+                raise
+            data = resp.json()
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            if not isinstance(data, dict):
+                return {}
+            if str(data.get("seasonId", year)) != str(year):
+                raise ESPNAPIError(f"ESPN returned a different season for {year}")
+            self._history_routes[year] = history
+            return data
+
     def get_raw_league(self, year: int, views: str | list[str] | tuple[str, ...] = "mSettings", **extra_params) -> dict:
         """Fetch a raw ESPN league payload and normalize leagueHistory arrays."""
-        url = self._build_league_url(year)
         if isinstance(views, str):
             params = self._build_league_params(year, views)
         else:
@@ -700,12 +724,7 @@ class ESPNAPIClient:
             params["view"] = list(views)
         params.update(extra_params)
 
-        resp = self._session.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        if year < 2018 and isinstance(data, list):
-            data = data[0] if data else {}
-        return data if isinstance(data, dict) else {}
+        return self._request_league(year, params)
 
     def get_league_settings_raw(self, year: int) -> dict:
         """

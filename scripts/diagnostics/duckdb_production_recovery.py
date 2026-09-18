@@ -353,13 +353,28 @@ def run_handoff(fly, original, config, args, helper_sha, *, observed=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=['handoff', 'remote', 'repair', 'stock'], required=True)
+    parser.add_argument('--mode', choices=['handoff', 'remote', 'repair', 'stock', 'inspect'], required=True)
     parser.add_argument('--receipt-id', required=True)
     parser.add_argument('--db-name', default='nyu_ffl')
     parser.add_argument('--helper-sha256')
     parser.add_argument('--deadline', type=float)
     args = parser.parse_args()
-    if args.mode == 'handoff':
+    if args.mode == 'inspect':
+        fly = Fly()
+        machine = fly.call()
+        event('machine_inspected', state=machine['state'], init=machine['config'].get('init'))
+        result = fly.execute(['/usr/local/bin/python', '-c',
+            'import json,os; from pathlib import Path; '
+            'files=[Path("/data/___leagues.duckdb"),Path("/data/___leagues.duckdb.wal"),Path("/data/production_recovery_35390284697_1/original.wal")]; '
+            'print(json.dumps({str(p): {"size":p.stat().st_size,"mtime_ns":p.stat().st_mtime_ns,"inode":p.stat().st_ino} for p in files if p.exists()})); '
+            'print(Path("/proc/meminfo").read_text()[:400]); '
+            'print(json.dumps([{ "pid":p.parent.name,"state":(p.parent/"stat").read_text().split(")",1)[1][:30]} '
+            'for p in Path("/proc").glob("[0-9]*/cmdline") if p.exists() and b"duckdb_production_recovery.py" in p.read_bytes() and int(p.parent.name)!=os.getpid()]))'], 15)
+        print(result.get('stdout', ''), flush=True)
+        print(result.get('stderr', ''), flush=True)
+        if result.get('exit_code', 0):
+            raise ValueError('inspection failed')
+    elif args.mode == 'handoff':
         handoff(args)
     else:
         remote(args)

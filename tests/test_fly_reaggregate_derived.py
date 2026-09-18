@@ -247,6 +247,34 @@ def test_parallel_workers_attach_shared_catalogs(monkeypatch, tmp_path):
     assert observed == [(11, 22)]
 
 
+def test_parallel_workers_do_not_race_shared_catalog_attach(monkeypatch, tmp_path):
+    primary = tmp_path / "leagues.duckdb"
+    ops = tmp_path / "ops.duckdb"
+    ops_nfl = tmp_path / "ops_nfl.duckdb"
+    duckdb.connect(str(primary)).close()
+    duckdb.connect(str(ops)).close()
+    duckdb.connect(str(ops_nfl)).close()
+
+    observed: list[str] = []
+
+    def observe(_conn, db_name, **_kwargs):
+        observed.append(db_name)
+        return {table: 1 for table in repair.TARGET_TABLES}
+
+    monkeypatch.setattr(repair, "reaggregate_one_league", observe)
+
+    result = repair.reaggregate_parallel(
+        primary,
+        db_names=[f"league_{index}" for index in range(16)],
+        ops_path=ops,
+        ops_nfl_path=ops_nfl,
+        max_workers=4,
+    )
+
+    assert result == {"leagues": 16}
+    assert set(observed) == {f"league_{index}" for index in range(16)}
+
+
 def test_parallel_reaggregation_reports_exact_stage_failure(monkeypatch, tmp_path):
     duckdb.connect(str(tmp_path / "leagues.duckdb")).close()
 

@@ -56,6 +56,7 @@ TARGET_TABLES = (
 )
 
 logger = logging.getLogger(__name__)
+_ATTACH_LOCK = threading.Lock()
 
 
 def quarantine_corrupt_targets(conn) -> dict[str, str]:
@@ -381,16 +382,21 @@ def reaggregate_parallel(
 
 def _attach_if_present(conn, path: Path, catalog: str) -> None:
     if path.is_file():
-        attached = conn.execute(
-            "SELECT 1 FROM duckdb_databases() WHERE database_name = ? LIMIT 1",
-            [catalog],
-        ).fetchone()
-        if attached:
-            return
-        conn.execute(
-            f"ATTACH '{path.as_posix().replace(chr(39), chr(39) * 2)}' "
-            f"AS {_quote_identifier(catalog)} (READ_ONLY)"
-        )
+        # DuckDB coordinates attached catalog names at the database-instance
+        # level. Parallel connections can otherwise both observe the catalog
+        # as absent and race on ATTACH, making the loser fail with "already
+        # exists" before any league work starts.
+        with _ATTACH_LOCK:
+            attached = conn.execute(
+                "SELECT 1 FROM duckdb_databases() WHERE database_name = ? LIMIT 1",
+                [catalog],
+            ).fetchone()
+            if attached:
+                return
+            conn.execute(
+                f"ATTACH '{path.as_posix().replace(chr(39), chr(39) * 2)}' "
+                f"AS {_quote_identifier(catalog)} (READ_ONLY)"
+            )
 
 
 def main() -> int:

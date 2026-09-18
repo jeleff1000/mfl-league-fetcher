@@ -38,14 +38,8 @@ class _AggregationRunner(AggregationEnrichmentsMixin, SQLEnrichmentsBase):
     (1.0, "6pt", 15.75, 13.25),
     (0.0, "4pt", 0.0, 0.0),
 ])
-def test_position_alltime_rank_uses_ops_history_not_active_year_subset(ppr, td_key, season_ppg, career_ppg):
-    """A quick refresh must never call a single current-week player #1 ever.
-
-    The historical rank is precomputed in the OPS super table.  The local
-    refresh database deliberately contains only the active partition, so
-    recomputing an all-time window there turns every lone player-week into
-    rank 1.
-    """
+def test_position_alltime_rank_is_a_league_game_rank_not_ops_career(ppr, td_key, season_ppg, career_ppg):
+    """The recap's game rank uses league points; NFL career ranks are not substitutes."""
     conn = duckdb.connect(":memory:")
     conn.execute("ATTACH ':memory:' AS ___ops")
     conn.execute("CREATE SCHEMA ___ops.nfl_historical")
@@ -86,6 +80,13 @@ def test_position_alltime_rank_uses_ops_history_not_active_year_subset(ppr, td_k
     conn.execute("INSERT INTO ___ops.nfl_historical.player_bio VALUES ('punter', 'P')")
     conn.execute("INSERT INTO ___ops.nfl_historical.nfl_player_stats_all (player_week,position) VALUES ('2026_01_punter','P')")
     conn.execute("INSERT INTO player_fantasy (db_name,player_week,NFL_player_id,year,week,position,fantasy_points,position_alltime_rank) VALUES ('quick_scope','2026_01_punter','punter',2026,1,'P',0,7)")
+    conn.execute("""
+        INSERT INTO player_fantasy
+            (db_name,player_week,NFL_player_id,year,week,position,fantasy_points)
+        VALUES ('quick_scope','2025_01_old','old',2025,1,'QB',30),
+               ('quick_scope','2025_02_old','old',2025,2,'QB',25),
+               ('other_league','2025_01_other','other',2025,1,'QB',100)
+    """)
     helpers = RosterHelpers(
         available_settings_years=lambda: [2026],
         resolve_settings_year=lambda year: year,
@@ -112,11 +113,11 @@ def test_position_alltime_rank_uses_ops_history_not_active_year_subset(ppr, td_k
 
     assert conn.execute(
         "SELECT position_alltime_rank FROM player_fantasy WHERE player_week = '2026_01_caleb'"
-    ).fetchone()[0] == 222
+    ).fetchone()[0] == 3
     assert conn.execute(
         "SELECT season_ppg, alltime_ppg FROM player_fantasy WHERE player_week = '2026_01_caleb'"
     ).fetchone() == (season_ppg, career_ppg)
-    assert conn.execute("SELECT position_alltime_rank FROM player_fantasy WHERE NFL_player_id='punter'").fetchone()[0] is None
+    assert conn.execute("SELECT position_alltime_rank FROM player_fantasy WHERE NFL_player_id='punter'").fetchone()[0] == 1
 
     # A missing historical source must fail before erasing the previous output,
     # not substitute the single hydrated week's 18.76 points for a career mean.

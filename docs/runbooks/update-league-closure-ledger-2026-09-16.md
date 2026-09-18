@@ -85,6 +85,19 @@ chunks. This does not resolve the separate game-rank semantic defect.
 
 ### Expanded cohort evidence - September18 22:35 UTC
 
+True game-rank fix is reviewed: shared original ranking windows run against
+the complete persisted league chain before derived publication, updating only
+changed position_season_rank/position_alltime_rank cells inside the transaction.
+Developer79tests plus explicit rollback test passed; independent15tests passed
+in9.45s/14.19s/3.81s chunks; main4focusedtests passed0.66s. Synthetic300k-game
+tenant ranked0.92s, identical repeat0.60s with zero writes. Live read-only
+expected Caleb game ranks:STK91,IFL11,KMFFL58,AlwaysSunny151. These values are
+not yet published. NFL career-rank serving-view sidequest is not included.
+
+Compact NFL revision preflight made NO write: one-week wide source read hit
+its8s client timeout (total10.171s), so stop rather than blindly retry. Subsequent
+ready probe reports serving/accepting, zero active queries/OPS writes/publications.
+
 - Census:403attempts/397runs,100resolved targets including one verify-only
   fixture;13attempt identities unresolved. Metadata includes all conclusions
   and older-created runs rerun inside the NewYork September14-18 window.

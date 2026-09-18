@@ -72,6 +72,33 @@ def test_weekly_merge_rebuilds_careers_inside_its_commit(merged_chain, tmp_path)
     assert conn.execute("SELECT games FROM public.matchup_career WHERE db_name='test_league'").fetchone() == (16,)
 
 
+def test_full_chain_publication_corrects_game_ranks_before_deriving_careers(merged_chain, tmp_path):
+    server = _fleet_server()
+    bundle, extracted = _weekly_bundle(tmp_path)
+    conn = merged_chain
+    conn.execute("""
+        UPDATE public.player_fantasy SET position_season_rank=216,position_alltime_rank=216
+        WHERE db_name='test_league'
+    """)
+    server.apply_fleet_merge(conn, bundle.manifest, extracted)
+    assert conn.execute("""
+        SELECT year,position_season_rank,position_alltime_rank
+        FROM public.player_fantasy WHERE db_name='test_league' ORDER BY year
+    """).fetchall() == [(2025, 1, 2), (2026, 1, 1)]
+    assert conn.execute("SELECT position_alltime_rank FROM public.player_fantasy WHERE db_name='another_league'").fetchone() == (None,)
+
+
+def test_scoped_season_rollups_rank_complete_history_not_only_changed_year(merged_chain):
+    conn = merged_chain
+    prior_season = conn.execute("SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025").fetchall()
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league', season_years={2026})
+    assert conn.execute("""
+        SELECT year,position_season_rank,position_alltime_rank
+        FROM public.player_fantasy WHERE db_name='test_league' ORDER BY year
+    """).fetchall() == [(2025, 1, 2), (2026, 1, 1)]
+    assert conn.execute("SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025").fetchall() == prior_season
+
+
 def test_weekly_merge_rolls_back_partitions_when_career_rebuild_fails(merged_chain, tmp_path):
     server = _fleet_server()
     bundle, extracted = _weekly_bundle(tmp_path)
@@ -99,6 +126,10 @@ def test_weekly_merge_career_sql_uses_publication_timeout_executor(merged_chain,
     server = _fleet_server()
     bundle, extracted = _weekly_bundle(tmp_path)
     before = merged_chain.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall()
+    before_ranks = merged_chain.execute("""
+        SELECT player_week,position_season_rank,position_alltime_rank
+        FROM public.player_fantasy WHERE db_name='test_league' ORDER BY player_week
+    """).fetchall()
 
     def interrupted_execute(conn, sql, params=None, *, step=''):
         if 'DELETE FROM ___leagues.public.matchup_career' in sql:
@@ -108,6 +139,10 @@ def test_weekly_merge_career_sql_uses_publication_timeout_executor(merged_chain,
     with pytest.raises(TimeoutError, match='career query deadline'):
         server.apply_fleet_merge(merged_chain, bundle.manifest, extracted, execute=interrupted_execute)
     assert merged_chain.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall() == before
+    assert merged_chain.execute("""
+        SELECT player_week,position_season_rank,position_alltime_rank
+        FROM public.player_fantasy WHERE db_name='test_league' ORDER BY player_week
+    """).fetchall() == before_ranks
     assert server.current_generations(merged_chain, ['test_league']) == {'test_league': 0}
 
 
@@ -227,8 +262,10 @@ def test_complete_chain_rollups_rebuild_stale_historical_season_dependencies(mer
 
     source_witness = conn.execute("""
         SELECT COUNT(*), bit_xor(hash(t))
-        FROM public.player_fantasy t
-        WHERE db_name='test_league'
+        FROM (
+            SELECT * EXCLUDE (position_season_rank, position_alltime_rank)
+            FROM public.player_fantasy WHERE db_name='test_league'
+        ) t
     """).fetchone()
 
     counts = aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
@@ -263,8 +300,10 @@ def test_complete_chain_rollups_rebuild_stale_historical_season_dependencies(mer
     """).fetchone() == (1, 5.0, 1, 5.0)
     assert conn.execute("""
         SELECT COUNT(*), bit_xor(hash(t))
-        FROM public.player_fantasy t
-        WHERE db_name='test_league'
+        FROM (
+            SELECT * EXCLUDE (position_season_rank, position_alltime_rank)
+            FROM public.player_fantasy WHERE db_name='test_league'
+        ) t
     """).fetchone() == source_witness
 
 
@@ -715,7 +754,8 @@ def test_scoped_season_rollups_do_not_rewrite_identity_outside_selected_year(hom
                 '[{"from_franchise_id":"f1","into_franchise_id":"canonical","name":"Preferred Alias"}]')
     """)
     before = conn.execute("""
-        SELECT * FROM public.player_fantasy WHERE db_name='test_league' AND year=2025
+        SELECT * EXCLUDE (position_season_rank, position_alltime_rank)
+        FROM public.player_fantasy WHERE db_name='test_league' AND year=2025
     """).fetchall()
 
     aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league', season_years={2026})
@@ -725,7 +765,8 @@ def test_scoped_season_rollups_do_not_rewrite_identity_outside_selected_year(hom
         WHERE db_name='test_league' AND year=2026
     """).fetchall() == [('Preferred Alias', 'canonical')]
     assert conn.execute("""
-        SELECT * FROM public.player_fantasy WHERE db_name='test_league' AND year=2025
+        SELECT * EXCLUDE (position_season_rank, position_alltime_rank)
+        FROM public.player_fantasy WHERE db_name='test_league' AND year=2025
     """).fetchall() == before
 
 

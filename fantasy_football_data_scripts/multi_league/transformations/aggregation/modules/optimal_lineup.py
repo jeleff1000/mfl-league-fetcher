@@ -910,6 +910,64 @@ def manager_optimal(
 # ---------------------------------------------------------------------------
 
 
+def refresh_position_game_ranks(
+    conn,
+    player_table: str,
+    *,
+    db_name: str | None = None,
+    primary_position_sql: Callable | None = None,
+) -> dict[str, int]:
+    """Rank individual league-scored games, not NFL season/career point totals.
+
+    Reuse the original position_rank game window on ALL available league years.
+    Publication calls this after merging into the complete persisted chain and
+    before restricting season outputs. Worker-only ranks are provisional when
+    its scratch database contains only an active season. The caller owns the
+    connection/transaction; only changed cells in these two columns are written.
+    """
+    if primary_position_sql is None:
+        from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
+
+        primary_position_sql = SQLEnrichmentsBase._primary_position_sql
+    primary_pos = primary_position_sql("d.position")
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _position_game_rank_metrics AS
+        WITH deduped AS (
+            SELECT DISTINCT player_week, year, week, position, fantasy_points
+            FROM {player_table}
+            WHERE fantasy_points IS NOT NULL
+              AND NULLIF(TRIM(COALESCE(position, '')), '') IS NOT NULL
+              AND {_db_filter(db_name)}
+        )
+        SELECT d.player_week,
+            RANK() OVER (
+                PARTITION BY {primary_pos}, d.year
+                ORDER BY d.fantasy_points DESC NULLS LAST, d.player_week
+            ) AS position_season_rank,
+            RANK() OVER (
+                PARTITION BY {primary_pos}
+                ORDER BY d.fantasy_points DESC NULLS LAST, d.year, d.week, d.player_week
+            ) AS position_alltime_rank
+        FROM deduped d
+    """)
+    changed = {}
+    for column in ("position_season_rank", "position_alltime_rank"):
+        changed[column] = conn.execute(f"""
+            UPDATE {player_table} p SET {column} = r.{column}
+            FROM (
+                SELECT DISTINCT t.player_week, m.{column}
+                FROM {player_table} t
+                LEFT JOIN _position_game_rank_metrics m ON t.player_week = m.player_week
+                WHERE {_db_filter(db_name, 't')}
+            ) r
+            WHERE p.player_week = r.player_week
+              AND {_db_filter(db_name, 'p')}
+              AND p.{column} IS DISTINCT FROM r.{column}
+        """).fetchone()[0]
+    conn.execute("DROP TABLE _position_game_rank_metrics")
+    return changed
+
+
 def position_rank(
     conn,
     player_table: str,
@@ -978,8 +1036,6 @@ def position_rank(
             UPDATE {player_table}
             SET position_rank = NULL,
                 position_week_rank = NULL,
-                position_season_rank = NULL,
-                position_alltime_rank = NULL,
                 flex_week_rank = NULL,
                 flex_season_rank = NULL,
                 flex_alltime_rank = NULL,
@@ -996,7 +1052,6 @@ def position_rank(
         years_csv = ", ".join(str(y) for y in year_group)
 
         position_rank_parts = []
-        position_alltime_rank_parts = []
         # Use player_bio.nfl_position as canonical position, fall back to
         # s.position then p.position for rank lookup.
         for position in ("QB", "RB", "WR", "TE", "K", "DEF", "LB", "DL", "DB"):
@@ -1005,21 +1060,8 @@ def position_rank(
                 position_rank_parts.append(
                     f"CASE WHEN {helpers.position_eligibility_sql('COALESCE(pb.nfl_position, s.position, p.position)', position)} THEN s.{rank_col} END"
                 )
-                # This is an NFL-wide historical rank from the OPS source.
-                # A quick update intentionally hydrates only the active
-                # season, so a local all-time window would make its lone
-                # week-1 row rank first by construction.
-                alltime_rank_col = "rank_alltime_" + rank_col.removeprefix("rank_")
-                position_alltime_rank_parts.append(
-                    f"CASE WHEN {helpers.position_eligibility_sql('COALESCE(pb.nfl_position, s.position, p.position)', position)} THEN s.{alltime_rank_col} END"
-                )
 
         position_rank_expr = f"COALESCE({', '.join(position_rank_parts)})" if position_rank_parts else "NULL"
-        position_alltime_rank_expr = (
-            f"COALESCE({', '.join(position_alltime_rank_parts)})"
-            if position_alltime_rank_parts
-            else "NULL"
-        )
         _pos_col = "COALESCE(pb.nfl_position, s.position, p.position)"
         flex_week_expr = (
             f"CASE WHEN {helpers.flex_eligibility_sql(_pos_col, ['RB', 'WR', 'TE'])}"
@@ -1065,7 +1107,6 @@ def position_rank(
                     p.player_week,
                     {position_rank_expr} AS position_rank,
                     {position_rank_expr} AS position_week_rank,
-                    {position_alltime_rank_expr} AS position_alltime_rank,
                     {flex_week_expr} AS flex_week_rank,
                     {flex_season_expr} AS flex_season_rank,
                     {flex_alltime_expr} AS flex_alltime_rank,
@@ -1087,7 +1128,6 @@ def position_rank(
                 UPDATE {player_table} p
                 SET position_rank = st.position_rank,
                     position_week_rank = st.position_week_rank,
-                    position_alltime_rank = st.position_alltime_rank,
                     flex_week_rank = st.flex_week_rank,
                     flex_season_rank = st.flex_season_rank,
                     flex_alltime_rank = st.flex_alltime_rank,
@@ -1109,36 +1149,9 @@ def position_rank(
     logger.info(f"[position_rank] Updated weekly/flex rank aliases for {total_updated:,} player-weeks")
 
     if not dry_run:
-        deduped_primary_pos_sql = helpers.primary_position_sql("d.position")
-
-        conn.execute(f"""
-            CREATE OR REPLACE TEMP TABLE _position_rank_metrics AS
-            WITH deduped AS (
-                SELECT DISTINCT player_week, year, week, position, fantasy_points
-                FROM {player_table}
-                WHERE fantasy_points IS NOT NULL
-                  AND NULLIF(TRIM(COALESCE(position, '')), '') IS NOT NULL
-                  AND {_db_filter(db_name)}
-            )
-            SELECT
-                d.player_week,
-                RANK() OVER (
-                    PARTITION BY {deduped_primary_pos_sql}, d.year
-                    ORDER BY d.fantasy_points DESC NULLS LAST, d.player_week
-                ) AS position_season_rank,
-                -- The OPS source above owns the NFL-wide historical rank.
-                -- The local refresh holds only active-year facts.
-                NULL::INTEGER AS unused_local_alltime_rank
-            FROM deduped d
-        """)
-        conn.execute(f"""
-            UPDATE {player_table} p
-            SET position_season_rank = m.position_season_rank
-            FROM _position_rank_metrics m
-            WHERE p.player_week = m.player_week
-              AND {_db_filter(db_name, 'p')}
-        """)
-        conn.execute("DROP TABLE IF EXISTS _position_rank_metrics")
+        refresh_position_game_ranks(
+            conn, player_table, db_name=db_name, primary_position_sql=helpers.primary_position_sql,
+        )
 
         summary = conn.execute(f"""
             SELECT

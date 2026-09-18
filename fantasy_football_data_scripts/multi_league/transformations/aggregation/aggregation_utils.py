@@ -176,9 +176,10 @@ def aggregate_complete_chain_season_rollups(
 ) -> dict[str, int]:
     """Rebuild season-derived dependencies from the complete persisted chain.
 
-    ``season_years`` limits reads and writes to affected seasons. Omit it only
-    for an explicit full-chain aggregation. Careers and homepage outputs still
-    consume the complete persisted chain on the same connection.
+    ``season_years`` limits season outputs to affected seasons. Game ranks must
+    first see the complete league history: a new high game can move an older
+    game's all-time rank. Careers and homepage outputs also consume the
+    complete persisted chain on the same connection.
 
     This function never fetches provider data. Saved identity settings are
     reapplied only within the requested source seasons before aggregation.
@@ -218,6 +219,10 @@ def aggregate_complete_chain_season_rollups(
     reapply_persisted_manager_identities(conn, db_name, season_years=season_years)
     for table in COMPLETE_CHAIN_SEASON_ROLLUP_TABLES:
         ensure_aggregate_table(conn, get_active_catalog(), table)
+
+    from multi_league.transformations.aggregation.modules.optimal_lineup import refresh_position_game_ranks
+
+    refresh_position_game_ranks(conn, central_table("player_fantasy"), db_name=db_name)
 
     result = dict.fromkeys(COMPLETE_CHAIN_SEASON_ROLLUP_TABLES, 0)
     builders = (
@@ -336,6 +341,11 @@ def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:
     # Validate the centralized shell before the first destructive operation.
     for table in (*aggregations, "matchup_h2h_career", "matchup_h2h_season"):
         ensure_aggregate_table(conn, get_active_catalog(), table)
+    # v2 publication has no season pass. v3 already refreshed these ranks;
+    # this idempotent call writes zero cells when the game inputs are unchanged.
+    from multi_league.transformations.aggregation.modules.optimal_lineup import refresh_position_game_ranks
+
+    refresh_position_game_ranks(conn, central_table("player_fantasy"), db_name=db_name)
     result = {table: aggregate(conn, db_name) for table, aggregate in aggregations.items()}
     _, result["matchup_h2h_career"] = aggregate_matchup_h2h(conn, db_name, season_years=set())
     return result

@@ -82,3 +82,37 @@ def test_inspect_reports_candidate_block_without_opening_database(monkeypatch, c
         deadline=time.time() + 5)
     assert pilot.run(args) == 0
     assert '"checksum_valid": true' in capsys.readouterr().out
+
+
+def test_metadata_donor_probe_reads_checkpoint_without_touching_database_or_wal(tmp_path, monkeypatch):
+    import hashlib
+    import struct
+    import duckdb
+    from scripts import fly_table_storage_pilot as pilot
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+
+    path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(path)) as conn:
+        conn.execute("CREATE TABLE facts AS SELECT i FROM range(50) t(i)")
+        conn.execute("CHECKPOINT")
+        ids = [r[0] for r in conn.execute("SELECT block_id FROM pragma_metadata_info()").fetchall()]
+    with path.open("rb") as stream:
+        stream.seek(12288 + ids[0] * 262144)
+        expected = struct.unpack("<Q", stream.read(8))[0]
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    wal = Path(str(path) + ".wal")
+    wal.write_bytes(b"retained evidence - must not replay, move or delete")
+    result = pilot.probe_metadata_donor(path, expected)
+    assert result["checkpoint_only"] is True
+    assert result["metadata_blocks_checked"] == len(ids)
+    assert any(item["block_id"] == ids[0] and item["checksum_valid"] for item in result["candidates"])
+    assert result["repair_authorized"] is False
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    assert wal.read_bytes() == b"retained evidence - must not replay, move or delete"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["source.duckdb", "source.duckdb.wal"]
+
+
+def test_metadata_donor_action_rejects_unapproved_volume():
+    from scripts.fly_table_storage_pilot import validate_target
+    with pytest.raises(ValueError, match="donor volume"):
+        validate_target("donor_headers", "player_fantasy_season", "nyu_ffl", "isolated", "vol_test")

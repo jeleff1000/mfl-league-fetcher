@@ -9,6 +9,8 @@ import argparse
 import json
 import os
 import re
+import struct
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -46,12 +48,61 @@ def validate_target(action, table, db_name, machine, volume, path=DATABASE_PATH)
         raise ValueError("primary target forbidden")
     if not machine or not volume.startswith("vol_"):
         raise ValueError("isolated machine and volume are required")
-    if action not in {"inspect", "locate", "remove"} or table not in TARGETS:
+    if action == "donor_headers" and volume != "vol_vp26dp2g9x3167j4":
+        raise ValueError("donor volume is not the existing September 15 witness")
+    if action not in {"inspect", "locate", "remove", "donor_headers"} or table not in TARGETS:
         raise ValueError("target table/action is not allowlisted")
     if not re.fullmatch(r"[a-z0-9_]+", db_name):
         raise ValueError("invalid witness league")
     if path != DATABASE_PATH:
         raise ValueError("database path is not allowlisted")
+
+
+def probe_metadata_donor(path, expected_checksum):
+    """Inspect registered metadata only; retain the donor database and its WAL.
+
+    The temporary hard link consumes no database copy. A read-only connection
+    under that name inspects only the checkpoint, not the original name's WAL.
+    This is forensic evidence, never a current publication or repair source.
+    """
+    import duckdb
+    from fly_duckdb_block_probe import probe
+
+    path = Path(path)
+    before = path.stat()
+    with tempfile.TemporaryDirectory(prefix="metadata_probe_", dir=path.parent) as folder:
+        link = Path(folder) / "checkpoint.duckdb"
+        os.link(path, link)
+        if not os.path.samefile(path, link):
+            raise ValueError("checkpoint probe must share the original inode")
+        emit("donor_catalog_open", checkpoint_only=True, read_only=True)
+        with duckdb.connect(str(link), read_only=True, config={"threads": "1", "memory_limit": "512MB"}) as conn:
+            ids = [row[0] for row in conn.execute(
+                "SELECT block_id FROM pragma_metadata_info() ORDER BY block_id LIMIT 4097"
+            ).fetchall()]
+        if len(ids) > 4096:
+            raise ValueError("metadata header probe exceeds 4096-block ceiling")
+        emit("donor_headers_start", metadata_blocks=len(ids))
+        matches = []
+        with path.open("rb", buffering=0) as stream:
+            for block_id in ids:
+                offset = 12288 + block_id * 262144
+                if block_id < 0 or offset + 262144 > before.st_size:
+                    raise ValueError("metadata pointer outside donor file")
+                stream.seek(offset)
+                data = stream.read(8)
+                if len(data) != 8:
+                    raise ValueError("short metadata checksum read")
+                if struct.unpack("<Q", data)[0] == expected_checksum:
+                    matches.append(offset)
+        if len(matches) > 2:
+            raise ValueError("ambiguous checksum has more than two candidate blocks")
+        candidates = [probe(path, offset) for offset in matches]
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise ValueError("donor file changed during inspection")
+    return {"checkpoint_only": True, "metadata_blocks_checked": len(ids),
+            "header_bytes_read": len(ids) * 8, "candidates": candidates, "repair_authorized": False}
 
 
 def run(args):
@@ -72,6 +123,11 @@ def run(args):
 
         if duckdb.__version__ != "1.5.4":
             raise ValueError("pilot must use production DuckDB 1.5.4")
+        if args.action == "donor_headers":
+            if block["file_changed_during_read"]:
+                raise ValueError("donor changed during initial block read")
+            emit("donor_result", **probe_metadata_donor(DATABASE_PATH, 18392342689821271652))
+            return 0
         if block["file_changed_during_read"] or block["block_sha256"] != "7bbcf166a70b06eb12c19888577060bf17e867a6f8b81ac7b802bffb3cab1186":
             raise ValueError("target is not the exact previously observed damaged block")
         if args.action == "remove" and Path(str(DATABASE_PATH) + ".wal").exists():
@@ -130,7 +186,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove"])
+    parser.add_argument("--action", required=True, choices=["inspect", "locate", "remove", "donor_headers"])
     parser.add_argument("--target-table", required=True)
     parser.add_argument("--db-name", required=True)
     parser.add_argument("--machine-id", required=True)

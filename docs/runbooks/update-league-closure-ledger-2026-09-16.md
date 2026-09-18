@@ -1,6 +1,55 @@
 # September Update League closure ledger
 
-State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
+
+## Bounded continuation - 2026-09-18 06:00 UTC
+
+Production remains serving with zero active reads, OPS writes and publications
+at the latest readiness check. No primary restart, publication, database copy,
+snapshot restore, checksum modification or architecture change was performed.
+The known physical checkpoint blocker remains OPEN; green diagnostic jobs below
+do not demonstrate removal, repair, or safe production publication.
+Northern League's live overview returned HTTP 200 in 0.549s with summary,
+standings, rankings and rivalries fields. That proves current page availability,
+not fresh-score correctness or a successful new update.
+
+Read-only header pilot `35311940464`, public main `6a21ed59c`, took seven
+seconds including disposable-machine startup. The existing oldest recovery
+volume has checkpoint iterations 12125 and 12126 pointing to different catalog
+roots; neither header receipt proves an intact older table. It inspected only
+the same 274,432 bytes already used by the block probe. The machine was removed.
+
+The September 15 volume `vol_vp26dp2g9x3167j4` already existed. Earlier evidence
+checked only the damaged offset there; the new hypothesis was that the expected
+block could exist at another registered metadata location. Public main
+`78ca1a65832d367aef6c564d99979ef758a8888d` adds a strictly read-only, exact-volume
+allowlisted probe to the existing 40-second pilot, mirrored in the app repo.
+A temporary hard link opens the checkpoint read-only without replaying, moving
+or deleting its retained WAL. There is no database copy or new restored volume.
+The probe caps metadata headers at 4096 and full candidate blocks at two; it
+never authorizes a repair. Hard termination can leave the temporary hard link
+on the isolated volume; normal completion removes it. Production is rejected.
+
+Run `35312723061` completed the pilot in 15 seconds including machine startup
+(helper 1.972s), using production DuckDB 1.5.4. It checked 1351 registered
+metadata-block checksum headers (10,808 bytes, excluding catalog-open I/O and
+the initial 274,432-byte block/header probe). **No checksum candidate exists in
+that registered set.** This rejects this donor hypothesis, not all possible
+recovery methods. Disposable machine `8d96509c194998` was destroyed; existing
+volume and WAL were retained. The full Actions job took 36 seconds.
+
+Twenty-seven focused tests passed in 2.64 seconds on a fresh C-drive temporary
+directory, including real DuckDB database/WAL preservation. D-drive testing
+first failed because its filesystem does not support hard links; no product
+fallback or database copy was added. Independent review found no blocker and
+noted the timeout hard-link cleanup caveat above. Both workflow/helper mirrors
+match exactly. This is diagnostic progress, NOT completion of physical repair,
+the twelve remaining aggregate recoveries, or all-platform UI canaries.
+
+The previously requested new-snapshot restore remains unapproved and unperformed.
+Do not repeat the rejected single-bit, same-offset donor, registered-metadata
+donor, WAL-replay connection, or DROP attempts unchanged. A safe in-place
+removal has not been established within current scope.
 
 ## Bounded continuation - 2026-09-18 05:40 UTC
 

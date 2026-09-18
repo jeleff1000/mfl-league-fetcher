@@ -1,4 +1,5 @@
-/* EXPERIMENT ONLY: tiny-fixture DROP interposition, never a server extension. */
+/* Offline recovery experiment, never a server extension. The real-file build
+ * is separately tested; loading it does not arm any destructive behavior. */
 #include <dlfcn.h>
 #include <atomic>
 #include <string>
@@ -56,8 +57,25 @@ void lh_table_drop(void *table) {
         }
         // Exact catalog, schema and reserved identity, observed on stock 1.5.4.
         // Never broaden this to a first-DROP or substring match.
+#ifdef LH_REAL_FILE
+        const char *names[] = {
+            "homepage_manager_rankings", "matchup_h2h_career", "player_fantasy_season",
+            "player_fantasy_season_all", "standings_by_year"
+        };
+        for (const auto name : names) {
+            const auto prefix = std::string("CREATE TABLE ___leagues.public.__corrupt_recovery_") + name + "(";
+            if (sql.compare(0, prefix.size(), prefix) == 0) {
+                allowed_table_drop = true;
+                break;
+            }
+        }
+        // Explicit removal is fail-closed. Never forward an unexpected DROP
+        // while the real-file helper is armed.
+        if (!allowed_table_drop) { _exit(99); }
+#else
         const std::string prefix = "CREATE TABLE candidate.public.__corrupt_recovery_player_fantasy_season(";
         allowed_table_drop = sql.compare(0, prefix.size(), prefix) == 0;
+#endif
     }
     try {
         original(table);

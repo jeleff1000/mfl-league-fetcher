@@ -182,6 +182,7 @@ def run_stage(stage, command, *, deadline, env=None, transitions=(), trace=None)
         if event.get('event') != 'phase':
             if event.get('event') in {'engine_open', 'wal_preserved', 'wal_replayed', 'prior_commit_reconciled',
                     'commit_returned', 'checkpoint_start', 'checkpoint_end', 'checkpoint_returned',
+                    'checkpoint_table_progress',
                     'stock_reopen_write_verified', 'isolated_recovery_verified', 'adapter_failed'}:
                 emit_event({'event': 'child_event', 'child': event})
             return
@@ -657,6 +658,21 @@ def recovery_connect_config():
             'max_vacuum_tasks': '0'}
 
 
+def checkpoint_progress(hook):
+    buffer = ctypes.create_string_buffer(512)
+    hook.lh_spike_checkpoint_progress.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    if hook.lh_spike_checkpoint_progress(buffer, len(buffer)) <= 0:
+        raise ValueError('checkpoint progress exceeded its fixed buffer')
+    return json.loads(buffer.value)
+
+
+def report_checkpoint_progress(hook, stopped):
+    # At most eight samples in the 15s verification window. No extra SQL,
+    # database reads, native disk writes, or watchdog budget changes.
+    while not stopped.wait(2):
+        print(json.dumps(checkpoint_progress(hook)), flush=True)
+
+
 def verify_stock(path, db_name, before, *, receipt_id='stock-proof'):
     """Run in a fresh helper-free child. Ordinary write leaves no user rows."""
     if os.environ.get('LD_PRELOAD'):
@@ -853,10 +869,18 @@ def recovery_child(args):
         print(json.dumps({'event': 'commit_returned', 'removed': removed}), flush=True)
 
     phase('verify')
-    for index in (1, 2):
-        print(json.dumps({'event': 'checkpoint_start', 'index': index}), flush=True)
-        conn.execute('CHECKPOINT')
-        print(json.dumps({'event': 'checkpoint_end', 'index': index}), flush=True)
+    checkpoint_progress(hook)  # Validate observer binding before the checkpoint.
+    observer_stopped = threading.Event()
+    observer = threading.Thread(target=report_checkpoint_progress, args=(hook, observer_stopped), daemon=True)
+    observer.start()
+    try:
+        for index in (1, 2):
+            print(json.dumps({'event': 'checkpoint_start', 'index': index}), flush=True)
+            conn.execute('CHECKPOINT')
+            print(json.dumps({'event': 'checkpoint_end', 'index': index}), flush=True)
+    finally:
+        observer_stopped.set()
+        observer.join(timeout=.1)
     conn.close()
     hook.lh_spike_checkpoint(0)
     print(json.dumps({'event': 'checkpoint_returned', 'metadata_blocks': hook.lh_spike_allocations(),

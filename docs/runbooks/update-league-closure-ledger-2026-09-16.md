@@ -1,8 +1,36 @@
 # September Update League closure ledger
 
-State: isolated real-file removal COMMIT returned for all five objects; checkpoint exited at the unchanged 128-new-block ceiling. Outcome remains UNKNOWN until retained-WAL reconciliation and stock verification. Selective allocator and guarded-resume regressions passed the Linux matrix. Production has not been changed. This ledger is for league updates, not SuperTable SOTA work.
+State: isolated real-file removal COMMIT returned for all five objects; retained-WAL reconciliation confirms no additional DROP is needed. The latest first checkpoint exceeded its unchanged 15-second ceiling, so durable removal and helper-free stock verification remain UNKNOWN. Production storage-reference cleanup has not been applied. This ledger is for league updates, not SuperTable SOTA work.
 
 ## Current bounded-recovery receipts - 2026-09-18
+
+- Public main feb16731e: synthetic Linux run35379364978 passed all six cases,
+  including61adapter tests5.95s and real_scope6.712s. These are synthetic,
+  not proof of real-file durability.
+- Capacity trial35379439057 refused performance2/4096MiB on the existing
+  recovery volume at18:19:01Z: insufficient host resources. No VM was created,
+  no engine opened and no baseline changed. Do not repeat this launch unchanged.
+- Checkpoint source review: max_vacuum_tasks=0 disables merging tasks but not
+  InitializeVacuumState's empty-row-group removal and subsequent metadata
+  rewriting. A tiny local1.5.1 characterization preserved122880rows and
+  score sum22661468160; concurrent checkpoint retained2rowgroups, but fresh
+  normal reopen/write/checkpoint reduced them to1. Total2.515s. This only
+  defers the work; NOT adopted as a fix and NOT production-engine evidence.
+  Primary sources: DuckDB v1.5.4 src/storage/table/row_group_collection.cpp
+  InitializeVacuumState/Checkpoint and src/transaction/duck_transaction_manager.cpp.
+- Next diagnostic: sample the stock WriteTable callback's current table,
+  elapsed time and completed-table count every2s. Bounded512-byte samples;
+  no new queries, native I/O, values or altered checkpoint behavior. The
+  timeout-persistence regression failed before forwarding this event and
+  passes after. Native observer proof on1.5.4 remains pending; no real pilot
+  until it and the existing preservation/interruption suite pass.
+- Local scoped suite79passed,3Linuxskipped,2legacy-metadata-donor-excluded
+  in23.28s. Startup shell proofs2passed1.55s; YAML/compile/diff checks passed.
+  Ruff reports the same3pre-existing findings on HEAD and working files;
+  no unrelated lint edits. Candidate capacity is nowperformance1/4096MiB:
+  fewer dedicated CPUs than the refused placement, with48MiB/s documented
+  volume bandwidth. No claimed speed result;3GiB engine and all time caps
+  unchanged. Requires synthetic proof before one isolated attempt.
 
 - Real resume35378792853 on3e7e573df: startup4.46s (previous7.60s).
   WAL replay9.747s, preservation reconciliation passed, new_drops0 and

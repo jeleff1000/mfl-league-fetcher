@@ -6,6 +6,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#ifdef LH_REAL_FILE
+#include <chrono>
+#include <mutex>
+#include <cstring>
+static std::mutex progress_mutex;
+static std::string progress_table;
+static bool progress_active = false;
+static unsigned progress_completed = 0;
+static std::chrono::steady_clock::time_point progress_started;
+#endif
 
 using std::atomic_store;
 using std::atomic_load;
@@ -37,6 +47,73 @@ static std::atomic<uint64_t> metadata_mark_partial_mask{0};
 #endif
 
 extern "C" {
+
+#ifdef LH_REAL_FILE
+// Observation only. The pinned stock method is always called, unmodified.
+// A Python observer samples this bounded state; no logging or fsync occurs
+// on the engine's checkpoint path and no row/column values are exposed.
+int lh_spike_checkpoint_progress(char *buffer, int capacity) {
+    std::lock_guard<std::mutex> guard(progress_mutex);
+    auto elapsed = progress_active ? std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - progress_started).count() : 0;
+    const auto message = std::string("{\"event\":\"checkpoint_table_progress\",\"table\":\"") +
+        progress_table + "\",\"active\":" + (progress_active ? "true" : "false") +
+        ",\"completed_tables\":" + std::to_string(progress_completed) +
+        ",\"elapsed_ms\":" + std::to_string(elapsed) + "}";
+    if (capacity < 1 || message.size() >= static_cast<size_t>(capacity)) { return -1; }
+    std::memcpy(buffer, message.c_str(), message.size() + 1);
+    return static_cast<int>(message.size());
+}
+
+void lh_checkpoint_table(void *writer, void *table, void *serializer)
+    __asm__("_ZN6duckdb26SingleFileCheckpointWriter10WriteTableERNS_17TableCatalogEntryERNS_10SerializerE");
+
+void lh_checkpoint_table(void *writer, void *table, void *serializer) {
+    auto original = reinterpret_cast<void (*)(void *, void *, void *)>(dlsym(RTLD_NEXT,
+        "_ZN6duckdb26SingleFileCheckpointWriter10WriteTableERNS_17TableCatalogEntryERNS_10SerializerE"));
+    if (!original) { _exit(86); }
+#ifdef LH_TEST_SKIP_CHECKPOINT_OBSERVER
+    original(writer, table, serializer); // Synthetic negative control only.
+#else
+    if (!atomic_load(&fresh_metadata)) {
+        original(writer, table, serializer);
+        return;
+    }
+    auto storage = reinterpret_cast<void *(*)(void *)>(dlsym(RTLD_NEXT,
+        "_ZN6duckdb14DuckTableEntry10GetStorageEv"));
+    auto table_name = reinterpret_cast<std::string (*)(void *)>(dlsym(RTLD_NEXT,
+        "_ZNK6duckdb9DataTable12GetTableNameB5cxx11Ev"));
+    if (!storage || !table_name) { _exit(85); }
+    std::string name = "redacted";
+    try {
+        // GetTableName copies only the name, never full column/constraint DDL.
+        const auto candidate = table_name(storage(table));
+        if (candidate.size() <= 128 &&
+            candidate.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.") == std::string::npos) {
+            name = candidate;
+        }
+    } catch (...) {
+        // Diagnostic name lookup must not suppress the stock checkpoint.
+    }
+    {
+        std::lock_guard<std::mutex> guard(progress_mutex);
+        progress_table = name;
+        progress_active = true;
+        progress_started = std::chrono::steady_clock::now();
+    }
+    try {
+        original(writer, table, serializer);
+    } catch (...) {
+        std::lock_guard<std::mutex> guard(progress_mutex);
+        progress_active = false;
+        throw;
+    }
+    std::lock_guard<std::mutex> guard(progress_mutex);
+    progress_active = false;
+    ++progress_completed;
+#endif
+}
+#endif
 
 #ifdef LH_TEST_MARK_ORIGIN
 int lh_spike_test_mark_calls(void) { return atomic_load(&metadata_mark_calls); }

@@ -358,6 +358,18 @@ def child(path, mode):
             if mode == "crash_flush":
                 hook.lh_spike_crash_flush()
         conn.execute("CHECKPOINT")
+        if hook and len(targets(path)) == 5 and mode == 'hook':
+            # Exercise the actual engine callback, not a fabricated log line.
+            progress = ctypes.create_string_buffer(512)
+            hook.lh_spike_checkpoint_progress.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            assert hook.lh_spike_checkpoint_progress(progress, len(progress)) > 0
+            sample = json.loads(progress.value)
+            assert sample['event'] == 'checkpoint_table_progress'
+            if sample['completed_tables'] < 6 or sample['active'] is not False:
+                raise ValueError('native checkpoint table observer did not run')
+            assert sample['table'] and all(c.isalnum() or c in '._' for c in sample['table'])
+            assert 'Saved Alias' not in progress.value.decode()
+            emit('real_checkpoint_observer_verified', **sample)
         if hook:
             # A second checkpoint retires metadata no longer referenced by
             # the new catalog, before a stock engine is asked to reuse space.
@@ -496,6 +508,16 @@ def main():
                                check=True, timeout=5)
                 shutil.copyfile(baseline, candidate)
                 if args.scenario == "real_scope":
+                    mutant = folder / 'unobserved.so'
+                    subprocess.run(['c++', '-shared', '-fPIC', '-O0', '-Wall', '-Werror',
+                                    '-DLH_REAL_FILE', '-DLH_TEST_SKIP_CHECKPOINT_OBSERVER',
+                                    str(Path(__file__).with_suffix('.cpp')), '-ldl', '-o', str(mutant)],
+                                   check=True, timeout=5)
+                    missing = run_child(candidate, 'hook', mutant)
+                    if missing.returncode == 0 or 'native checkpoint table observer did not run' not in missing.stdout:
+                        raise ValueError('missing native checkpoint observation escaped the behavioral test')
+                    emit('missing_checkpoint_observer_rejected')
+                    shutil.copyfile(baseline, candidate)
                     seeded = run_child(candidate, "seed_wal")
                     if seeded.returncode != 25:
                         raise ValueError("prior committed WAL fixture was not created")

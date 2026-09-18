@@ -753,6 +753,20 @@ def test_checkpoint_marker_is_forwarded_before_a_timeout(capsys):
     assert result['outcome'] == 'UNKNOWN'
 
 
+def test_checkpoint_table_progress_survives_remote_timeout(tmp_path):
+    import json
+    a = adapter()
+    event = {'event': 'checkpoint_table_progress', 'table': '___leagues.public.player_fantasy',
+             'active': True, 'completed_tables': 12, 'elapsed_ms': 2010}
+    code = f"import time; print({json.dumps(event)!r},flush=True); time.sleep(5)"
+    with (tmp_path / 'trace.jsonl').open('xb') as trace:
+        result = a.run_stage('verify', [sys.executable, '-u', '-c', code],
+                             deadline=time.time()+.4, transitions=('inspect',), trace=trace)
+    saved = [json.loads(line) for line in (tmp_path / 'trace.jsonl').read_text().splitlines()]
+    assert any(row.get('child') == event for row in saved)
+    assert result['outcome'] == 'UNKNOWN'
+
+
 def test_machine_exec_remote_failure_is_not_a_successful_cli_result(capsys):
     a = adapter()
     assert a.emit_machine_exec_result({'exit_code': 7, 'stdout': 'sentinel', 'stderr': 'failure'}) == 7

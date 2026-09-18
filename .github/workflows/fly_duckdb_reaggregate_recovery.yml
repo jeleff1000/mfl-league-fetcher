@@ -193,11 +193,13 @@ jobs:
           if [ "$PILOT_ACTION" = engine_resume ]; then
             recovery_args="--resume-receipt 35368369603_1"
             # Real receipt35378792853: replay saturated shared4's32MiB/s.
-            # One authorized temporary performance2/4GiB trial gives64MiB/s.
+            # performance2/4GiB was refused by this volume's host (35379439057).
+            # A single dedicated CPU keeps4GiB RAM and offers48MiB/s vs32.
+            # One smaller-placement test, with table progress; not a retry loop.
             # Same volume,3GiB engine ceiling and deadlines; never copy/move.
             # Cleanup destroys this VM. No automatic capacity retry ladder.
             vm_cpu_kind=performance
-            vm_cpus=2
+            vm_cpus=1
             vm_memory=4096
           fi
           if [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then

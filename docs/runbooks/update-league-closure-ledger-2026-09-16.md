@@ -4,6 +4,24 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Blocked audit after the repeated capacity condition across the status turn
+  and two goal continuations: the recovery host refused all three tested
+  placements, there is no live recovery job, and the inspected inventory has
+  no abandoned pilot to remove. Observer/native/synthetic work is complete
+  for the next bounded trial. Real-file proof cannot advance until this
+  existing volume's host has suitable capacity. Do not loop unchanged launches
+  or substitute production, a copied volume, or extended deadlines.
+- Fresh production catalog-only query returned exactly the five quarantined
+  names AND all five canonical replacements. This proves cleanup is still
+  incomplete, not preservation of every value. One /ready503 was transient;
+  immediate recheck returned200/serving/accepting with no active writers,
+  without a restart. No production mutation was performed.
+- Handoff remains unexecuted: local close_pool cannot close borrowed handles
+  and HTTP maintenance routes reopen the pool. Live runtime configuration also
+  differs from local fly.toml. A controlled server-process shutdown and exact
+  deployed-config binding are prerequisites AFTER successful isolated proof;
+  no hot helper or local-config deployment is an approved substitute.
+
 - Diagnostic35381870547 on619009c6c: even the previously working
   shared4/3584 placement was refused by the volume host at18:43:58Z, before
   engine open. No third unchanged launch is authorized by this evidence.

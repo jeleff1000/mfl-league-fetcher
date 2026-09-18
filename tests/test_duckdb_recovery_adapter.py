@@ -328,3 +328,36 @@ def test_writable_replay_timeout_is_unknown_not_failed():
                          deadline=time.time()+.5, transitions=('replay',))
     assert result['exit_code'] == 124
     assert result['outcome'] == 'UNKNOWN'
+
+
+def test_phase_transition_rejects_elapsed_budget_even_before_poll_observes_it():
+    a = adapter()
+    spent = {'preserve': 9.0}
+    with pytest.raises(ValueError, match='budget'):
+        a.charge_phase(spent, 'preserve', 1.1)
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux parent-death signal')
+def test_recovery_child_dies_if_supervisor_is_killed(tmp_path):
+    import os
+    import subprocess
+    marker = tmp_path / 'child-survived'
+    armed = tmp_path / 'child-armed'
+    child = (f"import sys,os,time; sys.path.insert(0,{str(ROOT / 'scripts/diagnostics')!r}); "
+             "import duckdb_recovery_adapter as a; a.protect_parent(int(sys.argv[1])); "
+             f"open({str(armed)!r},'w').close(); time.sleep(.7); open({str(marker)!r},'w').close()")
+    parent = subprocess.Popen([sys.executable, '-c',
+        "import subprocess,sys,os,time; subprocess.Popen([sys.executable,'-c',sys.argv[1],str(os.getpid())]); time.sleep(10)", child])
+    try:
+        deadline = time.monotonic()+3
+        while not armed.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert armed.exists()
+        parent.kill()
+        parent.wait(timeout=1)
+        time.sleep(.8)
+        assert not marker.exists()
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=1)

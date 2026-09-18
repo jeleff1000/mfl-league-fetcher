@@ -217,11 +217,14 @@ def test_file_inventory_does_not_open_duckdb_or_hide_wal(tmp_path, monkeypatch):
     path.write_bytes(b'fixture')
     wal = Path(str(path) + '.wal')
     wal.write_bytes(b'committed')
+    checkpoint_wal = Path(str(path) + '.wal.checkpoint')
+    checkpoint_wal.write_bytes(b'checkpoint committed')
     result = pilot.file_inventory(path)
     assert result['']['size'] == 7
     assert result['.wal']['size'] == 9
     assert result['.wal']['mtime_ns'] == wal.stat().st_mtime_ns
     assert wal.read_bytes() == b'committed'
+    assert result['.wal.checkpoint']['size'] == 20
 
 
 def test_inventory_replay_has_no_spill_and_fits_same_one_gib_machine():

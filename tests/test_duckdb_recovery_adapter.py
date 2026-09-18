@@ -491,6 +491,27 @@ def test_stock_probe_reconciles_its_owned_interrupted_write_and_repeats(tmp_path
         assert conn.execute('SELECT receipt_id FROM public.__lh_recovery_write_probe').fetchall() == [('some-other-owner',)]
 
 
+def test_stock_verification_does_not_compact_unrelated_pending_deletes(tmp_path):
+    a = adapter()
+    path = tmp_path / '___leagues.duckdb'
+    with duckdb.connect(str(path), config={'threads': '1'}) as conn:
+        conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'nyu_ffl' AS db_name, 2018 AS year, 'Saved Alias' AS manager, 91.23 AS points")
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT * FROM public.matchup')
+        conn.execute("CREATE TABLE public.unrelated_history AS SELECT 'other' AS db_name, i, i+100 AS score FROM range(245760)t(i)")
+        conn.execute('CHECKPOINT')
+        # Keep committed deletes in WAL, as the real recovery must do.
+        conn.execute("DELETE FROM public.unrelated_history WHERE db_name='other' AND i%3!=0")
+        before = a.capture_witness(conn, 'nyu_ffl')
+    assert path.stat().st_size < 8*1024*1024
+    a.verify_stock(path, 'nyu_ffl', before)
+    with duckdb.connect(str(path), read_only=True) as conn:
+        assert conn.execute("SELECT COUNT(*),SUM(score) FROM public.unrelated_history WHERE db_name='other'").fetchone() == (81920, 10074398720)
+        assert conn.execute("SELECT COUNT(DISTINCT row_group_id) FROM pragma_storage_info('public.unrelated_history')").fetchone() == (2,), 'ordinary proof must not vacuum/rewrite unrelated history'
+
+
 def test_adapter_cli_refuses_wrong_machine_before_opening_any_file():
     import base64
     import json

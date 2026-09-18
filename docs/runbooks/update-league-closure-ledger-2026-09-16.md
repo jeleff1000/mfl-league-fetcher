@@ -4,6 +4,20 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Capacity attempts `35371924340` (performance8/16GiB) and `35372065094`
+  (performance2/4GiB) were refused by the existing volume host before a VM or
+  database process started. No data change or extra capacity remains. Resume
+  baseline from `35371660210` is unchanged; no unchanged capacity retry.
+- Tiny behavioral test reproduced optional stock-checkpoint compaction:
+  245,760 input rows with committed deletes retained in WAL become 81,920
+  rows with the same values, but default checkpoint merges two row groups
+  into one. Recovery config now sets stock `max_vacuum_tasks=0`: durable
+  replay/checkpoint retains both groups and identical surviving values,
+  avoiding unrelated optional rewrites. This test failed before the setting.
+  This is a candidate explanation for real CP cost, not yet an actual-file
+  performance proof. Same deadlines, memory and allocation cap; shared4/4GiB
+  remains available. Pinned Linux regression and then real pilot still needed.
+
 - Actual resume `35371482774`: retained current WAL, replay 9.648s, five DROP
   records replayed, all five names absent, original value witnesses matched;
   zero new inserts/drops. First CHECKPOINT hit the 15s verify cap: UNKNOWN,

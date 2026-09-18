@@ -488,12 +488,19 @@ def reconcile_committed_removal(conn, db_name, before):
     return 0
 
 
+def recovery_connect_config():
+    # Stock setting: persist WAL/catalog changes without optional row-group
+    # compaction of unrelated tables. No checksum or durability setting changes.
+    return {'threads': '1', 'memory_limit': '3072MB', 'temp_directory': '',
+            'max_vacuum_tasks': '0'}
+
+
 def verify_stock(path, db_name, before, *, receipt_id='stock-proof'):
     """Run in a fresh helper-free child. Ordinary write leaves no user rows."""
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
     import duckdb
-    config = {'threads': '1', 'memory_limit': '3072MB', 'temp_directory': ''}
+    config = recovery_connect_config()
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
@@ -582,7 +589,7 @@ def recovery_child(args):
     if sys.platform != 'linux':
         raise ValueError('isolated recovery requires the verified Linux runtime')
     sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
-    from fly_table_storage_pilot import engine_identity, inventory_connect_config, file_inventory
+    from fly_table_storage_pilot import engine_identity, file_inventory
     from fly_duckdb_block_probe import probe
     import duckdb
 
@@ -639,7 +646,7 @@ def recovery_child(args):
     replay_started = time.monotonic()
     # Read-write replay can flush committed row groups normally; read-only
     # replay could not fit them in memory. WAL remains present for the engine.
-    conn = duckdb.connect(str(path), config={**inventory_connect_config(), 'checkpoint_threshold': '1GB'})
+    conn = duckdb.connect(str(path), config={**recovery_connect_config(), 'checkpoint_threshold': '1GB'})
     conn.execute('PRAGMA disable_checkpoint_on_shutdown')
     if hook.lh_spike_reserved_masks() < 1:
         raise ValueError('verified engine did not reserve the exact damaged metadata block')
@@ -759,7 +766,7 @@ def main():
         from fly_duckdb_block_probe import probe
         import duckdb
         with duckdb.connect('/data/___leagues.duckdb', read_only=True,
-                            config={'threads': '1', 'memory_limit': '3072MB', 'temp_directory': ''}) as conn:
+                            config=recovery_connect_config()) as conn:
             registered = bool(conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=346').fetchall())
         if registered and not probe('/data/___leagues.duckdb', 90714112)['checksum_valid']:
             raise ValueError('damaged metadata remains eligible for stock reuse')

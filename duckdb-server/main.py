@@ -159,11 +159,58 @@ _delta_publish_inflight = 0
 _delta_publish_active: dict[str, dict[str, Any]] = {}
 _delta_publish_active_lock = threading.Lock()
 _state = {"status": "starting"}
+_derived_recovery_lock = threading.Lock()
+_derived_recovery_progress: dict[str, Any] = {
+    "stage": "idle",
+    "completed": 0,
+    "total": 0,
+    "current_db_name": None,
+    "started_at": None,
+    "updated_at": None,
+    "error": None,
+}
 _ops_write_count = 0
 # Serializes ___ops writers without blocking the dedicated read connection while
 # a replacement snapshot is being built.  The old snapshot remains queryable
 # until the final close/rename/reopen handoff.
 _ops_rebuild_lock = threading.Lock()
+
+
+def _start_derived_recovery_progress() -> None:
+    now = time.time()
+    with _derived_recovery_lock:
+        _derived_recovery_progress.update(
+            {
+                "stage": "starting",
+                "completed": 0,
+                "total": 0,
+                "current_db_name": None,
+                "started_at": now,
+                "updated_at": now,
+                "error": None,
+            }
+        )
+
+
+def _update_derived_recovery_progress(event: dict[str, Any]) -> None:
+    with _derived_recovery_lock:
+        _derived_recovery_progress.update(event)
+        _derived_recovery_progress["updated_at"] = time.time()
+
+
+def _fail_derived_recovery_progress(exc: Exception) -> None:
+    _update_derived_recovery_progress(
+        {"stage": "failed", "current_db_name": None, "error": f"{type(exc).__name__}: {exc}"}
+    )
+
+
+def _derived_recovery_snapshot() -> dict[str, Any]:
+    now = time.time()
+    with _derived_recovery_lock:
+        result = dict(_derived_recovery_progress)
+    started_at = result.get("started_at")
+    result["elapsed_seconds"] = round(now - float(started_at), 2) if started_at else 0.0
+    return result
 
 
 def _begin_ops_write_state(*, snapshot: bool = False) -> None:
@@ -1624,6 +1671,7 @@ async def server_state():
         "delta_admission_timeout_seconds": DELTA_ADMISSION_TIMEOUT_SECONDS,
         "delta_busy_retry_after_seconds": DELTA_BUSY_RETRY_AFTER_SECONDS,
         "active_delta_publishes": _active_delta_publish_snapshot(),
+        "derived_recovery": _derived_recovery_snapshot(),
         "league_file_hash": meta.get("___leagues", {}).get("file_hash", "unknown"),
         "databases": meta,
         "duckdb_memory": memory_info,
@@ -2150,35 +2198,70 @@ def _reaggregate_damaged_derived_from_sources(
     mode: str,
 ) -> dict[str, Any]:
     """Rebuild only the five damaged aggregate tables from persisted facts."""
-    from fly_reaggregate_derived import _attach_if_present, quarantine_corrupt_targets, reaggregate_all
+    from fly_reaggregate_derived import (
+        _attach_if_present,
+        clear_recovery_targets,
+        discover_leagues,
+        quarantine_corrupt_targets,
+        reaggregate_parallel,
+        validate_targets,
+    )
 
+    data_dir = db.get_data_dir()
+    ops_nfl_path = data_dir / "___ops_nfl.duckdb"
+    ops_path = data_dir / "___ops.duckdb"
     conn = db.connect_database(
         database_path,
         data_dir=db.get_data_dir(),
         threads=WRITE_DUCKDB_THREADS,
     )
     try:
-        data_dir = db.get_data_dir()
-        _attach_if_present(conn, data_dir / "___ops_nfl.duckdb", "___ops_nfl")
-        _attach_if_present(conn, data_dir / "___ops.duckdb", "___ops")
+        _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
+        _attach_if_present(conn, ops_path, "___ops")
         quarantined: dict[str, str] = {}
         if mode == "quarantine_and_rebuild":
             quarantined = quarantine_corrupt_targets(conn)
         elif mode != "resume_rebuild":
             raise ValueError("mode must be quarantine_and_rebuild or resume_rebuild")
-
-        result = reaggregate_all(conn)
-        result.update(
-            {
-                "status": "COMMITTED",
-                "mode": mode,
-                "quarantined": quarantined,
-                "targets": list(_DAMAGED_DERIVED_TARGETS),
-            }
-        )
-        return result
+        clear_recovery_targets(conn)
+        leagues = discover_leagues(conn)
     finally:
         conn.close()
+
+    result = reaggregate_parallel(
+        database_path,
+        db_names=leagues,
+        ops_path=ops_path,
+        ops_nfl_path=ops_nfl_path,
+        max_workers=min(8, WRITE_DUCKDB_THREADS),
+        progress_callback=_update_derived_recovery_progress,
+    )
+    _update_derived_recovery_progress(
+        {"stage": "validating", "completed": len(leagues), "total": len(leagues), "current_db_name": None}
+    )
+    verify_conn = db.connect_database(
+        database_path,
+        data_dir=db.get_data_dir(),
+        threads=WRITE_DUCKDB_THREADS,
+    )
+    try:
+        targets = validate_targets(verify_conn)
+        verify_conn.execute("CHECKPOINT")
+    finally:
+        verify_conn.close()
+    _update_derived_recovery_progress(
+        {"stage": "complete", "completed": len(leagues), "total": len(leagues), "current_db_name": None}
+    )
+    result.update(
+        {
+            "status": "COMMITTED",
+            "mode": mode,
+            "quarantined": quarantined,
+            "targets": list(_DAMAGED_DERIVED_TARGETS),
+            "target_receipts": targets,
+        }
+    )
+    return result
 
 
 class DeltaValidationError(ValueError):
@@ -3409,6 +3492,7 @@ async def rebuild_league_derived(request: Request):
 
     database_path = db.get_data_dir() / "___leagues.duckdb"
     async with _merge_lock:
+        _start_derived_recovery_progress()
         _state["status"] = "draining"
         elapsed = 0.0
         while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:
@@ -3485,8 +3569,10 @@ async def reaggregate_damaged_derived(request: Request):
                 mode=mode,
             )
         except ValueError as exc:
+            _fail_derived_recovery_progress(exc)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
+            _fail_derived_recovery_progress(exc)
             logger.error("Five-table derived recovery failed: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         finally:

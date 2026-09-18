@@ -415,6 +415,7 @@ def test_server_state_exposes_runtime_capacity(client):
     assert body["delta_busy_retry_after_seconds"] > 0
     assert body["duckdb_config"]["pool_size"] == 2
     assert body["duckdb_config"]["memory_limit"]
+    assert body["derived_recovery"]["stage"] == "idle"
 
 
 def test_query_requires_auth(client):

@@ -32,6 +32,9 @@ class _Connection:
             return _Result([(2,)])
         return _Result([])
 
+    def close(self):
+        self.sql.append("CLOSE")
+
 
 def test_reaggregate_one_league_calls_only_the_five_canonical_targets(monkeypatch):
     calls: list[tuple] = []
@@ -134,6 +137,76 @@ def test_reaggregate_all_fails_fast_instead_of_repeating_storage_error(monkeypat
 
     assert calls == ["alpha"]
     assert conn.sql[-1] == "ROLLBACK"
+
+
+def test_reaggregate_all_reports_incremental_progress(monkeypatch):
+    conn = _Connection()
+    events: list[dict] = []
+    monkeypatch.setattr(
+        repair,
+        "reaggregate_one_league",
+        lambda _conn, _db_name: {table: 1 for table in repair.TARGET_TABLES},
+    )
+    monkeypatch.setattr(
+        repair,
+        "validate_targets",
+        lambda _conn: {table: {"rows": 2, "distinct_keys": 2} for table in repair.TARGET_TABLES},
+    )
+
+    result = repair.reaggregate_all(
+        conn,
+        db_names=["alpha", "beta"],
+        progress_callback=lambda event: events.append(dict(event)),
+        checkpoint=False,
+    )
+
+    assert result["leagues"] == 2
+    assert events == [
+        {"stage": "reaggregating", "completed": 0, "total": 2, "current_db_name": "alpha"},
+        {"stage": "reaggregating", "completed": 1, "total": 2, "current_db_name": "beta"},
+        {"stage": "reaggregating", "completed": 2, "total": 2, "current_db_name": None},
+        {"stage": "validating", "completed": 2, "total": 2, "current_db_name": None},
+        {"stage": "complete", "completed": 2, "total": 2, "current_db_name": None},
+    ]
+    assert "CHECKPOINT" not in conn.sql
+
+
+def test_parallel_reaggregation_uses_disjoint_scoped_transactions(monkeypatch, tmp_path):
+    calls: list[str] = []
+    events: list[dict] = []
+    connections: list[_Connection] = []
+
+    def connection_factory(_path):
+        conn = _Connection()
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(
+        repair,
+        "reaggregate_one_league",
+        lambda _conn, db_name: calls.append(db_name) or {table: 1 for table in repair.TARGET_TABLES},
+    )
+
+    result = repair.reaggregate_parallel(
+        tmp_path / "leagues.duckdb",
+        db_names=[f"league_{index}" for index in range(12)],
+        max_workers=4,
+        progress_callback=lambda event: events.append(dict(event)),
+        connection_factory=connection_factory,
+    )
+
+    assert result == {"leagues": 12}
+    assert set(calls) == {f"league_{index}" for index in range(12)}
+    assert len(connections) == 4
+    assert all("BEGIN TRANSACTION" in conn.sql for conn in connections)
+    assert all("COMMIT" in conn.sql for conn in connections)
+    assert all(conn.sql[-1] == "CLOSE" for conn in connections)
+    assert events[-1] == {
+        "stage": "reaggregating",
+        "completed": 12,
+        "total": 12,
+        "current_db_name": None,
+    }
 
 
 def test_quarantine_targets_swaps_only_the_five_corrupt_objects():

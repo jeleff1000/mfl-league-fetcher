@@ -9,9 +9,12 @@ derived table is rewritten.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import sys
+import threading
 from pathlib import Path
+from typing import Callable
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PIPELINE_ROOT = _REPO_ROOT / "fantasy_football_data_scripts"
@@ -184,11 +187,30 @@ def validate_targets(conn) -> dict[str, dict[str, int]]:
     return results
 
 
-def reaggregate_all(conn, *, db_names: list[str] | None = None) -> dict:
+def reaggregate_all(
+    conn,
+    *,
+    db_names: list[str] | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
+    checkpoint: bool = True,
+) -> dict:
     """Reaggregate the five targets for all leagues, one transaction at a time."""
     leagues = sorted(set(db_names or discover_leagues(conn)))
     completed = 0
+
+    def report(stage: str, current_db_name: str | None = None) -> None:
+        if progress_callback:
+            progress_callback(
+                {
+                    "stage": stage,
+                    "completed": completed,
+                    "total": len(leagues),
+                    "current_db_name": current_db_name,
+                }
+            )
+
     for db_name in leagues:
+        report("reaggregating", db_name)
         conn.execute("BEGIN TRANSACTION")
         try:
             reaggregate_one_league(conn, db_name)
@@ -202,9 +224,96 @@ def reaggregate_all(conn, *, db_names: list[str] | None = None) -> dict:
                     sort_keys=True,
                 )
             ) from exc
+    report("reaggregating")
+    report("validating")
     targets = validate_targets(conn)
-    conn.execute("CHECKPOINT")
+    if checkpoint:
+        conn.execute("CHECKPOINT")
+    report("complete")
     return {"leagues": completed, "targets": targets}
+
+
+def clear_recovery_targets(conn) -> None:
+    """Remove partial retry output from only the five clean recovery tables."""
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        for table in TARGET_TABLES:
+            conn.execute(f"DELETE FROM public.{_quote_identifier(table)}")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def reaggregate_parallel(
+    database_path: Path,
+    *,
+    db_names: list[str],
+    ops_path: Path | None = None,
+    ops_nfl_path: Path | None = None,
+    max_workers: int = 8,
+    progress_callback: Callable[[dict], None] | None = None,
+    connection_factory: Callable[[Path], object] | None = None,
+) -> dict[str, int]:
+    """Run canonical scoped aggregators concurrently on disjoint league keys."""
+    leagues = sorted(set(db_names))
+    worker_count = max(1, min(int(max_workers), len(leagues) or 1))
+    completed = 0
+    progress_lock = threading.Lock()
+
+    def report(current_db_name: str | None) -> None:
+        if progress_callback:
+            progress_callback(
+                {
+                    "stage": "reaggregating",
+                    "completed": completed,
+                    "total": len(leagues),
+                    "current_db_name": current_db_name,
+                }
+            )
+
+    def run_shard(shard: list[str]) -> list[str]:
+        nonlocal completed
+        conn = connection_factory(database_path) if connection_factory else duckdb.connect(str(database_path))
+        try:
+            if connection_factory is None:
+                conn.execute("SET threads=1")
+            if ops_nfl_path:
+                _attach_if_present(conn, ops_nfl_path, "___ops_nfl")
+            if ops_path:
+                _attach_if_present(conn, ops_path, "___ops")
+            for db_name in shard:
+                conn.execute("BEGIN TRANSACTION")
+                try:
+                    reaggregate_one_league(conn, db_name)
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise RuntimeError(f"{db_name}: scoped reaggregation failed")
+                with progress_lock:
+                    completed += 1
+                    report(db_name if completed < len(leagues) else None)
+            return shard
+        finally:
+            conn.close()
+
+    report(None)
+    shards = [leagues[index::worker_count] for index in range(worker_count)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {executor.submit(run_shard, shard): shard for shard in shards if shard}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:
+                for pending in futures:
+                    pending.cancel()
+                raise RuntimeError(
+                    json.dumps(
+                        {"completed": completed, "error": str(exc)},
+                        sort_keys=True,
+                    )
+                ) from exc
+    return {"leagues": completed}
 
 
 def _attach_if_present(conn, path: Path, catalog: str) -> None:

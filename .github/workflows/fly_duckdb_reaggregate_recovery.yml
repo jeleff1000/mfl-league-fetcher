@@ -142,9 +142,11 @@ jobs:
           image="$(jq -r '.[] | select(.id == "1781e011b69068" and .state == "started") | .config.image' machines.json)"
           test -n "$image"
           echo "stage=isolated_machine_start utc=$(date -u +%FT%TZ)"
+          pilot_memory=512
+          if [ "$PILOT_ACTION" = engine_inventory ]; then pilot_memory=1024; fi
           flyctl machine run "$image" --app "$FLY_APP" --region "$region" \
             --name "$PILOT_MACHINE_NAME" --volume "$RECOVERY_VOLUME_ID:/data" \
-            --entrypoint /bin/sh --restart no --detach --vm-cpus 1 --vm-memory 512 \
+            --entrypoint /bin/sh --restart no --detach --vm-cpus 1 --vm-memory "$pilot_memory" \
             --file-local "/tmp/fly_table_storage_pilot.py=scripts/fly_table_storage_pilot.py" \
             --file-local "/tmp/fly_duckdb_block_probe.py=scripts/fly_duckdb_block_probe.py" \
             -- -lc 'sleep 45'
@@ -177,6 +179,7 @@ jobs:
           ids="$(flyctl machines list --app "$FLY_APP" --json | jq -r --arg name "$PILOT_MACHINE_NAME" '.[] | select(.name == $name) | .id')"
           for id in $ids; do
             test "$id" != 1781e011b69068
+            timeout --signal=KILL 5s flyctl logs --app "$FLY_APP" --instance "$id" --no-tail | tail -n 40 || true
             flyctl machine destroy "$id" --app "$FLY_APP" --force
           done
           CLEANUP

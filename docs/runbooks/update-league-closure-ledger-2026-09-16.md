@@ -61,6 +61,19 @@ contracts: 75 passed in 0.37s. These scoped fixes are being pushed to public
 main; the server change is NOT deployed. Fresh production readiness after all
 checks remains serving / zero active reads or writes / unchanged league hash.
 
+The fixes are now on public main `56f274f14792c14e5bf3b5cd6976cfb034ea8333`.
+No server deployment, machine restart or checkpoint was requested. The worker
+timing change is available to subsequent main executions; the server receipt
+guard and preceding OPS attachment release remain undeployed.
+
+The specifically reported failed import `35287522419` targets
+`i_95_gridlock_league_2k27`. Its upload log reports the exact known checkpoint
+checksum failure / invalidated database. A fresh bounded league-filtered read
+finds zero matchup rows; the latest saved bundle states are VALIDATED, not
+COMMITTED. Thus this is NOT an already-successful import whose cache merely
+needs expiring, and it must not be marked recovered. No retry was launched
+against the nearly-full WAL.
+
 ## Scoped aggregate recovery works - 2026-09-18
 
 This evidence supersedes the earlier assumption that physical-block removal must

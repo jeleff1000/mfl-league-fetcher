@@ -49,6 +49,8 @@ def assert_fixture(path):
     path = Path(path)
     parent = path.parent
     if (parent.parent.resolve() != Path(tempfile.gettempdir()).resolve()
+            or parent.is_symlink()
+            or parent.resolve().parent != Path(tempfile.gettempdir()).resolve()
             or not parent.name.startswith("lh_drop_spike_")
             or path.name != "candidate.duckdb" or path.is_symlink()
             or path.stat().st_nlink != 1 or path.stat().st_size > LIMIT):
@@ -101,6 +103,8 @@ def child(path, mode):
                 return 0
             raise ValueError("candidate did not affect target metadata")
         present = conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name=?", [TABLE]).fetchall()
+        if present and mode == "recover":
+            raise ValueError("committed aggregate DROP was not replayed; do not repeat it")
         if present:
             if hook:
                 before_rollback = hook.lh_spike_count()
@@ -119,7 +123,7 @@ def child(path, mode):
         if hook:
             hook.lh_spike_disarm()
             if hook.lh_spike_count() != 1 and mode != "recover":
-                raise ValueError("removal hook did not intercept exactly one call")
+                raise ValueError(f"removal scope not bound: entries={hook.lh_spike_entry_calls()}, intercepted={hook.lh_spike_count()}")
         emit("drop_committed", intercepted=hook.lh_spike_count() if hook else 0)
         if mode == "crash_commit":
             os._exit(23)
@@ -162,6 +166,12 @@ def run_child(path, mode, library=None):
     emit("child_result", mode=mode, exit_code=result.returncode,
          stdout=result.stdout[-5000:], stderr=result.stderr[-1000:])
     return result
+
+
+def fixture_files(path):
+    return {suffix: hashlib.sha256(file.read_bytes()).hexdigest()
+            for suffix in ("", ".wal", ".checkpoint.wal")
+            if (file := Path(str(path) + suffix)).exists()}
 
 
 def verify(path):
@@ -242,12 +252,12 @@ def main():
                     original = stream.read(1)
                     stream.seek(offset)
                     stream.write(bytes([original[0] ^ 1]))
-                damaged_hash = hashlib.sha256(candidate.read_bytes()).hexdigest()
+                damaged_files = fixture_files(candidate)
                 rejected = run_child(candidate, "hook", library)
                 if rejected.returncode == 0 or "checksum" not in rejected.stdout.lower():
                     raise ValueError("shared metadata corruption was not rejected")
-                if hashlib.sha256(candidate.read_bytes()).hexdigest() != damaged_hash:
-                    raise ValueError("rejected shared-metadata fixture changed")
+                if fixture_files(candidate) != damaged_files:
+                    raise ValueError("rejected shared-metadata fixture or WAL changed")
                 emit("shared_metadata_rejected_without_write", production_repair_authorized=False)
                 return 0
             chosen = None

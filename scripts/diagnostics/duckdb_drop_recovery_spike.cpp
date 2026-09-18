@@ -14,6 +14,7 @@ static std::atomic<int> intercepted{0};
 static std::atomic<int> fresh_metadata{0};
 static std::atomic<int> fresh_allocations{0};
 static std::atomic<int> crash_after_flush{0};
+static std::atomic<int> entry_calls{0};
 static thread_local bool allowed_table_drop = false;
 
 extern "C" {
@@ -23,12 +24,14 @@ int lh_spike_count(void) { return atomic_load(&intercepted); }
 void lh_spike_disarm(void) { atomic_store(&armed, 0); }
 void lh_spike_checkpoint(int enable) { atomic_store(&fresh_metadata, enable); }
 int lh_spike_allocations(void) { return atomic_load(&fresh_allocations); }
+int lh_spike_entry_calls(void) { return atomic_load(&entry_calls); }
 void lh_spike_crash_flush(void) { atomic_store(&crash_after_flush, 1); }
 
 void lh_table_drop(void *table)
     __asm__("_ZN6duckdb14DuckTableEntry10CommitDropEv");
 
 void lh_table_drop(void *table) {
+    atomic_fetch_add(&entry_calls, 1);
     auto original = reinterpret_cast<void (*)(void *)>(dlsym(RTLD_NEXT,
         "_ZN6duckdb14DuckTableEntry10CommitDropEv"));
     auto table_sql = reinterpret_cast<std::string (*)(void *)>(dlsym(RTLD_NEXT,
@@ -40,6 +43,10 @@ void lh_table_drop(void *table) {
     allowed_table_drop = false;
     if (atomic_load(&armed)) {
         const auto sql = table_sql(table);
+        const auto message = std::string("synthetic_drop_candidate=") + sql.substr(0, 120) + "\n";
+        if (write(2, message.data(), message.size()) < 0) {
+            _exit(96);
+        }
         // Exact schema and reserved aggregate identity. No private layout access.
         const std::string prefix = "CREATE TABLE public.__corrupt_recovery_player_fantasy_season(";
         allowed_table_drop = sql.compare(0, prefix.size(), prefix) == 0;

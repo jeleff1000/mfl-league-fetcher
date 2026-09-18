@@ -281,6 +281,12 @@ def main():
                     for table in REAL_TABLES:
                         canonical = table.removeprefix("__corrupt_recovery_")
                         conn.execute(f'CREATE TABLE public."{canonical}" AS SELECT * FROM public.facts')
+                    # A real catalog contains many metadata handles. Reusing
+                    # healthy sub-blocks must not become one 256KiB allocation
+                    # per 4KiB handle just to avoid one damaged physical block.
+                    columns = ','.join(f'column_{i:03d}_with_a_long_but_ordinary_metadata_name VARCHAR' for i in range(64))
+                    for i in range(96):
+                        conn.execute(f'CREATE TABLE public.metadata_density_{i:03d} ({columns})')
                 conn.execute("CHECKPOINT")
                 old_blocks = [r[0] for r in conn.execute("SELECT block_id FROM pragma_metadata_info()").fetchall()]
             if baseline.stat().st_size > LIMIT:

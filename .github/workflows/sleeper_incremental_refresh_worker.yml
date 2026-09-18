@@ -116,7 +116,7 @@ jobs:
 
       - name: Capture manual source manifest
         id: manual_probe
-        if: inputs.execute && !inputs.cache_only && inputs.dispatch_token == '' && inputs.observed_manifest_digest == ''
+        if: inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''
         run: python scripts/probe_league_update_freshness.py --db "${INPUT_DB_NAME}"
 
       - name: Install dependencies

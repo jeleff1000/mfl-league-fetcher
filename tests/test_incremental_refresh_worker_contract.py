@@ -224,11 +224,12 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
-def test_manual_execute_captures_the_same_source_manifest_as_the_ui(filename: str):
+def test_worker_captures_source_manifest_when_ui_did_not(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "id: manual_probe" in text
     assert "scripts/probe_league_update_freshness.py" in text
-    assert "inputs.execute && !inputs.cache_only && inputs.dispatch_token == ''" in text
+    assert "inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''" in text
+    assert "inputs.dispatch_token == '' && inputs.observed_manifest_digest == ''" not in text
     assert "inputs.observed_manifest_digest == ''" in text
     assert "steps.manual_probe.outputs.digest || inputs.observed_manifest_digest" in text
     assert text.index("scripts/probe_league_update_freshness.py") < text.index(

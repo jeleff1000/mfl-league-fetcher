@@ -28,6 +28,11 @@ interval to zero produced the intended two failures/two passes in 4.03s.
 After the fix, all four passed in 3.71s. Ten existing admin-write/cleanup/lock/
 checkpoint checks passed in 7.10s. Root-app mirror tests: four passed in 8.73s.
 Ruff and diff checks pass; independent read-only review found no merge blocker.
+The final combined selection passed all 14 tests in 9.32s. Public main contains
+`e03a4247553af562f954fc14991ab7cf42f6782f`; boundary run `35320345784` passed that
+exact revision in eight seconds. Final readiness was serving/accepting with
+zero active reads/writes/publications; Northern League returned HTTP 200 in
+0.186s. These availability checks do not establish data freshness/correctness.
 
 Only equivalent narrow hunks were applied to the dirty root-app server file,
 preserving its other differences; the test is mirrored. Canonical executing

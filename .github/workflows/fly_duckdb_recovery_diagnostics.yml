@@ -23,6 +23,11 @@ on:
         required: false
         default: ""
         type: string
+      inspect_block_only:
+        description: Read only block 346 from primary and the existing volume; no SQL or repair
+        required: false
+        default: false
+        type: boolean
       cleanup_recovery_resources:
         description: Remove only temporary wkupd_* validation machines and volumes
         required: false
@@ -42,6 +47,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
+      - name: Checkout bounded block diagnostic
+        if: inputs.inspect_block_only
+        uses: actions/checkout@v5
+
       - name: Install flyctl
         run: |
           curl -sL https://fly.io/install.sh | sh
@@ -57,10 +66,18 @@ jobs:
           VALIDATE_SNAPSHOT_ID: ${{ inputs.validate_snapshot_id }}
           INSPECT_EXISTING_VOLUME_ID: ${{ inputs.inspect_existing_volume_id }}
           INSPECT_DB_NAME: ${{ inputs.inspect_db_name }}
+          INSPECT_BLOCK_ONLY: ${{ inputs.inspect_block_only }}
           CLEANUP_RECOVERY_RESOURCES: ${{ inputs.cleanup_recovery_resources }}
           RESTART_PRIMARY: ${{ inputs.restart_primary }}
         run: |
           set -euo pipefail
+          if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
+            [ "$PRESERVE_CURRENT_VOLUME" != "true" ]
+            [ "$CLEANUP_RECOVERY_RESOURCES" != "true" ]
+            [ "$RESTART_PRIMARY" != "true" ]
+            [ -z "$VALIDATE_SNAPSHOT_ID" ]
+            [ -n "$INSPECT_EXISTING_VOLUME_ID" ]
+          fi
           flyctl status --app "$FLY_APP"
           flyctl machines list --app "$FLY_APP" --json | tee machines.json
           flyctl volumes list --app "$FLY_APP" --json | tee volumes.json
@@ -88,6 +105,7 @@ jobs:
             flyctl volumes list --app "$FLY_APP" --json | tee volumes-after-cleanup.json
           fi
 
+          if [ "$INSPECT_BLOCK_ONLY" != "true" ]; then
           jq -r '.[].id' volumes.json | while IFS= read -r volume_id; do
             [ -n "$volume_id" ] || continue
             if [ "${PRESERVE_CURRENT_VOLUME}" = "true" ]; then
@@ -99,6 +117,7 @@ jobs:
             flyctl volumes snapshots list "$volume_id" --app "$FLY_APP" --json \
               | tee "snapshots-${volume_id}.json"
           done
+          fi
 
           machine_id="$(jq -r 'map(select(.state == "started"))[0].id // .[0].id // empty' machines.json)"
           if [ -n "$machine_id" ]; then
@@ -108,12 +127,18 @@ jobs:
 
           if [ -n "$INSPECT_EXISTING_VOLUME_ID" ]; then
             [[ "$INSPECT_EXISTING_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]] || { echo "Invalid existing volume ID" >&2; exit 2; }
-            [[ "$INSPECT_DB_NAME" =~ ^[a-z0-9_]+$ ]] || { echo "Invalid db_name" >&2; exit 2; }
+            if [ "$INSPECT_BLOCK_ONLY" != "true" ]; then
+              [[ "$INSPECT_DB_NAME" =~ ^[a-z0-9_]+$ ]] || { echo "Invalid db_name" >&2; exit 2; }
+            fi
             inspect_name="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].name // empty' volumes.json)"
             inspect_region="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].region // empty' volumes.json)"
             inspect_state="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].state // empty' volumes.json)"
             inspect_attachment="$(jq -r --arg id "$INSPECT_EXISTING_VOLUME_ID" 'map(select(.id == $id))[0].attached_machine_id' volumes.json)"
-            [[ "$inspect_name" == wkupd_rebuild_* ]]
+            if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
+              [[ "$inspect_name" == wkupd_* ]]
+            else
+              [[ "$inspect_name" == wkupd_rebuild_* ]]
+            fi
             [ "$inspect_state" = "created" ]
             [ "$inspect_attachment" = "null" ]
 
@@ -247,6 +272,16 @@ jobs:
           print(json.dumps({"db_name": db_name, "snapshot": snapshot_payload(), "live": live}, default=str, sort_keys=True))
           PY
 
+            probe_script="identity_snapshot_probe.py"
+            probe_memory=2048
+            if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
+              probe_script="scripts/fly_duckdb_block_probe.py"
+              probe_memory=512
+              encoded_probe="$(base64 -w0 "$probe_script")"
+              timeout 20 flyctl ssh console --app "$FLY_APP" --machine 1781e011b69068 \
+                -C "python -c \"import base64; exec(base64.b64decode('$encoded_probe'))\" /data/___leagues.duckdb" \
+                | tee primary-block-probe.jsonl
+            fi
             inspect_machine_name="wkupd-identity-probe-${GITHUB_RUN_ID}"
             inspect_machine_id=""
             cleanup_inspect_machine() {
@@ -258,8 +293,8 @@ jobs:
             image_ref="$(jq -r 'map(select(.state == "started"))[0].config.image // empty' machines.json)"
             flyctl machine run "$image_ref" --app "$FLY_APP" --region "$inspect_region" \
               --name "$inspect_machine_name" --volume "$INSPECT_EXISTING_VOLUME_ID:/data" \
-              --entrypoint /bin/sh --file-local "/tmp/identity_snapshot_probe.py=identity_snapshot_probe.py" \
-              --restart no --detach --vm-cpus 1 --vm-memory 2048 -- -lc 'sleep 900' \
+              --entrypoint /bin/sh --file-local "/tmp/identity_snapshot_probe.py=$probe_script" \
+              --restart no --detach --vm-cpus 1 --vm-memory "$probe_memory" -- -lc 'sleep 900' \
               | tee identity-probe-machine.log
             for _ in $(seq 1 30); do
               inspect_machine_id="$(flyctl machines list --app "$FLY_APP" --json \
@@ -275,9 +310,15 @@ jobs:
               sleep 2
             done
             [ "${inspect_machine_state:-}" = "started" ]
-            flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
-              -C "/bin/sh -lc \"INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py\"" \
-              | tee identity-snapshot-probe.jsonl
+            if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
+              timeout 20 flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
+                -C "python /tmp/identity_snapshot_probe.py /data/___leagues.duckdb" \
+                | tee identity-snapshot-probe.jsonl
+            else
+              flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
+                -C "/bin/sh -lc \"INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py\"" \
+                | tee identity-snapshot-probe.jsonl
+            fi
             cleanup_inspect_machine
             inspect_machine_id=""
             trap - EXIT
@@ -527,5 +568,6 @@ jobs:
             snapshot-validation.jsonl
             identity-probe-machine.log
             identity-snapshot-probe.jsonl
+            primary-block-probe.jsonl
           if-no-files-found: warn
           retention-days: 7

@@ -2,6 +2,43 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Connection safeguards and storage decision - 2026-09-18
+
+The preceding goal-statement-only turn made no implementation progress. This
+continuation rechecked public main, the working diff, the completed diagnostic
+runs and live readiness before proceeding. Fly still serves reads with zero
+active queries/writes at the check; its league file fingerprint is unchanged.
+This is not evidence that publication is safe.
+
+- Diagnostic `35302921750` found exactly the same damaged block 346 on the
+  existing `vol_vgnpo57xd112npj4`; its temporary probe machine was destroyed.
+- Diagnostic `35302920583` could not inspect `vol_4919j2m0wzg0xw5r`: Fly reported
+  insufficient host resources to create a machine on that existing volume.
+  This candidate remains unverified, not classified as damaged or safe. No
+  unchanged retry, new volume, snapshot restore or database copy was initiated.
+- `connect_database` previously retried every DuckDB open failure twice, first
+  removing the checkpoint setting and then removing all connect-time settings.
+  It now makes one fully configured open and propagates the original error.
+  Reader/writer handles share one thread configuration, retaining the greater
+  configured capacity, instead of relying on the fallback for incompatible
+  per-handle thread settings. No production connection behavior has changed yet.
+- Fresh verification: 17 selected connection/startup/checkpoint/admission tests
+  passed in 19.70 seconds; Ruff and `git diff --check` passed. Prior red/green
+  runs reproduced repeated opens and the thread mismatch. Independent review
+  approved the patch. The earlier wider 58-test run remains recorded as 57
+  passed / one admission-test timeout, despite that case passing in isolation
+  and again in the current selection. Local DuckDB is 1.5.1; production pins
+  1.5.4. These tests are not a production-runtime or complete-goal verification.
+
+Deployment remains held: starting the unrepaired database with the previously
+committed fail-closed WAL safeguard could interrupt service. Physical recovery,
+publication, all-platform canaries and affected-league recovery are still open.
+Logical `db_name` filters cannot meet physical league isolation while writes
+share one database file. Any proposal to change that boundary must retain the
+existing pipeline and get explicit approval before implementation. It must not
+split a league's data and publication journal across separate writable databases:
+DuckDB only provides transactional atomicity within one database file.
+
 ## Bounded physical-block evidence - 2026-09-18 03:14 UTC
 
 Previous turn classification: progress (published regression-tested safeguards

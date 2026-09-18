@@ -14,7 +14,12 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "5"))
-DEFAULT_DUCKDB_THREADS = int(os.environ.get("DUCKDB_THREADS", "2"))
+# Threads are database-wide, not per connection. Keep the configured writer
+# capacity without asking readers and writers to open with conflicting options.
+DEFAULT_DUCKDB_THREADS = max(
+    int(os.environ.get("DUCKDB_THREADS", "2")),
+    int(os.environ.get("DUCKDB_WRITE_THREADS", "1")),
+)
 DEFAULT_DUCKDB_MEMORY_FRACTION = float(os.environ.get("DUCKDB_MEMORY_FRACTION", "0.38"))
 DEFAULT_DUCKDB_TEMP_LIMIT_GIB = int(os.environ.get("DUCKDB_DEFAULT_TEMP_LIMIT_GIB", "20"))
 DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD = os.environ.get("DUCKDB_CHECKPOINT_THRESHOLD", "512MB")
@@ -116,24 +121,18 @@ def connect_database(
     data_dir: Path | None = None,
     threads: int | None = None,
 ):
-    """Open DuckDB with guardrails applied before file initialization."""
+    """Open DuckDB once with the shared database-instance configuration.
+
+    ``threads`` is retained for caller compatibility, but cannot vary between
+    handles to the same database. The configured database-wide default wins.
+    """
     resolved_path = Path(path)
     resolved_data_dir = data_dir or _data_dir or resolved_path.parent
-    config = duckdb_connection_config(resolved_data_dir, threads=threads)
-    try:
-        conn = duckdb.connect(str(resolved_path), read_only=read_only, config=config)
-    except duckdb.Error as exc:
-        fallback_config = dict(config)
-        fallback_config.pop("checkpoint_threshold", None)
-        try:
-            conn = duckdb.connect(str(resolved_path), read_only=read_only, config=fallback_config)
-        except duckdb.Error:
-            logger.warning("DuckDB connect-time config failed; falling back to post-connect config: %s", exc)
-            conn = duckdb.connect(str(resolved_path), read_only=read_only)
-            configure_duckdb(conn, resolved_data_dir, threads=threads)
-            _apply_access_hardening(conn, resolved_data_dir)
-            return conn
-    _log_duckdb_guardrails(resolved_data_dir, threads=threads)
+    config = duckdb_connection_config(resolved_data_dir)
+    # A storage/replay error is not a reason to reopen without guardrails.
+    # Fail once with the original error and configuration intact.
+    conn = duckdb.connect(str(resolved_path), read_only=read_only, config=config)
+    _log_duckdb_guardrails(resolved_data_dir)
     _apply_access_hardening(conn, resolved_data_dir)
     return conn
 

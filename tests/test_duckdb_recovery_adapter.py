@@ -10,6 +10,49 @@ import pytest
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize('compile_exit', [0, 42])
+def test_workflow_overlaps_independent_setup_but_requires_compiler_success(tmp_path, compile_exit):
+    """Serial setup loses the window; an unchecked background failure is unsafe."""
+    import shutil
+    import subprocess
+    import textwrap
+    bash = shutil.which('bash')
+    if not bash and Path('C:/Program Files/Git/bin/bash.exe').exists():
+        bash = 'C:/Program Files/Git/bin/bash.exe'
+    if not bash:
+        pytest.skip('Bash required for the real workflow prelude')
+    workflow = (ROOT / '.github/workflows/fly_duckdb_reaggregate_recovery.yml').read_text()
+    prelude = workflow.split('          echo "stage=pilot_start', 1)[1]
+    prelude = '          echo "stage=pilot_start' + prelude.split('          echo "stage=isolated_machine_start', 1)[0]
+    prelude = textwrap.dedent(prelude).replace('/tmp/lh_five_drop.so', 'helper.so')
+    # Only external API/compiler calls are replaced. Run the actual shell's
+    # background execution, wait/error handling, file checks and SHA hashing.
+    boundary = r'''
+set -euo pipefail
+export FLY_APP=test RECOVERY_VOLUME_ID=vol_4919j2m0wzg0xw5r PILOT_ACTION=engine_resume
+export WITNESS_DB_NAME=nyu_ffl DIAGNOSTIC_RECEIPT_ID='' TARGET_TABLE=player_fantasy_season PILOT_DEADLINE=9999999999
+c++() { : > compiler.started; printf tiny-helper > helper.so; return "$COMPILE_EXIT"; }
+timeout() { shift 2; "$@"; }
+flyctl() {
+  for i in {1..50}; do
+    if test -f compiler.started; then printf '{}'; return 0; fi
+    sleep .01
+  done
+  echo 'compiler was serialized behind API reads' >&2
+  return 61
+}
+jq() {
+  if [ "$1" = -e ]; then return 0; fi
+  if [ "$2" = .region ]; then printf iad; else printf test-image; fi
+}
+'''
+    result = subprocess.run([bash, '--noprofile', '--norc'], cwd=tmp_path,
+                            input=f'COMPILE_EXIT={compile_exit}\n' + boundary + prelude + '\necho READY_TO_START\n',
+                            text=True, capture_output=True, timeout=10)
+    assert result.returncode == compile_exit, result.stderr
+    assert ('READY_TO_START' in result.stdout) is (compile_exit == 0)
+
+
 def adapter():
     path = ROOT / "scripts/diagnostics/duckdb_recovery_adapter.py"
     assert path.exists(), "real-file adapter is missing"

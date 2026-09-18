@@ -4,6 +4,18 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Public main 2b676c1a3: bounded trace/inspection changes published. Linux
+  matrix35378176034: adapter58tests5.71s; real_scope6.416s, five individual
+  durable steps1.067s. Shared test's compiler hit its5s limit on attempt1;
+  only that failed job reran, passing the behavioral proof1.313s on attempt2.
+- Real resume35378327494 refused BEFORE opening DuckDB: startup left29.6s,
+  below the unchanged30s minimum. Machine2870549b440618 destroyed18:07:52Z;
+  no replay, drops or WAL changes. New startup-only reduction overlaps local
+  compiler with independent inventory reads and removes a duplicate list.
+  All results still checked before mutation. Two real-shell regression cases
+  failed before change, then passed1.51s; compiler failure propagates. No
+  timeout/identity/capacity change. Real-file checkpoint remains unverified.
+
 - Trace changes: independent review closed all findings. Fresh local targeted
   suite:75passed,3Linuxskipped,2legacy-metadata-donor-deselected in14.32s.
   A trace's zero-exit end remains PROVISIONAL; authoritative completion needs

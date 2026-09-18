@@ -142,8 +142,20 @@ jobs:
             test "$RECOVERY_VOLUME_ID" = vol_4919j2m0wzg0xw5r
           fi
           case "$TARGET_TABLE" in player_fantasy_season|player_fantasy_season_all|homepage_manager_rankings|matchup_h2h_career|standings_by_year) ;; *) exit 2 ;; esac
-          flyctl machines list --app "$FLY_APP" --json > machines.json
-          flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > volume.json
+          # Independent read-only inventory and local compilation share startup
+          # time. Every result is checked before creating a machine.
+          flyctl machines list --app "$FLY_APP" --json > machines.json &
+          inventory_pid=$!
+          flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > volume.json &
+          volume_pid=$!
+          if [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
+            echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"
+            timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE \
+              scripts/diagnostics/duckdb_drop_recovery_spike.cpp -ldl -o /tmp/lh_five_drop.so &
+            compiler_pid=$!
+          fi
+          wait "$inventory_pid"
+          wait "$volume_pid"
           if [ "$PILOT_ACTION" = donor_headers ] || [ "$PILOT_ACTION" = retained_headers ]; then
             case "$PILOT_ACTION:$RECOVERY_VOLUME_ID" in
               donor_headers:vol_vp26dp2g9x3167j4|retained_headers:vol_vp26dp2g9x3167j4)
@@ -187,9 +199,7 @@ jobs:
             vm_memory=3584
           fi
           if [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
-            echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"
-            timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE \
-              scripts/diagnostics/duckdb_drop_recovery_spike.cpp -ldl -o /tmp/lh_five_drop.so
+            wait "$compiler_pid"
             test "$(stat -c %s /tmp/lh_five_drop.so)" -lt 1048576
             helper_sha="$(sha256sum /tmp/lh_five_drop.so | cut -d ' ' -f 1)"
             files+=(--file-local /tmp/lh_five_drop.so=/tmp/lh_five_drop.so)
@@ -203,11 +213,16 @@ jobs:
             --file-local "/tmp/fly_duckdb_block_probe.py=scripts/fly_duckdb_block_probe.py" \
             "${files[@]}" \
             -- -lc 'sleep 45'
-          machine_id="$(flyctl machines list --app "$FLY_APP" --json | jq -r --arg name "$PILOT_MACHINE_NAME" '.[] | select(.name == $name) | .id')"
+          flyctl machines list --app "$FLY_APP" --json > started-machines.json &
+          inventory_pid=$!
+          flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > attached-volume.json &
+          volume_pid=$!
+          wait "$inventory_pid"
+          wait "$volume_pid"
+          machine_id="$(jq -r --arg name "$PILOT_MACHINE_NAME" '.[] | select(.name == $name) | .id' started-machines.json)"
           test -n "$machine_id"
           test "$machine_id" != 1781e011b69068
-          flyctl machines list --app "$FLY_APP" --json | jq --arg id "$machine_id" '.[] | select(.id == $id)' > pilot-machine.json
-          flyctl volumes show "$RECOVERY_VOLUME_ID" --app "$FLY_APP" --json > attached-volume.json
+          jq --arg id "$machine_id" '.[] | select(.id == $id)' started-machines.json > pilot-machine.json
           remaining="$(( PILOT_DEADLINE - $(date +%s) ))"
           test "$remaining" -gt 0
           case "$PILOT_ACTION" in

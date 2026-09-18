@@ -2959,7 +2959,8 @@ def _delta_latest_committed_order(conn, db_name: str) -> tuple[int, int] | None:
 def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -> dict:
     """Atomically merge a validated delta bundle into ___leagues.duckdb."""
     db_name = manifest["db_name"]
-    hard_exit_timer = _start_merge_hard_exit_timer(db_name)
+    # Setup/receipt writes autocommit and may checkpoint. Arm only after BEGIN.
+    hard_exit_timer = None
     conn = None
     in_transaction = False
     try:
@@ -3027,6 +3028,7 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
         try:
             _interrupting_execute(conn, "BEGIN TRANSACTION", step=f"begin delta {db_name}")
             in_transaction = True
+            hard_exit_timer = _start_merge_hard_exit_timer(db_name)
             if "base_generation" in manifest:
                 fleet_merge.ensure_generation_tables(conn)
                 current_generation = fleet_merge.current_generations(conn, [db_name])[db_name]
@@ -3155,6 +3157,8 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             )
             return result
         except Exception as exc:
+            if hard_exit_timer is not None:
+                hard_exit_timer.cancel()
             if in_transaction:
                 try:
                     conn.execute("ROLLBACK")
@@ -3170,7 +3174,8 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             )
             raise
     finally:
-        hard_exit_timer.cancel()
+        if hard_exit_timer is not None:
+            hard_exit_timer.cancel()
         if conn is not None:
             conn.close()
 
@@ -3183,7 +3188,8 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
     delete bounded by the db_names actually present in the uploaded parquet.
     """
     sentinel = fleet_merge.FLEET_DB_SENTINEL
-    hard_exit_timer = _start_merge_hard_exit_timer(sentinel, FLEET_MERGE_HARD_EXIT_SECONDS)
+    # Autocommit setup and failure reporting are outside the kill-timer scope.
+    hard_exit_timer = None
     conn = None
     in_transaction = False
     ops_attached = False
@@ -3236,6 +3242,7 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
                 ops_attached = True
             _interrupting_execute(conn, "BEGIN TRANSACTION", step="begin fleet partition")
             in_transaction = True
+            hard_exit_timer = _start_merge_hard_exit_timer(sentinel, FLEET_MERGE_HARD_EXIT_SECONDS)
             _delta_upsert_state(conn, manifest, "STAGED")
             try:
                 result = fleet_merge.apply_fleet_merge(
@@ -3258,6 +3265,8 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             )
             return result
         except Exception as exc:
+            if hard_exit_timer is not None:
+                hard_exit_timer.cancel()
             if in_transaction:
                 try:
                     conn.execute("ROLLBACK")
@@ -3273,7 +3282,8 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             )
             raise
     finally:
-        hard_exit_timer.cancel()
+        if hard_exit_timer is not None:
+            hard_exit_timer.cancel()
         if conn is not None:
             if ops_attached:
                 _release_ops_attachment(conn)

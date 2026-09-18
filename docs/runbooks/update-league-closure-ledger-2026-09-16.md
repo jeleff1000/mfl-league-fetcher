@@ -2,6 +2,43 @@
 
 State: blocked on physical storage recovery. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## Bounded continuation - 2026-09-18 07:01 UTC
+
+Production readiness timed out twice (10s/8s) at the start of this continuation,
+then readiness, health and server-state returned serving with zero queries and
+publications. No restart, diagnostic VM, deployment or write was issued. League
+attachment metadata changed to 06:52:14 but the league fingerprint remained
+`sha256:935b1b973ff578d5`; OPS changed externally to `sha256:f66c11fc16f14413` at
+06:53:14. These observations do not prove a restart or explain the brief timeout.
+A single metadata-only `pragma_database_size()` read took 0.859s and still
+reported the league WAL at 480.4 MiB. Thus the write-headroom blocker is unchanged.
+
+Confirmed and fixed another narrow prevention gap in delta/fleet publication:
+their process-exit timer was armed before connection/setup and remained armed
+after rollback during autocommit failure-receipt writes. Those writes can invoke
+automatic checkpoints. Six actual HTTP/DuckDB tests reproduced the pending kill
+callback at setup, VALIDATED and FAILED_MERGE; two transaction positive controls
+passed. The timer now arms only after BEGIN and is cancelled before rollback,
+failure reporting and cleanup. Existing pre-COMMIT cancellation is retained.
+No new queries, dependencies, hydration, pipeline or publication format changes.
+
+The eight new tests passed in 19.10s. Existing timer/commit/receipt regression
+selection: seven passed in 5.63s. Existing replay, generation and older-bundle
+selection: six passed in 11.88s. Each command had a 38s subprocess cap. Ruff and
+diff checks passed; independent review found no blocker. The root-app mirror
+received only the same narrow hunks and new test, preserving unrelated changes.
+
+Deadline qualification: the server process-kill budget now starts after BEGIN,
+not at connection setup. Setup/failure cleanup deliberately have no process-kill
+timer. The external 120-second worker cap is unchanged but does not terminate
+server-side work. Legacy/admin timers and cross-connection process-kill hazards
+remain OPEN. This patch is NOT proof of the physical corruption's original cause.
+
+The server patch is NOT deployed: current startup checkpoint protection and the
+known bad block make a Fly restart unsafe. Existing storage damage, twelve
+remaining scoped reaggregations and production publication canaries remain
+blocked. No snapshot restore, rebuild or storage-architecture change authorized.
+
 ## Bounded continuation - 2026-09-18 06:51 UTC
 
 Tested a distinct remaining donor hypothesis: an intact duplicate of the damaged

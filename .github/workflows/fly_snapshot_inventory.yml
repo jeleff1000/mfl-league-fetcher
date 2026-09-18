@@ -7,6 +7,10 @@ on:
         description: Exact unattached kmffl_snapshot_recovery volume to destroy
         required: false
         type: string
+      destroy_wkupd_rebuild_volume_id:
+        description: Exact unattached wkupd_rebuild volume to destroy
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -32,6 +36,21 @@ jobs:
           NAME=$(jq -r --arg id "$VOLUME_ID" '.[] | select(.id == $id) | .name' volumes.json)
           ATTACHED=$(jq -r --arg id "$VOLUME_ID" '.[] | select(.id == $id) | .attached_machine_id // ""' volumes.json)
           test "$NAME" = "kmffl_snapshot_recovery"
+          test -z "$ATTACHED"
+          flyctl volumes destroy "$VOLUME_ID" --app league-history-duckdb --yes
+
+      - name: Destroy exact unattached weekly-update rebuild volume
+        if: inputs.destroy_wkupd_rebuild_volume_id != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          VOLUME_ID: ${{ inputs.destroy_wkupd_rebuild_volume_id }}
+        run: |
+          set -euo pipefail
+          [[ "$VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]
+          flyctl volumes list --app league-history-duckdb --json > volumes.json
+          NAME=$(jq -r --arg id "$VOLUME_ID" 'map(select(.id == $id))[0].name // empty' volumes.json)
+          ATTACHED=$(jq -r --arg id "$VOLUME_ID" 'map(select(.id == $id))[0].attached_machine_id // ""' volumes.json)
+          [[ "$NAME" == wkupd_rebuild_* ]]
           test -z "$ATTACHED"
           flyctl volumes destroy "$VOLUME_ID" --app league-history-duckdb --yes
 

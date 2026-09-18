@@ -5,7 +5,7 @@ publish-state bookkeeping, and hard-exit timers, while tests and the offline
 smoke harness drive them directly against local DuckDB connections.
 
 Contract (see docs/runbooks/weekly-update-system-plan.md):
-- Every table merges with ``merge_mode="replace_scope"``.
+- Weekly tables merge with ``merge_mode="replace_scope"``.
 - ``active_season`` tables delete only
   ``year = <scope year> AND db_name IN (SELECT DISTINCT db_name FROM parquet)``.
 - ``league_rollup`` tables delete only
@@ -14,10 +14,13 @@ Contract (see docs/runbooks/weekly-update-system-plan.md):
   the manifest, so leagues absent from the bundle can never be deleted.
 - Weekly bundles may never carry ``replace_league`` — that mode stays on the
   per-league delta endpoint (the repair lane).
+- Quick v3 imports declare one/two explicit fact years and initialize config
+  only where that league has no saved rows; both use the same transaction.
 """
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -115,11 +118,21 @@ def validate_fleet_manifest_shape(
         raise FleetValidationError(f"Unsupported schema_version: {manifest.get('schema_version')!r}")
     if manifest.get("db_name") != FLEET_DB_SENTINEL:
         raise FleetValidationError(f"Fleet manifest db_name must be {FLEET_DB_SENTINEL!r}")
-    if manifest.get("mode") != "weekly":
+    quick = manifest.get("mode") == "quick"
+    if manifest.get("mode") not in {"weekly", "quick"}:
         raise FleetValidationError(f"Unsupported fleet mode: {manifest.get('mode')!r}")
     active_year = manifest.get("active_year")
     if not isinstance(active_year, int):
         raise FleetValidationError("Fleet manifest missing integer active_year")
+    quick_years = manifest.get("quick_years")
+    if quick:
+        if (manifest.get("schema_version") != FLEET_HOMEPAGE_SCHEMA_VERSION
+                or not isinstance(quick_years, list) or not 1 <= len(quick_years) <= 2
+                or any(type(year) is not int or not 1900 <= year <= 2200 for year in quick_years)
+                or quick_years != sorted(set(quick_years)) or active_year != max(quick_years)):
+            raise FleetValidationError("Quick publication requires v3 and one or two explicit integer years")
+    elif quick_years is not None:
+        raise FleetValidationError("Weekly publication cannot declare quick_years")
     if expected_bundle_id and manifest.get("bundle_id") != expected_bundle_id:
         raise FleetValidationError("bundle_id header does not match manifest")
     if expected_bundle_hash and manifest.get("bundle_hash") != expected_bundle_hash:
@@ -130,6 +143,8 @@ def validate_fleet_manifest_shape(
     db_names = manifest.get("db_names")
     if not isinstance(db_names, list) or not db_names:
         raise FleetValidationError("Fleet manifest missing db_names list")
+    if quick and len(db_names) != 1:
+        raise FleetValidationError("Quick publication requires exactly one league")
     generations = manifest.get("league_generations")
     if not isinstance(generations, dict):
         raise FleetValidationError(
@@ -177,7 +192,11 @@ def validate_fleet_manifest_shape(
             raise FleetValidationError(f"Invalid path for {table}: {entry.get('path')!r}")
         if entry.get("format") != "parquet":
             raise FleetValidationError(f"Unsupported table format for {table}: {entry.get('format')!r}")
-        if entry.get("merge_mode") != "replace_scope":
+        from multi_league.core.local_db import CONFIG_TABLE_COLUMN_TYPES
+
+        initialize_config = quick and table in CONFIG_TABLE_COLUMN_TYPES
+        required_mode = "initialize_missing" if initialize_config else "replace_scope"
+        if entry.get("merge_mode") != required_mode:
             raise FleetValidationError(
                 f"Unsupported merge_mode for {table}: {entry.get('merge_mode')!r} "
                 "(weekly fleet bundles must use replace_scope)"
@@ -196,11 +215,22 @@ def validate_fleet_manifest_shape(
                 f"{table} must publish as {expected_cadence}, manifest declares {cadence}"
             )
 
+        if quick and not initialize_config and cadence != CADENCE_ACTIVE_SEASON:
+            raise FleetValidationError(f"Quick publication cannot replace whole-league table {table}")
         scope = entry.get("scope")
         if not isinstance(scope, dict):
             raise FleetValidationError(f"Missing scope for {table}")
-        if cadence == CADENCE_ACTIVE_SEASON:
-            if scope.get("year") != active_year:
+        if initialize_config:
+            if scope:
+                raise FleetValidationError(f"{table} initialization must declare empty scope")
+        elif cadence == CADENCE_ACTIVE_SEASON:
+            if quick:
+                years = scope.get("years")
+                if (set(scope) != {"years"} or not isinstance(years, list) or not years
+                        or any(type(year) is not int for year in years)
+                        or years != sorted(set(years)) or not set(years).issubset(quick_years)):
+                    raise FleetValidationError(f"{table} has invalid quick year scope")
+            elif scope != {"year": active_year}:
                 raise FleetValidationError(
                     f"{table} scope year {scope.get('year')!r} does not match manifest active_year {active_year}"
                 )
@@ -246,6 +276,11 @@ def validate_fleet_manifest_shape(
         allowed_paths.add(expected_path)
         table_entries[table] = entry
 
+    if quick:
+        payload_years = {year for entry in table_entries.values()
+                         for year in entry["scope"].get("years", [])}
+        if payload_years != set(quick_years):
+            raise FleetValidationError("Quick years must exactly match the payload year scopes")
     return allowed_paths, table_entries
 
 
@@ -309,11 +344,17 @@ def validate_fleet_parquet_tables(
             if actual_db_hash != entry["db_names_hash"]:
                 raise FleetValidationError(f"db_names_hash mismatch for {table}")
 
-            if entry["cadence_class"] == CADENCE_ACTIVE_SEASON:
+            if manifest.get("mode") == "quick":
+                actual_dbs = {row[0] for row in conn.execute(f"SELECT DISTINCT db_name FROM {parquet_ref}").fetchall()}
+                if actual_dbs != set(manifest["db_names"]):
+                    raise FleetValidationError(f"{table} does not match the quick league scope")
+
+            if entry["cadence_class"] == CADENCE_ACTIVE_SEASON and entry["merge_mode"] != "initialize_missing":
+                years = entry["scope"].get("years", [active_year])
                 out_of_scope = int(
                     conn.execute(
-                        f"SELECT COUNT(*) FROM {parquet_ref} WHERE year IS DISTINCT FROM ?",
-                        [active_year],
+                        f"SELECT COUNT(*) FROM {parquet_ref} WHERE year IS NULL OR year NOT IN ({','.join('?' for _ in years)})",
+                        years,
                     ).fetchone()[0]
                     or 0
                 )
@@ -322,6 +363,11 @@ def validate_fleet_parquet_tables(
                         f"{table} contains {out_of_scope} rows outside active year {active_year}; "
                         "weekly publishes may not rewrite prior seasons"
                     )
+
+                if manifest.get("mode") == "quick":
+                    actual_years = {row[0] for row in conn.execute(f"SELECT DISTINCT year FROM {parquet_ref}").fetchall()}
+                    if actual_years != set(years):
+                        raise FleetValidationError(f"{table} declared years must exactly match its rows")
 
             keys = entry.get("_identity_keys") or []
             missing_identity = [key for key in keys if key not in actual_cols]
@@ -366,7 +412,12 @@ def scope_predicate(entry: dict, db_names_ref: str) -> tuple[str, list]:
     """
     db_bound = f"db_name IN (SELECT db_name FROM {db_names_ref})"
     cadence = entry["cadence_class"]
+    if entry.get("merge_mode") == "initialize_missing":
+        return db_bound, []
     if cadence == CADENCE_ACTIVE_SEASON:
+        if "years" in entry["scope"]:
+            years = entry["scope"]["years"]
+            return f"year IN ({','.join('?' for _ in years)}) AND {db_bound}", years
         return f"year = ? AND {db_bound}", [int(entry["scope"]["year"])]
     if cadence == CADENCE_LEAGUE_ROLLUP:
         return db_bound, []
@@ -441,6 +492,46 @@ def _repair_legacy_null_trade_pick_mirrors(conn, db_name: str, run: Callable) ->
     )
 
 
+def _assert_quick_identity_context_compatible(conn, manifest: dict, extract_dir: Path) -> None:
+    """Reject already-transformed stale identities before touching league rows.
+
+    All worker identity settings must match saved settings, including empty
+    values: not every uploaded derived table is rebuilt by the canonical
+    identity helper. Omitted context is treated as empty, never as a bypass.
+    """
+    if manifest.get("mode") != "quick":
+        return
+    entry = next((item for item in manifest["tables"] if item["table"] == "league_context"), None)
+    exists = conn.execute("SELECT 1 FROM information_schema.tables WHERE table_catalog=current_database() AND table_schema='public' AND table_name='league_context'").fetchone()
+    if not exists:
+        return
+    fields = ("manager_name_overrides_json", "franchise_merges_json")
+    saved = conn.execute(
+        f"SELECT {', '.join(fields)} FROM public.league_context WHERE db_name = ?",
+        [manifest["db_names"][0]],
+    ).fetchall()
+    if not saved:
+        return  # First import initializes its own settings in this transaction.
+    if len(saved) != 1:
+        raise FleetValidationError("Ambiguous saved identity configuration")
+    incoming = [(None, None)]
+    if entry is not None:
+        columns = {column["name"] for column in entry["columns"]}
+        select = ', '.join(field if field in columns else 'NULL' for field in fields)
+        incoming = conn.execute(f"SELECT {select} FROM read_parquet({_sql_literal(extract_dir / entry['path'])})").fetchall()
+    for row in incoming:
+        for field, raw, persisted, kind in zip(fields, row, saved[0], (dict, list), strict=True):
+            try:
+                proposed = json.loads(raw) if raw else kind()
+                current = json.loads(persisted) if persisted else kind()
+            except (TypeError, ValueError) as error:
+                raise FleetValidationError(f"Invalid identity configuration: {field}") from error
+            if not isinstance(proposed, kind) or not isinstance(current, kind):
+                raise FleetValidationError(f"Invalid identity configuration: {field}")
+            if proposed != current:
+                raise FleetValidationError(f"Quick identity configuration differs from saved {field}; rebuild with saved settings")
+
+
 def apply_fleet_merge(
     conn: duckdb.DuckDBPyConnection,
     manifest: dict,
@@ -486,6 +577,8 @@ def apply_fleet_merge(
                     f"{dict(sorted(conflicts.items())[:5])} — rebuild the bundle"
                 )
 
+        _assert_quick_identity_context_compatible(conn, manifest, extract_dir)
+
         for entry in manifest["tables"]:
             table = entry["table"]
             table_start = time.perf_counter()
@@ -517,6 +610,22 @@ def apply_fleet_merge(
                 )
             if missing_cols:
                 target_col_types = {row[0]: row[1] for row in conn.execute(f"DESCRIBE {target}").fetchall()}
+
+            expected_count = int(entry["row_count"])
+            initialize_config = entry.get("merge_mode") == "initialize_missing"
+            if initialize_config:
+                # Existing league configuration is authoritative, even when
+                # the worker carries additional defaults. Filter atomically.
+                merged_db_names.update(row[0] for row in conn.execute(f"SELECT DISTINCT db_name FROM {parquet_ref}").fetchall())
+                run(conn, f"CREATE OR REPLACE TEMP TABLE _fleet_config_rows AS "
+                    f"SELECT incoming.* FROM {parquet_ref} incoming WHERE NOT EXISTS "
+                    f"(SELECT 1 FROM {target} saved WHERE saved.db_name = incoming.db_name)",
+                    step=f"fleet initialize scope {table}")
+                parquet_ref = "_fleet_config_rows"
+                expected_count = conn.execute("SELECT COUNT(*) FROM _fleet_config_rows").fetchone()[0]
+                if not expected_count:
+                    merged[table] = 0
+                    continue
 
             common_cols = [col for col in incoming_cols if col in target_col_types]
             select_exprs = []
@@ -574,7 +683,8 @@ def apply_fleet_merge(
             merged_db_names.update(row[0] for row in conn.execute("SELECT db_name FROM _fleet_scope_dbs").fetchall())
 
             delete_start = time.perf_counter()
-            run(conn, f"DELETE FROM {target} WHERE {predicate}", params, step=f"fleet delete {table}")
+            if not initialize_config:
+                run(conn, f"DELETE FROM {target} WHERE {predicate}", params, step=f"fleet delete {table}")
 
             insert_start = time.perf_counter()
             run(
@@ -588,7 +698,6 @@ def apply_fleet_merge(
             stored_count = int(
                 conn.execute(f"SELECT COUNT(*) FROM {target} WHERE {predicate}", params).fetchone()[0] or 0
             )
-            expected_count = int(entry["row_count"])
             if stored_count != expected_count:
                 raise RuntimeError(
                     f"Post-insert scoped row count mismatch for {table}: "
@@ -610,6 +719,22 @@ def apply_fleet_merge(
         if merged_db_names != set(manifest.get("db_names") or []):
             raise FleetValidationError("Published row scope does not match the generation-protected league scope")
 
+        if manifest.get("mode") == "quick":
+            for db_name in merged_db_names:
+                # First publication must leave usable provider context for
+                # future updates; existing context is never replaced.
+                rows = conn.execute("SELECT platform, league_id, league_ids_json FROM public.league_context WHERE db_name = ?", [db_name]).fetchall()
+                if len(rows) != 1:
+                    raise FleetValidationError(f"Quick publication requires one league_context for {db_name}")
+                platform, league_id, ids_json = rows[0]
+                try:
+                    ids = json.loads(ids_json) if ids_json else {}
+                except (TypeError, ValueError) as error:
+                    raise FleetValidationError(f"Invalid league context for {db_name}") from error
+                if (platform not in {"yahoo", "sleeper", "espn"} or not isinstance(ids, dict)
+                        or not (str(league_id or '').strip() or any(str(value or '').strip() for value in ids.values()))):
+                    raise FleetValidationError(f"Quick publication requires usable provider context for {db_name}")
+
         if manifest.get("schema_version") in {FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
             from multi_league.transformations.aggregation.aggregation_utils import (
                 aggregate_career_rollups,
@@ -628,7 +753,7 @@ def apply_fleet_merge(
                     # Validated source partitions have exactly this season.
                     # Unchanged historical seasons remain materialized; careers
                     # and homepage outputs still read the complete live chain.
-                    changed_years = {manifest["active_year"]}
+                    changed_years = set(manifest.get("quick_years") or [manifest["active_year"]])
                     try:
                         season_rollups[db_name] = aggregate_complete_chain_season_rollups(
                             aggregation_conn, db_name, season_years=changed_years

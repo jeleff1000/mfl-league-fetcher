@@ -58,7 +58,7 @@ def test_upload_to_fly_stages_only_canonical_tables(monkeypatch, tmp_path):
     conn.execute("CREATE TABLE public.scratch_table (value INTEGER)")
     conn.execute("INSERT INTO public.scratch_table VALUES (99)")
 
-    db.upload_to_fly("speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False)
+    db.upload_to_fly("speed_test", import_mode="full", platform="sleeper", finalize_merge_source=False)
     db.close()
 
     assert captured["db_name"] == "speed_test"
@@ -66,7 +66,7 @@ def test_upload_to_fly_stages_only_canonical_tables(monkeypatch, tmp_path):
     assert captured["tables"] == [("matchup",)]
     assert captured["rows"] == 2
     assert captured["managers"] == [("Alice",), ("Bob",)]
-    assert captured["marked"][1] == {"import_mode": "quick", "platform": "sleeper"}
+    assert captured["marked"][1] == {"import_mode": "full", "platform": "sleeper"}
 
 
 def test_delta_upload_uses_generation_captured_before_import(monkeypatch, tmp_path):
@@ -95,7 +95,7 @@ def test_delta_upload_uses_generation_captured_before_import(monkeypatch, tmp_pa
             "('speed_test', 2026, 1, 'alice_2026_1', 'Alice')"
         )
         db.upload_to_fly(
-            "speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False
+            "speed_test", import_mode="full", platform="sleeper", finalize_merge_source=False
         )
         manifest = json.loads((tmp_path / "delta_publish_manifest.json").read_text())
         assert manifest["base_generation"] == 2
@@ -116,7 +116,7 @@ def test_delta_upload_refuses_missing_required_snapshot(monkeypatch, tmp_path):
             "(db_name VARCHAR, year INTEGER, week INTEGER, manager_week VARCHAR)"
         )
         with pytest.raises(RuntimeError, match="unfenced league write"):
-            db.upload_to_fly("speed_test", import_mode="quick", platform="sleeper")
+            db.upload_to_fly("speed_test", import_mode="full", platform="sleeper")
     finally:
         db.close()
 
@@ -147,7 +147,7 @@ def test_same_name_legacy_uploads_own_distinct_staging_files(monkeypatch, tmp_pa
             conn.execute("CREATE TABLE public.matchup (year INTEGER, week INTEGER, manager VARCHAR)")
             conn.execute("INSERT INTO public.matchup VALUES (2026, 1, 'Alice')")
             db.upload_to_fly(
-                "speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False
+                "speed_test", import_mode="full", platform="sleeper", finalize_merge_source=False
             )
         finally:
             db.close()

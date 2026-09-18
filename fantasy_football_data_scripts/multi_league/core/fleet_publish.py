@@ -231,6 +231,7 @@ def build_fleet_partition_bundle(
     producer_version: str | None = None,
     rebuild_career_rollups: bool = False,
     rebuild_homepage_rollups: bool = False,
+    quick_years: list[int] | None = None,
 ) -> FleetBundle:
     """Build a fleet partition bundle from a staged fleet DuckDB.
 
@@ -250,8 +251,20 @@ def build_fleet_partition_bundle(
     from the merged full chain before committing. A v1 server rejects v2.
     ``rebuild_homepage_rollups`` requires v3 and career rebuilding; all five
     normal homepage outputs are recomputed inside that same transaction.
+    ``quick_years`` opts one league into a bounded one/two-season import:
+    fact scopes use each table's actual years and configuration initializes
+    only where absent. Without it, the weekly single-year contract is unchanged.
     """
     registry = canonical_table_registry()
+    from multi_league.core.local_db import CONFIG_TABLE_COLUMN_TYPES
+
+    if quick_years is not None:
+        if (not 1 <= len(quick_years) <= 2
+                or any(type(year) is not int or not 1900 <= year <= 2200 for year in quick_years)
+                or quick_years != sorted(set(quick_years)) or active_year != max(quick_years)):
+            raise FleetScopeError("Quick years must be one or two sorted unique integer years")
+        if not rebuild_homepage_rollups or len(league_generations) != 1:
+            raise FleetScopeError("Quick publication requires one generation-fenced league and full rollups")
     requested = list(tables) if tables is not None else sorted(registry)
     unknown = sorted(set(requested) - set(registry))
     if unknown:
@@ -330,17 +343,24 @@ def build_fleet_partition_bundle(
             raise FleetScopeError(f"{table} has {blank_db} rows with blank db_name")
 
         cadence = str(spec["cadence_class"])
+        initialize_config = quick_years is not None and table in CONFIG_TABLE_COLUMN_TYPES
         scope: dict[str, Any] = {}
-        if cadence == CADENCE_ACTIVE_SEASON:
+        if quick_years is not None and not initialize_config and cadence != CADENCE_ACTIVE_SEASON:
+            raise FleetScopeError(f"Quick publication may not replace whole-league table {table}")
+        if cadence == CADENCE_ACTIVE_SEASON and not initialize_config:
             if "year" not in upload_cols:
                 raise FleetScopeError(f"{table} is active_season but staged data has no year column")
-            out_of_scope = _out_of_scope_year_count(conn, table, active_year)
+            table_years = [row[0] for row in conn.execute(
+                f"SELECT DISTINCT year FROM public.{qident(table)} ORDER BY year"
+            ).fetchall()] if quick_years is not None else [active_year]
+            out_of_scope = (sum(year not in quick_years for year in table_years)
+                            if quick_years is not None else _out_of_scope_year_count(conn, table, active_year))
             if out_of_scope:
                 raise FleetScopeError(
                     f"{table} has {out_of_scope} rows outside active year {active_year}; "
                     "weekly publishes may not rewrite prior seasons"
                 )
-            scope = {"year": int(active_year)}
+            scope = {"years": table_years} if quick_years is not None else {"year": int(active_year)}
 
         # Weekly fleet publishes must carry full identity — silently narrowing
         # the key would let duplicate rows through (or reject valid ones).
@@ -391,7 +411,7 @@ def build_fleet_partition_bundle(
                 "partition_keys": [c for c in spec["partition_keys"] if c in upload_cols],
                 "identity_keys": primary_keys,
                 "primary_keys": primary_keys,
-                "merge_mode": "replace_scope",
+                "merge_mode": "initialize_missing" if initialize_config else "replace_scope",
                 "cadence_class": cadence,
                 "scope": scope,
                 "db_name_count": db_name_count,
@@ -403,13 +423,15 @@ def build_fleet_partition_bundle(
 
     if not table_entries:
         raise FleetScopeError("Fleet partition bundle contains no publishable tables")
+    if quick_years is not None and union_db_names != set(league_generations):
+        raise FleetScopeError("Quick payload must contain exactly the generation-fenced league")
 
     logical_payload = {
         "manifest_version": MANIFEST_VERSION,
         "schema_version": (FLEET_HOMEPAGE_SCHEMA_VERSION if rebuild_homepage_rollups else
                            FLEET_CAREER_SCHEMA_VERSION if rebuild_career_rollups else FLEET_SCHEMA_VERSION),
         "db_name": FLEET_DB_SENTINEL,
-        "mode": "weekly",
+        "mode": "quick" if quick_years is not None else "weekly",
         "active_year": int(active_year),
         "db_name_count": len(union_db_names),
         "db_names": sorted(union_db_names),
@@ -434,6 +456,8 @@ def build_fleet_partition_bundle(
         ],
         "omitted_tables": omitted_tables,
     }
+    if quick_years is not None:
+        logical_payload["quick_years"] = quick_years
     bundle_hash = _sha256_json(logical_payload)
     bundle_id = f"fleet-{bundle_hash}"
 

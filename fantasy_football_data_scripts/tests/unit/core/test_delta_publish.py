@@ -1,3 +1,5 @@
+"""Whole-league/full publication contracts; quick scoping lives in test_quick_publish."""
+
 import json
 import tarfile
 
@@ -211,14 +213,14 @@ def test_delta_bundle_filters_canonical_tables_and_keeps_logical_hash_stable(tmp
     bundle_a = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "a",
     )
     bundle_b = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "b",
     )
@@ -267,7 +269,7 @@ def test_player_fantasy_delta_identity_allows_unrostered_null_franchise(tmp_path
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "bundle",
     )
@@ -308,7 +310,7 @@ def test_delta_bundle_repairs_blank_player_week_before_manifest(tmp_path):
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="yahoo",
         output_dir=tmp_path / "bundle",
     )
@@ -356,7 +358,7 @@ def test_delta_bundle_dedupes_duplicate_player_week_before_manifest(tmp_path):
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "bundle",
     )
@@ -405,7 +407,7 @@ def test_delta_bundle_dedupes_duplicate_matchup_manager_week_before_manifest(tmp
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="yahoo",
         output_dir=tmp_path / "bundle",
     )
@@ -434,7 +436,7 @@ def test_schedule_delta_identity_allows_bye_or_unresolved_opponent(tmp_path):
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "bundle",
     )
@@ -453,7 +455,7 @@ def test_transactions_delta_identity_uses_sequence_for_multi_player_transactions
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "bundle",
     )
@@ -472,7 +474,7 @@ def test_draft_delta_identity_includes_draft_id_for_same_pick_slots(tmp_path):
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         output_dir=tmp_path / "bundle",
     )
@@ -491,7 +493,7 @@ def test_franchise_identity_tables_are_included_in_delta_manifest(tmp_path):
     bundle = build_delta_bundle(
         conn,
         db_name="speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="yahoo",
         output_dir=tmp_path / "bundle",
     )
@@ -537,7 +539,7 @@ def test_upload_to_fly_delta_uses_manifested_bundle(monkeypatch, tmp_path):
 
     db.upload_to_fly(
         "speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         finalize_inventory=True,
         finalize_merge_source=False,
@@ -553,7 +555,7 @@ def test_upload_to_fly_delta_uses_manifested_bundle(monkeypatch, tmp_path):
     assert captured["bundle_hash"] == captured["manifest"]["bundle_hash"]
     assert copied_manifest["bundle_hash"] == captured["bundle_hash"]
     assert [entry["table"] for entry in copied_manifest["tables"]] == ["matchup"]
-    assert captured["marked"][1] == {"import_mode": "quick", "platform": "sleeper"}
+    assert captured["marked"][1] == {"import_mode": "full", "platform": "sleeper"}
 
 
 def test_upload_to_fly_delta_skips_inventory_finalization_by_default(monkeypatch, tmp_path):
@@ -576,7 +578,7 @@ def test_upload_to_fly_delta_skips_inventory_finalization_by_default(monkeypatch
     conn = db.connect()
     _seed_minimal_league(conn)
 
-    db.upload_to_fly("speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False)
+    db.upload_to_fly("speed_test", import_mode="full", platform="sleeper", finalize_merge_source=False)
     db.close()
 
     assert captured["marked"] is False
@@ -607,7 +609,7 @@ def test_upload_to_fly_delta_stale_bundle_skips_finalization(monkeypatch, tmp_pa
 
     db.upload_to_fly(
         "speed_test",
-        import_mode="quick",
+        import_mode="full",
         platform="sleeper",
         finalize_inventory=True,
         finalize_merge_source=False,
@@ -639,7 +641,7 @@ def test_upload_to_fly_delta_can_skip_inventory_finalization_by_env(monkeypatch,
     conn = db.connect()
     _seed_minimal_league(conn)
 
-    db.upload_to_fly("speed_test", import_mode="quick", platform="sleeper", finalize_merge_source=False)
+    db.upload_to_fly("speed_test", import_mode="full", platform="sleeper", finalize_merge_source=False)
     db.close()
 
     assert captured["marked"] is False

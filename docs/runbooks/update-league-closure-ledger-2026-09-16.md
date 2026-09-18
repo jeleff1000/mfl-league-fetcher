@@ -2,6 +2,48 @@
 
 State: production storage repair PASSED in35390732009; both checkpoints and a fresh unmodified-engine write/checkpoint/reopen/second write passed. Fly restored at2026-09-18T20:20:12Z. Failed league import/refresh recovery and displayed-data verification remain ACTIVE. This ledger is for league updates, not SuperTable SOTA work.
 
+## Expanded acceptance scope - user confirmed September 18
+
+Every league with any import or refresh attempt during September14-18,
+America/New_York, is in the verification cohort, including successful,
+failed, cancelled and superseded runs. Capture from2026-09-14T04:00:00Z
+through the latest observation and reconcile subsequent attempts before
+closure. Retain the user's explicit `the_league` exclusion.
+
+For each unique league, require evidence of the intended imported history
+and retained prior seasons; required source/derived tables at correct grain;
+saved franchise merges and preferred aliases applied to rows, not merely
+retained in configuration JSON; provider-correct2026week1scores/data;
+correct precomputed NFL-wide rankings; and cache/live-page publication.
+Record the expected identities/preferences source and actual values, plus
+remaining gaps. Neither workflow success nor nonempty table counts close
+these checks. Use bounded league-filtered queries and existing workers;
+no full-database/NFL-lake download or replacement pipeline.
+
+### Bounded identity check - September18 continuation
+
+Live `league_context` preferences were checked against `matchup` and
+`homepage_manager_rankings` for agusta_fantasy_league, kmffl,
+the_dfb_league_ii, cmon_man, bitter_a_old_guys, chuck_noris_is_god,
+always_sunny_in_emmitsburg and stk. The1.968s read found zero rows retaining
+a replaced alias or a saved `from_franchise_id`. This is only an application
+check on existing rows: cmon_man has no matchup rows, Agusta has only2026,
+and other leagues lack2026. None receives an overall pass from this check.
+Preservation against original preferences and required history remain separate.
+STK currently prefers `AHABlumpkin` and merges the Yahoo franchise into its
+Sleeper franchise; do not reinstate the earlier `Hart` display preference.
+
+### Quick publication preservation fix - local verification complete
+
+Quick imports now use the existing generation-fenced v3 merge for one or two
+explicit years. Saved configuration is not replaced; full-chain rollups use
+the unchanged shared server helpers. Empty, omitted, or mismatched incoming
+identity settings reject before any league mutation, including derived
+`all_play` rows. New leagues initialize configuration atomically.
+Main-agent worker tests:13passed6.61s. Independent reviewer HTTP tests:
+6passed in17.86s/17.57s chunks. Developer verified23distinctquickcases,
+all chunks below40s. Production deployment/recovery verification pending.
+
 ## Live continuation - 2026-09-18 21:25 UTC
 
 - Post-repair live data, not historical green status, is the recovery authority.

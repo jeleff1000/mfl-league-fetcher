@@ -75,6 +75,28 @@ def data_dir(tmp_path, request):
                      'Opponent', 'f2', 'f1', 'Correct Player', 'CORRECT',
                      'pick_2025_1_1', NULL)
             """)
+        if getattr(request, 'param', None) == 'quick_new_league':
+            for table in canonical_table_registry():
+                conn.execute(f'DELETE FROM public."{table}"')
+        if getattr(request, 'param', None) in {'quick_saved_config', 'quick_yahoo_history'}:
+            conn.execute("""
+                INSERT INTO public.league_context
+                    (db_name, platform, league_ids_json, manager_name_overrides_json)
+                VALUES ('test_league', 'sleeper', '{"2025":"old-id","2026":"new-id"}',
+                        '{"Provider Name":"Shared Alias"}')
+            """)
+            conn.execute("INSERT INTO public.keeper_config (db_name, year) VALUES ('test_league', 0)")
+            conn.execute("INSERT INTO public.league_rules (db_name, faab_budget) VALUES ('test_league', 237)")
+            conn.execute("INSERT INTO public.manager_overrides (id, db_name, from_name, to_name) VALUES (1, 'test_league', 'Provider Name', 'Shared Alias')")
+        if getattr(request, 'param', None) == 'quick_yahoo_history':
+            conn.execute("UPDATE public.matchup SET year=2024 WHERE year=2025")
+            conn.execute("UPDATE public.matchup_season SET year=2024 WHERE year=2025")
+            conn.execute("INSERT INTO public.league_settings (db_name,year) VALUES ('test_league',2025)")
+            conn.execute("INSERT INTO public.all_play (db_name,year,week,franchise_id,opponent_franchise_id,points) VALUES ('test_league',2026,1,'f1','f2',110)")
+            conn.execute("""UPDATE public.league_context SET platform='yahoo',
+                league_ids_json='{"2024":"old-id","2025":"mid-id","2026":"new-id"}',
+                franchise_merges_json='[{"from_franchise_id":"provider-f1","into_franchise_id":"f1"}]'
+            """)
     if getattr(request, 'param', None) == 'missing_ops':
         return tmp_path
     with duckdb.connect(str(tmp_path / '___ops.duckdb')) as conn:
@@ -118,6 +140,227 @@ def _query(http_client, sql):
                           json={'sql': sql, 'database': '___leagues'})
     assert response.status_code == 200, response.text
     return response.json()
+
+
+@pytest.mark.parametrize('data_dir,worker_identity', [
+    ('quick_yahoo_history', 'empty'),
+    ('quick_yahoo_history', 'empty_merge'),
+    ('quick_yahoo_history', 'missing'),
+    ('quick_yahoo_history', 'matching'),
+    ('quick_yahoo_history', 'stale'),
+    ('quick_yahoo_history', 'stale_merge'),
+    ('quick_new_league', 'new'),
+], indirect=['data_dir'])
+def test_quick_two_years_initializes_only_missing_config_and_replays(client, tmp_path, request, worker_identity, monkeypatch):
+    """Yahoo quick's 2025+2026 payload must retain 2024 and saved identities."""
+    from multi_league.core.delta_publish import build_delta_bundle
+
+    existing = request.node.callspec.params['data_dir'] == 'quick_yahoo_history'
+    historical = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2024")
+    settings = _query(client, "SELECT * FROM public.league_settings WHERE db_name='test_league' AND year=2025")
+    facts_before = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' ORDER BY year")
+    derived_before = {table: _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year")
+                      for table in ('all_play', 'matchup_season')}
+    rejects_identity = worker_identity in {'empty', 'empty_merge', 'missing', 'stale', 'stale_merge'}
+    configs = ('league_context', 'keeper_config', 'league_rules', 'manager_overrides')
+    saved = {table: _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'")
+             for table in configs}
+    with duckdb.connect(':memory:') as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("""
+            CREATE TABLE public.matchup AS
+            SELECT 'test_league' AS db_name, year, 1 AS week,
+                   'provider_' || year AS manager_week, 'Provider Name' AS manager,
+                   'provider-f1' AS franchise_id, 'Opponent' AS opponent,
+                   'f2' AS opponent_franchise_id, 'Team' AS team_name,
+                   110.0 AS team_points, 120.0 AS opponent_points,
+                   0 AS win, 1 AS loss, 0 AS tie, 0 AS is_playoffs,
+                   0 AS is_consolation, 0 AS is_bye_week
+            FROM (VALUES (2025), (2026)) y(year)
+        """)
+        conn.execute("""
+            CREATE TABLE public.league_context AS SELECT 'test_league' AS db_name,
+                'yahoo' AS platform, 'new-id' AS league_id,
+                '{"2025":"mid-id","2026":"new-id"}' AS league_ids_json,
+                '{"Provider Name":"New Alias"}' AS manager_name_overrides_json,
+                '[]' AS franchise_merges_json
+        """)
+        conn.execute("CREATE TABLE public.keeper_config AS SELECT 'test_league' AS db_name, 0 AS year")
+        conn.execute("CREATE TABLE public.league_settings AS SELECT 'test_league' AS db_name, 2026 AS year")
+        conn.execute("CREATE TABLE public.league_rules AS SELECT 'test_league' AS db_name, 100 AS faab_budget")
+        conn.execute("CREATE TABLE public.manager_overrides AS SELECT 1 AS id, 'test_league' AS db_name, 'Provider Name' AS from_name, 'New Alias' AS to_name")
+        if worker_identity == 'empty':
+            conn.execute("UPDATE public.league_context SET manager_name_overrides_json='{}'")
+        elif worker_identity == 'empty_merge':
+            conn.execute("""UPDATE public.league_context
+                SET manager_name_overrides_json='{"Provider Name":"Shared Alias"}'
+            """)
+        elif worker_identity == 'matching':
+            conn.execute("""UPDATE public.league_context
+                SET manager_name_overrides_json='{"Provider Name":"Shared Alias"}',
+                    franchise_merges_json='[{"from_franchise_id":"provider-f1","into_franchise_id":"f1"}]'
+            """)
+        elif worker_identity == 'stale':
+            # The worker enrichment has already applied its obsolete alias.
+            # Reapplying Provider Name -> Shared Alias alone cannot undo this.
+            conn.execute("UPDATE public.matchup SET manager='New Alias'")
+        elif worker_identity == 'stale_merge':
+            conn.execute("""UPDATE public.league_context
+                SET manager_name_overrides_json='{"Provider Name":"Shared Alias"}',
+                    franchise_merges_json='[{"from_franchise_id":"provider-f1","into_franchise_id":"wrong-f1"}]'
+            """)
+            conn.execute("UPDATE public.matchup SET franchise_id='wrong-f1'")
+        elif worker_identity == 'missing':
+            conn.execute('DROP TABLE public.league_context')
+        if rejects_identity:
+            conn.execute("""CREATE TABLE public.all_play AS
+                SELECT 'test_league' AS db_name, 2026 AS year, 1 AS week,
+                       'provider-f1' AS franchise_id, 'f2' AS opponent_franchise_id,
+                       999.0 AS points""")
+        bundle = build_delta_bundle(conn, db_name='test_league', import_mode='quick',
+                                    base_generation=0, output_dir=tmp_path / 'quick_bundle')
+        conn.execute('UPDATE public.matchup SET team_points=999')
+        stale = build_delta_bundle(conn, db_name='test_league', import_mode='quick',
+                                   base_generation=0, output_dir=tmp_path / 'stale_quick_bundle')
+    mutation_steps = []
+    if rejects_identity:
+        import main
+        execute = main._interrupting_execute
+
+        def record_mutations(conn, sql, *args, **kwargs):
+            if kwargs.get('step', '').startswith(('fleet delete ', 'fleet insert ', 'fleet create ', 'fleet add column ')):
+                mutation_steps.append(kwargs['step'])
+            return execute(conn, sql, *args, **kwargs)
+
+        monkeypatch.setattr(main, '_interrupting_execute', record_mutations)
+    response = _publish(client, bundle)
+    if rejects_identity:
+        assert response.status_code in {400, 422}, response.text
+        assert 'identity configuration' in response.text
+        if worker_identity in {'empty_merge', 'stale_merge'}:
+            assert 'franchise_merges_json' in response.text
+        assert mutation_steps == []
+        assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' ORDER BY year") == facts_before
+        for table in configs:
+            assert _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'") == saved[table]
+        for table, rows in derived_before.items():
+            assert _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year") == rows
+        return
+    assert response.status_code == 200, response.text
+    assert response.json()['season_rollup_years']['test_league'] == [2025, 2026]
+    assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2024") == historical
+    assert _query(client, "SELECT * FROM public.league_settings WHERE db_name='test_league' AND year=2025") == settings
+    if existing:
+        for table in configs:
+            assert _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'") == saved[table]
+    else:
+        assert _query(client, "SELECT platform,league_id,league_ids_json FROM public.league_context WHERE db_name='test_league'") == [
+            {'platform': 'yahoo', 'league_id': 'new-id', 'league_ids_json': '{"2025":"mid-id","2026":"new-id"}'}]
+        for table in configs:
+            assert len(_query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'")) == 1
+    alias, fid = ('Shared Alias', 'f1') if existing else ('New Alias', 'provider-f1')
+    assert _query(client, "SELECT DISTINCT manager,franchise_id FROM public.matchup WHERE db_name='test_league' AND year IN (2025,2026)") == [
+        {'manager': alias, 'franchise_id': fid}]
+    assert _query(client, "SELECT games,seasons FROM public.matchup_career WHERE db_name='test_league'") == [
+        {'games': 16 if existing else 2, 'seasons': 3 if existing else 2}]
+    assert _query(client, "SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'") == [
+        {'highest_score_points': 140.0 if existing else 110.0}]
+    after = {table: _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'")
+             for table in (*configs, 'matchup', 'matchup_career', 'homepage_league_summary')}
+    replay = _publish(client, bundle)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()['idempotent_replay'] is True
+    rejected = _publish(client, stale)
+    assert rejected.status_code == 409, rejected.text
+    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 1}]
+    for table, rows in after.items():
+        assert _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'") == rows
+
+
+@pytest.mark.parametrize('data_dir', ['quick_saved_config'], indirect=True)
+def test_quick_upload_preserves_history_and_full_chain_rollups(client, tmp_path, monkeypatch):
+    """A one-year worker must not replace the league's complete persisted chain."""
+    from multi_league.core.local_db import LocalLeagueDB
+    import multi_league.core.targets.fly_target as fly_target
+
+    monkeypatch.setenv('DATABASE_SERVER_URL', 'https://fly.test')
+    monkeypatch.setenv('DATABASE_ADMIN_TOKEN', 'test-admin')
+    monkeypatch.setenv('FLY_PUBLISH_FORMAT', 'delta')
+    monkeypatch.setenv('LEAGUE_IMPORT_BASE_GENERATION', '0')
+
+    def local_transport(url, *, headers, files, timeout):
+        assert url.startswith('https://fly.test/')
+        return client.post(url.removeprefix('https://fly.test'), headers=headers, files=files)
+
+    monkeypatch.setattr(fly_target.requests, 'post', local_transport)
+    before = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025")
+    config = _query(client, "SELECT * FROM public.league_context WHERE db_name='test_league'")
+    saved = {
+        table: _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'")
+        for table in ('keeper_config', 'league_rules', 'manager_overrides')
+    }
+    local = LocalLeagueDB(tmp_path / 'quick_worker', 'test_league')
+    try:
+        conn = local.connect()
+        conn.execute("""
+            CREATE TABLE public.matchup AS
+            SELECT 'test_league' AS db_name, 2026 AS year, 1 AS week,
+                   'f1_2026_1' AS manager_week, 'Shared Alias' AS manager,
+                   'f1' AS franchise_id, 'Opponent' AS opponent,
+                   'f2' AS opponent_franchise_id, 'Team' AS team_name,
+                   110.0 AS team_points, 120.0 AS opponent_points,
+                   0 AS win, 1 AS loss, 0 AS tie, 0 AS is_playoffs,
+                   0 AS is_consolation, 0 AS is_bye_week
+        """)
+        conn.execute("""
+            CREATE TABLE public.league_context AS
+            SELECT 'test_league' AS db_name, 'sleeper' AS platform,
+                   '{"2026":"new-id"}' AS league_ids_json,
+                   '{"Provider Name":"Shared Alias"}' AS manager_name_overrides_json
+        """)
+        conn.execute("CREATE TABLE public.keeper_config AS SELECT 'test_league' AS db_name, 0 AS year")
+        conn.execute("CREATE TABLE public.league_rules AS SELECT 'test_league' AS db_name, 100 AS faab_budget")
+        conn.execute("CREATE TABLE public.manager_overrides AS SELECT 1 AS id, 'test_league' AS db_name, 'Provider Name' AS from_name, 'Default' AS to_name")
+        local.upload_to_fly('test_league', import_mode='quick', platform='sleeper',
+                            finalize_inventory=False, finalize_merge_source=False)
+    finally:
+        local.close()
+    assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025") == before
+    assert _query(client, "SELECT * FROM public.league_context WHERE db_name='test_league'") == config
+    for table, before_rows in saved.items():
+        assert _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league'") == before_rows
+    assert _query(client, "SELECT games,seasons FROM public.matchup_career WHERE db_name='test_league'") == [
+        {'games': 15, 'seasons': 2}]
+    assert _query(client, "SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'") == [
+        {'highest_score_points': 140.0}]
+
+
+def test_quick_rejects_declared_season_without_payload(tmp_path):
+    import fleet_merge
+
+    manifest = _bundle(tmp_path, homepage=True).manifest
+    manifest.update(mode='quick', quick_years=[2025, 2026])
+    manifest['tables'][0]['scope'] = {'years': [2026]}
+    with pytest.raises(fleet_merge.FleetValidationError, match='years'):
+        fleet_merge.validate_fleet_manifest_shape(
+            manifest, allowed_tables=set(canonical_table_registry()), identity_keys={})
+
+
+@pytest.mark.parametrize('data_dir', ['quick_new_league'], indirect=True)
+def test_quick_missing_context_rolls_back_facts_and_generation(client, tmp_path):
+    from multi_league.core.delta_publish import build_delta_bundle
+
+    with duckdb.connect(':memory:') as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("""CREATE TABLE public.matchup AS SELECT 'test_league' AS db_name,
+            2026 AS year, 1 AS week, 'f1_2026_1' AS manager_week, 'Name' AS manager""")
+        bundle = build_delta_bundle(conn, db_name='test_league', import_mode='quick',
+                                    base_generation=0, output_dir=tmp_path / 'missing_context')
+    response = _publish(client, bundle)
+    assert response.status_code in {400, 422}, response.text
+    assert 'league_context' in response.text
+    assert _query(client, "SELECT COUNT(*) n FROM public.matchup WHERE db_name='test_league'") == [{'n': 0}]
+    assert _query(client, "SELECT table_name FROM information_schema.tables WHERE table_schema='merge_admin' AND table_name='league_publish_generations'") == []
 
 
 @pytest.mark.parametrize('homepage', [False, True])

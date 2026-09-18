@@ -433,6 +433,11 @@ def build_delta_bundle(
 
     registry = canonical_table_registry()
     normalized_mode = (import_mode or os.environ.get("IMPORT_MODE") or "unknown").lower().strip()
+    if normalized_mode == "quick":
+        return _build_quick_partition_bundle(
+            conn, db_name=db_name, base_generation=base_generation,
+            registry=registry, output_dir=output_dir,
+        )
     normalized_platform = (
         (platform or os.environ.get("PLATFORM") or os.environ.get("LEAGUE_PLATFORM") or "unknown").lower().strip()
     )
@@ -568,3 +573,59 @@ def build_delta_bundle(
             tar.add(base_dir / entry["path"], arcname=entry["path"])
 
     return DeltaBundle(path=archive_path, manifest=manifest)
+
+
+def _build_quick_partition_bundle(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    db_name: str,
+    base_generation: int | None,
+    registry: dict[str, dict[str, Any]],
+    output_dir: str | Path | None,
+) -> DeltaBundle:
+    """Publish quick seasons through the existing full-chain v3 merge contract.
+
+    Quick worker configuration is not an authoritative snapshot of saved user
+    settings or franchise history. Initialize those tables only where absent
+    inside the fenced merge (including year-zero keeper defaults).
+    Careers and homepage outputs must be rebuilt on the server, not uploaded
+    from the worker's partial-history scratch database.
+    """
+    from multi_league.core.fleet_publish import build_fleet_partition_bundle
+    from multi_league.core.local_db import CONFIG_TABLE_COLUMN_TYPES
+
+    if base_generation is None:
+        raise ValueError("Quick publication requires a pre-fetch base_generation")
+    tables = [
+        table for table, spec in registry.items()
+        if spec["cadence_class"] == CADENCE_ACTIVE_SEASON
+        and table not in CONFIG_TABLE_COLUMN_TYPES
+    ]
+    local_tables = {
+        row[0] for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_catalog = current_database() AND table_schema = 'public' "
+            "AND table_type = 'BASE TABLE'"
+        ).fetchall()
+    }
+    years: set[int] = set()
+    for table in sorted(set(tables) & local_tables):
+        if not {"db_name", "year"}.issubset(_actual_columns(conn, table)):
+            raise ValueError(f"Quick publication {table} requires db_name and year")
+        for name, year in conn.execute(
+            f"SELECT DISTINCT db_name, year FROM public.{qident(table)}"
+        ).fetchall():
+            if name != db_name:
+                raise ValueError(f"Quick publication {table} contains another or missing league")
+            if isinstance(year, bool) or not isinstance(year, int) or not 1900 <= year <= 2200:
+                raise ValueError(f"Quick publication {table} requires a non-null integer year")
+            years.add(year)
+    if not 1 <= len(years) <= 2:
+        raise ValueError("Quick publication requires one or two populated years")
+    bundle = build_fleet_partition_bundle(
+        conn, active_year=max(years), league_generations={db_name: base_generation},
+        tables=tables + list(CONFIG_TABLE_COLUMN_TYPES), output_dir=output_dir,
+        rebuild_career_rollups=True, rebuild_homepage_rollups=True,
+        quick_years=sorted(years),
+    )
+    return DeltaBundle(path=bundle.path, manifest=bundle.manifest)

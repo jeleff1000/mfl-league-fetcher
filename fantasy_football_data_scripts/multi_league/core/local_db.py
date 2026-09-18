@@ -912,8 +912,11 @@ class LocalLeagueDB:
 
         The worker entrypoint is intentionally stable. Set
         FLY_PUBLISH_FORMAT=delta to publish a manifested Parquet delta bundle
-        through /merge-league-delta; otherwise this keeps the legacy whole
-        .duckdb operational rollback path.
+        through /merge-league-delta. Quick imports always use the existing
+        /merge-fleet-partition v3 lane: bounded seasons of facts with full-chain
+        server rollups, never whole-league replacement or a legacy fallback.
+        Configuration/identity tables initialize only where absent; saved
+        user settings remain authoritative inside the fenced transaction.
         """
         import duckdb
         import json
@@ -998,13 +1001,15 @@ class LocalLeagueDB:
             )
             return any(marker in message for marker in safe_markers)
 
-        publish_format = os.environ.get("FLY_PUBLISH_FORMAT", "duckdb").strip().lower()
+        resolved_mode = (import_mode or _infer_fly_import_mode() or "unknown").strip().lower()
+        quick_publish = resolved_mode == "quick"
+        publish_format = "delta" if quick_publish else os.environ.get("FLY_PUBLISH_FORMAT", "duckdb").strip().lower()
         if publish_format == "delta":
             from multi_league.core.delta_publish import build_delta_bundle
 
             snapshot_raw = os.environ.get("LEAGUE_IMPORT_BASE_GENERATION")
             if snapshot_raw is None:
-                if _env_bool("REQUIRE_IMPORT_BASE_GENERATION", False):
+                if quick_publish or _env_bool("REQUIRE_IMPORT_BASE_GENERATION", False):
                     raise RuntimeError(
                         "Delta import has no pre-fetch Fly publication generation; "
                         "refusing an unfenced league write"
@@ -1024,7 +1029,7 @@ class LocalLeagueDB:
                 bundle = build_delta_bundle(
                     conn,
                     db_name=db_name,
-                    import_mode=import_mode or _infer_fly_import_mode(),
+                    import_mode=resolved_mode,
                     platform=platform or _infer_fly_platform(),
                     league_id=os.environ.get("LEAGUE_ID")
                     or os.environ.get("SLEEPER_LEAGUE_ID")
@@ -1046,12 +1051,16 @@ class LocalLeagueDB:
 
                 target = FlyTarget()
                 merge_start = time.perf_counter()
-                result = target.merge_league_delta(
-                    db_name,
-                    bundle.path,
-                    bundle_id=bundle.bundle_id,
-                    bundle_hash=bundle.bundle_hash,
-                )
+                if quick_publish:
+                    result = target.merge_fleet_partition(
+                        bundle.path, bundle_id=bundle.bundle_id, bundle_hash=bundle.bundle_hash,
+                    )
+                    if not isinstance(result, dict) or result.get("status") != "COMMITTED":
+                        raise RuntimeError("Quick partition publication lacks a COMMITTED receipt")
+                else:
+                    result = target.merge_league_delta(
+                        db_name, bundle.path, bundle_id=bundle.bundle_id, bundle_hash=bundle.bundle_hash,
+                    )
                 elapsed = time.perf_counter() - merge_start
                 if isinstance(result, dict) and result.get("status") == "STALE_SKIPPED":
                     print(
@@ -1069,12 +1078,13 @@ class LocalLeagueDB:
                     elif result.get("elapsed_seconds") is not None:
                         timing_bits.append(f"server_merge={float(result['elapsed_seconds']):.1f}s")
                 suffix = f" ({', '.join(timing_bits)})" if timing_bits else ""
-                print(f"[UPLOAD-FLY] merge-league-delta completed in {elapsed:.1f}s{suffix}")
+                endpoint = "merge-fleet-partition" if quick_publish else "merge-league-delta"
+                print(f"[UPLOAD-FLY] {endpoint} completed in {elapsed:.1f}s{suffix}")
                 finalize_inventory_and_merge_source(target)
                 logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
                 return
             except Exception as exc:
-                if delta_fallback_allowed(exc):
+                if not quick_publish and delta_fallback_allowed(exc):
                     logger.warning(
                         "[UPLOAD-FLY] Delta publish failed on a fallback-allowed endpoint/network error; "
                         "using legacy whole-DuckDB rollback path: %s",

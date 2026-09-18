@@ -272,8 +272,16 @@ def test_stale_delta_import_cannot_rewind_a_newer_weekly_fleet_commit(
             "INSERT INTO public.player_fantasy VALUES "
             "('league_alpha', 2026, 1, 'nfl_a_2026_1', 'nfl_a', 'alice', 10)"
         )
+        # This is the full-import repair lane, not a quick partition publish.
+        # Supply its required derived table schemas so validation reaches the
+        # stale-generation fence rather than rejecting an incomplete fixture.
+        from multi_league.core.delta_publish import canonical_table_registry
+
+        for table, spec in canonical_table_registry().items():
+            columns = ', '.join(f'"{name}" {dtype}' for name, dtype in spec['columns'].items())
+            stale_source.execute(f'CREATE TABLE IF NOT EXISTS public."{table}" ({columns})')
         stale = build_delta_bundle(
-            stale_source, db_name="league_alpha", import_mode="quick",
+            stale_source, db_name="league_alpha", import_mode="full",
             platform="sleeper", base_generation=0,
             output_dir=tmp_path / "stale-delta",
         )

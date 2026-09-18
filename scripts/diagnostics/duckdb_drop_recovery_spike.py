@@ -71,12 +71,144 @@ def add_metadata_density(conn):
         conn.execute(f'CREATE TABLE public.metadata_density_{i:03d} ({columns})')
 
 
+def mark_origin_child(path, verify_only=False):
+    """Healthy shared-block proof, never a corruption or recovery input."""
+    if sys.platform != 'linux':
+        raise ValueError('Mark-origin proof requires the stock Linux engine')
+    if verify_only and os.environ.get('LD_PRELOAD'):
+        raise ValueError('Mark-origin stock proof must not load the helper')
+    marker = json.loads((path.parent / 'mark-origin.json').read_text())
+    block_id = marker['block_id']
+    expected = [(i, i + 100) for i in range(16)]
+    if verify_only:
+        with connect(path, read_only=True) as conn:
+            if conn.execute('SELECT i, value FROM public.mark_survivor ORDER BY i').fetchall() != expected:
+                raise ValueError('retained values changed after helper-free reopen')
+            if conn.execute("SELECT table_name FROM duckdb_tables() WHERE schema_name='public' AND table_name IN ('mark_keep','mark_drop')").fetchall():
+                raise ValueError('retired shared tables survived stock reopen')
+            if conn.execute('SELECT block_id FROM pragma_metadata_info() WHERE block_id=?', [block_id]).fetchall():
+                raise ValueError('retired metadata block survived stock reopen')
+        with connect(path) as conn:
+            conn.execute('CREATE TABLE public.mark_stock_write AS SELECT 7 AS value')
+            conn.execute('CHECKPOINT')
+        assert_fixture(path)
+        with connect(path, read_only=True) as conn:
+            if conn.execute('SELECT value FROM public.mark_stock_write').fetchall() != [(7,)]:
+                raise ValueError('helper-free checkpoint lost the stock write')
+            if conn.execute('SELECT i, value FROM public.mark_survivor ORDER BY i').fetchall() != expected:
+                raise ValueError('helper-free checkpoint changed retained values')
+        emit('mark_origin_stock_verified', block_id=block_id, fixture_bytes=path.stat().st_size)
+        return 0
+
+    hook = ctypes.CDLL(None)
+    hook.lh_spike_avoid_block.argtypes = [ctypes.c_int64]
+    hook.lh_spike_test_mark_partial_mask.restype = ctypes.c_uint64
+    hook.lh_spike_test_mark_calls.restype = ctypes.c_int
+    hook.lh_spike_test_mark_partial_calls.restype = ctypes.c_int
+    hook.lh_spike_reserved_masks.restype = ctypes.c_int
+    hook.lh_spike_allocations.restype = ctypes.c_int
+    hook.lh_spike_avoid_block(block_id)  # Must precede MetadataBlock::Read.
+    hook.lh_spike_checkpoint(1)  # Retain the unchanged 128 physical-allocation cap.
+    hook.lh_spike_disarm()  # All healthy table drops take the ordinary engine path.
+
+    def reserved_state(conn):
+        return conn.execute('SELECT free_list FROM pragma_metadata_info() WHERE block_id=?', [block_id]).fetchall()
+
+    def block_digest():
+        assert_fixture(path)
+        with path.open('rb') as stream:
+            stream.seek(12288 + block_id * 262144)
+            raw = stream.read(262144)
+        if len(raw) != 262144:
+            raise ValueError('shared metadata block outside the tiny fixture')
+        return hashlib.sha256(raw).hexdigest()
+
+    try:
+        with connect(path) as conn:
+            conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+            conn.execute("SET checkpoint_threshold='1GB'")
+            if hook.lh_spike_reserved_masks() < 1 or reserved_state(conn) != [([],)]:
+                raise ValueError('healthy shared block was not reserved on engine Read')
+            digest = block_digest()
+            if conn.execute('SELECT i, value FROM public.mark_keep ORDER BY i').fetchall() != expected:
+                raise ValueError('healthy retained reference is unreadable')
+            # Both tables were persisted in the fixture's sole metadata block.
+            # Drop one normally, but leave the other's row-group references live.
+            conn.execute('DROP TABLE public.mark_drop')
+            for index in (1, 2):
+                calls = hook.lh_spike_test_mark_calls()
+                partial_calls = hook.lh_spike_test_mark_partial_calls()
+                conn.execute(f'CREATE TABLE public.mark_churn_{index} AS SELECT {index} AS value')
+                conn.execute('CHECKPOINT')  # Only SQL drives the instrumented engine path.
+                mask = hook.lh_spike_test_mark_partial_mask()
+                if (hook.lh_spike_test_mark_calls() <= calls
+                        or hook.lh_spike_test_mark_partial_calls() <= partial_calls
+                        or not 0 < mask < (1 << 64) - 1):
+                    raise ValueError('real MarkBlocksAsModified did not deliver a targeted partial mask')
+                if reserved_state(conn) != [([],)]:
+                    raise ValueError('reserved metadata subslots became allocatable')
+                if block_digest() != digest:
+                    raise ValueError('checkpoint allocated or rewrote reserved metadata subslots')
+                if conn.execute('SELECT i, value FROM public.mark_keep ORDER BY i').fetchall() != expected:
+                    raise ValueError('checkpoint changed the healthy retained reference')
+                emit('mark_origin_partial_mask_verified', index=index, block_id=block_id,
+                     incoming_mask=hex(mask), mark_calls=hook.lh_spike_test_mark_calls(),
+                     partial_calls=hook.lh_spike_test_mark_partial_calls())
+            # Copy the values to fresh storage, then release the final old reference.
+            conn.execute('CREATE TABLE public.mark_survivor AS SELECT i,value FROM public.mark_keep')
+            conn.execute('DROP TABLE public.mark_keep')
+            conn.execute('CHECKPOINT')
+            if reserved_state(conn):
+                raise ValueError('unreferenced reserved metadata did not retire normally')
+            assert_fixture(path)
+            emit('mark_origin_retired', block_id=block_id, allocations=hook.lh_spike_allocations())
+        return 0
+    except Exception as exc:
+        emit('mark_origin_failed', error=str(exc).splitlines()[0])
+        return 2
+    finally:
+        hook.lh_spike_checkpoint(0)
+        hook.lh_spike_avoid_block(-1)
+
+
+def prove_mark_origin(library, mutant):
+    """Run the same real-engine assertions against a broken and enabled mask."""
+    for selected, should_fail in ((mutant, True), (library, False)):
+        with tempfile.TemporaryDirectory(prefix='lh_drop_spike_') as temp:
+            path = Path(temp) / 'candidate.duckdb'
+            with connect(path) as conn:
+                conn.execute('CREATE SCHEMA public')
+                conn.execute('CREATE TABLE public.mark_keep AS SELECT i, i+100 AS value FROM range(16) t(i)')
+                conn.execute('CREATE TABLE public.mark_drop AS SELECT i, i+200 AS value FROM range(16) t(i)')
+                conn.execute('CHECKPOINT')
+                blocks = conn.execute('SELECT block_id,free_list FROM pragma_metadata_info()').fetchall()
+            assert_fixture(path)
+            if len(blocks) != 1 or not blocks[0][1]:
+                raise ValueError('healthy shared fixture must occupy one partially free metadata block')
+            (path.parent / 'mark-origin.json').write_text(json.dumps({'block_id': blocks[0][0]}))
+            result = run_child(path, 'mark_origin', selected)
+            if should_fail:
+                if result.returncode != 2 or 'reserved metadata subslots became allocatable' not in result.stdout:
+                    raise ValueError('Mark-path mask mutant did not fail for exposed reserved subslots')
+                emit('mark_origin_red_proved')
+            else:
+                if result.returncode:
+                    raise ValueError('Mark-origin shared-reference proof failed')
+                if run_child(path, 'mark_verify').returncode:
+                    raise ValueError('Mark-origin helper-free stock proof failed')
+                emit('mark_origin_behavior_proved', production_repair_authorized=False)
+
+
 def child(path, mode):
     # The interposer's forwarding lookup needs Python's engine globally visible.
     if sys.platform == "linux":
         sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     import duckdb
     path = assert_fixture(path)
+    if mode in {'mark_origin', 'mark_verify'}:
+        if duckdb.__version__ != '1.5.4':
+            raise ValueError('Mark-origin proof requires stock DuckDB 1.5.4')
+        return mark_origin_child(path, verify_only=mode == 'mark_verify')
     if mode in {"verify", "verify_wal"}:
         verify(path)
         if mode == "verify_wal":
@@ -263,7 +395,7 @@ def verify(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--child", type=Path)
-    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden", "seed_wal", "verify_wal"], default="ordinary")
+    parser.add_argument("--mode", choices=["locate", "ordinary", "hook", "verify", "crash_commit", "crash_flush", "recover", "budget", "forbidden", "seed_wal", "verify_wal", "mark_origin", "mark_verify"], default="ordinary")
     parser.add_argument("--scenario", choices=["normal", "indexed", "shared", "budget", "real_scope"], default="normal")
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--binding-only", action="store_true")
@@ -316,6 +448,7 @@ def main():
             if not args.fixture_only:
                 subprocess.run(["c++", "-shared", "-fPIC", "-O0", "-Wall", "-Werror",
                                 *(["-DLH_REAL_FILE"] if args.scenario == "real_scope" else []),
+                                *(["-DLH_TEST_MARK_ORIGIN"] if args.scenario == "shared" else []),
                                 str(Path(__file__).with_suffix(".cpp")), "-ldl", "-o", str(library)],
                                check=True, timeout=5)
                 shutil.copyfile(baseline, candidate)
@@ -341,6 +474,12 @@ def main():
                 emit("allocation_ceiling_verified", metadata_block_budget=1)
                 return 0
             if args.scenario == "shared":
+                mutant = folder / 'mark_mask_mutant.so'
+                subprocess.run(['c++', '-shared', '-fPIC', '-O0', '-Wall', '-Werror',
+                                '-DLH_TEST_MARK_ORIGIN', '-DLH_TEST_SKIP_MARK_RESERVATION',
+                                str(Path(__file__).with_suffix('.cpp')), '-ldl', '-o', str(mutant)],
+                               check=True, timeout=5)
+                prove_mark_origin(library, mutant)
                 shutil.copyfile(baseline, candidate)
                 with candidate.open("r+b") as stream:
                     offset = 12288 + old_blocks[0] * 262144 + 32

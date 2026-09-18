@@ -23,7 +23,45 @@ static std::atomic<int64_t> reserved_metadata_block{-1};
 static std::atomic<int> reserved_mask_calls{0};
 static thread_local bool allowed_table_drop = false;
 
+// Built only by the synthetic shared-reference case, never the real-file helper.
+#ifdef LH_TEST_MARK_ORIGIN
+#ifdef LH_REAL_FILE
+#error "Mark-origin instrumentation is synthetic-only"
+#endif
+static thread_local bool inside_metadata_mark = false;
+static std::atomic<int> metadata_mark_calls{0};
+static std::atomic<int> metadata_mark_partial_calls{0};
+static std::atomic<uint64_t> metadata_mark_partial_mask{0};
+#elif defined(LH_TEST_SKIP_MARK_RESERVATION)
+#error "The Mark-mask mutant requires synthetic origin instrumentation"
+#endif
+
 extern "C" {
+
+#ifdef LH_TEST_MARK_ORIGIN
+int lh_spike_test_mark_calls(void) { return atomic_load(&metadata_mark_calls); }
+int lh_spike_test_mark_partial_calls(void) { return atomic_load(&metadata_mark_partial_calls); }
+uint64_t lh_spike_test_mark_partial_mask(void) { return atomic_load(&metadata_mark_partial_mask); }
+
+void lh_test_metadata_mark(void *manager)
+    __asm__("_ZN6duckdb15MetadataManager20MarkBlocksAsModifiedEv");
+
+void lh_test_metadata_mark(void *manager) {
+    auto original = reinterpret_cast<void (*)(void *)>(dlsym(RTLD_NEXT,
+        "_ZN6duckdb15MetadataManager20MarkBlocksAsModifiedEv"));
+    if (!original) { _exit(87); }
+    const bool previous = inside_metadata_mark;
+    inside_metadata_mark = true;
+    atomic_fetch_add(&metadata_mark_calls, 1);
+    try {
+        original(manager);
+    } catch (...) {
+        inside_metadata_mark = previous;
+        throw;
+    }
+    inside_metadata_mark = previous;
+}
+#endif
 
 void lh_spike_arm(void) { atomic_store(&armed, 1); }
 // Startup replay may legitimately contain earlier unrelated DROP records.
@@ -59,10 +97,23 @@ void lh_metadata_free_mask(void *block, uint64_t mask) {
         if (!describe) { _exit(88); }
         const auto prefix = std::string("block_id: ") + std::to_string(reserved) + " [";
         if (describe(block).compare(0, prefix.size(), prefix) == 0) {
+#ifdef LH_TEST_MARK_ORIGIN
+            // Count the ORIGINAL nontrivial mask only while the real engine's
+            // MarkBlocksAsModified is on-stack, not a direct test invocation.
+            if (inside_metadata_mark && mask != 0 && mask != UINT64_MAX) {
+                atomic_fetch_add(&metadata_mark_partial_calls, 1);
+                atomic_store(&metadata_mark_partial_mask, mask);
+            }
+#endif
             // Reserve this block's free subslots without pinning/reading it.
             // Live pointers remain live; normal all-unreferenced retirement
             // happens before FreeBlocksFromInteger in MarkBlocksAsModified.
+#ifdef LH_TEST_SKIP_MARK_RESERVATION
+            // Negative control: Read still reserves; only the Mark path leaks.
+            if (!inside_metadata_mark) { mask = 0; }
+#else
             mask = 0;
+#endif
             atomic_fetch_add(&reserved_mask_calls, 1);
         }
     }

@@ -16,7 +16,7 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_logs, service_health]
+        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_resume, engine_logs, service_health]
       diagnostic_machine_id:
         description: Isolated pilot machine for read-only exit diagnostics
         required: false
@@ -126,8 +126,8 @@ jobs:
           [[ "$RECOVERY_VOLUME_ID" =~ ^vol_[A-Za-z0-9]+$ ]]
           test "$RECOVERY_VOLUME_ID" != vol_rkg7mmd17llez224
           [[ "$WITNESS_DB_NAME" =~ ^[a-z0-9_]+$ ]]
-          case "$PILOT_ACTION" in inspect|locate|remove|donor_headers|retained_headers|engine_inventory|engine_identity|engine_recover) ;; *) exit 2 ;; esac
-          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_identity ] || [ "$PILOT_ACTION" = engine_recover ]; then
+          case "$PILOT_ACTION" in inspect|locate|remove|donor_headers|retained_headers|engine_inventory|engine_identity|engine_recover|engine_resume) ;; *) exit 2 ;; esac
+          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_identity ] || [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
             test "$RECOVERY_VOLUME_ID" = vol_4919j2m0wzg0xw5r
           fi
           case "$TARGET_TABLE" in player_fantasy_season|player_fantasy_season_all|homepage_manager_rankings|matchup_h2h_career|standings_by_year) ;; *) exit 2 ;; esac
@@ -152,7 +152,7 @@ jobs:
           vm_cpu_kind=shared
           vm_cpus=1
           files=()
-          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ]; then
+          if [ "$PILOT_ACTION" = engine_inventory ] || [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
             vm_memory=4096
             # Fly volume bandwidth: shared 1/2 CPU=16 MiB/s, 4 CPU=32 MiB/s.
             # Temporary pilot only; cleanup destroys this VM, retaining the volume.
@@ -165,6 +165,12 @@ jobs:
             test "$(stat -c %s /tmp/lh_recovery_witness.json)" -le 65536
             fixture_sha="$(sha256sum /tmp/lh_recovery_witness.json | cut -d ' ' -f 1)"
             files+=(--file-local /tmp/lh_recovery_witness.json=/tmp/lh_recovery_witness.json)
+            recovery_args="--witness-fixture /tmp/lh_recovery_witness.json --fixture-sha256 $fixture_sha"
+          fi
+          if [ "$PILOT_ACTION" = engine_resume ]; then
+            recovery_args="--resume-receipt 35368369603_1"
+          fi
+          if [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
             echo "stage=compile_helper utc=$(date -u +%FT%TZ) limit_seconds=5"
             timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE \
               scripts/diagnostics/duckdb_drop_recovery_spike.cpp -ldl -o /tmp/lh_five_drop.so
@@ -195,12 +201,12 @@ jobs:
           esac
           if [ "$remaining" -gt "$stage_limit" ]; then remaining="$stage_limit"; fi
           echo "stage=sql_pilot_start remaining_seconds=$remaining"
-          if [ "$PILOT_ACTION" = engine_recover ]; then
+          if [ "$PILOT_ACTION" = engine_recover ] || [ "$PILOT_ACTION" = engine_resume ]; then
             inventory="$(jq -cn --argjson machine "$(jq '{id,name,state,config:{mounts:.config.mounts}}' pilot-machine.json)" \
               --argjson volume "$(jq '{id,name,attached_machine_id}' attached-volume.json)" \
               '{machine:$machine,volume:$volume}' | base64 -w0)"
             flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
-              -C "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/duckdb_recovery_adapter.py --inventory-base64 $inventory --receipt-id ${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT} --helper-sha256 $helper_sha --witness-fixture /tmp/lh_recovery_witness.json --fixture-sha256 $fixture_sha --db-name $WITNESS_DB_NAME --deadline $PILOT_DEADLINE'"
+              -C "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/duckdb_recovery_adapter.py --inventory-base64 $inventory --receipt-id ${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT} --helper-sha256 $helper_sha $recovery_args --db-name $WITNESS_DB_NAME --deadline $PILOT_DEADLINE'"
             echo "stage=isolated_recovery_finished utc=$(date -u +%FT%TZ)"
             exit 0
           fi

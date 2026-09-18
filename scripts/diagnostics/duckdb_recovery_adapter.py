@@ -463,7 +463,32 @@ def remove_quarantined(conn, *, prepare=None):
     return len(QUARANTINED)
 
 
-def verify_stock(path, db_name, before):
+def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
+    """Two observed isolated states only; never infer permission from a timestamp."""
+    main_mtime, wal_size, wal_mtime, wal_sha = (
+        (1789748756148253909, 45522023, 1789748753472137934,
+         'b330657077bb40250e0e1977309d917810f6c9856eb9bc4cef9dc1d9b0dc1213') if resume else
+        (1789662410048242836, 45516621, 1789662378556231033,
+         'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
+    if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime
+            or binding['inode'] != 14
+            or header_sha != '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
+            or '.wal.checkpoint' in files or '.wal.recovery' in files
+            or any(files.get('.wal', {}).get(k) != v for k, v in
+                   {'size': wal_size, 'mtime_ns': wal_mtime, 'inode': 64}.items())):
+        raise ValueError('isolated main/WAL baseline changed: reconcile before replay')
+    return wal_sha
+
+
+def reconcile_committed_removal(conn, db_name, before):
+    """Read-only reconciliation: never calls seed, DROP, or starts a transaction."""
+    if object_inventory(conn) != sorted(('___leagues', 'public', name) for name in CANONICAL):
+        raise ValueError('reconcile requires all five removals already committed')
+    compare_witness(before, capture_witness(conn, db_name))
+    return 0
+
+
+def verify_stock(path, db_name, before, *, receipt_id='stock-proof'):
     """Run in a fresh helper-free child. Ordinary write leaves no user rows."""
     if os.environ.get('LD_PRELOAD'):
         raise ValueError('stock verification must not load a recovery helper')
@@ -474,12 +499,23 @@ def verify_stock(path, db_name, before):
         if {r[2] for r in object_inventory(conn)} != set(CANONICAL):
             raise ValueError('quarantined objects remain or healthy replacements are missing')
         compare_witness(before, capture_witness(conn, db_name))
-        conn.execute('CREATE TABLE public.__lh_recovery_write_probe (value INTEGER)')
-        conn.execute('INSERT INTO public.__lh_recovery_write_probe VALUES (7)')
+        columns = conn.execute("""SELECT column_name, data_type FROM duckdb_columns()
+            WHERE database_name=current_database() AND schema_name='public'
+            AND table_name='__lh_recovery_write_probe' ORDER BY column_index""").fetchall()
+        expected = [(7, receipt_id)]
+        if columns:
+            if (columns != [('value', 'INTEGER'), ('receipt_id', 'VARCHAR')]
+                    or conn.execute('SELECT value,receipt_id FROM public.__lh_recovery_write_probe').fetchall() != expected):
+                raise ValueError('stock probe ownership mismatch; do not overwrite')
+        else:
+            conn.execute('BEGIN TRANSACTION')
+            conn.execute('CREATE TABLE public.__lh_recovery_write_probe (value INTEGER, receipt_id VARCHAR)')
+            conn.execute('INSERT INTO public.__lh_recovery_write_probe VALUES (7, ?)', [receipt_id])
+            conn.execute('COMMIT')
         conn.execute('CHECKPOINT')
     with duckdb.connect(str(path), config=config) as conn:
         conn.execute('PRAGMA disable_checkpoint_on_shutdown')
-        if conn.execute('SELECT value FROM public.__lh_recovery_write_probe').fetchall() != [(7,)]:
+        if conn.execute('SELECT value,receipt_id FROM public.__lh_recovery_write_probe').fetchall() != expected:
             raise ValueError('ordinary stock write did not survive reopen')
         conn.execute('DROP TABLE public.__lh_recovery_write_probe')
         conn.execute('CHECKPOINT')
@@ -501,6 +537,31 @@ def write_receipt(path, payload):
             os.fsync(fd)
         finally:
             os.close(fd)
+
+
+def read_receipt(path):
+    path = Path(path)
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 65536):
+        raise ValueError('evidence must be a bounded regular receipt')
+    with path.open('rb') as stream:
+        raw = stream.read(65537)
+    if len(raw) > 65536:
+        raise ValueError('evidence exceeds bounded receipt size')
+    return json.loads(raw)
+
+
+def validate_resume_manifest(manifest, binding, db_name, fixture_sha):
+    """Bind retained original evidence to this volume, not its destroyed VM."""
+    old = json.loads(base64.b64decode(manifest['inventory_base64'], validate=True))
+    validate_inventory(old['machine'], old['volume'], old['machine']['id'], '/data/___leagues.duckdb')
+    expected_wal = validate_recovery_baseline(manifest['binding'], manifest['files'],
+        '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878')
+    if (manifest['binding']['inode'] != binding['inode'] or manifest['db_name'] != db_name
+            or manifest['wal'] != {'bytes': 45516621, 'sha256': expected_wal}
+            or fixture_sha != '373b43909b047303815798e581b1d3c861562fbcbd3a3f2cf064de09949df4f6'
+            or manifest['fixture_sha256'] != fixture_sha):
+        raise ValueError('original removal evidence does not bind this resume')
 
 
 def preflight_identity(encoded, runtime_machine_id):
@@ -530,9 +591,6 @@ def recovery_child(args):
     validate_engine(engine_identity())
     block = probe(path, 90714112)
     validate_block(block)
-    if (binding['size'] != 15555375104 or binding['mtime_ns'] != 1789662410048242836
-            or block['main_header_sha256'] != '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'):
-        raise ValueError('isolated source changed: reconcile, do not start another removal')
     library = Path('/tmp/lh_five_drop.so')
     if (os.environ.get('LD_PRELOAD') != str(library) or library.is_symlink()
             or library.stat().st_size > 1024 * 1024
@@ -543,20 +601,32 @@ def recovery_child(args):
     hook.lh_spike_allocations.restype = ctypes.c_int
     hook.lh_spike_disarm()
     files = file_inventory(path)
-    if ('.wal.checkpoint' in files or '.wal.recovery' in files or files.get('.wal', {}).get('size') != 45516621
-            or files['.wal']['mtime_ns'] != 1789662378556231033):
-        raise ValueError('retained WAL identity changed; reconcile before replay')
+    expected_wal_sha = validate_recovery_baseline(binding, files, block['main_header_sha256'],
+                                                  resume=bool(args.resume_receipt))
 
     phase('preserve')
+    retained_before = None
+    if args.resume_receipt:
+        source = Path('/data') / ('recovery_five_' + args.resume_receipt)
+        if source.is_symlink() or source.stat().st_dev != path.stat().st_dev:
+            raise ValueError('resume evidence must stay on the approved volume')
+        manifest = read_receipt(source / 'input.json')
+        fixture = read_receipt(source / 'fixture.json')
+        fixture_sha = hashlib.sha256(json.dumps(fixture, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        validate_resume_manifest(manifest, binding, args.db_name, fixture_sha)
+        retained_before = read_receipt(source / 'before.json')
     folder = Path('/data') / ('recovery_five_' + args.receipt_id)
     folder.mkdir()  # Create-only; an interrupted attempt is never overwritten.
     wal = preserve_wal(Path(str(path) + '.wal'), folder / 'original.wal')
-    if wal['sha256'] != 'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f':
-        raise ValueError('committed WAL differs from the retained first-attempt receipt')
+    if wal['sha256'] != expected_wal_sha:
+        raise ValueError('committed WAL differs from the inspected recovery baseline')
     write_receipt(folder / 'input.json', {'binding': binding, 'files': files, 'wal': wal,
                                         'inventory_base64': args.inventory_base64,
                                         'helper_sha256': args.helper_sha256, 'db_name': args.db_name,
-                                        'fixture_sha256': args.fixture_sha256})
+                                        'fixture_sha256': args.fixture_sha256,
+                                        'resume_receipt': args.resume_receipt})
+    if retained_before is not None:
+        write_receipt(folder / 'before.json', retained_before)
     if preflight_identity(args.inventory_base64, os.environ.get('FLY_MACHINE_ID', '')) != binding:
         raise ValueError('database identity changed while preserving WAL')
     print(json.dumps({'event': 'wal_preserved', **wal}), flush=True)
@@ -576,7 +646,6 @@ def recovery_child(args):
     print(json.dumps({'event': 'wal_replayed', 'elapsed_s': round(time.monotonic()-replay_started, 3),
                       'wal_source_bytes': wal['bytes'], 'metadata_blocks': hook.lh_spike_allocations()}), flush=True)
     phase('preserve')
-    validate_objects(object_inventory(conn))
     prior = hook.lh_spike_count()
 
     def prepare():
@@ -599,11 +668,19 @@ def recovery_child(args):
         phase('remove')
         hook.lh_spike_arm()
 
-    removed = remove_quarantined(conn, prepare=prepare)
-    hook.lh_spike_disarm()
-    if removed != 5 or hook.lh_spike_count() - prior != 5:
-        raise ValueError('unexpected native removal count; outcome UNKNOWN')
-    print(json.dumps({'event': 'commit_returned', 'removed': removed}), flush=True)
+    if args.resume_receipt:
+        removed = reconcile_committed_removal(conn, args.db_name, retained_before)
+        hook.lh_spike_disarm()
+        phase('remove')
+        print(json.dumps({'event': 'prior_commit_reconciled', 'new_drops': removed,
+                          'new_fixture_rows': 0, 'replay_drop_hooks': prior}), flush=True)
+    else:
+        validate_objects(object_inventory(conn))
+        removed = remove_quarantined(conn, prepare=prepare)
+        hook.lh_spike_disarm()
+        if removed != 5 or hook.lh_spike_count() - prior != 5:
+            raise ValueError('unexpected native removal count; outcome UNKNOWN')
+        print(json.dumps({'event': 'commit_returned', 'removed': removed}), flush=True)
 
     phase('verify')
     for index in (1, 2):
@@ -639,6 +716,7 @@ def main():
     parser.add_argument('--export-fixture')
     parser.add_argument('--witness-fixture')
     parser.add_argument('--fixture-sha256')
+    parser.add_argument('--resume-receipt', choices=['35368369603_1'])
     args = parser.parse_args()
     if args.recovery_child or args.stock_child:
         protect_parent(int(os.environ.get('LH_RECOVERY_SUPERVISOR_PID', '0')))
@@ -670,13 +748,14 @@ def main():
             raise ValueError('stock witness must be the isolated receipt folder')
         if os.environ.get('FLY_MACHINE_ID') == '1781e011b69068':
             raise ValueError('production stock pilot forbidden')
-        manifest = json.loads((folder / 'input.json').read_text())
+        manifest = read_receipt(folder / 'input.json')
         binding = preflight_identity(manifest['inventory_base64'], os.environ.get('FLY_MACHINE_ID', ''))
         if any(binding[k] != manifest['binding'][k] for k in ('device', 'inode')):
             raise ValueError('stock verification database inode changed')
         if manifest['db_name'] != args.db_name:
             raise ValueError('stock witness league identity mismatch')
-        verify_stock('/data/___leagues.duckdb', args.db_name, json.loads((folder / 'before.json').read_text()))
+        verify_stock('/data/___leagues.duckdb', args.db_name, read_receipt(folder / 'before.json'),
+                     receipt_id=manifest.get('resume_receipt') or folder.name.removeprefix('recovery_five_'))
         from fly_duckdb_block_probe import probe
         import duckdb
         with duckdb.connect('/data/___leagues.duckdb', read_only=True,
@@ -691,6 +770,8 @@ def main():
             or not re.fullmatch(r'[0-9a-f]{64}', args.helper_sha256 or '')):
         raise ValueError('exact receipt, helper fingerprint and bounded deadline required')
     if args.recovery_child:
+        if args.resume_receipt and (args.witness_fixture or args.fixture_sha256):
+            raise ValueError('resume cannot reseed a witness fixture')
         recovery_child(args)
         return 0
     if args.witness_fixture:

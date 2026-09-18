@@ -4,6 +4,18 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Guarded resume implementation: only original receipt `35368369603_1` plus
+  the exact post-commit main/WAL identity from `35369876519` is accepted.
+  Current WAL is retained separately before replay; original before-witnesses
+  are reused. After replay, all five old objects MUST already be absent and
+  the sampled values unchanged. No reseeding or new DROP is issued. A stock
+  write probe now carries an exact receipt owner and safely reconciles its
+  own interrupted write, while refusing another owner's object. Five new
+  regressions were red before implementation; local adapter result 41 passed,
+  three Linux-only skipped. Storage pilot tests: 19 passed, two old donor
+  cases deselected. Linux shared-block Mark-origin proof and real resume
+  remain pending; no production mutation is authorized by these local results.
+
 - Actual isolated run `35368369603` on `5b7a8d2ed`: export twenty genuine rows
   in about 0.66s; guarded retained-WAL replay 9.739s; fixture type/value and
   preservation checks passed. Five-object removal COMMIT returned in about

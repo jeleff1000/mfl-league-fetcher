@@ -399,6 +399,98 @@ def test_repeated_phase_cannot_reset_its_budget():
     assert result['exit_code'] == 124
 
 
+def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
+    a = adapter()
+    binding = {'size': 15555375104, 'mtime_ns': 1789748756148253909, 'inode': 14}
+    files = {'.wal': {'size': 45522023, 'mtime_ns': 1789748753472137934, 'inode': 64}}
+    header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == 'b330657077bb40250e0e1977309d917810f6c9856eb9bc4cef9dc1d9b0dc1213'
+    with pytest.raises(ValueError):
+        a.validate_recovery_baseline(binding, files, header, resume=False)
+    for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):
+        with pytest.raises(ValueError):
+            a.validate_recovery_baseline(changed, files, header, resume=True)
+    for sidecar in ('.wal.checkpoint', '.wal.recovery'):
+        with pytest.raises(ValueError):
+            a.validate_recovery_baseline(binding, {**files, sidecar: {'size': 1}}, header, resume=True)
+
+
+def test_resume_reconciliation_never_reseeds_or_reissues_drops(tmp_path):
+    a = adapter()
+    with duckdb.connect(str(tmp_path / '___leagues.duckdb')) as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'nyu_ffl' AS db_name, 2018 AS year, 'Alias' AS manager, 91.23 AS points")
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT * FROM public.matchup')
+        before = a.capture_witness(conn, 'nyu_ffl')
+        assert a.reconcile_committed_removal(conn, 'nyu_ffl', before) == 0
+        assert a.reconcile_committed_removal(conn, 'nyu_ffl', before) == 0
+        assert a.capture_witness(conn, 'nyu_ffl') == before
+        conn.execute(f'CREATE TABLE public."{a.QUARANTINED[0]}" AS SELECT 7 AS value')
+        with pytest.raises(ValueError, match='reconcile'):
+            a.reconcile_committed_removal(conn, 'nyu_ffl', before)
+        assert len(a.object_inventory(conn)) == 6
+        conn.execute(f'DROP TABLE public."{a.QUARANTINED[0]}"')
+        conn.execute("UPDATE public.matchup SET manager='Unmerged' WHERE db_name='nyu_ffl'")
+        with pytest.raises(ValueError, match='witness'):
+            a.reconcile_committed_removal(conn, 'nyu_ffl', before)
+
+
+def test_resume_evidence_rebinds_same_volume_not_the_destroyed_machine():
+    import base64
+    import copy
+    import json
+    a = adapter()
+    machine, volume = inventory()
+    manifest = {'inventory_base64': base64.b64encode(json.dumps({'machine': machine, 'volume': volume}).encode()).decode(),
+        'binding': {'size': 15555375104, 'mtime_ns': 1789662410048242836, 'inode': 14},
+        'files': {'.wal': {'size': 45516621, 'mtime_ns': 1789662378556231033, 'inode': 64}},
+        'db_name': 'nyu_ffl',
+        'wal': {'bytes': 45516621, 'sha256': 'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'},
+        'fixture_sha256': '373b43909b047303815798e581b1d3c861562fbcbd3a3f2cf064de09949df4f6'}
+    a.validate_resume_manifest(manifest, {'inode': 14}, 'nyu_ffl', manifest['fixture_sha256'])
+    for key, value in [('db_name', 'other'), ('fixture_sha256', 'wrong'), ('binding', {**manifest['binding'], 'inode': 15}),
+                       ('wal', {**manifest['wal'], 'sha256': 'wrong'})]:
+        changed = copy.deepcopy(manifest)
+        changed[key] = value
+        with pytest.raises(ValueError):
+            a.validate_resume_manifest(changed, {'inode': 14}, 'nyu_ffl', manifest['fixture_sha256'])
+
+
+def test_read_evidence_refuses_large_files_and_never_replaces_them(tmp_path):
+    a = adapter()
+    path = tmp_path / 'before.json'
+    path.write_bytes(b'{"unchanged":true}')
+    assert a.read_receipt(path) == {'unchanged': True}
+    path.write_bytes(b' ' * 65537)
+    with pytest.raises(ValueError, match='bounded'):
+        a.read_receipt(path)
+    assert path.stat().st_size == 65537
+
+
+def test_stock_probe_reconciles_its_owned_interrupted_write_and_repeats(tmp_path):
+    a = adapter()
+    path = tmp_path / '___leagues.duckdb'
+    with duckdb.connect(str(path)) as conn:
+        conn.execute('CREATE SCHEMA public')
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'nyu_ffl' AS db_name, 2025 AS year, 'Alias' AS manager, 123.4 AS points")
+        for name in a.CANONICAL:
+            conn.execute(f'CREATE TABLE public."{name}" AS SELECT * FROM public.matchup')
+        before = a.capture_witness(conn, 'nyu_ffl')
+        conn.execute('CREATE TABLE public.__lh_recovery_write_probe (value INTEGER, receipt_id VARCHAR)')
+        conn.execute("INSERT INTO public.__lh_recovery_write_probe VALUES (7,'35368369603_1')")
+    a.verify_stock(path, 'nyu_ffl', before, receipt_id='35368369603_1')
+    a.verify_stock(path, 'nyu_ffl', before, receipt_id='35368369603_1')
+    with duckdb.connect(str(path)) as conn:
+        assert conn.execute("SELECT table_name FROM duckdb_tables() WHERE table_name='__lh_recovery_write_probe'").fetchall() == []
+        conn.execute('CREATE TABLE public.__lh_recovery_write_probe (value INTEGER, receipt_id VARCHAR)')
+        conn.execute("INSERT INTO public.__lh_recovery_write_probe VALUES (7,'some-other-owner')")
+    with pytest.raises(ValueError, match='probe ownership'):
+        a.verify_stock(path, 'nyu_ffl', before, receipt_id='35368369603_1')
+    with duckdb.connect(str(path)) as conn:
+        assert conn.execute('SELECT receipt_id FROM public.__lh_recovery_write_probe').fetchall() == [('some-other-owner',)]
+
+
 def test_adapter_cli_refuses_wrong_machine_before_opening_any_file():
     import base64
     import json

@@ -2,6 +2,50 @@
 
 State: active. Production completion is unproven. This ledger is for league updates, not SuperTable SOTA work.
 
+## User scope correction and 40-second pilots - 2026-09-18
+
+The user rejected per-league database migration. That proposal is withdrawn.
+Scope is only the blocking derived-table objects; no all-league storage split.
+The new hard limit is 40 seconds per pilot, including its Fly machine startup,
+with no retries or automatic escalation into a rebuild. Actions queue/setup and
+bounded disposable-machine cleanup are reported separately from pilot execution.
+
+Fresh read-only evidence: catalog lists all five old `__corrupt_recovery_*`
+objects. Storage metadata for `player_fantasy_season`,
+`homepage_manager_rankings`, `matchup_h2h_career`, and `standings_by_year`
+fails on the exact known block at 90714112. The fifth metadata request timed out
+at five seconds, so it is not new confirming evidence. A scoped `nyu_ffl` 2025
+source query still reads 8,010 player-week rows and sums their scores in 1.38s.
+Readable source data exists; this does not establish complete historical recovery.
+
+A disposable 536,576-byte local fixture pilot stopped in 1.531s: corrupting its
+metadata also prevented opening the catalog. It did not reach DROP and is NOT a
+successful or production-representative removal test (local DuckDB 1.5.1).
+
+The existing `fly_duckdb_reaggregate_recovery.yml` all-league, 180-minute route is
+replaced by a one-table isolated pilot. It uses only an existing unattached
+`wkupd_rebuild_*` volume and the primary's current image; it creates no volume,
+snapshot, database copy, replacement, or deployment. The helper requires DuckDB
+1.5.4, the exact observed bad block, a known table and independent fact witness.
+Removal additionally requires both quarantine and canonical table names, and
+refuses any retained WAL rather than replaying it during the pilot. Only one
+old allowlisted table can be dropped; success requires commit, checkpoint,
+reopen, object absence and unchanged witness. Rebuild is deliberately unavailable
+until that storage-removal gate passes. The production machine and volume are
+rejected by both workflow and helper. An outer OS timeout, remote OS timeout,
+and absolute helper deadline bound the operation; only its disposable VM is
+cleaned up afterward. Stage output is immediate.
+
+Review found two deadline gaps: SSH connection delay could extend the remote OS
+timeout, and blocked logging could stall the Python watchdog. Both are fixed:
+the remote shell recalculates remaining time after SSH connects, and the watchdog
+exits without I/O. The blocked-logger regression failed before the fix. All 22
+focused tests pass in 4.08s, including real deadline termination, late-SSH refusal
+and the workflow's primary-volume rejection in Bash. Ruff/diff checks pass;
+both local workflow copies and helper copies match. Actual isolated pilot
+evidence and a supported removal mechanism remain pending. This is an enforcement
+and diagnostic change, not a claim that physical corruption is repaired.
+
 ## Connection safeguards and storage decision - 2026-09-18
 
 The preceding goal-statement-only turn made no implementation progress. This

@@ -93,24 +93,42 @@ def test_isolated_full_database_rebuild_workflow_is_not_dispatchable():
     ).exists()
 
 
-def test_isolated_reaggregation_is_limited_to_the_retained_recovery_volume():
-    source = (
-        ROOT / ".github" / "workflows" / "fly_duckdb_reaggregate_recovery.yml"
-    ).read_text(encoding="utf-8")
+def test_table_pilot_workflow_rejects_primary_before_calling_fly(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    import yaml
 
-    assert "scripts/fly_reaggregate_derived.py" in source
-    assert "scripts/fly_rebuild_duckdb.py" not in source
-    assert "___leagues.clean.duckdb" not in source
-    assert "--database /data/___leagues.duckdb" in source
-    assert "--ops /data/___ops.duckdb" in source
-    assert "--ops-nfl /data/___ops_nfl.duckdb" in source
-    assert "wkupd_rebuild_" in source
-    assert "--vm-cpus 2 --vm-memory 4096" in source
-    assert '-C "env PYTHONPATH=/app python /tmp/fly_reaggregate_derived.py' in source
-    assert "--drop-quarantined-targets-only" not in source
-    assert "quarantine_drop" not in source
-    assert "recovery_mode:" not in source
-    assert "flyctl machine stop" not in source
-    assert "flyctl machine clone" not in source
-    assert "/replace-db" not in source
-    assert "flyctl deploy" not in source
+    workflow = yaml.safe_load((ROOT / ".github/workflows/fly_duckdb_reaggregate_recovery.yml").read_text())
+    step = next(step for step in workflow["jobs"]["pilot"]["steps"] if step.get("name", "").startswith("One-table pilot"))
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    env = dict(os.environ, RECOVERY_VOLUME_ID="vol_rkg7mmd17llez224", PILOT_ACTION="remove",
+               TARGET_TABLE="player_fantasy_season", WITNESS_DB_NAME="nyu_ffl")
+    result = subprocess.run(
+        [bash], input="flyctl() { echo UNEXPECTED_FLY_CALL; return 99; }; export -f flyctl\n" + step["run"],
+        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=5,
+    )
+    assert result.returncode != 0
+    assert "stage=pilot_start" in result.stdout
+    assert "UNEXPECTED_FLY_CALL" not in result.stdout
+
+
+def test_table_pilot_rechecks_deadline_after_ssh_connect(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    import time
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/fly_duckdb_reaggregate_recovery.yml").read_text())
+    step = next(step for step in workflow["jobs"]["pilot"]["steps"] if step.get("name", "").startswith("One-table pilot"))
+    ssh = step["run"].split('flyctl ssh console', 1)[1].split('echo "stage=pilot_finished', 1)[0]
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    env = dict(os.environ, PILOT_DEADLINE=str(int(time.time()) - 1), remaining="35",
+               FLY_APP="test", machine_id="test", PILOT_ACTION="remove", TARGET_TABLE="player_fantasy_season",
+               WITNESS_DB_NAME="nyu_ffl", RECOVERY_VOLUME_ID="vol_test")
+    # Execute exactly the remote command with a connection that arrived late.
+    execute_remote = 'flyctl() { while [ "$1" != "-C" ]; do shift; done; bash -c "$2"; };\n'
+    result = subprocess.run([bash], input=execute_remote + "flyctl ssh console" + ssh,
+                            cwd=tmp_path, env=env, text=True, capture_output=True, timeout=5)
+    assert result.returncode == 124, (result.stdout, result.stderr)

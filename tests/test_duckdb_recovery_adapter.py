@@ -401,10 +401,10 @@ def test_repeated_phase_cannot_reset_its_budget():
 
 def test_resume_binds_only_the_observed_postcommit_file_and_sidecars():
     a = adapter()
-    binding = {'size': 15555375104, 'mtime_ns': 1789751396939092785, 'inode': 14}
-    files = {'.wal': {'size': 45522129, 'mtime_ns': 1789751386755047295, 'inode': 64}}
+    binding = {'size': 15555375104, 'mtime_ns': 1789751759807751374, 'inode': 14}
+    files = {'.wal': {'size': 45522182, 'mtime_ns': 1789751748307783731, 'inode': 64}}
     header = '1b47d141ed345a3a89371b6caffe8dc76db21a093b6438c444d22da461c01878'
-    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '016b3debb96b9479e39dacd99aee29f6ad58bbd95dfc498a45ccf1cf5e1d61a7'
+    assert a.validate_recovery_baseline(binding, files, header, resume=True) == '6a14b987e064f8854b3027971171d98d670c8e3fd8486645ab5425567bdd08ef'
     with pytest.raises(ValueError):
         a.validate_recovery_baseline(binding, files, header, resume=False)
     for changed in ({**binding, 'inode': 15}, {**binding, 'mtime_ns': 1789748756148253910}):
@@ -519,6 +519,35 @@ def test_recovery_uses_the_four_available_threads_without_relaxing_memory_or_vac
         assert conn.execute("SELECT current_setting('max_vacuum_tasks')").fetchone() == (0,)
         assert a.recovery_connect_config()['memory_limit'] == '3072MB'
         assert conn.execute("SELECT current_setting('temp_directory')").fetchone() == ('',)
+
+
+def test_recovery_refuses_startup_starvation_before_engine_open():
+    a = adapter()
+    a.require_recovery_window(140, now=110)
+    for now in (110.1, 125, 141):
+        with pytest.raises(ValueError, match='NOT_STARTED'):
+            a.require_recovery_window(140, now=now)
+
+
+def test_checkpoint_marker_is_forwarded_before_a_timeout(capsys):
+    a = adapter()
+    code = "import json,time; print(json.dumps({'event':'checkpoint_start','index':1}),flush=True); time.sleep(5)"
+    result = a.run_stage('verify', [sys.executable, '-u', '-c', code], deadline=time.time()+.4,
+                         transitions=('inspect',))
+    output = capsys.readouterr().out
+    assert output.index('child_event') < output.index('"event": "end"')
+    assert result['outcome'] == 'UNKNOWN'
+
+
+def test_machine_exec_remote_failure_is_not_a_successful_cli_result(capsys):
+    a = adapter()
+    assert a.emit_machine_exec_result({'exit_code': 7, 'stdout': 'sentinel', 'stderr': 'failure'}) == 7
+    assert capsys.readouterr().out == 'sentinel'
+    assert a.emit_machine_exec_result({'stdout': '{"event":"isolated_recovery_verified"}\n'}) == 0
+    for bad in ({'stdout': ''}, {'exit_code': False, 'stdout': '', 'stderr': ''},
+                {'exit_code': 0, 'stdout': 'x'*131073, 'stderr': ''}):
+        with pytest.raises(ValueError):
+            a.emit_machine_exec_result(bad)
 
 
 def test_adapter_cli_refuses_wrong_machine_before_opening_any_file():

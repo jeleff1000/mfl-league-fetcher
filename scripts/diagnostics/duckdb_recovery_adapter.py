@@ -27,6 +27,38 @@ RECOVERY_VOLUME = "vol_4919j2m0wzg0xw5r"
 STAGE_LIMITS = {"inspect": 5, "preserve": 10, "replay": 10, "remove": 5, "verify": 15}
 
 
+def require_recovery_window(deadline, *, now=None):
+    # Observed pre-checkpoint work is ~14s; leave the full existing 15s proof
+    # window BEFORE starting replay. Do not start an already-starved mutation.
+    if deadline - (time.time() if now is None else now) < 30:
+        raise ValueError('NOT_STARTED: less than 30s remains after startup')
+
+
+def emit_machine_exec_result(data, expected_event='isolated_recovery_verified'):
+    """fly machine exec returns CLI success even when its remote exit is nonzero."""
+    if not isinstance(data, dict) or set(data) - {'exit_code', 'stdout', 'stderr'}:
+        raise ValueError('unrecognized machine exec response')
+    # Fly's Go response deliberately omits zero/empty fields (omitempty).
+    code, out, err = data.get('exit_code', 0), data.get('stdout', ''), data.get('stderr', '')
+    if (type(code) is not int or not isinstance(out, str) or not isinstance(err, str)
+            or len(out.encode()) > 131072 or len(err.encode()) > 65536):
+        raise ValueError('invalid or unbounded machine exec response')
+    print(out, end='', flush=True)
+    print(err, file=sys.stderr, end='', flush=True)
+    if code:
+        return code if 1 <= code <= 255 else 1
+    for line in out.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            child = event.get('child', event)
+            if isinstance(child, dict) and expected_event in (child.get('event'), child.get('stage')):
+                return 0
+    raise ValueError('remote success lacks its required completion event')
+
+
 def charge_phase(spent, name, elapsed):
     spent[name] += elapsed
     if spent[name] > STAGE_LIMITS[name]:
@@ -86,7 +118,13 @@ def run_stage(stage, command, *, deadline, env=None, transitions=()):
             event = json.loads(line)
         except (ValueError, UnicodeError):
             return
-        if not isinstance(event, dict) or event.get('event') != 'phase':
+        if not isinstance(event, dict):
+            return
+        if event.get('event') != 'phase':
+            if event.get('event') in {'engine_open', 'wal_preserved', 'wal_replayed', 'prior_commit_reconciled',
+                    'commit_returned', 'checkpoint_start', 'checkpoint_end', 'checkpoint_returned',
+                    'stock_reopen_write_verified', 'isolated_recovery_verified', 'adapter_failed'}:
+                print(json.dumps({'event': 'child_event', 'child': event}), flush=True)
             return
         with phase_lock:
             index, next_phase = phase['index'], event.get('stage')
@@ -466,8 +504,8 @@ def remove_quarantined(conn, *, prepare=None):
 def validate_recovery_baseline(binding, files, header_sha, *, resume=False):
     """Two observed isolated states only; never infer permission from a timestamp."""
     main_mtime, wal_size, wal_mtime, wal_sha = (
-        (1789751396939092785, 45522129, 1789751386755047295,
-         '016b3debb96b9479e39dacd99aee29f6ad58bbd95dfc498a45ccf1cf5e1d61a7') if resume else
+        (1789751759807751374, 45522182, 1789751748307783731,
+         '6a14b987e064f8854b3027971171d98d670c8e3fd8486645ab5425567bdd08ef') if resume else
         (1789662410048242836, 45516621, 1789662378556231033,
          'a4f7a2a20afdf2dc1cc218509c1f4052bf6f4df37924768fef518e8c53dace1f'))
     if (binding['size'] != 15555375104 or binding['mtime_ns'] != main_mtime
@@ -725,7 +763,15 @@ def main():
     parser.add_argument('--witness-fixture')
     parser.add_argument('--fixture-sha256')
     parser.add_argument('--resume-receipt', choices=['35368369603_1'])
+    parser.add_argument('--machine-exec-result')
+    parser.add_argument('--expect-event', default='isolated_recovery_verified')
     args = parser.parse_args()
+    if args.machine_exec_result:
+        with Path(args.machine_exec_result).open('rb') as stream:
+            raw = stream.read(262145)
+        if len(raw) > 262144:
+            raise ValueError('machine exec receipt exceeds 256KiB')
+        return emit_machine_exec_result(json.loads(raw), args.expect_event)
     if args.recovery_child or args.stock_child:
         protect_parent(int(os.environ.get('LH_RECOVERY_SUPERVISOR_PID', '0')))
     if not re.fullmatch(r'[a-z0-9_]+', args.db_name):
@@ -788,6 +834,7 @@ def main():
         # Export has its own 5s ceiling inside the SAME 40s workflow deadline.
         # Reserve that full allowance from the cumulative 10s preservation cap.
         STAGE_LIMITS['preserve'] = 5
+    require_recovery_window(args.deadline)
     env = dict(os.environ)
     env['LD_PRELOAD'] = '/tmp/lh_five_drop.so'
     env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())

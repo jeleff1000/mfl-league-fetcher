@@ -4,6 +4,26 @@ State: isolated real-file removal COMMIT returned for all five objects; checkpoi
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Four-thread matrix `35373115939` on `f3e65e0d4` passed all six groups.
+  Actual `35373221048` again exhausted the overall startup-inclusive window
+  during first checkpoint. Last process counters:862,777,344 read bytes,
+  237,989,888 written bytes, CPU23.48s. No durable checkpoint marker; UNKNOWN.
+  VM `683e3d6c449348` removed17:16:10Z. This does not establish CP time>15s.
+- No-engine `35373483853` took0.928s: header iteration12126 and known bad
+  block unchanged; main size15555375104,inode14,mtime1789751759807751374;
+  WAL45522182bytes,inode64,mtime1789751748307783731,SHA
+  `6a14b987e064f8854b3027971171d98d670c8e3fd8486645ab5425567bdd08ef`.
+  No alternate sidecars. VM `7812613c007368` removed17:18:12Z. New baseline
+  is exact; earlier receipts/WAL copies retained, no blind retry.
+- Startup-starvation guard now requires >=30s remain before starting a recovery
+  child; deadlines are not extended. Child checkpoint markers are forwarded
+  immediately instead of lost if the outer deadline kills the supervisor.
+  Machines-API transport avoids SSH setup; explicit JSON exit-code AND terminal
+  event checks prevent flyctl's zero CLI exit from hiding a remote failure.
+  Three red regressions preceded implementation; local46passed/3Linuxskipped.
+  API transport is first tested read-only with a deliberate remote exit7;
+  real execution must wait for that receipt. Production still unchanged.
+
 - `35372449206` on `5bdd4444d`: all six Linux groups passed, including all45
   adapter tests8.65s and the no-compaction regression. Actual resume
   `35372578623`: replay9.786s, original witnesses preserved, zero new drops or

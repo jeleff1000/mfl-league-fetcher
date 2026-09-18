@@ -207,9 +207,28 @@ jobs:
             inventory="$(jq -cn --argjson machine "$(jq '{id,name,state,config:{mounts:.config.mounts}}' pilot-machine.json)" \
               --argjson volume "$(jq '{id,name,attached_machine_id}' attached-volume.json)" \
               '{machine:$machine,volume:$volume}' | base64 -w0)"
-            flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
-              -C "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/duckdb_recovery_adapter.py --inventory-base64 $inventory --receipt-id ${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT} --helper-sha256 $helper_sha $recovery_args --db-name $WITNESS_DB_NAME --deadline $PILOT_DEADLINE'"
+            # Machines API avoids SSH/WireGuard setup inside the tight pilot.
+            # flyctl itself does NOT propagate the remote command's exit code.
+            flyctl machine exec "$machine_id" --app "$FLY_APP" --timeout "$remaining" --json \
+              "/bin/sh -lc 'remaining=\$(( $PILOT_DEADLINE - \$(date +%s) )); test \"\$remaining\" -gt 0 || exit 124; exec timeout --signal=KILL \"\${remaining}s\" python -u /tmp/duckdb_recovery_adapter.py --inventory-base64 $inventory --receipt-id ${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT} --helper-sha256 $helper_sha $recovery_args --db-name $WITNESS_DB_NAME --deadline $PILOT_DEADLINE'" > machine-exec.json
+            python scripts/diagnostics/duckdb_recovery_adapter.py --machine-exec-result machine-exec.json --db-name "$WITNESS_DB_NAME"
             echo "stage=isolated_recovery_finished utc=$(date -u +%FT%TZ)"
+            exit 0
+          fi
+          if [ "$PILOT_ACTION" = inspect ]; then
+            # Harmless negative control: verify nonzero remote exit propagation
+            # before using this transport for a real recovery command.
+            flyctl machine exec "$machine_id" --app "$FLY_APP" --timeout 3 --json \
+              "/bin/sh -lc 'printf exec-sentinel; exit 7'" > machine-exec-negative.json
+            if python scripts/diagnostics/duckdb_recovery_adapter.py --machine-exec-result machine-exec-negative.json --db-name "$WITNESS_DB_NAME"; then
+              echo 'remote failure was incorrectly accepted'; exit 1
+            else
+              test "$?" -eq 7
+            fi
+            flyctl machine exec "$machine_id" --app "$FLY_APP" --timeout 5 --json \
+              "/bin/sh -lc 'exec timeout --signal=KILL 5s python -u /tmp/fly_table_storage_pilot.py --action inspect --target-table $TARGET_TABLE --db-name $WITNESS_DB_NAME --machine-id $machine_id --volume-id $RECOVERY_VOLUME_ID --deadline $PILOT_DEADLINE'" > machine-exec.json
+            python scripts/diagnostics/duckdb_recovery_adapter.py --machine-exec-result machine-exec.json --expect-event wal_fingerprints_without_engine_open --db-name "$WITNESS_DB_NAME"
+            echo "stage=api_inspection_finished utc=$(date -u +%FT%TZ)"
             exit 0
           fi
           flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
@@ -270,6 +289,8 @@ jobs:
             pilot-machine.json
             attached-volume.json
             table-pilot.jsonl
+            machine-exec.json
+            machine-exec-negative.json
             service-ready.json
             service-checks.txt
             service-machines.json

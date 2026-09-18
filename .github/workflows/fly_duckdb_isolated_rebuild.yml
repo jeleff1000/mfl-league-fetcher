@@ -161,6 +161,11 @@ jobs:
               --empty-table public.player_fantasy_season \
               --empty-table public.player_fantasy_season_all \
               --empty-table public.standings_by_year \
+              --skip-table public.__corrupt_recovery_homepage_manager_rankings \
+              --skip-table public.__corrupt_recovery_matchup_h2h_career \
+              --skip-table public.__corrupt_recovery_player_fantasy_season \
+              --skip-table public.__corrupt_recovery_player_fantasy_season_all \
+              --skip-table public.__corrupt_recovery_standings_by_year \
               --overwrite" | tee isolated-rebuild.jsonl
 
           cat > validate_isolated_rebuild.py <<'PY'

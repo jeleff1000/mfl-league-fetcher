@@ -44,6 +44,10 @@ def test_rebuild_copies_healthy_tables_and_preserves_empty_table_schema(tmp_path
     assert '"table": "merge_admin.generations"' in progress
     assert '"table": "public.damaged"' in progress
     assert '"table": "public.healthy"' in progress
+    assert '"event": "copy_table_started"' in progress
+    assert '"event": "copy_table_completed"' in progress
+    assert '"event": "rebuild_completed"' in progress
+    assert '"elapsed_seconds"' in progress
 
     assert result["tables"]["public.healthy"]["target_rows"] == 2
     assert result["tables"]["public.damaged"] == {
@@ -91,3 +95,31 @@ def test_rebuild_requires_every_excluded_table_to_exist(tmp_path):
 
     with pytest.raises(RuntimeError, match="excluded tables are absent"):
         rebuild_database(source, target, empty_tables={("public", "missing")})
+
+
+def test_rebuild_omits_only_explicitly_skipped_quarantine(tmp_path):
+    source = tmp_path / "source.duckdb"
+    target = tmp_path / "target.duckdb"
+    _build_source(source)
+    conn = duckdb.connect(str(source))
+    conn.execute("CREATE TABLE public.__corrupt_recovery_damaged AS SELECT 99 AS value")
+    conn.close()
+
+    result = rebuild_database(
+        source,
+        target,
+        empty_tables={("public", "damaged")},
+        skip_tables={("public", "__corrupt_recovery_damaged")},
+    )
+
+    assert result["skipped_tables"] == ["public.__corrupt_recovery_damaged"]
+    conn = duckdb.connect(str(target), read_only=True)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE schema_name='public'"
+        ).fetchall()
+    }
+    conn.close()
+    assert "__corrupt_recovery_damaged" not in tables
+    assert {"healthy", "damaged"}.issubset(tables)

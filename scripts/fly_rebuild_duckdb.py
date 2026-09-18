@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import duckdb
@@ -28,6 +29,7 @@ def rebuild_database(
     target_path: Path,
     *,
     empty_tables: set[tuple[str, str]],
+    skip_tables: set[tuple[str, str]] | None = None,
     overwrite: bool = False,
 ) -> dict:
     source_path = source_path.resolve()
@@ -45,6 +47,8 @@ def rebuild_database(
     conn = duckdb.connect(str(target_path))
     attached = False
     copied: dict[str, dict[str, int | bool]] = {}
+    skip_tables = set(skip_tables or ())
+    rebuild_started = time.monotonic()
     try:
         conn.execute(f"ATTACH {_quote_literal(source_path.as_posix())} AS source (READ_ONLY)")
         attached = True
@@ -99,16 +103,37 @@ def rebuild_database(
         missing_exclusions = sorted(empty_tables - available)
         if missing_exclusions:
             raise RuntimeError(f"excluded tables are absent from source: {missing_exclusions}")
+        missing_skips = sorted(skip_tables - available)
+        if missing_skips:
+            raise RuntimeError(f"skipped tables are absent from source: {missing_skips}")
 
-        for schema_raw, table_raw, ddl_raw in tables:
+        copy_tables = [
+            row for row in tables
+            if (str(row[0]), str(row[1])) not in skip_tables
+        ]
+        print(
+            json.dumps(
+                {
+                    "event": "rebuild_started",
+                    "tables_total": len(copy_tables),
+                    "tables_skipped": len(skip_tables),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        for index, (schema_raw, table_raw, ddl_raw) in enumerate(copy_tables, start=1):
             schema = str(schema_raw)
             table = str(table_raw)
             ddl = str(ddl_raw or "").strip()
             excluded = (schema, table) in empty_tables
+            table_started = time.monotonic()
             print(
                 json.dumps(
                     {
-                        "event": "copy_table",
+                        "event": "copy_table_started",
+                        "index": index,
+                        "total": len(copy_tables),
                         "table": f"{schema}.{table}",
                         "emptied": excluded,
                     },
@@ -141,6 +166,22 @@ def rebuild_database(
                 "target_rows": target_rows,
                 "emptied": excluded,
             }
+            print(
+                json.dumps(
+                    {
+                        "event": "copy_table_completed",
+                        "index": index,
+                        "total": len(copy_tables),
+                        "table": f"{schema}.{table}",
+                        "source_rows": source_rows,
+                        "target_rows": target_rows,
+                        "emptied": excluded,
+                        "elapsed_seconds": round(time.monotonic() - table_started, 3),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
         conn.execute("CHECKPOINT")
         conn.execute("DETACH source")
@@ -156,6 +197,18 @@ def rebuild_database(
     wal_path = Path(f"{target_path}.wal")
     if wal_path.exists() and wal_path.stat().st_size:
         raise RuntimeError(f"rebuilt database retained a WAL: {wal_path}")
+    print(
+        json.dumps(
+            {
+                "event": "rebuild_completed",
+                "tables_copied": len(copied),
+                "tables_skipped": len(skip_tables),
+                "elapsed_seconds": round(time.monotonic() - rebuild_started, 3),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     return {
         "source": str(source_path),
         "target": str(target_path),
@@ -164,6 +217,7 @@ def rebuild_database(
         "schemas": schemas,
         "tables": copied,
         "empty_tables": sorted(f"{schema}.{table}" for schema, table in empty_tables),
+        "skipped_tables": sorted(f"{schema}.{table}" for schema, table in skip_tables),
     }
 
 
@@ -177,6 +231,12 @@ def main() -> int:
         default=[],
         help="schema.table to recreate empty; repeat for each damaged table",
     )
+    parser.add_argument(
+        "--skip-table",
+        action="append",
+        default=[],
+        help="schema.table to omit entirely; repeat only for quarantined objects",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     empty_tables: set[tuple[str, str]] = set()
@@ -185,10 +245,17 @@ def main() -> int:
         if len(parts) != 2 or not all(parts):
             parser.error(f"--empty-table must be schema.table: {value!r}")
         empty_tables.add((parts[0], parts[1]))
+    skip_tables: set[tuple[str, str]] = set()
+    for value in args.skip_table:
+        parts = value.split(".", 1)
+        if len(parts) != 2 or not all(parts):
+            parser.error(f"--skip-table must be schema.table: {value!r}")
+        skip_tables.add((parts[0], parts[1]))
     result = rebuild_database(
         args.source,
         args.target,
         empty_tables=empty_tables,
+        skip_tables=skip_tables,
         overwrite=args.overwrite,
     )
     print(json.dumps(result, sort_keys=True))

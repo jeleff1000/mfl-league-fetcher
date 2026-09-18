@@ -64,6 +64,10 @@ jobs:
           test "$TARGET_VOLUME" = vol_rkg7mmd17llez224
       - name: Compile proven helper - no image build
         run: timeout --signal=KILL 5s c++ -shared -fPIC -O0 -Wall -Werror -DLH_REAL_FILE scripts/diagnostics/duckdb_drop_recovery_spike.cpp -ldl -o /tmp/lh_five_drop.so
+      - name: Install Fly client for lease-preserving SSH
+        run: |
+          curl --fail --max-time 15 -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
       - name: Exclusive production handoff and bounded repair
         env:
           WITNESS: ${{ inputs.witness_db_name }}

@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -67,6 +68,22 @@ def file_input(path, guest_path):
     if len(raw) > 1024 * 1024:
         raise ValueError('repair input exceeds 1MiB')
     return {'guest_path': guest_path, 'raw_value': base64.b64encode(raw).decode()}
+
+
+def saved_original(current):
+    if current['config'].get('init', {}).get('exec') != ['/bin/sleep', '600']:
+        return current
+    for item in current['config'].get('files', []):
+        if item.get('guest_path') == '/tmp/original-machine.json':
+            raw = base64.b64decode(item['raw_value'], validate=True)
+            if len(raw) > 65536:
+                raise ValueError('saved original config exceeds64KiB')
+            original = json.loads(raw)
+            maintenance_config(original, [])
+            if original['config'].get('init', {}).get('exec'):
+                raise ValueError('saved original is another maintenance config')
+            return original
+    raise ValueError('original production config missing from maintenance')
 
 
 def production_binding():
@@ -237,14 +254,25 @@ class Fly:
             time.sleep(1)
         raise TimeoutError('machine did not reach ' + str(state))
 
+    def execute(self, command, seconds):
+        # /exec rejects this machine's active lease even with its nonce.
+        # SSH retains the exclusive configuration lease during offline work.
+        result = subprocess.run(['flyctl', 'ssh', 'console', '--app', 'league-history-duckdb',
+            '--machine', MACHINE, '-C', shlex.join(command)], capture_output=True, text=True, timeout=seconds)
+        return {'exit_code': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr}
+
 
 def handoff(args):
     fly = Fly()
-    original = fly.call()
-    event('handoff_inventory', state=original['state'], instance_id=original['instance_id'],
-          init=original['config'].get('init'), cordoned=original.get('cordoned'))
-    if original['config'].get('init', {}).get('exec'):
-        raise ValueError('existing maintenance config must be reconciled, not saved as the original')
+    observed = fly.call()
+    original = saved_original(observed)
+    event('handoff_inventory', state=observed['state'], instance_id=observed['instance_id'],
+          init=observed['config'].get('init'), cordoned=observed.get('cordoned'))
+    if observed != original:
+        helper = next(f for f in observed['config']['files'] if f['guest_path'] == '/tmp/lh_five_drop.so')
+        helper_sha = hashlib.sha256(base64.b64decode(helper['raw_value'], validate=True)).hexdigest()
+        run_handoff(fly, original, observed['config'], args, helper_sha, observed=observed)
+        return
     root = Path(__file__).resolve().parents[2]
     files = [file_input(root / relative, '/tmp/' + Path(relative).name) for relative in
              ('scripts/diagnostics/duckdb_production_recovery.py', 'scripts/diagnostics/duckdb_recovery_adapter.py',
@@ -267,25 +295,29 @@ def handoff(args):
     run_handoff(fly, original, config, args, helper_sha)
 
 
-def run_handoff(fly, original, config, args, helper_sha):
+def run_handoff(fly, original, config, args, helper_sha, *, observed=None):
+    observed = original if observed is None else observed
     lease = fly.call('/lease', {'description': 'bounded storage repair ' + args.receipt_id, 'ttl': 600})
     fly.headers['fly-machine-lease-nonce'] = lease['data']['nonce']
     try:
         current = fly.call()
-        if current['instance_id'] != original['instance_id'] or current['config'] != original['config']:
+        if current['instance_id'] != observed['instance_id'] or current['config'] != observed['config']:
             raise ValueError('machine changed before handoff')
-        event('production_stop', machine=MACHINE)
-        fly.call('/cordon', {}, 'POST')
-        if current['state'] != 'stopped':
-            fly.call('/stop', {'signal': 'SIGKILL', 'timeout': '1s'}, 'POST')
-        stopped = fly.wait('stopped')
-        if stopped['config'] != original['config']:
-            raise ValueError('configuration changed during stop')
-        event('writer_stopped', instance_id=stopped['instance_id'])
-        fly.call('', {'config': config, 'current_version': stopped['instance_id'],
-                      'skip_launch': True, 'skip_service_registration': True}, 'POST')
-        fly.wait(('created', 'stopped'))
-        fly.call('/start', {}, 'POST')
+        if observed == original:
+            event('production_stop', machine=MACHINE)
+            fly.call('/cordon', {}, 'POST')
+            if current['state'] != 'stopped':
+                fly.call('/stop', {'signal': 'SIGKILL', 'timeout': '1s'}, 'POST')
+            stopped = fly.wait('stopped')
+            if stopped['config'] != original['config']:
+                raise ValueError('configuration changed during stop')
+            event('writer_stopped', instance_id=stopped['instance_id'])
+            fly.call('', {'config': config, 'current_version': stopped['instance_id'],
+                          'skip_launch': True, 'skip_service_registration': True}, 'POST')
+            fly.wait(('created', 'stopped'))
+            fly.call('/start', {}, 'POST')
+        elif current['state'] == 'stopped':
+            fly.call('/start', {}, 'POST')
         fly.wait('started')
         event('maintenance_started', repair_limit_s=150)
         deadline = time.time()+150
@@ -294,7 +326,7 @@ def run_handoff(fly, original, config, args, helper_sha):
                    '--helper-sha256', helper_sha, '--deadline', str(deadline)]
         # Flyexec response is buffered; remote supervisor writes progress every
         # 2seconds to the retained trace and enforces all process-group limits.
-        result = fly.call('/exec', {'command': command, 'timeout': 155}, 'POST', timeout=165)
+        result = fly.execute(command, 165)
         require_verified(result)
         current = fly.call()
         event('restore_original_service')
@@ -306,8 +338,8 @@ def run_handoff(fly, original, config, args, helper_sha):
                       'skip_service_registration': True}, 'POST')
         fly.wait('started')
         # Probe the server locally while still cordoned; only route after ready.
-        health = fly.call('/exec', {'command': ['/usr/local/bin/python', '-c',
-            'import json,time,urllib.request;\nfor i in range(30):\n try:\n  d=json.load(urllib.request.urlopen("http://127.0.0.1:8080/ready",timeout=2));\n  if d.get("accepting_queries"): print("READY"); break\n except Exception: pass\n time.sleep(1)\nelse: raise SystemExit(1)'], 'timeout': 40}, 'POST', timeout=45)
+        health = fly.execute(['/usr/local/bin/python', '-c',
+            'import json,time,urllib.request;\nfor i in range(30):\n try:\n  d=json.load(urllib.request.urlopen("http://127.0.0.1:8080/ready",timeout=2));\n  if d.get("accepting_queries"): print("READY"); break\n except Exception: pass\n time.sleep(1)\nelse: raise SystemExit(1)'], 45)
         if health.get('exit_code', 0) != 0 or health.get('exit_signal', 0) != 0 or 'READY' not in health.get('stdout', ''):
             raise ValueError('restored service is not ready; still cordoned')
         fly.call('/uncordon', {}, 'POST')

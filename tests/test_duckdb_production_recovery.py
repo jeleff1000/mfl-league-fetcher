@@ -83,6 +83,18 @@ def test_supervisor_emits_success_only_after_durable_stock_receipt(tmp_path, cap
         r.finish_remote({'exit_code': 124, 'outcome': 'UNKNOWN'}, tmp_path)
 
 
+def test_resume_maintenance_uses_embedded_original_not_sleep_config():
+    import base64, json
+    original = machine()
+    current = copy.deepcopy(original)
+    current['config'] = recovery().maintenance_config(original, [
+        {'guest_path': '/tmp/original-machine.json', 'raw_value': base64.b64encode(json.dumps(original).encode()).decode()}])
+    assert recovery().saved_original(current) == original
+    current['config']['files'] = []
+    with pytest.raises(ValueError):
+        recovery().saved_original(current)
+
+
 def test_wal_explicit_production_limit_preserves_bytes_and_default_stays_narrow(tmp_path):
     from duckdb_recovery_adapter import preserve_wal
     source = tmp_path / 'active.wal'
@@ -130,6 +142,9 @@ def test_handoff_restores_exact_config_only_after_proof_and_uncordons_after_heal
             if state == 'stopped':
                 self.current['instance_id'] = 'stopped-version'
             return copy.deepcopy(self.current)
+
+        def execute(self, command, seconds):
+            return self.call('/exec', {'command': command})
 
     api = API()
     args = SimpleNamespace(receipt_id='1_1', db_name='nyu_ffl')

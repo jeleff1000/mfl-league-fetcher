@@ -16,7 +16,7 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_logs]
+        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_logs, service_health]
       diagnostic_machine_id:
         description: Isolated pilot machine for read-only exit diagnostics
         required: false
@@ -104,7 +104,7 @@ jobs:
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
       - name: One-table pilot - 40 second hard ceiling including machine startup
-        if: inputs.action != 'engine_logs'
+        if: inputs.action != 'engine_logs' && inputs.action != 'service_health'
         env:
           RECOVERY_VOLUME_ID: ${{ inputs.recovery_volume_id }}
           PILOT_ACTION: ${{ inputs.action }}
@@ -179,8 +179,27 @@ jobs:
           test "$DIAGNOSTIC_MACHINE_ID" != 1781e011b69068
           timeout --signal=KILL 15s flyctl logs --app "$FLY_APP" --instance "$DIAGNOSTIC_MACHINE_ID" --no-tail 2>&1 | tee table-pilot.jsonl
 
+      - name: Read production health only - hard 15 seconds, no machine changes
+        if: inputs.action == 'service_health'
+        run: |
+          timeout --signal=KILL 15s bash <<'HEALTH'
+          set -u
+          curl --silent --show-error --connect-timeout 2 --max-time 5 https://league-history-duckdb.fly.dev/ready > service-ready.json 2>&1 &
+          ready_pid=$!
+          timeout --signal=KILL 5s flyctl checks list --app "$FLY_APP" > service-checks.txt 2>&1 &
+          checks_pid=$!
+          timeout --signal=KILL 5s flyctl machines list --app "$FLY_APP" --json | jq '[.[] | {id,name,state,checks}]' > service-machines.json &
+          machines_pid=$!
+          result=0
+          wait "$ready_pid" || result=1
+          wait "$checks_pid" || result=1
+          wait "$machines_pid" || result=1
+          cat service-ready.json service-checks.txt service-machines.json
+          exit "$result"
+          HEALTH
+
       - name: Remove only this disposable pilot machine (never its volume)
-        if: always() && inputs.action != 'engine_logs'
+        if: always() && inputs.action != 'engine_logs' && inputs.action != 'service_health'
         run: |
           timeout --signal=KILL 20s bash <<'CLEANUP'
           set -euo pipefail
@@ -203,4 +222,7 @@ jobs:
             pilot-machine.json
             attached-volume.json
             table-pilot.jsonl
+            service-ready.json
+            service-checks.txt
+            service-machines.json
           if-no-files-found: warn

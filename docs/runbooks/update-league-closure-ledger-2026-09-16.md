@@ -4,6 +4,16 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- On02f3c5063, synthetic35386383813 passed all6cases (62adapter tests6.22s).
+  Real trial35386448920 successfully placed shared4/3072MiB machine
+  48ee5d1cee7e48. It stopped BEFORE engine open: startup consumed8.4s and
+  the internal38s deadline left just under the required30s. No database
+  mutation or changed baseline; machine destroyed19:32:17Z. Capacity is
+  therefore no longer the observed blocker for this profile.
+  Remove the duplicate2s reservation: use the whole40s deadline already
+  enforced by the unchanged outer timeout. No stage limit or safety gate
+  changes. This is not permission to lengthen the pilot or touch production.
+
 - Fresh publication failures: Yahoo full import35382170308 (`stk`), Sleeper
   quick import35379651781 (`ifl_dynasty`) and refresh35383306930 all report
   the same checkpoint checksum failure at90714112. The first two live bundle

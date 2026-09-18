@@ -124,7 +124,9 @@ jobs:
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
         run: |
           set -euo pipefail
-          export PILOT_DEADLINE="$(( $(date +%s) + 38 ))"
+          # The outer timeout remains the hard40s wall-clock ceiling. Flooring
+          # this deadline to seconds already reserves up to1s for termination.
+          export PILOT_DEADLINE="$(( $(date +%s) + 40 ))"
           timeout --signal=KILL 40s bash <<'PILOT' 2>&1 | tee table-pilot.jsonl
           set -euo pipefail
           echo "stage=pilot_start utc=$(date -u +%FT%TZ) hard_deadline=$PILOT_DEADLINE"

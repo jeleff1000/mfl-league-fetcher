@@ -4,6 +4,21 @@ State: isolated real-file removal COMMIT returned for all five objects; retained
 
 ## Current bounded-recovery receipts - 2026-09-18
 
+- Diagnostic35381870547 on619009c6c: even the previously working
+  shared4/3584 placement was refused by the volume host at18:43:58Z, before
+  engine open. No third unchanged launch is authorized by this evidence.
+  Its3321-byte artifact was inspected: only production1781e011b69068 exists
+  (started,shared8/16384,volumevol_rkg7mmd17llez224); no stranded pilot is
+  consuming capacity. Recovery volumevol_4919j2m0wzg0xw5r is unattached,
+  created,in iad/zone529a. No stale pilot can be removed to clear the blocker.
+  All three placement refusals leave the exact35378960124 baseline unchanged.
+- Current blocker: no suitable VM can be placed on the existing recovery
+  volume's host. New table-progress observation is verified and ready, but
+  no real checkpoint trace from it exists yet. Do not claim the suspected
+  compaction work is the real-file bottleneck. Resume the one bounded probe
+  only after capacity changes; no copying/moving volume or larger time caps.
+  Production /ready still serves/accepts with zero active queries/writes.
+
 - 38ca16ee9 Linux proof35381566119: all6cases passed,62adapter tests6.18s,
   real_scope8.673s. Native WriteTable observer saw103stock callbacks. Its
   negative mutant was correctly rejected; helper-free write/reopen, individual

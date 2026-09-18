@@ -120,6 +120,28 @@ def quarantine_or_resume_corrupt_targets(conn) -> dict[str, str]:
     return quarantine_corrupt_targets(conn)
 
 
+def drop_complete_quarantine(conn) -> list[str]:
+    """Drop only the complete, allowlisted quarantine after clean shells exist."""
+    expected = [f"__corrupt_recovery_{table}" for table in TARGET_TABLES]
+    present = set(expected) & _public_table_names(conn)
+    if not present:
+        return []
+    if present != set(expected):
+        raise RuntimeError(
+            "partial corrupt-table quarantine is unsafe to drop: "
+            f"found={sorted(present)}, expected={sorted(expected)}"
+        )
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        for table in expected:
+            conn.execute(f"DROP TABLE public.{_quote_identifier(table)}")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return expected
+
+
 def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 

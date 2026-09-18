@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import duckdb
 import pandas as pd
+import pytest
 
 from scripts import fly_reaggregate_derived as repair
 
@@ -340,8 +341,32 @@ def test_quarantine_targets_swaps_only_the_five_corrupt_objects():
         )
 
 
-def test_recovery_has_no_way_to_drop_quarantined_corrupt_objects():
-    assert not hasattr(repair, "drop_quarantined_targets")
+def test_drop_complete_quarantine_drops_only_the_five_allowlisted_objects(monkeypatch):
+    conn = _Connection()
+    expected = [
+        f"__corrupt_recovery_{table}" for table in repair.TARGET_TABLES
+    ]
+    monkeypatch.setattr(repair, "_public_table_names", lambda actual_conn: set(expected))
+
+    assert repair.drop_complete_quarantine(conn) == expected
+    assert conn.sql[0] == "BEGIN TRANSACTION"
+    assert conn.sql[-1] == "COMMIT"
+    assert [sql for sql in conn.sql if sql.startswith("DROP TABLE")] == [
+        f'DROP TABLE public."{table}"' for table in expected
+    ]
+
+
+def test_drop_complete_quarantine_rejects_partial_set(monkeypatch):
+    conn = _Connection()
+    monkeypatch.setattr(
+        repair,
+        "_public_table_names",
+        lambda actual_conn: {"__corrupt_recovery_homepage_manager_rankings"},
+    )
+
+    with pytest.raises(RuntimeError, match="partial corrupt-table quarantine"):
+        repair.drop_complete_quarantine(conn)
+    assert not any(sql.startswith("DROP TABLE") for sql in conn.sql)
 
 
 def test_quarantine_or_resume_reuses_complete_existing_quarantine(monkeypatch):

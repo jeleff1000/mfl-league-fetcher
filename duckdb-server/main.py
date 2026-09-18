@@ -2262,6 +2262,7 @@ def _reaggregate_damaged_derived_from_sources(
         _attach_if_present,
         clear_recovery_targets,
         discover_leagues,
+        drop_complete_quarantine,
         quarantine_corrupt_targets,
         reaggregate_parallel,
         validate_targets,
@@ -2283,6 +2284,9 @@ def _reaggregate_damaged_derived_from_sources(
             quarantined = quarantine_corrupt_targets(conn)
         elif mode != "resume_rebuild":
             raise ValueError("mode must be quarantine_and_rebuild or resume_rebuild")
+        dropped_quarantine = (
+            drop_complete_quarantine(conn) if mode == "resume_rebuild" else []
+        )
         clear_recovery_targets(conn)
         leagues = discover_leagues(conn)
     finally:
@@ -2317,6 +2321,7 @@ def _reaggregate_damaged_derived_from_sources(
             "status": "COMMITTED",
             "mode": mode,
             "quarantined": quarantined,
+            "dropped_quarantine": dropped_quarantine,
             "targets": list(_DAMAGED_DERIVED_TARGETS),
             "target_receipts": targets,
         }

@@ -740,6 +740,7 @@ def apply_fleet_merge(
                 aggregate_career_rollups,
                 aggregate_complete_chain_season_rollups,
                 assert_retained_season_rollup_coverage,
+                find_missing_retained_season_rollup_years,
                 HomepageValidationError,
             )
 
@@ -755,15 +756,20 @@ def apply_fleet_merge(
                     # and homepage outputs still read the complete live chain.
                     changed_years = set(manifest.get("quick_years") or [manifest["active_year"]])
                     try:
-                        season_rollups[db_name] = aggregate_complete_chain_season_rollups(
+                        missing_by_table = find_missing_retained_season_rollup_years(
                             aggregation_conn, db_name, season_years=changed_years
+                        )
+                        repair_years = set().union(*missing_by_table.values()) if missing_by_table else set()
+                        rollup_years = changed_years | repair_years
+                        season_rollups[db_name] = aggregate_complete_chain_season_rollups(
+                            aggregation_conn, db_name, season_years=rollup_years
                         )
                         assert_retained_season_rollup_coverage(
                             aggregation_conn, db_name, season_years=changed_years
                         )
                     except HomepageValidationError as exc:
                         raise FleetValidationError(str(exc)) from exc
-                    season_rollup_years[db_name] = sorted(changed_years)
+                    season_rollup_years[db_name] = sorted(rollup_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
                 career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)

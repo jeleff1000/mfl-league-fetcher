@@ -808,6 +808,46 @@ def test_retained_season_coverage_rejects_missing_keys_not_just_empty_tables(hom
     assert conn.execute(f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year").fetchall() == before
 
 
+@pytest.mark.parametrize('table', aggregation_utils.COMPLETE_CHAIN_SEASON_ROLLUP_TABLES)
+def test_missing_retained_aggregate_years_are_discovered_and_rebuilt_narrowly(homepage_chain, table):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.draft (db_name,year,manager,franchise_id,player,manager_lamar)
+        VALUES ('test_league',2025,'Shared Alias','f1','Player',5),
+               ('test_league',2026,'Shared Alias','f1','Player',8)
+    """)
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name,year,week,transaction_id,transaction_type,manager,franchise_id,player)
+        VALUES ('test_league',2025,1,'old','add','Shared Alias','f1','Player'),
+               ('test_league',2026,1,'new','add','Shared Alias','f1','Player')
+    """)
+    aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
+    source_before = conn.execute(
+        "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025"
+    ).fetchall()
+    conn.execute(f"DELETE FROM public.{table} WHERE db_name='test_league' AND year=2025")
+
+    missing = aggregation_utils.find_missing_retained_season_rollup_years(
+        conn, 'test_league', season_years={2026},
+    )
+    assert missing[table] == {2025}
+    repair_years = set().union(*missing.values())
+    aggregation_utils.aggregate_complete_chain_season_rollups(
+        conn, 'test_league', season_years={2026} | repair_years,
+    )
+    aggregation_utils.assert_retained_season_rollup_coverage(
+        conn, 'test_league', season_years={2026},
+    )
+
+    assert conn.execute(
+        f"SELECT COUNT(*) FROM public.{table} WHERE db_name='test_league' AND year=2025"
+    ).fetchone()[0] > 0
+    assert conn.execute(
+        "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025"
+    ).fetchall() == source_before
+
+
 def test_retained_coverage_supports_draft_without_category(homepage_chain):
     conn = homepage_chain
     conn.execute('ALTER TABLE public.draft DROP COLUMN draft_category')

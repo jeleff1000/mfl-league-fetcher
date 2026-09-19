@@ -386,14 +386,17 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
 
 
 @pytest.mark.parametrize('data_dir', ['missing_historical_franchise'], indirect=True)
-def test_http_missing_historical_franchise_rejects_publication_without_advancing_generation(client, tmp_path):  # noqa: F811
-    before = _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year")
+def test_http_missing_historical_aggregate_is_repaired_inside_scoped_publication(client, tmp_path):  # noqa: F811
+    source_before = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025")
     response = _publish(client, _bundle(tmp_path, homepage=True, generation=7))
-    assert response.status_code == 422, response.text
-    assert 'matchup_season' in response.text and '2025' in response.text
-    assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' ORDER BY year") == before
-    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 7}]
-    assert _query(client, "SELECT COUNT(*) n FROM public.matchup_career WHERE db_name='test_league'") == [{'n': 0}]
+    assert response.status_code == 200, response.text
+    assert response.json()['season_rollup_years']['test_league'] == [2025, 2026]
+    assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025") == source_before
+    assert _query(client, "SELECT franchise_id,games,wins,losses FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == [
+        {'franchise_id': 'f1', 'games': 1, 'wins': 1, 'losses': 0}]
+    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 8}]
+    assert _query(client, "SELECT games,seasons FROM public.matchup_career WHERE db_name='test_league'") == [
+        {'games': 2, 'seasons': 2}]
 
 
 def test_error_after_fleet_commit_preserves_receipt_and_does_not_republish(client, tmp_path, monkeypatch):  # noqa: F811

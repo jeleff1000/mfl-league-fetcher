@@ -236,11 +236,14 @@ def aggregate_complete_chain_season_rollups(
     return result
 
 
-def assert_retained_season_rollup_coverage(conn, db_name: str, *, season_years: set[int]) -> None:
-    """Reject missing historical keys without recomputing historical values.
+def find_missing_retained_season_rollup_years(
+    conn, db_name: str, *, season_years: set[int],
+) -> dict[str, set[int]]:
+    """Return historical aggregate years that are missing source-backed keys.
 
-    This is a narrow coverage check, not proof of historical value correctness.
-    Known stale values require an explicitly scoped correction/recovery run.
+    The check reads only one league and returns years, not rows.  Callers can
+    fold those years into the normal scoped season aggregation before commit,
+    avoiding a separate recovery run or any whole-database work.
     """
     from multi_league.transformations.aggregation.aggregate_draft_context import _build_keeper_expr
     from multi_league.transformations.aggregation.aggregate_transaction_context import _ADD_DROP_TRANSACTION_TYPES_SQL
@@ -281,19 +284,36 @@ def assert_retained_season_rollup_coverage(conn, db_name: str, *, season_years: 
         ('transaction_report_card', 'transaction_manager_season', 'year, franchise_id', 'd.year, d.franchise_id',
          "d.franchise_id IS NOT NULL AND TRIM(d.franchise_id)<>''"),
     )
+    missing_years: dict[str, set[int]] = {}
     for target, source, target_keys, source_keys, predicate in checks:
         missing = conn.execute(f"""
-            SELECT {source_keys} FROM {central_table(source)} d
-            WHERE {source_scope} AND {predicate}
-            EXCEPT
-            SELECT {target_keys} FROM {central_table(target)} WHERE {league_db_filter(db_name)}
-            LIMIT 5
+            SELECT DISTINCT CAST(missing.year AS INTEGER)
+            FROM (
+                SELECT {source_keys} FROM {central_table(source)} d
+                WHERE {source_scope} AND {predicate}
+                EXCEPT
+                SELECT {target_keys} FROM {central_table(target)} WHERE {league_db_filter(db_name)}
+            ) missing
+            WHERE missing.year IS NOT NULL
+            ORDER BY 1
         """).fetchall()
         if missing:
-            raise HomepageValidationError(
-                f"Incomplete retained {target} for {db_name}: missing historical keys {missing}. "
-                "Recover the identified seasons before publishing this refresh."
-            )
+            missing_years[target] = {int(row[0]) for row in missing}
+    return missing_years
+
+
+def assert_retained_season_rollup_coverage(conn, db_name: str, *, season_years: set[int]) -> None:
+    """Reject retained historical aggregate gaps after scoped repair."""
+    missing_by_table = find_missing_retained_season_rollup_years(
+        conn, db_name, season_years=season_years,
+    )
+    if missing_by_table:
+        target = next(iter(missing_by_table))
+        years = sorted(missing_by_table[target])[:5]
+        raise HomepageValidationError(
+            f"Incomplete retained {target} for {db_name}: missing historical years {years}. "
+            "Scoped aggregate repair did not restore source-backed coverage."
+        )
 
 
 def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:

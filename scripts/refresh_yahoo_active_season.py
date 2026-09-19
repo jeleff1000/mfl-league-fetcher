@@ -2039,6 +2039,7 @@ def main(argv: list[str] | None = None) -> int:
                 transform_source_frames,
                 active_year=active_year,
             )
+            timer.mark("restore_active_derived_values")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="yahoo_player_id",
@@ -2048,6 +2049,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
+            timer.mark("transformed_scope_validation")
             # A retained active key is deliberately only a one-year fast path.
             # Persist context only after a real full chain discovery, never as
             # a side effect of a weekly update.

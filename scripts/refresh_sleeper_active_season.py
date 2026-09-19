@@ -777,6 +777,7 @@ def main(argv: list[str] | None = None) -> int:
                 transform_source_frames,
                 active_year=active_year,
             )
+            timer.mark("restore_active_derived_values")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="sleeper_player_id",
@@ -786,6 +787,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
+            timer.mark("transformed_scope_validation")
             local_db.connect()
             stage_timer = PhaseTimer()
             from multi_league.core.league_update_ownership import (

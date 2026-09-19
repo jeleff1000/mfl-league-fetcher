@@ -374,6 +374,7 @@ def test_active_refresh_restores_a_valid_derived_player_value_only_when_rebuild_
                 "player_week": "00-0038977_2026_1",
                 "NFL_player_id": "00-0038977",
                 "position_alltime_rank": 129,
+                "position_week_rank": 7,
             }
         ]
     )
@@ -382,7 +383,8 @@ def test_active_refresh_restores_a_valid_derived_player_value_only_when_rebuild_
         local.ensure_table("player_fantasy")
         local._insert_into_table("player_fantasy", source)
         local.connect().execute(
-            "UPDATE public.player_fantasy SET position_alltime_rank = NULL "
+            "UPDATE public.player_fantasy "
+            "SET position_alltime_rank = NULL, position_week_rank = 2 "
             "WHERE player_week = '00-0038977_2026_1'"
         )
 
@@ -394,9 +396,9 @@ def test_active_refresh_restores_a_valid_derived_player_value_only_when_rebuild_
 
         assert restored["player_fantasy"]["position_alltime_rank"] == 1
         assert local.connect().execute(
-            "SELECT position_alltime_rank FROM public.player_fantasy "
+            "SELECT position_alltime_rank, position_week_rank FROM public.player_fantasy "
             "WHERE player_week = '00-0038977_2026_1'"
-        ).fetchone()[0] == 129
+        ).fetchone() == (129, 2)
     finally:
         local.close()
 

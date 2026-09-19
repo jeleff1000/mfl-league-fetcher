@@ -365,33 +365,42 @@ def restore_active_derived_source_values(
                 f'target."{column}" = source."{column}"'
                 for column in keys
             )
-            restored_columns: dict[str, int] = {}
-            for column in derived:
-                count = int(
-                    conn.execute(
-                        f'''SELECT COUNT(*)
-                            FROM public."{table_name}" AS target
-                            JOIN {source_relation} AS source ON {join}
-                            WHERE target.year = ?
-                              AND target."{column}" IS NULL
-                              AND source."{column}" IS NOT NULL''',
-                        [int(active_year)],
-                    ).fetchone()[0]
-                    or 0
+            count_expressions = ", ".join(
+                f'''COALESCE(SUM(CASE
+                        WHEN target."{column}" IS NULL AND source."{column}" IS NOT NULL
+                        THEN 1 ELSE 0 END), 0)::BIGINT AS "restore_{index}"'''
+                for index, column in enumerate(derived)
+            )
+            counts = conn.execute(
+                f'''SELECT {count_expressions}
+                    FROM public."{table_name}" AS target
+                    JOIN {source_relation} AS source ON {join}
+                    WHERE target.year = ?''',
+                [int(active_year)],
+            ).fetchone()
+            restored_columns = {
+                column: int(count or 0)
+                for column, count in zip(derived, counts, strict=True)
+                if int(count or 0) > 0
+            }
+            if restored_columns:
+                assignments = ", ".join(
+                    f'"{column}" = COALESCE(target."{column}", source."{column}")'
+                    for column in restored_columns
                 )
-                if not count:
-                    continue
+                missing = " OR ".join(
+                    f'(target."{column}" IS NULL AND source."{column}" IS NOT NULL)'
+                    for column in restored_columns
+                )
                 conn.execute(
                     f'''UPDATE public."{table_name}" AS target
-                        SET "{column}" = source."{column}"
+                        SET {assignments}
                         FROM {source_relation} AS source
                         WHERE {join}
                           AND target.year = ?
-                          AND target."{column}" IS NULL
-                          AND source."{column}" IS NOT NULL''',
+                          AND ({missing})''',
                     [int(active_year)],
                 )
-                restored_columns[column] = count
             if restored_columns:
                 restored[table_name] = restored_columns
         finally:

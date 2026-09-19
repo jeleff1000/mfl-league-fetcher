@@ -54,6 +54,35 @@ class PersistedManifestError(RuntimeError):
     """Persisted source manifests cannot prove the dispatched snapshot."""
 
 
+def active_provider_league_id(
+    value: SourceManifest | PersistedRefreshPlan | None,
+    *,
+    provider: str,
+) -> str | None:
+    """Return the active ID only when the captured provider chain proves it."""
+    if value is None:
+        return None
+    manifest = value.observed_manifest if isinstance(value, PersistedRefreshPlan) else value
+    expected = str(provider).strip().lower()
+    segments = [segment for segment in manifest.segments if segment.provider.strip().lower() == expected]
+    if len(segments) != 1:
+        raise PersistedManifestError(
+            f"captured manifest must contain exactly one {expected} active segment"
+        )
+    segment = segments[0]
+    active_year = int(manifest.active_season)
+    if active_year not in {int(year) for year in segment.seasons}:
+        raise PersistedManifestError("captured provider chain omitted the active season")
+    active_ids = {
+        str(league_id)
+        for year, league_id in segment.renewal_chain
+        if int(year) == active_year and str(league_id).strip()
+    }
+    if active_ids != {str(segment.active_league_id)}:
+        raise PersistedManifestError("captured provider chain has an inconsistent active identity")
+    return str(segment.active_league_id)
+
+
 def active_publication_covers_plan(
     plan: RefreshPlan | PersistedRefreshPlan | None,
     *,

@@ -79,6 +79,7 @@ def _build_context(
     db_name: str,
     active_year: int,
     work_dir: Path,
+    active_league_id: str | None = None,
     frontend_settings: dict[str, Any] | None = None,
 ) -> tuple[Any, Path, Any, Any]:
     """Load stored ESPN cookies and construct only the active-season context."""
@@ -99,8 +100,9 @@ def _build_context(
     if not league_name:
         raise RuntimeError(f"Fly has no league name for ESPN league {db_name}")
 
+    league_id = int(active_league_id or credentials["league_id"])
     ctx = ESPNContext(
-        league_id=int(credentials["league_id"]),
+        league_id=league_id,
         league_name=league_name,
         espn_s2=credentials["espn_s2"],
         swid=credentials["swid"],
@@ -115,6 +117,7 @@ def _build_context(
         standings_weights=frontend.get("standings_weights"),
         is_private=frontend.get("is_private") is True,
         import_mode="quick",
+        league_ids={str(active_year): league_id},
     )
     client = ESPNAPIClient(ctx.league_id, ctx.espn_s2, ctx.swid)
     league = client.get_league(active_year)
@@ -376,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         sync_player_bio_cache_from_fly,
     )
     from multi_league.core.local_db import LocalLeagueDB
-    from multi_league.core.league_update_plan import load_persisted_refresh_plan
+    from multi_league.core.league_update_plan import active_provider_league_id, load_persisted_refresh_plan
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
@@ -428,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
+    captured_league_id = active_provider_league_id(persisted_plan, provider="espn")
     refresh_weeks = (
         list(persisted_plan.weeks)
         if persisted_plan is not None
@@ -489,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             reader=reader,
             db_name=args.db,
             active_year=active_year,
+            active_league_id=captured_league_id or active_segment.current_league_id,
             work_dir=work_dir,
             frontend_settings=_frontend_settings_from_source_context(
                 source_frames["league_context"],

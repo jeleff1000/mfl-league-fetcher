@@ -125,35 +125,10 @@ def _resolve_active_renewal(
     active_year: int,
     known_league_ids: dict[str, str],
 ) -> dict[str, Any] | None:
-    """Prove a persisted ID, or discover one through saved league members.
-
-    The member list only supplies candidate IDs. A successor is accepted
-    solely when its provider predecessor chain reaches the stored seed.
-    """
+    """Validate the persisted active ID against Sleeper's native predecessor chain."""
     active_id = str(known_league_ids.get(str(active_year)) or "")
     if not active_id:
-        if not seed_league_id:
-            return None
-        candidates: set[str] = set()
-        members = client.get_league_users(seed_league_id)
-        for member in members:
-            user_id = str(member.get("user_id") or "").strip()
-            if not user_id:
-                continue
-            for league in client.get_user_leagues(user_id, "nfl", active_year):
-                candidate_id = str(league.get("league_id") or "").strip()
-                if candidate_id:
-                    candidates.add(candidate_id)
-        verified = [
-            candidate_id for candidate_id in sorted(candidates)
-            if str((client.get_league(candidate_id) or {}).get("season") or "") == str(active_year)
-            and _renewal_chain_reaches_seed(
-                candidate_id, seed_league_id=seed_league_id, get_league=client.get_league
-            )
-        ]
-        if len(verified) != 1:
-            return None
-        active_id = verified[0]
+        return None
     candidate = client.get_league(active_id) or {}
     if str(candidate.get("league_id") or "") != active_id:
         return None
@@ -570,7 +545,7 @@ def main(argv: list[str] | None = None) -> int:
         sync_sleeper_scored_bio_crosswalk,
     )
     from multi_league.core.local_db import LocalLeagueDB
-    from multi_league.core.league_update_plan import load_persisted_refresh_plan
+    from multi_league.core.league_update_plan import active_provider_league_id, load_persisted_refresh_plan
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
@@ -621,6 +596,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
+    captured_league_id = active_provider_league_id(persisted_plan, provider="sleeper")
+    if args.league_id and captured_league_id and str(args.league_id) != captured_league_id:
+        raise RuntimeError("caller and captured manifest have conflicting active Sleeper league IDs")
     refresh_weeks = (
         list(persisted_plan.weeks)
         if persisted_plan is not None
@@ -656,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
             db_name=args.db,
             active_year=active_year,
             work_dir=work_dir,
-            active_league_id=args.league_id,
+            active_league_id=captured_league_id or args.league_id,
         )
         if ctx is None:
             receipt["status"] = "NO_ACTIVE_RENEWAL"

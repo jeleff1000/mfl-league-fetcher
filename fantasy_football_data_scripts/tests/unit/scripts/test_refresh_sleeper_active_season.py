@@ -234,6 +234,25 @@ def test_sleeper_worker_rejects_wrong_intermediate_renewal_identity():
     )
 
 
+def test_missing_active_identity_never_scans_member_leagues():
+    """A refresh may validate a saved chain, but must never discover via members."""
+    from refresh_sleeper_active_season import _resolve_active_renewal
+
+    class Provider:
+        def get_league_users(self, _league_id):
+            raise AssertionError("refresh must not enumerate league members")
+
+        def get_user_leagues(self, *_args):
+            raise AssertionError("refresh must not enumerate a member's leagues")
+
+    assert _resolve_active_renewal(
+        Provider(),
+        seed_league_id="saved-2025",
+        active_year=2026,
+        known_league_ids={"2025": "saved-2025"},
+    ) is None
+
+
 def test_active_sleeper_roster_scope_exposes_points_before_finalized_game_gate():
     """The weekly gate consumes canonical scoring, while the fetcher emits points."""
     import pandas as pd

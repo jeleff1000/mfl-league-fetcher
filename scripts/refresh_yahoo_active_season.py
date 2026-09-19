@@ -1792,7 +1792,7 @@ def main(argv: list[str] | None = None) -> int:
         stage_refresh_partitions,
     )
     from multi_league.core.local_db import LocalLeagueDB
-    from multi_league.core.league_update_plan import load_persisted_refresh_plan
+    from multi_league.core.league_update_plan import active_provider_league_id, load_persisted_refresh_plan
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
@@ -1834,6 +1834,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
+    captured_league_id = active_provider_league_id(persisted_plan, provider="yahoo")
     refresh_weeks = (
         list(persisted_plan.weeks)
         if persisted_plan is not None
@@ -1893,10 +1894,13 @@ def main(argv: list[str] | None = None) -> int:
         transform_source_frames, historical_source_rows = _split_active_transform_source_frames(
             source_frames, active_year=active_year,
         )
-        source_active_key = active_segment.current_league_id or _active_yahoo_key_from_source_frames(
+        retained_active_key = active_segment.current_league_id or _active_yahoo_key_from_source_frames(
             source_frames,
             active_year=active_year,
         )
+        if captured_league_id and retained_active_key and captured_league_id != retained_active_key:
+            raise RuntimeError("captured manifest and Fly have conflicting active Yahoo league keys")
+        source_active_key = captured_league_id or retained_active_key
         frontend_settings = _frontend_settings_from_source_context(
             source_frames["league_context"],
             db_name=args.db,

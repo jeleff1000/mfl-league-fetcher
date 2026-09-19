@@ -12,6 +12,7 @@ from multi_league.core.league_update_manifest import (
 from multi_league.core.league_update_manifest import canonical_manifest_json, manifest_digest
 from multi_league.core.league_update_plan import (
     PersistedManifestError,
+    active_provider_league_id,
     build_refresh_plan,
     load_persisted_refresh_plan,
 )
@@ -262,6 +263,7 @@ def test_persisted_plan_replays_active_week_when_only_player_rows_exist():
     current = manifest(
         nfl=(resource("nfl", "game", "2026:1:A@B", "one"),),
     )
+
     row = {
         "observed_manifest_json": canonical_manifest_json(current),
         "observed_manifest_digest": manifest_digest(current),
@@ -293,6 +295,23 @@ def test_persisted_plan_replays_active_week_when_only_player_rows_exist():
 
     assert plan.weeks == (1,)
     assert plan.reasons == ("missing_materialized_week",)
+
+
+def test_active_provider_identity_comes_from_the_verified_native_chain():
+    current = manifest()
+    assert active_provider_league_id(current, provider="sleeper") == "s26"
+
+
+@pytest.mark.parametrize(
+    "segment",
+    [
+        LeagueSegment("sleeper", "wrong", (2025, 2026), ((2025, "s25"), (2026, "s26"))),
+        LeagueSegment("sleeper", "s26", (2025,), ((2025, "s25"),)),
+    ],
+)
+def test_active_provider_identity_rejects_an_inconsistent_chain(segment):
+    with pytest.raises(PersistedManifestError, match="active.*identity|active season"):
+        active_provider_league_id(manifest(segments=(segment,)), provider="sleeper")
 
 
 def test_persisted_plan_replays_active_week_when_nonzero_offense_is_missing_ppg():

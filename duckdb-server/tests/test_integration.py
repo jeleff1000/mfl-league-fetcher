@@ -2097,6 +2097,102 @@ def test_reaggregate_damaged_derived_rejects_broader_target_set(client):
     assert resp.status_code == 400
 
 
+def test_repair_matchup_season_swaps_only_that_table_and_preserves_homepage(data_dir, client):
+    import db as db_mod
+    import main as main_mod
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+
+    db_mod.close_all()
+    conn = duckdb.connect(str(data_dir / "___leagues.duckdb"))
+    conn.execute("DROP TABLE public.matchup")
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR, manager VARCHAR, franchise_id VARCHAR,
+            year INTEGER, week INTEGER, opponent VARCHAR,
+            team_points DOUBLE, opponent_points DOUBLE,
+            win INTEGER, loss INTEGER, tie INTEGER,
+            is_playoffs INTEGER, is_consolation INTEGER,
+            is_bye_week INTEGER, is_placeholder INTEGER,
+            margin DOUBLE, close_margin INTEGER,
+            above_league_median INTEGER, below_league_median INTEGER,
+            champion INTEGER, sacko INTEGER,
+            playoff_round VARCHAR, consolation_round VARCHAR,
+            power_rating DOUBLE
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (" + ",".join(["?"] * 24) + ")",
+        [
+            ("alpha", "Alice", "a", 2026, 1, "Bob", 100.0, 90.0, 1, 0, 0, 0, 0, 0, 0, 10.0, 0, 1, 0, 0, 0, None, None, 101.0),
+            ("alpha", "Bob", "b", 2026, 1, "Alice", 90.0, 100.0, 0, 1, 0, 0, 0, 0, 0, -10.0, 0, 0, 1, 0, 0, None, None, 99.0),
+        ],
+    )
+    conn.execute(
+        "CREATE TABLE public.league_settings "
+        "(db_name VARCHAR, year INTEGER, playoff_start_week INTEGER, uses_median BOOLEAN)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('alpha', 2026, 15, FALSE)")
+    conn.execute(create_aggregate_table_sql("___leagues", "matchup_season"))
+    conn.execute(
+        "INSERT INTO public.matchup_season (db_name, manager, year, franchise_id, games) "
+        "VALUES ('stale', 'Stale', 2020, 'stale-fid', 99)"
+    )
+    conn.execute("CREATE TABLE public.homepage_manager_rankings (db_name VARCHAR, payload VARCHAR)")
+    conn.execute("INSERT INTO public.homepage_manager_rankings VALUES ('alpha', 'ranking-canary')")
+    conn.execute("CREATE TABLE public.homepage_league_summary (db_name VARCHAR, payload VARCHAR)")
+    conn.execute("INSERT INTO public.homepage_league_summary VALUES ('alpha', 'summary-canary')")
+    homepage_before = {
+        "rankings": conn.execute("SELECT * FROM public.homepage_manager_rankings").fetchall(),
+        "summary": conn.execute("SELECT * FROM public.homepage_league_summary").fetchall(),
+    }
+    conn.close()
+    db_mod.init_pool()
+
+    response = client.post(
+        "/repair-matchup-season",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"confirm": main_mod._MATCHUP_SEASON_REPAIR_CONFIRMATION},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMMITTED"
+    assert response.json()["rows"] == 2
+    assert response.json()["homepage_tables_verified"] == 2
+    matchup_rows = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT db_name, manager, franchise_id, year, games, wins, losses, power_rating FROM public.matchup_season ORDER BY franchise_id"},
+    )
+    assert matchup_rows.status_code == 200, matchup_rows.text
+    assert matchup_rows.json() == [
+        {"db_name": "alpha", "manager": "Alice", "franchise_id": "a", "year": 2026, "games": 1, "wins": 1, "losses": 0, "power_rating": 101.0},
+        {"db_name": "alpha", "manager": "Bob", "franchise_id": "b", "year": 2026, "games": 1, "wins": 0, "losses": 1, "power_rating": 99.0},
+    ]
+    rankings = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT db_name, payload FROM public.homepage_manager_rankings"},
+    )
+    summary = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT db_name, payload FROM public.homepage_league_summary"},
+    )
+    assert rankings.json() == [{"db_name": row[0], "payload": row[1]} for row in homepage_before["rankings"]]
+    assert summary.json() == [{"db_name": row[0], "payload": row[1]} for row in homepage_before["summary"]]
+
+
+def test_repair_matchup_season_requires_exact_confirmation(client):
+    response = client.post(
+        "/repair-matchup-season",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"confirm": "wrong"},
+    )
+    assert response.status_code == 400
+
+
 def test_replace_canonical_table_swaps_only_allowlisted_table(data_dir, client):
     _install_target_league_settings(data_dir)
     bundle = data_dir / "settings_bundle.duckdb"

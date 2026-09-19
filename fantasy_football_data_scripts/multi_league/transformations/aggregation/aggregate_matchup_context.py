@@ -36,7 +36,11 @@ except ImportError:
 setup_module_path()
 
 from multi_league.core.db_utils import get_pipeline_connection
-from multi_league.core.aggregate_ddl import aggregate_insert_columns, ensure_aggregate_table
+from multi_league.core.aggregate_ddl import (
+    MATCHUP_SEASON_COLUMN_TYPES,
+    aggregate_insert_columns,
+    ensure_aggregate_table,
+)
 from multi_league.core.canonical_matchup import (
     SCHEDULE_LUCK_SIM_COLUMNS,
     SOS_LUCK_SIM_COLUMNS,
@@ -697,6 +701,299 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False, *, year:
 
     log(f"  matchup_season: {total_rows} total rows")
     return total_rows
+
+
+def rebuild_matchup_season_fleet(conn, *, target_table: str) -> dict[str, int]:
+    """Rebuild the fleet-wide matchup-season rollup in one set-based pass.
+
+    This is a storage-recovery helper for a replaceable derived table.  It
+    reads only canonical ``matchup`` and ``league_settings`` facts and writes
+    only the caller-provided empty staging table.  The caller owns the atomic
+    canonical-table swap after these receipts pass.
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", target_table):
+        raise ValueError("invalid matchup_season staging table name")
+    configure_table_catalog(conn)
+    existing_cols = get_available_columns(conn, "", "matchup")
+    required = {
+        "db_name", "manager", "franchise_id", "year", "week", "opponent",
+        "team_points", "opponent_points", "win", "loss", "is_playoffs",
+        "is_consolation",
+    }
+    missing = sorted(required - existing_cols)
+    if missing:
+        raise ValueError(f"matchup source is missing required columns: {missing}")
+
+    target_ref = f'public."{target_table}"'
+    target_cols = {
+        row[0] for row in conn.execute(f"DESCRIBE {target_ref}").fetchall()
+    }
+    expected_cols = set(MATCHUP_SEASON_COLUMN_TYPES)
+    if target_cols != expected_cols:
+        raise ValueError(
+            "matchup_season staging schema mismatch: "
+            f"missing={sorted(expected_cols - target_cols)}, "
+            f"extra={sorted(target_cols - expected_cols)}"
+        )
+    if conn.execute(f"SELECT COUNT(*) FROM {target_ref}").fetchone()[0]:
+        raise ValueError("matchup_season staging table must be empty")
+
+    has = existing_cols.__contains__
+    int_col = lambda col: f"COALESCE(CAST(m.{col} AS INT), 0)" if has(col) else "0"
+    dbl_col = lambda col: f"COALESCE(CAST(m.{col} AS DOUBLE), 0)" if has(col) else "0"
+    raw_col = lambda col, default="NULL": f"m.{col}" if has(col) else default
+
+    proj_col = "team_projected_points" if has("team_projected_points") else "manager_proj_score" if has("manager_proj_score") else None
+    opp_proj_col = "opponent_projected_points" if has("opponent_projected_points") else "opponent_proj_score" if has("opponent_proj_score") else None
+    proj = f"COALESCE(CAST(m.{proj_col} AS DOUBLE), 0)" if proj_col else "0"
+    opp_proj = f"COALESCE(CAST(m.{opp_proj_col} AS DOUBLE), 0)" if opp_proj_col else "0"
+    optimal = dbl_col("optimal_points")
+    tie = int_col("tie")
+    is_playoffs = int_col("is_playoffs")
+    above_median = int_col("above_league_median")
+    below_median = int_col("below_league_median")
+
+    snapshot_cols = [
+        col
+        for col in (*SCHEDULE_LUCK_SIM_COLUMNS, *SOS_LUCK_SIM_COLUMNS, *PLAYOFF_SIM_COLUMNS,
+                    "wins_to_date", "losses_to_date", "ties_to_date", "points_scored_to_date")
+        if has(col)
+    ]
+    mean_cols = [
+        col for col in (
+            "avg_seed", "p_playoffs", "p_bye", "p_semis", "p_final",
+            "p_champ", "exp_final_wins", "exp_final_pf",
+        ) if has(col)
+    ]
+
+    base_exprs = {
+        "manager": "MAX(m.manager)",
+        "games": "COUNT(*)",
+        "wins": f"SUM({int_col('win')} + CASE WHEN m.uses_median THEN {above_median} ELSE 0 END)",
+        "losses": f"SUM({int_col('loss')} + CASE WHEN m.uses_median THEN {below_median} ELSE 0 END)",
+        "ties": f"SUM({tie})",
+        "total_team_points": "SUM(m.team_points)",
+        "total_opponent_points": "SUM(m.opponent_points)",
+        "avg_team_points": "AVG(m.team_points)",
+        "avg_opponent_points": "AVG(m.opponent_points)",
+        "avg_margin": "AVG(m.team_points) - AVG(m.opponent_points)",
+        "max_team_points": "MAX(m.team_points)",
+        "min_team_points": "MIN(CASE WHEN m.team_points > 0 THEN m.team_points END)",
+        "std_dev_team_points": "STDDEV_SAMP(m.team_points)",
+        "avg_gpa": f"AVG(CAST({raw_col('gpa')} AS DOUBLE))" if has("gpa") else "CAST(NULL AS DOUBLE)",
+        "above_league_median": f"SUM(CASE WHEN {above_median} = 1 AND {is_playoffs} = 0 THEN 1 ELSE 0 END)",
+        "below_league_median": f"SUM(CASE WHEN {below_median} = 1 AND {is_playoffs} = 0 THEN 1 ELSE 0 END)",
+        "close_games": f"SUM(CASE WHEN {int_col('close_margin')} = 1 THEN 1 ELSE 0 END)",
+        "close_wins": f"SUM(CASE WHEN {int_col('close_margin')} = 1 AND {int_col('win')} = 1 THEN 1 ELSE 0 END)",
+        "close_losses": f"SUM(CASE WHEN {int_col('close_margin')} = 1 AND {int_col('loss')} = 1 THEN 1 ELSE 0 END)",
+        "blowout_wins": f"SUM(CASE WHEN {int_col('win')} = 1 AND m.margin > 20 THEN 1 ELSE 0 END)" if has("margin") else "0",
+        "blowout_losses": f"SUM(CASE WHEN {int_col('loss')} = 1 AND m.margin < -20 THEN 1 ELSE 0 END)" if has("margin") else "0",
+        "max_win_streak": f"MAX({raw_col('win_streak', raw_col('winning_streak', '0'))})",
+        "max_loss_streak": f"MAX({raw_col('loss_streak', raw_col('losing_streak', '0'))})",
+        "optimal_games": f"SUM(CASE WHEN {optimal} > 0 THEN 1 ELSE 0 END)",
+        "optimal_actual_pts": f"SUM(CASE WHEN {optimal} > 0 THEN m.team_points ELSE 0 END)",
+        "optimal_ceiling_pts": f"SUM(CASE WHEN {optimal} > 0 THEN {optimal} ELSE 0 END)",
+        "optimal_wins": f"SUM(CASE WHEN {optimal} > m.opponent_points THEN 1 ELSE 0 END)",
+        "optimal_missed_wins": f"SUM(CASE WHEN {int_col('win')} = 0 AND {tie} = 0 AND {optimal} > m.opponent_points THEN 1 ELSE 0 END)",
+        "optimal_lucky_wins": f"SUM(CASE WHEN {int_col('win')} = 1 AND {optimal} > 0 AND (m.team_points / NULLIF({optimal}, 0)) < 0.80 THEN 1 ELSE 0 END)",
+        "optimal_wins_actual": f"SUM(CASE WHEN {optimal} > 0 AND {int_col('win')} = 1 THEN 1 ELSE 0 END)",
+        "optimal_losses_actual": f"SUM(CASE WHEN {optimal} > 0 AND {int_col('loss')} = 1 THEN 1 ELSE 0 END)",
+        "optimal_outcome_changes": f"SUM(CASE WHEN {optimal} > 0 AND ({optimal} > m.opponent_points) != ({int_col('win')} = 1) THEN 1 ELSE 0 END)",
+        "optimal_margin": f"SUM(CASE WHEN {optimal} > 0 THEN {optimal} - m.opponent_points ELSE 0 END)",
+        "proj_games": f"SUM(CASE WHEN {proj} > 0 THEN 1 ELSE 0 END)",
+        "proj_wins": f"SUM(CASE WHEN {proj} > 0 AND {int_col('win')} = 1 THEN 1 ELSE 0 END)",
+        "proj_losses": f"SUM(CASE WHEN {proj} > 0 AND {int_col('loss')} = 1 THEN 1 ELSE 0 END)",
+        "proj_total_team_points": f"SUM(CASE WHEN {proj} > 0 THEN m.team_points ELSE 0 END)",
+        "proj_total_opponent_points": f"SUM(CASE WHEN {proj} > 0 THEN m.opponent_points ELSE 0 END)",
+        "proj_total_proj": f"SUM({proj})",
+        "proj_opp_proj": f"SUM({opp_proj})",
+        "proj_above_proj": f"SUM(CASE WHEN m.team_points > {proj} AND {proj} > 0 THEN 1 ELSE 0 END)",
+        "proj_below_proj": f"SUM(CASE WHEN m.team_points <= {proj} AND {proj} > 0 THEN 1 ELSE 0 END)",
+        "proj_beat_spread": f"SUM(CASE WHEN {raw_col('expected_spread')} IS NOT NULL AND (m.team_points - m.opponent_points) > {dbl_col('expected_spread')} THEN 1 ELSE 0 END)" if has("expected_spread") else "0",
+        "proj_margin_total": f"SUM(CASE WHEN {proj} > 0 THEN m.margin ELSE 0 END)" if has("margin") else "0",
+        "proj_spread_avg": "AVG(CASE WHEN m.expected_spread IS NOT NULL THEN CAST(m.expected_spread AS DOUBLE) END)" if has("expected_spread") else "CAST(NULL AS DOUBLE)",
+        "proj_favored_pct": "AVG(CASE WHEN m.expected_odds IS NOT NULL AND CAST(m.expected_odds AS DOUBLE) > 0.5 THEN 1.0 WHEN m.expected_odds IS NOT NULL THEN 0.0 END)" if has("expected_odds") else "CAST(NULL AS DOUBLE)",
+        "proj_avg_win_pct": "AVG(CASE WHEN m.expected_odds IS NOT NULL THEN CAST(m.expected_odds AS DOUBLE) END)" if has("expected_odds") else "CAST(NULL AS DOUBLE)",
+        "proj_expected_wins": f"SUM(CASE WHEN {proj} > {opp_proj} AND {proj} > 0 THEN 1 ELSE 0 END)",
+        "proj_upset_wins": f"SUM({int_col('underdog_wins')})",
+        "proj_upset_losses": f"SUM({int_col('favorite_losses')})",
+        "proj_total_error": f"SUM({dbl_col('proj_score_error')})",
+        "proj_avg_error": "AVG(CASE WHEN m.abs_proj_score_error IS NOT NULL THEN CAST(m.abs_proj_score_error AS DOUBLE) END)" if has("abs_proj_score_error") else "CAST(NULL AS DOUBLE)",
+    }
+    if has("final_playoff_seed"):
+        base_exprs["_final_playoff_seed"] = "MAX(m.final_playoff_seed)"
+    if has("playoff_seed_to_date"):
+        snapshot_cols.append("playoff_seed_to_date")
+    for col in mean_cols:
+        base_exprs[f"mean_{col}"] = f"AVG(CAST(m.{col} AS DOUBLE))"
+
+    base_select = ",\n                ".join(
+        f"{expr} AS \"{column}\"" for column, expr in base_exprs.items()
+    )
+    insert_cols = ["db_name", "manager", "year", "franchise_id", *[c for c in base_exprs if c not in {"manager", "_final_playoff_seed"}]]
+    insert_cols.extend(snapshot_cols)
+    insert_cols.extend([
+        "win_pct", "close_win_pct", "optimal_bench_pts", "optimal_efficiency",
+        "optimal_losses", "proj_total_upsets", "made_playoffs", "is_champion",
+        "is_sacko", "playoff_result",
+    ])
+    # Canonical order is not required by INSERT column lists, but deterministic
+    # schema order makes the statement and tests easier to audit.
+    insert_cols = [col for col in MATCHUP_SEASON_COLUMN_TYPES if col in set(insert_cols)]
+
+    champion = int_col("champion")
+    sacko = int_col("sacko")
+    playoff_round = "NULLIF(TRIM(CAST(m.playoff_round AS VARCHAR)), '')" if has("playoff_round") else "NULL"
+    consolation_round = "NULLIF(TRIM(CAST(m.consolation_round AS VARCHAR)), '')" if has("consolation_round") else "NULL"
+    final_select = {
+        "db_name": "a.db_name", "manager": "a.manager", "year": "a.year", "franchise_id": "a.franchise_id",
+        **{col: f'a."{col}"' for col in base_exprs if col not in {"manager", "_final_playoff_seed"}},
+        **{col: f's."{col}"' for col in snapshot_cols},
+        "win_pct": "CASE WHEN a.games > 0 THEN (a.wins + 0.5 * a.ties) / a.games ELSE 0 END",
+        "close_win_pct": "CASE WHEN a.close_games > 0 THEN CAST(a.close_wins AS DOUBLE) / a.close_games ELSE 0 END",
+        "optimal_bench_pts": "a.optimal_ceiling_pts - a.optimal_actual_pts",
+        "optimal_efficiency": "CASE WHEN a.optimal_ceiling_pts > 0 THEN (a.optimal_actual_pts / a.optimal_ceiling_pts) * 100 ELSE 0 END",
+        "optimal_losses": "a.optimal_games - a.optimal_wins",
+        "proj_total_upsets": "a.proj_upset_wins + a.proj_upset_losses",
+        "made_playoffs": "COALESCE(p.made_playoffs, 0)",
+        "is_champion": "COALESCE(p.is_champion, 0)",
+        "is_sacko": "COALESCE(p.is_sacko, 0)",
+        "playoff_result": "p.playoff_result",
+    }
+    if has("playoff_seed_to_date") and has("final_playoff_seed"):
+        final_select["playoff_seed_to_date"] = 'COALESCE(a."_final_playoff_seed", s."playoff_seed_to_date")'
+    select_list = ",\n            ".join(
+        f"{final_select[col]} AS \"{col}\"" for col in insert_cols
+    )
+    quoted_insert_cols = ", ".join(f'"{col}"' for col in insert_cols)
+    bye_filter = f"AND {int_col('is_bye_week')} = 0" if has("is_bye_week") else ""
+    placeholder_filter = f"AND {int_col('is_placeholder')} = 0" if has("is_placeholder") else ""
+    settings_has_uses_median = "uses_median" in get_available_columns(conn, "", "league_settings")
+    uses_median_expr = "COALESCE(MAX(CAST(ls.uses_median AS INT)), 0) = 1" if settings_has_uses_median else "FALSE"
+    eligible_source_columns = [
+        col for col in (
+            "db_name", "manager", "franchise_id", "year", "week", "opponent",
+            "team_points", "opponent_points", "win", "loss", "tie",
+            "is_playoffs", "is_consolation", "is_bye_week", "is_placeholder",
+            "margin", "gpa", "above_league_median", "below_league_median",
+            "close_margin", "win_streak", "winning_streak", "loss_streak",
+            "losing_streak", "optimal_points", "team_projected_points",
+            "manager_proj_score", "opponent_projected_points", "opponent_proj_score",
+            "expected_spread", "expected_odds", "underdog_wins", "favorite_losses",
+            "proj_score_error", "abs_proj_score_error", "final_playoff_seed",
+            *mean_cols,
+        ) if has(col)
+    ]
+    eligible_projection = ", ".join(f'm."{col}"' for col in eligible_source_columns)
+
+    sql = f"""
+        INSERT INTO {target_ref} ({quoted_insert_cols})
+        WITH boundaries AS (
+            SELECT
+                m.db_name,
+                m.year,
+                COALESCE(
+                    MAX(CAST(ls.playoff_start_week AS INTEGER)) - 1,
+                    MAX(CASE WHEN {is_playoffs} = 0 AND {int_col('is_consolation')} = 0
+                                  AND m.manager IS NOT NULL THEN m.week END),
+                    14
+                ) AS last_reg_week,
+                {uses_median_expr} AS uses_median
+            FROM public.matchup m
+            LEFT JOIN public.league_settings ls
+              ON ls.db_name = m.db_name AND TRY_CAST(ls.year AS INTEGER) = TRY_CAST(m.year AS INTEGER)
+            WHERE m.db_name IS NOT NULL AND m.year IS NOT NULL
+            GROUP BY m.db_name, m.year
+        ),
+        eligible AS (
+            SELECT {eligible_projection}, b.uses_median
+            FROM public.matchup m
+            JOIN boundaries b ON b.db_name = m.db_name AND b.year = m.year
+            WHERE m.week <= b.last_reg_week
+              AND {is_playoffs} = 0
+              AND {int_col('is_consolation')} = 0
+              AND m.manager IS NOT NULL AND m.opponent IS NOT NULL
+              {bye_filter}
+              {placeholder_filter}
+              AND (
+                  COALESCE(m.team_points, 0) > 0 OR COALESCE(m.opponent_points, 0) > 0
+                  OR {int_col('win')} = 1 OR {int_col('loss')} = 1 OR {tie} = 1
+              )
+        ),
+        aggregated AS (
+            SELECT
+                m.db_name,
+                m.year,
+                m.franchise_id,
+                {base_select}
+            FROM eligible m
+            GROUP BY m.db_name, m.year, m.franchise_id
+        ),
+        snapshot_weeks AS (
+            SELECT db_name, year, franchise_id, MAX(week) AS week
+            FROM eligible
+            GROUP BY db_name, year, franchise_id
+        ),
+        snapshots AS (
+            SELECT m.*
+            FROM public.matchup m
+            JOIN snapshot_weeks w
+              ON w.db_name = m.db_name AND w.year = m.year
+             AND w.franchise_id = m.franchise_id AND w.week = m.week
+        ),
+        playoffs AS (
+            SELECT
+                m.db_name,
+                m.year,
+                m.franchise_id,
+                MAX(CASE WHEN {is_playoffs} = 1 THEN 1 ELSE 0 END) AS made_playoffs,
+                MAX({champion}) AS is_champion,
+                MAX({sacko}) AS is_sacko,
+                ARG_MAX(
+                    CASE WHEN COALESCE({playoff_round}, {consolation_round}) IS NOT NULL
+                         THEN (CASE WHEN {int_col('win')} = 1 THEN 'Won ' ELSE 'Lost ' END)
+                              || REPLACE(COALESCE({playoff_round}, {consolation_round}), '_', ' ')
+                         ELSE NULL END,
+                    m.week
+                ) AS playoff_result
+            FROM public.matchup m
+            JOIN boundaries b ON b.db_name = m.db_name AND b.year = m.year
+            WHERE (m.week > b.last_reg_week OR {champion} = 1 OR {sacko} = 1)
+              AND m.manager IS NOT NULL
+            GROUP BY m.db_name, m.year, m.franchise_id
+        )
+        SELECT
+            {select_list}
+        FROM aggregated a
+        JOIN snapshots s
+          ON s.db_name = a.db_name AND s.year = a.year AND s.franchise_id = a.franchise_id
+        LEFT JOIN playoffs p
+          ON p.db_name = a.db_name AND p.year = a.year AND p.franchise_id = a.franchise_id
+    """
+    conn.execute(sql)
+
+    rows = int(conn.execute(f"SELECT COUNT(*) FROM {target_ref}").fetchone()[0])
+    distinct_keys = int(conn.execute(
+        f"SELECT COUNT(*) FROM (SELECT db_name, franchise_id, year FROM {target_ref} "
+        "GROUP BY db_name, franchise_id, year)"
+    ).fetchone()[0])
+    null_keys = int(conn.execute(
+        f"SELECT COUNT(*) FROM {target_ref} WHERE db_name IS NULL OR franchise_id IS NULL OR year IS NULL"
+    ).fetchone()[0])
+    if not rows or rows != distinct_keys or null_keys:
+        raise RuntimeError(
+            "invalid rebuilt matchup_season keys: "
+            f"rows={rows}, distinct={distinct_keys}, null={null_keys}"
+        )
+    leagues, league_years = conn.execute(
+        f"SELECT COUNT(DISTINCT db_name), COUNT(DISTINCT db_name || ':' || CAST(year AS VARCHAR)) FROM {target_ref}"
+    ).fetchone()
+    return {
+        "rows": rows,
+        "distinct_keys": distinct_keys,
+        "leagues": int(leagues),
+        "league_years": int(league_years),
+    }
 
 
 def aggregate_matchup_career(conn, db_name: str, dry_run: bool = False) -> int:

@@ -124,6 +124,7 @@ FLEET_MERGE_HARD_EXIT_SECONDS = _env_float("FLEET_MERGE_HARD_EXIT_SECONDS", 900.
 # Reserve headroom inside the 40s pilot for admission, receipt reconciliation,
 # rollback/cleanup and transport. Never kill the process at this SQL deadline.
 DERIVED_REBUILD_TIMEOUT_SECONDS = 35.0
+MATCHUP_SEASON_REPAIR_TIMEOUT_SECONDS = 40.0
 RENAME_TIMEOUT_SECONDS = 35.0
 OPS_WRITE_STALL_DIAGNOSTIC_SECONDS = 10.0
 # /merge-ops replaces whole ___ops reference tables (the ~1.2M x 820 super table takes minutes to
@@ -1840,6 +1841,8 @@ _CANONICAL_TABLE_REPLACEMENTS = {
     ("___leagues", "standings_by_year"): ("db_name", "franchise_id", "year"),
 }
 
+_MATCHUP_SEASON_REPAIR_CONFIRMATION = "rebuild-matchup-season-from-matchup"
+
 
 def _quote_identifier(value: str) -> str:
     return '"' + str(value).replace('"', '""') + '"'
@@ -1895,7 +1898,14 @@ def _replace_canonical_table(
     incoming_ref = f"_incoming.public.{_quote_identifier(table_name)}"
 
     try:
-        conn = db.acquire_connection(timeout=10.0)
+        # The HTTP handler drains and closes the public pool before invoking
+        # this exclusive storage-recovery primitive. Open the sole writer
+        # directly; acquiring from the intentionally empty pool can never work.
+        conn = db.connect_database(
+            database_path,
+            data_dir=db.get_data_dir(),
+            threads=WRITE_DUCKDB_THREADS,
+        )
         conn.execute(f"ATTACH '{incoming_path.as_posix()}' AS _incoming (READ_ONLY)")
         attached = True
 
@@ -3604,6 +3614,142 @@ def _merge_fleet_bundle(
             conn.close()
 
 
+def _relation_fingerprint(conn, table_name: str) -> tuple[int, int]:
+    """Return a compact deterministic whole-relation witness."""
+    columns = [row[0] for row in conn.execute(f"DESCRIBE public.{_quote_identifier(table_name)}").fetchall()]
+    if not columns:
+        return (0, 0)
+    args = ", ".join(_quote_identifier(column) for column in columns)
+    row = conn.execute(
+        f"SELECT COUNT(*), COALESCE(BIT_XOR(HASH({args})), 0) "
+        f"FROM public.{_quote_identifier(table_name)}"
+    ).fetchone()
+    return int(row[0]), int(row[1])
+
+
+def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
+    """Rebuild exactly ``public.matchup_season`` and atomically swap it.
+
+    The candidate is generated in one set-based pass from healthy canonical
+    ``matchup`` and ``league_settings`` facts.  Homepage relations are
+    fingerprinted inside the swap transaction and are never regenerated.
+    """
+    del database_path  # The live pooled connection is already bound to ___leagues.
+    started = time.monotonic()
+    deadline = started + MATCHUP_SEASON_REPAIR_TIMEOUT_SECONDS
+    staging_name = f"__recovered_matchup_season_{time.time_ns()}"
+    replaced_name = f"__replaced_matchup_season_{time.time_ns()}"
+    target_ref = 'public."matchup_season"'
+    staging_ref = f"public.{_quote_identifier(staging_name)}"
+    replaced_ref = f"public.{_quote_identifier(replaced_name)}"
+    conn = db.acquire_connection(timeout=10.0)
+    expired = threading.Event()
+
+    def interrupt_deadline():
+        expired.set()
+        with suppress(Exception):
+            conn.interrupt()
+
+    timer = threading.Timer(max(0.0, deadline - time.monotonic()), interrupt_deadline)
+    timer.daemon = True
+    timer.start()
+    committed = False
+    try:
+        target_row = conn.execute(
+            "SELECT sql FROM duckdb_tables() WHERE database_name = current_database() "
+            "AND schema_name = 'public' AND table_name = 'matchup_season'"
+        ).fetchone()
+        if not target_row or not target_row[0]:
+            raise RuntimeError("public.matchup_season canonical table is missing")
+        target_ddl = str(target_row[0])
+        staging_ddl = re.sub(
+            r'(?i)^CREATE TABLE\s+(?:"?public"?\.)?"?matchup_season"?',
+            f"CREATE TABLE {staging_ref}",
+            target_ddl,
+            count=1,
+        )
+        if staging_ddl == target_ddl:
+            raise RuntimeError("could not derive matchup_season staging DDL")
+        conn.execute(staging_ddl)
+
+        homepage_tables = [
+            row[0]
+            for row in conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_catalog=current_database() AND table_schema='public' "
+                "AND table_name LIKE 'homepage_%' ORDER BY table_name"
+            ).fetchall()
+        ]
+        homepage_before = {
+            table: _relation_fingerprint(conn, table) for table in homepage_tables
+        }
+
+        from multi_league.transformations.aggregation.aggregate_matchup_context import (
+            rebuild_matchup_season_fleet,
+        )
+
+        receipts = rebuild_matchup_season_fleet(conn, target_table=staging_name)
+        if expired.is_set() or time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"matchup_season repair exceeded {MATCHUP_SEASON_REPAIR_TIMEOUT_SECONDS:g}s deadline"
+            )
+
+        # Keep the timer armed through candidate creation only.  The final
+        # metadata-only swap must not receive a late interrupt after COMMIT.
+        timer.cancel()
+        timer.join()
+
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            conn.execute(
+                f"ALTER TABLE {target_ref} RENAME TO {_quote_identifier(replaced_name)}"
+            )
+            conn.execute(
+                f"ALTER TABLE {staging_ref} RENAME TO {_quote_identifier('matchup_season')}"
+            )
+            conn.execute(f"DROP TABLE {replaced_ref}")
+
+            final_rows = int(conn.execute(f"SELECT COUNT(*) FROM {target_ref}").fetchone()[0])
+            final_keys = int(conn.execute(
+                f"SELECT COUNT(*) FROM (SELECT db_name, franchise_id, year FROM {target_ref} "
+                "GROUP BY db_name, franchise_id, year)"
+            ).fetchone()[0])
+            if final_rows != receipts["rows"] or final_keys != receipts["distinct_keys"]:
+                raise RuntimeError(
+                    "matchup_season post-swap receipt mismatch: "
+                    f"rows={final_rows}, keys={final_keys}, expected={receipts}"
+                )
+            homepage_after = {
+                table: _relation_fingerprint(conn, table) for table in homepage_tables
+            }
+            if homepage_after != homepage_before:
+                raise RuntimeError("homepage table fingerprint changed during matchup_season repair")
+            conn.execute("COMMIT")
+            committed = True
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+        return {
+            "status": "COMMITTED",
+            "table": "matchup_season",
+            **receipts,
+            "homepage_tables_verified": len(homepage_tables),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "checkpointed": False,
+        }
+    finally:
+        if timer.is_alive():
+            timer.cancel()
+            timer.join()
+        if not committed:
+            with suppress(Exception):
+                conn.execute("ROLLBACK")
+        with suppress(Exception):
+            conn.execute(f"DROP TABLE IF EXISTS {staging_ref}")
+        db.release_connection(conn)
+
+
 def _merge_fleet_bundle_serialized(
     leagues_path: Path,
     manifest: dict,
@@ -4075,6 +4221,44 @@ async def rebuild_league_derived(request: Request):
             "status": result["status"],
             "generation": result["generation"],
             "checkpointed": result["checkpointed"],
+        },
+    )
+    return result
+
+
+@app.post("/repair-matchup-season")
+async def repair_matchup_season(request: Request):
+    """Rebuild and atomically swap only the reproducible matchup_season table."""
+    try:
+        validate_admin_token(get_bearer_token(request))
+    except AuthError as exc:
+        track_event("auth_failed", {"endpoint": "/repair-matchup-season"})
+        raise HTTPException(status_code=401, detail="Unauthorized") from exc
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="request body must be JSON") from exc
+    if body.get("confirm") != _MATCHUP_SEASON_REPAIR_CONFIRMATION:
+        raise HTTPException(status_code=400, detail="exact matchup_season repair confirmation is required")
+
+    database_path = db.get_data_dir() / "___leagues.duckdb"
+    async with _merge_lock:
+        try:
+            result = await asyncio.to_thread(_rebuild_canonical_matchup_season, database_path)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error("matchup_season one-table repair failed: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    track_event(
+        "matchup_season_repaired",
+        {
+            "rows": result["rows"],
+            "leagues": result["leagues"],
+            "league_years": result["league_years"],
+            "elapsed_seconds": result["elapsed_seconds"],
         },
     )
     return result

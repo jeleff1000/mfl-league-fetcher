@@ -166,6 +166,87 @@ def test_aggregate_matchup_season_excludes_playoffs_from_record_rollup():
     ]
 
 
+def test_rebuild_matchup_season_fleet_matches_scoped_semantics_and_leaves_homepage_untouched():
+    from multi_league.core.aggregate_ddl import create_named_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        rebuild_matchup_season_fleet,
+    )
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___leagues")
+    conn.execute('USE "___leagues"')
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(create_named_aggregate_table_sql("___leagues", "matchup_season", "matchup_season_rebuilt"))
+    conn.execute(
+        """
+        CREATE TABLE public.league_settings (
+            db_name VARCHAR, year INTEGER, playoff_start_week INTEGER, uses_median BOOLEAN
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR, manager VARCHAR, franchise_id VARCHAR,
+            year INTEGER, week INTEGER, opponent VARCHAR,
+            team_points DOUBLE, opponent_points DOUBLE,
+            win INTEGER, loss INTEGER, tie INTEGER,
+            is_playoffs INTEGER, is_consolation INTEGER,
+            is_bye_week INTEGER, is_placeholder INTEGER,
+            margin DOUBLE, close_margin INTEGER,
+            above_league_median INTEGER, below_league_median INTEGER,
+            power_rating DOUBLE, wins_to_date INTEGER, losses_to_date INTEGER,
+            ties_to_date INTEGER, points_scored_to_date DOUBLE,
+            playoff_seed_to_date INTEGER, final_playoff_seed INTEGER,
+            champion INTEGER, sacko INTEGER,
+            playoff_round VARCHAR, consolation_round VARCHAR
+        )
+        """
+    )
+    conn.execute("CREATE TABLE public.homepage_manager_rankings (db_name VARCHAR, payload VARCHAR)")
+    conn.execute("INSERT INTO public.homepage_manager_rankings VALUES ('alpha', 'must-survive')")
+    homepage_before = conn.execute("SELECT * FROM public.homepage_manager_rankings").fetchall()
+    conn.executemany(
+        "INSERT INTO public.league_settings VALUES (?, ?, ?, ?)",
+        [("alpha", 2025, 3, False), ("beta", 2026, 3, True)],
+    )
+    rows = [
+        ("alpha", "Alice", "a", 2025, 1, "Bob", 100.0, 90.0, 1, 0, 0, 0, 0, 0, 0, 10.0, 0, 1, 0, 101.0, 1, 0, 0, 100.0, 1, None, 0, 0, None, None),
+        ("alpha", "Alice", "a", 2025, 2, "Bob", 95.0, 105.0, 0, 1, 0, 0, 0, 0, 0, -10.0, 0, 0, 1, 99.0, 1, 1, 0, 195.0, 2, None, 0, 0, None, None),
+        ("alpha", "Alice", "a", 2025, 3, "Bob", 120.0, 110.0, 1, 0, 0, 1, 0, 0, 0, 10.0, 0, 0, 0, 110.0, 2, 1, 0, 315.0, 1, 1, 1, 0, "championship", None),
+        ("beta", "Bea", "b", 2026, 1, "Cal", 80.0, 70.0, 1, 0, 0, 0, 0, 0, 0, 10.0, 0, 1, 0, 88.0, 1, 0, 0, 80.0, 1, None, 0, 0, None, None),
+        ("beta", "Cal", "c", 2026, 1, "Bea", 70.0, 80.0, 0, 1, 0, 0, 0, 0, 0, -10.0, 0, 0, 1, 77.0, 0, 1, 0, 70.0, 2, None, 0, 0, None, None),
+        # An unfinished scoreless row is not a played game.
+        ("beta", "Bea", "b", 2026, 2, "Cal", 0.0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0, 90.0, 1, 0, 0, 80.0, 1, None, 0, 0, None, None),
+    ]
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (" + ",".join(["?"] * 30) + ")",
+        rows,
+    )
+
+    result = rebuild_matchup_season_fleet(conn, target_table="matchup_season_rebuilt")
+
+    assert result == {
+        "rows": 3,
+        "distinct_keys": 3,
+        "leagues": 2,
+        "league_years": 2,
+    }
+    assert conn.execute(
+        """
+        SELECT db_name, manager, franchise_id, year, games, wins, losses,
+               total_team_points, made_playoffs, is_champion, power_rating
+        FROM public.matchup_season_rebuilt
+        ORDER BY db_name, franchise_id
+        """
+    ).fetchall() == [
+        ("alpha", "Alice", "a", 2025, 2, 1, 1, 195.0, 1, 1, 99.0),
+        ("beta", "Bea", "b", 2026, 1, 2, 0, 80.0, 0, 0, 88.0),
+        ("beta", "Cal", "c", 2026, 1, 0, 2, 70.0, 0, 0, 77.0),
+    ]
+    assert conn.execute("SELECT * FROM public.homepage_manager_rankings").fetchall() == homepage_before
+
+
 def test_aggregate_matchup_season_preserves_no_playoff_regular_season_flags():
     from multi_league.core.aggregate_ddl import create_aggregate_table_sql
     from multi_league.transformations.aggregation.aggregate_matchup_context import (

@@ -3734,7 +3734,8 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
             conn.execute("COMMIT")
             committed = True
         except Exception:
-            conn.execute("ROLLBACK")
+            with suppress(Exception):
+                conn.execute("ROLLBACK")
             raise
 
         return {

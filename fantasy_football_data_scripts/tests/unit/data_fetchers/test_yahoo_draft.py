@@ -30,6 +30,7 @@ def test_fetch_draft_picks_uses_combined_draftresults_players_payload(monkeypatc
             </name>
             <display_position>WR</display_position>
             <primary_position>WR</primary_position>
+            <editorial_team_abbr>HOU</editorial_team_abbr>
             <is_keeper>
               <status>1</status>
               <cost>35</cost>
@@ -53,6 +54,7 @@ def test_fetch_draft_picks_uses_combined_draftresults_players_payload(monkeypatc
     assert pick.yahoo_player_id == "33477"
     assert pick.player == "Nico Collins"
     assert pick.yahoo_position == "WR"
+    assert pick.nfl_team == "HOU"
     assert pick.is_keeper_status == "1"
     assert pick.is_keeper_cost == "35"
 
@@ -68,6 +70,7 @@ def test_merge_draft_data_preserves_keeper_fields_from_pick_payload():
             cost=35.0,
             player="Nico Collins",
             yahoo_position="WR",
+            nfl_team="HOU",
             is_keeper_status="1",
             is_keeper_cost="35",
         )
@@ -89,6 +92,41 @@ def test_merge_draft_data_preserves_keeper_fields_from_pick_payload():
     assert row["manager"] == "Gavi"
     assert row["manager_guid"] == "ABC12345FULL"
     assert row["nfl_team"] == "HOU"
+
+
+def test_fetch_team_mappings_does_not_fetch_each_team_roster(monkeypatch):
+    xml = """
+    <fantasy_content>
+      <league><teams>
+        <team>
+          <team_key>470.l.1.t.1</team_key><name>Alpha</name>
+          <managers><manager><nickname>Alice</nickname><guid>guid-a</guid></manager></managers>
+        </team>
+        <team>
+          <team_key>470.l.1.t.2</team_key><name>Beta</name>
+          <managers><manager><nickname>Bob</nickname><guid>guid-b</guid></manager></managers>
+        </team>
+      </teams></league>
+    </fantasy_content>
+    """
+    urls = []
+
+    def fake_fetch(url, oauth, **kwargs):
+        urls.append(url)
+        return ET.fromstring(xml)
+
+    monkeypatch.setattr(yahoo_draft, "fetch_url", fake_fetch)
+
+    managers, guids, names, player_names, player_teams = yahoo_draft.fetch_team_and_player_mappings(
+        object(), "470.l.1"
+    )
+
+    assert urls == ["https://fantasysports.yahooapis.com/fantasy/v2/league/470.l.1/teams"]
+    assert managers == {"470.l.1.t.1": "Alice", "470.l.1.t.2": "Bob"}
+    assert guids == {"470.l.1.t.1": "guid-a", "470.l.1.t.2": "guid-b"}
+    assert names == {"470.l.1.t.1": "Alpha", "470.l.1.t.2": "Beta"}
+    assert player_names == {}
+    assert player_teams == {}
 
 
 def test_merge_draft_data_returns_empty_schema_for_empty_pick_payload():

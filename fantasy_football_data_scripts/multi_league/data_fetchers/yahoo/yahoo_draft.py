@@ -119,6 +119,7 @@ class DraftPick:
     cost: float | None
     player: str | None = None
     yahoo_position: str | None = None
+    nfl_team: str | None = None
     is_keeper_status: str | None = None
     is_keeper_cost: str | None = None
 
@@ -352,6 +353,7 @@ def fetch_draft_picks(oauth, league_id: str, year: int) -> list[DraftPick]:
             "player_id": (player_elem.findtext("player_id") or "").strip() or None,
             "player_name": player_name,
             "position": position,
+            "nfl_team": (player_elem.findtext("editorial_team_abbr") or "").strip() or None,
             "is_keeper_status": (player_elem.findtext("is_keeper/status") or "").strip(),
             "is_keeper_cost": (player_elem.findtext("is_keeper/cost") or "").strip(),
         }
@@ -383,6 +385,7 @@ def fetch_draft_picks(oauth, league_id: str, year: int) -> list[DraftPick]:
             cost=float(result.findtext("cost")) if result.findtext("cost") else None,
             player=player_name,
             yahoo_position=position,
+            nfl_team=meta.get("nfl_team"),
             is_keeper_status=meta.get("is_keeper_status"),
             is_keeper_cost=meta.get("is_keeper_cost"),
         )
@@ -448,52 +451,9 @@ def fetch_team_and_player_mappings(
     except (APITimeoutError, RecoverableAPIError) as e:
         log(f"[draft] Warning: Could not fetch teams from /teams endpoint: {e}")
 
-    # Step 2: Fetch player mappings from week 1 rosters (for players on rosters)
-    # Use actual team count from Step 1 if available, otherwise try up to 20
-    num_teams = len(team_key_to_manager) if team_key_to_manager else 20
-    teams_fetched = 0
-    for i in range(1, num_teams + 1):
-        try:
-            root = fetch_url(
-                f"https://fantasysports.yahooapis.com/fantasy/v2/team/{league_id}.t.{i}/roster;week=1/players/stats",
-                oauth,
-            )
-            teams_fetched += 1
-        except (APITimeoutError, RecoverableAPIError):
-            continue
-
-        # If we didn't get team mappings from /teams endpoint, try to get them here
-        if not team_key_to_manager:
-            raw_nickname = (root.findtext("team/managers/manager/nickname") or "").strip()
-            team_name = (root.findtext("team/name") or "").strip()
-            team_key = (root.findtext("team/team_key") or "").strip()
-            manager_guid = (root.findtext("team/managers/manager/guid") or "").strip()
-
-            if team_key and team_key not in team_key_to_manager:
-                manager_name = normalize_manager_name(
-                    nickname=raw_nickname if raw_nickname else None,
-                    overrides=manager_name_overrides,
-                    team_name_fallback=team_name,
-                )
-                team_key_to_manager[team_key] = manager_name
-                team_key_to_guid[team_key] = manager_guid if manager_guid else None
-                team_key_to_team_name[team_key] = team_name if team_name else None
-
-        players = root.findall("team/roster/players/player")
-        for p in players:
-            pid = p.findtext("player_id")
-            if not pid or pid in player_id_to_name:
-                continue
-            name = p.findtext("name/full")
-            tabbr = p.findtext("editorial_team_abbr")
-            player_id_to_name[pid] = name
-            player_id_to_team[pid] = tabbr
-
-    log(f"[draft] Fetched rosters for {teams_fetched}/{num_teams} teams, {len(player_id_to_name)} player mappings")
-
-    # NOTE: Removed slow "fetch all players" pagination (Step 3)
-    # Draft picks include player names, and roster fetch provides backup for most players.
-    # This eliminates ~30 API calls per year while keeping all needed data.
+    # Draft player names, positions, and NFL teams are returned by the combined
+    # draftresults/players payload. Fetching every Week 1 team roster here was
+    # redundant and allowed one unavailable team to consume the refresh budget.
 
     return team_key_to_manager, team_key_to_guid, team_key_to_team_name, player_id_to_name, player_id_to_team
 
@@ -648,7 +608,8 @@ def merge_draft_data(
     # Enrich picks with manager and team info
     picks_df["manager"] = picks_df["team_key"].map(team_key_to_manager).fillna("N/A")
     picks_df["manager_guid"] = picks_df["team_key"].map(team_key_to_guid)
-    picks_df["nfl_team"] = picks_df["yahoo_player_id"].map(player_id_to_team).fillna("N/A")
+    payload_nfl_team = picks_df["nfl_team"].replace("", pd.NA)
+    picks_df["nfl_team"] = payload_nfl_team.fillna(picks_df["yahoo_player_id"].map(player_id_to_team)).fillna("N/A")
 
     # Backfill missing player names
     def _missing_player_name(value) -> bool:

@@ -2432,6 +2432,69 @@ def test_fresh_live_active_year_cache_skips_a_second_fly_patch(tmp_path, monkeyp
     assert output == cache
 
 
+def test_weekly_worker_rebuilds_existing_ops_cache_missing_active_scoring_columns(
+    tmp_path, monkeypatch,
+):
+    """A present but incompatible cache must not fail position-rank enrichment."""
+    import duckdb
+
+    from scripts import refresh_yahoo_active_season
+
+    cache = tmp_path / "ops_cache.duckdb"
+    conn = duckdb.connect(str(cache))
+    conn.execute("CREATE SCHEMA nfl_historical")
+    conn.execute(
+        "CREATE TABLE nfl_historical.nfl_player_stats_all "
+        "(NFL_player_id VARCHAR, year INTEGER, week INTEGER, season_type VARCHAR, "
+        "nfl_team VARCHAR, opponent_nfl_team VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO nfl_historical.nfl_player_stats_all VALUES "
+        "('00-001', 2026, 1, 'REG', 'NWE', 'SEA')"
+    )
+    conn.close()
+    monkeypatch.setenv("OPS_CACHE_PATH", str(cache))
+    monkeypatch.delenv("OPS_CACHE_LIVE_ACTIVE_YEAR", raising=False)
+    builds: list[dict] = []
+
+    def build(_reader, *, output, year, scoring_info):
+        from multi_league.transformations.player.modules.ppg_precompute import (
+            get_ppg_columns_for_scoring,
+        )
+
+        builds.append({"output": output, "year": year, "scoring_info": scoring_info})
+        output.unlink()
+        rebuilt = duckdb.connect(str(output))
+        rebuilt.execute("CREATE SCHEMA nfl_historical")
+        ppg_columns = list(dict.fromkeys(get_ppg_columns_for_scoring(0.0, 4).values()))
+        rebuilt.execute(
+            "CREATE TABLE nfl_historical.nfl_player_stats_all "
+            "(NFL_player_id VARCHAR, year INTEGER, week INTEGER, season_type VARCHAR, "
+            "nfl_team VARCHAR, opponent_nfl_team VARCHAR, "
+            + ", ".join(f'\"{column}\" DOUBLE' for column in ppg_columns)
+            + ")"
+        )
+        rebuilt.execute("INSERT INTO nfl_historical.nfl_player_stats_all "
+                        "(NFL_player_id, year, week, season_type, nfl_team, opponent_nfl_team) "
+                        "VALUES ('00-001', 2026, 1, 'REG', 'NWE', 'SEA')")
+        rebuilt.close()
+        return output
+
+    monkeypatch.setattr(refresh_yahoo_active_season, "_build_active_year_ops_cache", build)
+    scoring = {"ppr": 0.0, "td_key": "4pt", "rank_cols": {}}
+
+    output = refresh_yahoo_active_season._ensure_active_year_ops_cache(
+        object(), year=2026, work_dir=tmp_path, scoring_info=scoring,
+    )
+
+    assert output == cache
+    assert len(builds) == 1
+    assert builds[0]["year"] == 2026
+    assert refresh_yahoo_active_season._ops_cache_supports_active_scoring(
+        cache, year=2026, scoring_info=scoring,
+    )
+
+
 def test_ops_cache_delta_identifies_only_changed_and_removed_rows():
     from scripts.refresh_yahoo_active_season import _ops_delta_keys
 

@@ -1089,7 +1089,11 @@ def _ensure_active_year_ops_cache(
     """Return an existing disposable cache or create the bounded weekly one."""
     configured = str(os.environ.get("OPS_CACHE_PATH", "")).strip()
     output = Path(configured).resolve() if configured else work_dir / "ops_cache.duckdb"
-    if not output.is_file():
+    if not _ops_cache_supports_active_scoring(
+        output,
+        year=year,
+        scoring_info=scoring_info,
+    ):
         _build_active_year_ops_cache(
             reader,
             output=output,
@@ -1103,6 +1107,72 @@ def _ensure_active_year_ops_cache(
         os.environ["OPS_CACHE_LIVE_ACTIVE_YEAR"] = f"{int(year)}|{output.resolve()}"
     os.environ["OPS_CACHE_PATH"] = str(output)
     return output
+
+
+def _ops_cache_supports_active_scoring(
+    cache_path: Path,
+    *,
+    year: int,
+    scoring_info: dict[str, Any],
+) -> bool:
+    """Return whether a reusable weekly cache can serve this league variant."""
+    if not cache_path.is_file():
+        return False
+
+    from multi_league.transformations.player.modules.ppg_precompute import (
+        get_ppg_columns_for_scoring,
+    )
+
+    td_key = str(scoring_info.get("td_key") or "4pt")
+    required = {
+        "NFL_player_id",
+        "year",
+        "week",
+        "season_type",
+        "nfl_team",
+        "opponent_nfl_team",
+        *get_ppg_columns_for_scoring(
+            float(scoring_info.get("ppr", 0.5)),
+            int(td_key.removesuffix("pt")),
+        ).values(),
+    }
+    required.update(
+        str(value)
+        for value in (scoring_info.get("rank_cols") or {}).values()
+        if value
+    )
+    required.update(
+        str(value)
+        for value in (
+            scoring_info.get("fpts_col"),
+            scoring_info.get("rolling_total_col"),
+        )
+        if value
+    )
+
+    cache = None
+    try:
+        cache = duckdb.connect(str(cache_path), read_only=True)
+        columns = {
+            str(row[0])
+            for row in cache.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'nfl_historical' "
+                "AND table_name = 'nfl_player_stats_all'"
+            ).fetchall()
+        }
+        if not required.issubset(columns):
+            return False
+        return cache.execute(
+            "SELECT EXISTS (SELECT 1 FROM nfl_historical.nfl_player_stats_all "
+            "WHERE year = ? LIMIT 1)",
+            [int(year)],
+        ).fetchone()[0]
+    except Exception:
+        return False
+    finally:
+        if cache is not None:
+            cache.close()
 
 
 def _ensure_ops_cache_matches_live(

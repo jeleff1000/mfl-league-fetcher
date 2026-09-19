@@ -1,7 +1,10 @@
+import threading
+
 import duckdb
 import pytest
 
 from multi_league.transformations.aggregation.homepage_summary import (
+    _compute_profiles_concurrently,
     _latest_matchup_year_week,
     _compute_best_trade,
     _compute_manager_career_stats,
@@ -18,6 +21,24 @@ from multi_league.transformations.aggregation.homepage_summary import (
     compute_top_rivalries,
 )
 from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext
+
+
+def test_manager_profile_tasks_use_independent_concurrent_cursors():
+    conn = duckdb.connect(":memory:")
+    barrier = threading.Barrier(2)
+    thread_ids: set[int] = set()
+
+    def build(cursor, value):
+        assert cursor.execute("SELECT 1").fetchone() == (1,)
+        thread_ids.add(threading.get_ident())
+        barrier.wait(timeout=2)
+        return value * 10
+
+    try:
+        assert _compute_profiles_concurrently(conn, [1, 2], build, max_workers=2) == [10, 20]
+        assert len(thread_ids) == 2
+    finally:
+        conn.close()
 
 
 def test_homepage_watermark_pairs_latest_year_with_its_own_latest_week():

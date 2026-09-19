@@ -63,6 +63,41 @@ def test_aggregate_standings_raises_when_opponent_franchise_id_missing():
         aggregate_standings(conn, db_name, [2024])
 
 
+def test_aggregate_standings_marks_unfinished_active_season_in_progress():
+    from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    db_name = _db_name(conn)
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR, year INTEGER, week INTEGER, manager VARCHAR,
+            team_name VARCHAR, opponent VARCHAR, team_points DOUBLE,
+            opponent_points DOUBLE, win INTEGER, loss INTEGER,
+            is_playoffs INTEGER, playoff_round VARCHAR,
+            consolation_round VARCHAR, champion INTEGER, sacko INTEGER,
+            is_consolation INTEGER, final_playoff_seed INTEGER,
+            is_bye_week INTEGER, franchise_id VARCHAR,
+            opponent_franchise_id VARCHAR, above_league_median INTEGER
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (db_name, 2026, 1, "A", "Alpha", "B", 100.0, 90.0, 1, 0, 0, None, None, 0, 0, 0, None, 0, "fa", "fb", 1),
+            (db_name, 2026, 1, "B", "Beta", "A", 90.0, 100.0, 0, 1, 0, None, None, 0, 0, 0, None, 0, "fb", "fa", 0),
+        ],
+    )
+
+    aggregate_standings(conn, db_name, [2026], active_season=2026)
+
+    assert conn.execute(
+        "SELECT DISTINCT final_result FROM public.standings_by_year"
+    ).fetchall() == [("In Progress",)]
+
+
 def test_aggregate_standings_normalizes_text_week_columns():
     from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
 

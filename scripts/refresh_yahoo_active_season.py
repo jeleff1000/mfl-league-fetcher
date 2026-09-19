@@ -1095,6 +1095,11 @@ def _ensure_active_year_ops_cache(
             year=year,
             scoring_info=scoring_info,
         )
+        # This process just read the complete active-year projection from the
+        # same live Fly table used by the delta patch.  Record that exact cache
+        # identity so the immediately following enrichment step does not issue
+        # another schema read plus one fetch per admitted week.
+        os.environ["OPS_CACHE_LIVE_ACTIVE_YEAR"] = f"{int(year)}|{output.resolve()}"
     os.environ["OPS_CACHE_PATH"] = str(output)
     return output
 
@@ -1109,6 +1114,8 @@ def _ensure_ops_cache_matches_live(
 ) -> Path:
     """Use the Fly-finalized weekly cache slice for the local SQL pipeline."""
     base = Path(os.environ.get("OPS_CACHE_PATH", "")).resolve()
+    if os.environ.get("OPS_CACHE_LIVE_ACTIVE_YEAR") == f"{int(year)}|{base}":
+        return base
     current = _patch_research_ops_cache_from_fly(
         reader,
         finalized_ops,

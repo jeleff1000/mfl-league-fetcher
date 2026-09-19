@@ -26,6 +26,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 
 try:
     from multi_league.shared.import_setup import setup_module_path
@@ -94,7 +95,19 @@ def _detect_h2h_median(conn, db_name: str, year: int, cols: set) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def aggregate_standings(conn, db_name: str, years: list) -> None:
+def _active_fantasy_season(now: datetime | None = None) -> int:
+    """Return the NFL season currently in progress for a UTC timestamp."""
+    current = now or datetime.now(timezone.utc)
+    return current.year - 1 if current.month <= 2 else current.year
+
+
+def aggregate_standings(
+    conn,
+    db_name: str,
+    years: list,
+    *,
+    active_season: int | None = None,
+) -> None:
     """Create ``standings_by_year`` table from matchup data.
 
     Parameters
@@ -125,6 +138,7 @@ def aggregate_standings(conn, db_name: str, years: list) -> None:
     # above_league_median is in canonical DDL (always exists); we still need
     # to detect which years actually use H2H+Median to decide output schema
     median_years: set = set()
+    current_season = _active_fantasy_season() if active_season is None else int(active_season)
     for year in years:
         if _detect_h2h_median(conn, db_name, year, cols):
             median_years.add(year)
@@ -139,6 +153,7 @@ def aggregate_standings(conn, db_name: str, years: list) -> None:
     )
 
     for year in years:
+        unfinished_result = "'In Progress'" if int(year) == current_season else "'Missed Playoffs'"
         # Determine whether this specific year uses H2H+Median
         has_median = year in median_years
 
@@ -290,7 +305,7 @@ def aggregate_standings(conn, db_name: str, years: list) -> None:
                     WHEN mp.last_consolation_round IS NOT NULL AND mp.last_game_win = 0 THEN 'Lost Placement Game'
                     WHEN mp.last_game_consolation = 1 THEN 'Consolation'
                     WHEN mp.max_week IS NOT NULL THEN 'Eliminated'
-                    ELSE 'Missed Playoffs'
+                    ELSE {unfinished_result}
                 END AS final_result
             FROM agg a
             LEFT JOIN max_playoff mp ON {final_identity_join}

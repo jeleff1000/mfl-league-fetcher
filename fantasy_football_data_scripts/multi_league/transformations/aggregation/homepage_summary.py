@@ -29,9 +29,10 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from collections.abc import Sequence
 
 try:
@@ -1872,11 +1873,13 @@ def compute_all_manager_profiles(
 
         log(f"  Processing {len(managers_df)} managers (local)...")
 
-        # Phase 2: Compute all profiles locally
-        profiles = []
-        for row in managers_df.itertuples(index=False):
+        # Phase 2: Compute profiles on independent cursors over the same small,
+        # league-scoped in-memory database.  Every manager runs the exact same
+        # queries as before; only their independent reads overlap.
+        def build_profile(profile_conn, row):
             manager = row.manager
             franchise_id = row.franchise_id
+            profile_cache = ColumnCache(profile_conn, "memory", schema="main")
             profile = {
                 "manager": manager,
                 "franchise_id": franchise_id,
@@ -1884,74 +1887,95 @@ def compute_all_manager_profiles(
             }
 
             career = _compute_manager_career_stats(
-                local, db_name, franchise_id, manager, median_years=median_years, matchup_cols=matchup_cols
+                profile_conn, db_name, franchise_id, manager,
+                median_years=median_years, matchup_cols=matchup_cols,
             )
             profile.update(career)
 
-            badges = _compute_manager_badges(local, db_name, manager, career)
+            badges = _compute_manager_badges(profile_conn, db_name, manager, career)
             profile["badges_list"] = badges
 
-            draft = _compute_manager_draft_profile(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
+            draft = _compute_manager_draft_profile(
+                profile_conn, db_name, franchise_id, manager,
+                platform=platform, cache=profile_cache,
+            )
             profile.update(draft)
 
             if current_year:
                 draft_season = _compute_manager_draft_profile(
-                    local,
+                    profile_conn,
                     db_name,
                     franchise_id,
                     manager,
                     year=current_year,
                     prefix="season_",
                     platform=platform,
-                    cache=ctx.cache,
+                    cache=profile_cache,
                 )
                 profile.update(draft_season)
 
-            txn = _compute_manager_txn_profile(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
+            txn = _compute_manager_txn_profile(
+                profile_conn, db_name, franchise_id, manager,
+                platform=platform, cache=profile_cache,
+            )
             profile.update(txn)
 
             if current_year:
                 txn_season = _compute_manager_txn_profile(
-                    local,
+                    profile_conn,
                     db_name,
                     franchise_id,
                     manager,
                     year=current_year,
                     prefix="season_",
                     platform=platform,
-                    cache=ctx.cache,
+                    cache=profile_cache,
                 )
                 profile.update(txn_season)
 
-            trade = _compute_manager_best_trade(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
+            trade = _compute_manager_best_trade(
+                profile_conn, db_name, franchise_id, manager,
+                platform=platform, cache=profile_cache,
+            )
             profile.update(trade)
 
             if current_year:
                 trade_season = _compute_manager_best_trade(
-                    local,
+                    profile_conn,
                     db_name,
                     franchise_id,
                     manager,
                     year=current_year,
                     prefix="season_",
                     platform=platform,
-                    cache=ctx.cache,
+                    cache=profile_cache,
                 )
                 profile.update(trade_season)
 
-            rivalries = _compute_manager_rivalries(local, db_name, franchise_id, manager, cache=ctx.cache)
+            rivalries = _compute_manager_rivalries(
+                profile_conn, db_name, franchise_id, manager, cache=profile_cache,
+            )
             profile.update(rivalries)
 
-            leaders = _compute_manager_player_leaders(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
+            leaders = _compute_manager_player_leaders(
+                profile_conn, db_name, franchise_id, manager,
+                platform=platform, cache=profile_cache,
+            )
             profile.update(leaders)
 
             timeline = _compute_manager_timeline(
-                local, db_name, franchise_id, manager, median_years=median_years, matchup_cols=matchup_cols,
-                cache=ctx.cache,
+                profile_conn, db_name, franchise_id, manager,
+                median_years=median_years, matchup_cols=matchup_cols,
+                cache=profile_cache,
             )
             profile["timeline_data"] = timeline
+            return profile
 
-            profiles.append(profile)
+        profiles = _compute_profiles_concurrently(
+            local,
+            list(managers_df.itertuples(index=False)),
+            build_profile,
+        )
 
         elapsed = time.perf_counter() - t_start
         log(f"  Computed profiles for {len(profiles)} managers in {elapsed:.1f}s")
@@ -1959,6 +1983,34 @@ def compute_all_manager_profiles(
     finally:
         set_active_catalog(previous_catalog)
         ctx.close()
+
+
+def _compute_profiles_concurrently(
+    conn,
+    rows: Sequence[Any],
+    build: Callable[[Any, Any], dict[str, Any] | Any],
+    *,
+    max_workers: int = 4,
+) -> list[Any]:
+    """Map independent manager reads across cursors, preserving row order."""
+    if not rows:
+        return []
+    worker_count = max(1, min(int(max_workers), len(rows)))
+    if worker_count == 1:
+        return [build(conn, row) for row in rows]
+
+    def run(row):
+        cursor = conn.cursor()
+        try:
+            return build(cursor, row)
+        finally:
+            cursor.close()
+
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="homepage-profile",
+    ) as executor:
+        return list(executor.map(run, rows))
 
 
 def _compute_manager_career_stats(

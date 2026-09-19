@@ -2371,6 +2371,35 @@ def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monke
     assert captured["in_place"] is True
 
 
+def test_fresh_live_active_year_cache_skips_a_second_fly_patch(tmp_path, monkeypatch):
+    from scripts import refresh_yahoo_active_season
+
+    cache = tmp_path / "ops_cache.duckdb"
+    monkeypatch.setenv("OPS_CACHE_PATH", str(cache))
+    monkeypatch.delenv("OPS_CACHE_LIVE_ACTIVE_YEAR", raising=False)
+
+    def build(_reader, *, output, year, scoring_info):
+        assert year == 2026
+        output.write_bytes(b"fresh-live-cache")
+        return output
+
+    monkeypatch.setattr(refresh_yahoo_active_season, "_build_active_year_ops_cache", build)
+    monkeypatch.setattr(
+        refresh_yahoo_active_season,
+        "_patch_research_ops_cache_from_fly",
+        lambda *_args, **_kwargs: pytest.fail("fresh live cache must not be fetched and patched twice"),
+    )
+
+    refresh_yahoo_active_season._ensure_active_year_ops_cache(
+        object(), year=2026, work_dir=tmp_path, scoring_info={},
+    )
+    output = refresh_yahoo_active_season._ensure_ops_cache_matches_live(
+        object(), pd.DataFrame(), year=2026, weeks=[1, 2], work_dir=tmp_path,
+    )
+
+    assert output == cache
+
+
 def test_ops_cache_delta_identifies_only_changed_and_removed_rows():
     from scripts.refresh_yahoo_active_season import _ops_delta_keys
 

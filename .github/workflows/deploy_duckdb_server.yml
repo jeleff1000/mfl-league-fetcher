@@ -2,6 +2,12 @@ name: Deploy DuckDB Server
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_unready_recovery:
+        description: Allow image-only recovery when the current server cannot report idle state
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,6 +36,7 @@ jobs:
       - name: Update existing primary image without resetting capacity or storage
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          ALLOW_UNREADY_RECOVERY: ${{ inputs.allow_unready_recovery }}
         run: |
           set -euo pipefail
           # Image-only update preserves the live guest/env/mount configuration;
@@ -48,7 +55,10 @@ jobs:
             fi
             sleep 1
           done
-          test "$safe_to_update" = true
+          if [ "$safe_to_update" != true ]; then
+            test "$ALLOW_UNREADY_RECOVERY" = true
+            echo "Current image is unresponsive; proceeding with explicit image-only recovery"
+          fi
           update_ok=false
           for update_attempt in 1 2 3; do
             if timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes; then

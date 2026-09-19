@@ -125,6 +125,7 @@ def _resolve_active_renewal(
     seed_league_id: str | None,
     active_year: int,
     known_league_ids: dict[str, str],
+    allow_unimported_predecessor: bool = False,
 ) -> dict[str, Any] | None:
     """Validate the persisted active ID against Sleeper's native predecessor chain."""
     active_id = str(known_league_ids.get(str(active_year)) or "")
@@ -138,7 +139,7 @@ def _resolve_active_renewal(
     if not seed_league_id:
         if str(candidate.get("league_id") or "") != active_id:
             return None
-        if candidate.get("previous_league_id"):
+        if candidate.get("previous_league_id") and not allow_unimported_predecessor:
             return None
         return candidate
     if _renewal_chain_reaches_seed(
@@ -312,6 +313,7 @@ def _build_context(
         seed_league_id=seed_league_id,
         active_year=active_year,
         known_league_ids=known_league_ids,
+        allow_unimported_predecessor=bool(active_league_id),
     )
     if not renewal:
         return None, Path(), client, None

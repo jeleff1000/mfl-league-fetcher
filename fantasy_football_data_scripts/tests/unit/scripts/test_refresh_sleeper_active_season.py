@@ -99,6 +99,34 @@ def test_active_only_setting_does_not_reconstruct_a_missing_predecessor_chain(tm
     assert league is None
 
 
+def test_captured_active_identity_updates_without_importing_an_unowned_predecessor():
+    from refresh_sleeper_active_season import _resolve_active_renewal
+
+    calls = []
+
+    class Provider:
+        @staticmethod
+        def get_league(league_id):
+            calls.append(league_id)
+            assert league_id == "active"
+            return {
+                "league_id": "active",
+                "season": "2026",
+                "previous_league_id": "not-imported",
+            }
+
+    active = _resolve_active_renewal(
+        Provider(),
+        seed_league_id=None,
+        active_year=2026,
+        known_league_ids={"2026": "active"},
+        allow_unimported_predecessor=True,
+    )
+
+    assert active["league_id"] == "active"
+    assert calls == ["active"]
+
+
 @pytest.mark.parametrize('broken', ['cycle', 'wrong_identity', 'missing_link', 'duplicate_season'])
 def test_shared_import_discovery_rejects_unprovable_chain(broken):
     from multi_league.data_fetchers.sleeper.sleeper_context import discover_league_history

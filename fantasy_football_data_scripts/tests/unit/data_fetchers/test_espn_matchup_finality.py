@@ -90,6 +90,24 @@ def test_full_import_keeps_final_week_only_and_raw_live_scores(provider, archive
     assert calls == [1, 2]
 
 
+def test_repeated_live_snapshot_does_not_refetch_raw_schedule(provider):
+    schedules = {
+        1: [schedule_row()],
+        2: [schedule_row("UNDECIDED", period=2, scores=(27.5, 3.2))],
+        # ESPN repeats the current live snapshot for a future requested week.
+        3: [schedule_row("UNDECIDED", period=2, scores=(27.5, 3.2))],
+    }
+    ctx, _, original, calls = provider(schedules)
+
+    frame = espn_matchups.fetch_espn_matchups(ctx, 2026)
+
+    assert frame is not None
+    assert frame.week.tolist() == [1, 1]
+    assert frame[["win", "loss", "tie"]].values.tolist() == [[1, 0, 0], [0, 1, 0]]
+    assert schedules == original
+    assert calls == [1, 2]
+
+
 @pytest.mark.parametrize("archive", [False, True])
 def test_scoped_quick_import_holds_undecided_week(provider, archive):
     ctx, _, _, _ = provider({2: [schedule_row("UNDECIDED", period=2, scores=(27.5, 3.2))]}, archive=archive)

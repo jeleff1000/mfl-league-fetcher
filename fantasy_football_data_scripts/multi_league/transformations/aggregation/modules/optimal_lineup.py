@@ -950,20 +950,38 @@ def refresh_position_game_ranks(
             ) AS position_alltime_rank
         FROM deduped d
     """)
-    changed = {}
-    for column in ("position_season_rank", "position_alltime_rank"):
-        changed[column] = conn.execute(f"""
-            UPDATE {player_table} p SET {column} = r.{column}
-            FROM (
-                SELECT DISTINCT t.player_week, m.{column}
-                FROM {player_table} t
-                LEFT JOIN _position_game_rank_metrics m ON t.player_week = m.player_week
-                WHERE {_db_filter(db_name, 't')}
-            ) r
-            WHERE p.player_week = r.player_week
-              AND {_db_filter(db_name, 'p')}
-              AND p.{column} IS DISTINCT FROM r.{column}
-        """).fetchone()[0]
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _position_game_rank_updates AS
+        SELECT
+            t.rowid AS target_rowid,
+            m.position_season_rank,
+            m.position_alltime_rank,
+            t.position_season_rank IS DISTINCT FROM m.position_season_rank AS season_changed,
+            t.position_alltime_rank IS DISTINCT FROM m.position_alltime_rank AS alltime_changed
+        FROM {player_table} t
+        LEFT JOIN _position_game_rank_metrics m ON t.player_week = m.player_week
+        WHERE {_db_filter(db_name, 't')}
+    """)
+    season_changed, alltime_changed = conn.execute("""
+        SELECT
+            COUNT(*) FILTER (WHERE season_changed),
+            COUNT(*) FILTER (WHERE alltime_changed)
+        FROM _position_game_rank_updates
+    """).fetchone()
+    conn.execute(f"""
+        UPDATE {player_table} p
+        SET position_season_rank = r.position_season_rank,
+            position_alltime_rank = r.position_alltime_rank
+        FROM _position_game_rank_updates r
+        WHERE p.rowid = r.target_rowid
+          AND {_db_filter(db_name, 'p')}
+          AND (r.season_changed OR r.alltime_changed)
+    """)
+    changed = {
+        "position_season_rank": int(season_changed or 0),
+        "position_alltime_rank": int(alltime_changed or 0),
+    }
+    conn.execute("DROP TABLE _position_game_rank_updates")
     conn.execute("DROP TABLE _position_game_rank_metrics")
     return changed
 

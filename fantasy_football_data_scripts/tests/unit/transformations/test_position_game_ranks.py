@@ -88,3 +88,22 @@ def test_unrankable_games_clear_only_stale_game_ranks(games):
         SELECT position_season_rank,position_alltime_rank,position_week_rank,season_ppg
         FROM games WHERE player_week IN ('no_points','no_position')
     """).fetchall() == [(None, None, 88, 12), (None, None, 88, 12)]
+
+
+def test_refresh_writes_both_game_rank_columns_in_one_scoped_update(games):
+    class RecordingConnection:
+        def __init__(self, raw):
+            self.raw = raw
+            self.sql = []
+
+        def execute(self, sql, params=None):
+            self.sql.append(" ".join(str(sql).split()))
+            return self.raw.execute(sql, params) if params is not None else self.raw.execute(sql)
+
+    recorded = RecordingConnection(games)
+    _refresh(recorded)
+
+    updates = [sql for sql in recorded.sql if sql.upper().startswith("UPDATE GAMES ")]
+    assert len(updates) == 1
+    assert "POSITION_SEASON_RANK" in updates[0].upper()
+    assert "POSITION_ALLTIME_RANK" in updates[0].upper()

@@ -65,7 +65,7 @@ def _load_claim(reader: FlyReader, args: argparse.Namespace, *, allow_running: b
         f"{claim_predicate}"
         f"AND d.platform = {_literal(args.platform)} "
         f"AND d.status IN ({statuses}) "
-        "AND d.cache_verified_at IS NULL LIMIT 1",
+        "AND (d.status = 'committed_cache_pending' OR d.cache_verified_at IS NULL) LIMIT 1",
         database="___ops",
     )
     if len(rows) != 1:

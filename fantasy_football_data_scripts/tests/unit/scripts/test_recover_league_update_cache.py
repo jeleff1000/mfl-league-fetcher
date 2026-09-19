@@ -114,6 +114,22 @@ def test_blank_token_recovers_only_an_exact_committed_manual_attempt(monkeypatch
         recovery.main(["--db", "the_league", "--platform", "yahoo"])
 
 
+def test_pending_cache_recovery_accepts_stale_cache_verified_timestamp():
+    captured = []
+
+    class Reader:
+        def query(self, sql, *, database):
+            captured.append(sql)
+            return [ROW]
+
+    args = recovery.argparse.Namespace(
+        db="the_league", platform="yahoo", dispatch_token="original",
+        attempt_id="attempt", claim_version=4,
+    )
+    assert recovery._load_claim(Reader(), args) == ROW
+    assert "(d.status = 'committed_cache_pending' OR d.cache_verified_at IS NULL)" in captured[0]
+
+
 @pytest.fixture
 def ambiguous_commit(tmp_path, monkeypatch):
     from multi_league.core.league_update_manifest import manifest_digest, source_manifest_from_mapping

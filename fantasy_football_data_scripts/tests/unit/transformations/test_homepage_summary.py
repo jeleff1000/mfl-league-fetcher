@@ -661,14 +661,25 @@ def test_local_profile_context_player_lookup_without_remote_register():
         ["nfl_1_2024_1", "Lookup Player", "https://img.example/lookup.png", "nfl_1"],
     )
     remote.execute(
+        'INSERT INTO "___ops".nfl_historical.nfl_player_stats_all VALUES (?, ?, ?, ?)',
+        ["nfl_decoy_2024_1", "Other League Player", "https://img.example/decoy.png", "nfl_decoy"],
+    )
+    remote.execute(
         'INSERT INTO "___ops".nfl_historical.player_bio VALUES (?, ?)',
         ["nfl_1", "https://img.example/bio.png"],
+    )
+    remote.execute(
+        'INSERT INTO "___ops".nfl_historical.player_bio VALUES (?, ?)',
+        ["nfl_decoy", "https://img.example/decoy-bio.png"],
     )
 
     ctx = LocalProfileContext(ExecuteOnlyConnection(remote), db_name)
 
     rows = ctx.local.execute("SELECT player, headshot_url, NFL_player_id FROM player_lookup").fetchall()
     assert rows == [("Lookup Player", "https://img.example/lookup.png", "nfl_1")]
+    assert ctx.local.execute(
+        "SELECT NFL_player_id FROM nfl_id_headshots ORDER BY NFL_player_id"
+    ).fetchall() == [("nfl_1",)]
 
 
 def _memory_conn_with_schema():

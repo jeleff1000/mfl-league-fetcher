@@ -937,22 +937,54 @@ class LocalProfileContext:
         except Exception as e:
             self._log(f"[WARN] Failed to build player_lookup: {e}")
 
-        # b) NFL_player_id-based lookup (for draft/txn headshots)
+        # b) NFL_player_id-based lookup (for draft/txn headshots).  Restrict
+        # the OPS read to players actually present in this league; scanning the
+        # global bio and weekly-stat tables on every league refresh is both
+        # unnecessary and the dominant homepage setup cost.
         try:
+            id_queries: list[str] = []
+            for table in ("player_lookup", "player_fantasy", "draft", "transactions"):
+                try:
+                    columns = {
+                        str(row[0])
+                        for row in self.local.execute(f"DESCRIBE {table}").fetchall()
+                    }
+                except Exception:
+                    continue
+                if "NFL_player_id" in columns:
+                    id_queries.append(
+                        f"SELECT CAST(NFL_player_id AS VARCHAR) AS NFL_player_id FROM {table} "
+                        "WHERE NFL_player_id IS NOT NULL"
+                    )
+            wanted_ids = (
+                [str(row[0]) for row in self.local.execute(
+                    "SELECT DISTINCT NFL_player_id FROM (" + " UNION ALL ".join(id_queries) + ") "
+                    "WHERE NULLIF(TRIM(NFL_player_id), '') IS NOT NULL ORDER BY 1"
+                ).fetchall()]
+                if id_queries
+                else []
+            )
             nfl_headshots_df = remote_conn.execute("""
-                SELECT NFL_player_id, headshot_url
-                FROM (
-                    SELECT NFL_player_id, headshot_url
-                    FROM ___ops.nfl_historical.player_bio
-                    WHERE headshot_url IS NOT NULL AND NFL_player_id IS NOT NULL
+                WITH wanted AS (
+                    SELECT UNNEST(?::VARCHAR[]) AS NFL_player_id
+                ), candidates AS (
+                    SELECT bio.NFL_player_id, bio.headshot_url, 0 AS source_priority
+                    FROM ___ops.nfl_historical.player_bio AS bio
+                    JOIN wanted USING (NFL_player_id)
+                    WHERE bio.headshot_url IS NOT NULL
                     UNION ALL
-                    SELECT NFL_player_id, ANY_VALUE(headshot_url) as headshot_url
-                    FROM ___ops.nfl_historical.nfl_player_stats_all
-                    WHERE headshot_url IS NOT NULL AND NFL_player_id IS NOT NULL
-                    GROUP BY NFL_player_id
+                    SELECT stats.NFL_player_id, ANY_VALUE(stats.headshot_url) AS headshot_url,
+                           1 AS source_priority
+                    FROM ___ops.nfl_historical.nfl_player_stats_all AS stats
+                    JOIN wanted USING (NFL_player_id)
+                    WHERE stats.headshot_url IS NOT NULL
+                    GROUP BY stats.NFL_player_id
                 )
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY NFL_player_id ORDER BY 1) = 1
-            """).fetchdf()
+                SELECT NFL_player_id, headshot_url FROM candidates
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY NFL_player_id ORDER BY source_priority, headshot_url
+                ) = 1
+            """, [wanted_ids]).fetchdf()
             _create_local_table_from_df(self.local, "nfl_id_headshots", nfl_headshots_df)
         except Exception as e:
             self._log(f"[WARN] Failed to build nfl_id_headshots: {e}")

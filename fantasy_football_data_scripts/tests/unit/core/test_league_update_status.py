@@ -330,7 +330,7 @@ def test_running_claim_has_a_short_crash_recovery_lease():
         status="running",
         dispatch_token="opaque",
     )
-    assert "INTERVAL '20 minutes'" in writer.sql
+    assert "INTERVAL '3 minutes'" in writer.sql
     assert "135 minutes" not in writer.sql
 
 

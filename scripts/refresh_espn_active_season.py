@@ -721,6 +721,7 @@ def main(argv: list[str] | None = None) -> int:
                 bundle.path,
                 bundle_id=bundle.bundle_id,
                 bundle_hash=bundle.bundle_hash,
+                merge_timeout_seconds=40,
             )
             record_publication_commit(
                 receipt, result=result, bundle_id=bundle.bundle_id, path=args.json_out,

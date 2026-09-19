@@ -348,7 +348,7 @@ def record_league_update_status(
       {_literal(generation)}, {'TRUE' if is_success else 'FALSE'},
       {'NOW()' if normalized == 'running' else 'NULL'},
       {'NOW()' if is_terminal else 'NULL'},
-      {"NOW() + INTERVAL '20 minutes'" if normalized == 'running' else 'NULL'},
+      {"NOW() + INTERVAL '3 minutes'" if normalized == 'running' else 'NULL'},
       NOW(), {_literal((error or '')[:2000] or None)},
       {_literal(normalized_attempt_id)}, {normalized_claim_version},
       {'NOW()' if normalized == 'running' else 'NULL'}, {_literal(source_fingerprint)},
@@ -378,7 +378,7 @@ def record_league_update_status(
       cache_verified_at = CASE WHEN {str(normalized in {'cache_verified', 'succeeded'}).upper()} THEN COALESCE(cache_verified_at, NOW()) ELSE cache_verified_at END,
       completed_at = CASE WHEN {str(is_terminal).upper()} THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
       lease_expires_at = CASE
-        WHEN {_literal(normalized)} = 'running' THEN NOW() + INTERVAL '20 minutes'
+        WHEN {_literal(normalized)} = 'running' THEN NOW() + INTERVAL '3 minutes'
         WHEN {str(is_terminal).upper()} THEN NULL
         ELSE lease_expires_at END,
       updated_at = NOW(), error = {_literal((error or '')[:2000] or None)}

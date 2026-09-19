@@ -130,6 +130,27 @@ OPS_WRITE_STALL_DIAGNOSTIC_SECONDS = 10.0
 # CREATE OR REPLACE), so it needs its own generous ceilings independent of the 120s admin default.
 OPS_MERGE_TIMEOUT = _env_float("OPS_MERGE_TIMEOUT", 900.0, min_value=120.0)  # per-table statement
 OPS_MERGE_HARD_EXIT = _env_float("OPS_MERGE_HARD_EXIT", 1500.0, min_value=300.0)  # whole /merge-ops call
+
+
+def _fleet_merge_step_timeout(raw_value: str | None) -> float:
+    """Return a bounded caller-specific fleet merge step timeout.
+
+    Full imports keep the configured fleet default. Weekly updates may request
+    a smaller ceiling so a tiny partition cannot occupy the sole writer until
+    the entire workflow is killed.
+    """
+    if raw_value is None or not raw_value.strip():
+        return FLEET_MERGE_STEP_TIMEOUT_SECONDS
+    try:
+        timeout_seconds = float(raw_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid fleet merge step timeout") from exc
+    if not math.isfinite(timeout_seconds) or not 10.0 <= timeout_seconds <= 300.0:
+        raise HTTPException(
+            status_code=400,
+            detail="Fleet merge step timeout must be between 10 and 300 seconds",
+        )
+    return timeout_seconds
 # /compact-db runs with the pool closed (sole open connection), so it can safely
 # use more threads/memory than the per-query guardrails to rebuild wide tables fast.
 COMPACT_THREADS = int(os.environ.get("COMPACT_THREADS", "4"))
@@ -1202,14 +1223,20 @@ class _MergeHardExitTimer(threading.Timer):
                 os._exit(1)
 
 
-def _commit_merge(conn, *, step: str, hard_exit_timer: threading.Timer):
+def _commit_merge(
+    conn,
+    *,
+    step: str,
+    hard_exit_timer: threading.Timer,
+    timeout_seconds: float = MERGE_STEP_TIMEOUT_SECONDS,
+):
     """Disarm process termination before COMMIT can run an automatic checkpoint.
 
     The statement still has its DuckDB interrupt timeout; worker deadlines are
     unchanged. Cancelling only before the later explicit checkpoint is too late.
     """
     hard_exit_timer.cancel()
-    return _interrupting_execute(conn, "COMMIT", step=step)
+    return _interrupting_execute(conn, "COMMIT", step=step, timeout_seconds=timeout_seconds)
 
 
 def _start_merge_hard_exit_timer(db_name: str, seconds: float | None = None) -> threading.Timer:
@@ -3476,7 +3503,13 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             conn.close()
 
 
-def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -> dict:
+def _merge_fleet_bundle(
+    leagues_path: Path,
+    manifest: dict,
+    extract_dir: Path,
+    *,
+    step_timeout_seconds: float = FLEET_MERGE_STEP_TIMEOUT_SECONDS,
+) -> dict:
     """Atomically merge a validated fleet partition bundle into ___leagues.duckdb.
 
     Shares the delta publish-state table (db_name = ``___fleet``) for
@@ -3516,7 +3549,7 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
                 sql,
                 params,
                 step=step,
-                timeout_seconds=FLEET_MERGE_STEP_TIMEOUT_SECONDS,
+                timeout_seconds=step_timeout_seconds,
             )
 
         try:
@@ -3540,7 +3573,12 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
             except fleet_merge.FleetGenerationConflict as exc:
                 raise DeltaConflictError(str(exc)) from exc
             _delta_upsert_state(conn, manifest, "COMMITTED", result=result)
-            _commit_merge(conn, step="commit fleet partition", hard_exit_timer=hard_exit_timer)
+            _commit_merge(
+                conn,
+                step="commit fleet partition",
+                hard_exit_timer=hard_exit_timer,
+                timeout_seconds=step_timeout_seconds,
+            )
             in_transaction = False
             _checkpoint_after_merge(
                 conn,
@@ -3581,6 +3619,7 @@ async def merge_fleet_partition(
     file: UploadFile = _FILE_PARAM,
     x_bundle_id: str | None = Header(None),
     x_bundle_hash: str | None = Header(None),
+    x_merge_step_timeout_seconds: str | None = Header(None),
 ):
     try:
         validate_admin_token(get_bearer_token(request))
@@ -3588,6 +3627,7 @@ async def merge_fleet_partition(
         track_event("auth_failed", {"endpoint": "/merge-fleet-partition"})
         raise HTTPException(status_code=401, detail="Unauthorized") from e
 
+    merge_step_timeout = _fleet_merge_step_timeout(x_merge_step_timeout_seconds)
     sentinel = fleet_merge.FLEET_DB_SENTINEL
     publish_token: str | None = None
     data_dir = Path(os.environ.get("DATA_DIR", "/data"))
@@ -3642,7 +3682,13 @@ async def merge_fleet_partition(
                 size_mb=round(written / (1024 * 1024), 2),
             )
             try:
-                result = await asyncio.to_thread(_merge_fleet_bundle, leagues_path, manifest, extract_dir)
+                result = await asyncio.to_thread(
+                    _merge_fleet_bundle,
+                    leagues_path,
+                    manifest,
+                    extract_dir,
+                    step_timeout_seconds=merge_step_timeout,
+                )
             except DeltaConflictError as exc:
                 track_event("fleet_partition_conflict", {"bundle_id": manifest.get("bundle_id")})
                 raise HTTPException(status_code=409, detail=str(exc)) from exc

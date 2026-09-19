@@ -181,6 +181,19 @@ def test_fleet_partition_requires_admin(client):  # noqa: F811
     assert resp.status_code == 401
 
 
+def test_weekly_fleet_timeout_is_bounded_without_changing_full_import_default():  # noqa: F811
+    import main as main_mod
+
+    assert main_mod._fleet_merge_step_timeout(None) == main_mod.FLEET_MERGE_STEP_TIMEOUT_SECONDS
+    assert main_mod._fleet_merge_step_timeout("40") == 40.0
+    with pytest.raises(Exception) as exc:
+        main_mod._fleet_merge_step_timeout("9")
+    assert getattr(exc.value, "status_code", None) == 400
+    with pytest.raises(Exception) as exc:
+        main_mod._fleet_merge_step_timeout("301")
+    assert getattr(exc.value, "status_code", None) == 400
+
+
 def test_fleet_commit_owns_aggregate_timestamp_and_replay_is_idempotent(
     data_dir, client, tmp_path
 ):  # noqa: F811

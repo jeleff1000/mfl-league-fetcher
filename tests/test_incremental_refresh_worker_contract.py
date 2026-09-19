@@ -110,7 +110,7 @@ def test_active_updates_use_bounded_ops_and_runtime_dependencies(platform: str, 
 def test_active_updates_reserve_time_to_fail_and_exit_before_two_minutes(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "- name: Set hard update deadline" in text
-    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 105 ))" in text
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 90 ))" in text
     assert 'remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))' in text
     assert 'timeout --signal=KILL "${remaining}s" python scripts/refresh_' in text
     assert 'timeout --signal=KILL 8s python scripts/record_league_update_status.py' in text
@@ -421,6 +421,12 @@ def test_all_platforms_overlap_publication_claim_with_local_staging():
         wait = main.index("claim_future.result()", stage)
         publish = main.index("merge_fleet_partition(", wait)
         assert start < stage < wait < publish
+
+
+def test_all_platforms_bound_weekly_fly_merge_to_forty_seconds():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        assert "merge_timeout_seconds=40" in text
 
 
 def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():

@@ -248,6 +248,7 @@ class FlyTarget:
         *,
         bundle_id: str,
         bundle_hash: str,
+        merge_timeout_seconds: int | None = None,
     ) -> dict:
         """Publish an active-season scoped bundle through Fly's fast fleet lane.
 
@@ -262,6 +263,10 @@ class FlyTarget:
             "X-Bundle-Id": bundle_id,
             "X-Bundle-Hash": bundle_hash,
         }
+        if merge_timeout_seconds is not None:
+            if not 10 <= int(merge_timeout_seconds) <= 300:
+                raise ValueError("merge_timeout_seconds must be between 10 and 300")
+            extra_headers["X-Merge-Step-Timeout-Seconds"] = str(int(merge_timeout_seconds))
         try:
             resp = self._post_file(
                 "merge-fleet-partition",

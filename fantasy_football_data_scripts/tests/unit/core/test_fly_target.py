@@ -132,6 +132,7 @@ def test_merge_fleet_partition_posts_a_scoped_bundle(fly_env, tmp_path):
             bundle_path,
             bundle_id="fleet-2026-draft",
             bundle_hash="bundle-hash",
+            merge_timeout_seconds=40,
         )
 
     assert result["status"] == "COMMITTED"
@@ -140,6 +141,7 @@ def test_merge_fleet_partition_posts_a_scoped_bundle(fly_env, tmp_path):
     assert kwargs["headers"]["X-Db-Name"] == "___fleet"
     assert kwargs["headers"]["X-Bundle-Id"] == "fleet-2026-draft"
     assert kwargs["headers"]["X-Bundle-Hash"] == "bundle-hash"
+    assert kwargs["headers"]["X-Merge-Step-Timeout-Seconds"] == "40"
 
 
 def test_fleet_publish_reconciles_a_post_commit_http_failure(fly_env, tmp_path):

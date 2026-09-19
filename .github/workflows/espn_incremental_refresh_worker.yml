@@ -86,7 +86,7 @@ jobs:
           fi
 
       - name: Set hard update deadline
-        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 105 ))" >> "$GITHUB_ENV"
+        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 90 ))" >> "$GITHUB_ENV"
 
       - name: Checkout application code
         uses: actions/checkout@v5

@@ -129,6 +129,49 @@ def test_resolve_active_update_segment_rejects_overlapping_active_platform_owner
         )
 
 
+def test_merge_provider_chain_ids_adds_imported_settings_chain_without_losing_other_legs():
+    from multi_league.core.league_update_lineage import (
+        ActiveUpdateSegment,
+        merge_provider_chain_ids,
+    )
+
+    segment = ActiveUpdateSegment(
+        platform="yahoo",
+        current_league_id="470.l.3",
+        league_ids={"2023": "423.l.1", "2024": "449.l.2", "2026": "470.l.3"},
+        historical_platforms=("sleeper",),
+    )
+
+    assert merge_provider_chain_ids(
+        {"2025": "sleeper-2025", "2026": "470.l.3"}, segment,
+    ) == {
+        "2023": "423.l.1",
+        "2024": "449.l.2",
+        "2025": "sleeper-2025",
+        "2026": "470.l.3",
+    }
+
+
+def test_merge_provider_chain_ids_rejects_a_saved_identity_conflict():
+    import pytest
+
+    from multi_league.core.league_update_lineage import (
+        ActiveUpdateSegment,
+        ActiveUpdateSegmentError,
+        merge_provider_chain_ids,
+    )
+
+    segment = ActiveUpdateSegment(
+        platform="espn",
+        current_league_id="222",
+        league_ids={"2025": "222", "2026": "222"},
+        historical_platforms=(),
+    )
+
+    with pytest.raises(ActiveUpdateSegmentError, match="conflicting ESPN league ID for 2025"):
+        merge_provider_chain_ids({"2025": "111"}, segment)
+
+
 @pytest.mark.parametrize(
     "saved_platform,unexpected_platform,unexpected_id",
     [("sleeper", "yahoo", "470.l.164172"),

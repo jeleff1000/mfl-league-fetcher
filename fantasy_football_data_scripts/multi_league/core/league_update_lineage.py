@@ -129,6 +129,35 @@ class ActiveUpdateSegment:
     historical_platforms: tuple[str, ...]
 
 
+def merge_provider_chain_ids(
+    saved_ids: Mapping[object, object] | None,
+    segment: ActiveUpdateSegment,
+) -> dict[str, str]:
+    """Merge the imported provider timeline into a worker context.
+
+    ``league_settings`` is the canonical record of which provider owned each
+    imported season.  Refresh contexts must carry those exact IDs so a weekly
+    run cannot collapse a multi-year chain to only the active season.  Context
+    values from other platform legs are retained; conflicting values fail
+    closed before provider fetch.
+    """
+    merged = {
+        str(year).strip(): str(league_id).strip()
+        for year, league_id in (saved_ids or {}).items()
+        if str(year).strip() and str(league_id).strip()
+    }
+    for year, league_id in segment.league_ids.items():
+        year_key = str(year).strip()
+        provider_id = str(league_id).strip()
+        existing = merged.get(year_key)
+        if existing and existing != provider_id:
+            raise ActiveUpdateSegmentError(
+                f"saved context has a conflicting {segment.platform.upper()} league ID for {year_key}"
+            )
+        merged[year_key] = provider_id
+    return dict(sorted(merged.items(), key=lambda item: int(item[0])))
+
+
 def _platform(value: object) -> str:
     return str(value or "").strip().lower()
 

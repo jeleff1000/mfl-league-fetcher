@@ -80,6 +80,7 @@ def _build_context(
     active_year: int,
     work_dir: Path,
     active_league_id: str | None = None,
+    league_ids: dict[str, str] | None = None,
     frontend_settings: dict[str, Any] | None = None,
 ) -> tuple[Any, Path, Any, Any]:
     """Load stored ESPN cookies and construct only the active-season context."""
@@ -101,6 +102,14 @@ def _build_context(
         raise RuntimeError(f"Fly has no league name for ESPN league {db_name}")
 
     league_id = int(active_league_id or credentials["league_id"])
+    context_league_ids = {
+        str(year): int(saved_id)
+        for year, saved_id in (league_ids or {str(active_year): league_id}).items()
+    }
+    saved_active_id = context_league_ids.get(str(active_year))
+    if saved_active_id is not None and saved_active_id != league_id:
+        raise RuntimeError("Fly and caller have conflicting active ESPN league IDs")
+    context_league_ids[str(active_year)] = league_id
     ctx = ESPNContext(
         league_id=league_id,
         league_name=league_name,
@@ -117,7 +126,7 @@ def _build_context(
         standings_weights=frontend.get("standings_weights"),
         is_private=frontend.get("is_private") is True,
         import_mode="quick",
-        league_ids={str(active_year): league_id},
+        league_ids=context_league_ids,
     )
     client = ESPNAPIClient(ctx.league_id, ctx.espn_s2, ctx.swid)
     league = client.get_league(active_year)
@@ -487,22 +496,28 @@ def main(argv: list[str] | None = None) -> int:
             "current_league_id": active_segment.current_league_id,
             "historical_platforms": list(active_segment.historical_platforms),
         }
+        from multi_league.core.league_update_lineage import merge_provider_chain_ids
         from multi_league.core.league_update_ownership import source_preservation_snapshot
 
         preservation_witnesses = source_preservation_snapshot(source_frames)
         transform_source_frames, historical_source_rows = _split_active_transform_source_frames(
             source_frames, active_year=active_year,
         )
+        frontend_settings = _frontend_settings_from_source_context(
+            source_frames["league_context"],
+            db_name=args.db,
+        )
+        imported_chain = merge_provider_chain_ids(
+            frontend_settings.get("league_ids"), active_segment,
+        )
         ctx, context_path, client, league = _build_context(
             reader=reader,
             db_name=args.db,
             active_year=active_year,
             active_league_id=captured_league_id or active_segment.current_league_id,
+            league_ids=imported_chain,
             work_dir=work_dir,
-            frontend_settings=_frontend_settings_from_source_context(
-                source_frames["league_context"],
-                db_name=args.db,
-            ),
+            frontend_settings=frontend_settings,
         )
         local_db = LocalLeagueDB(work_dir, args.db)
         try:

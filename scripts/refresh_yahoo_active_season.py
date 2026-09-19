@@ -1909,6 +1909,14 @@ def main(argv: list[str] | None = None) -> int:
             source_frames["league_context"],
             db_name=args.db,
         )
+        from multi_league.core.league_update_lineage import merge_provider_chain_ids
+
+        # league_settings is the canonical imported provider timeline. Carry
+        # every persisted Yahoo season into the quick context so refreshes do
+        # not collapse a complete renewal chain to the context's active key.
+        frontend_settings["league_ids"] = merge_provider_chain_ids(
+            frontend_settings.get("league_ids"), active_segment,
+        )
         ctx, context_path = _build_context_from_fly(
             args.db,
             data_dir_override=str(work_dir),

@@ -144,6 +144,66 @@ def test_build_context_uses_saved_active_segment_id_not_registry_anchor(tmp_path
     assert observed == {"client_league_id": 222222, "year": 2026}
 
 
+def test_build_context_retains_the_complete_imported_espn_year_map(tmp_path, monkeypatch):
+    from multi_league.data_fetchers.espn import espn_api_client, espn_context
+    from multi_league.utils import credential_store
+    from refresh_espn_active_season import _build_context
+
+    class Context:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self.team_to_guid = {}
+            self.team_to_team_name = {}
+            self.team_to_manager_by_year = {}
+            self.team_to_guid_by_year = {}
+
+        def save(self, path):
+            path.write_text("{}", encoding="utf-8")
+
+    class Client:
+        def __init__(self, *_args):
+            pass
+
+        def get_league(self, _year):
+            return SimpleNamespace(
+                teams=[SimpleNamespace(team_id=1, team_name="One", owners=[{"id": "owner-1"}])]
+            )
+
+    monkeypatch.setattr(
+        credential_store,
+        "retrieve_espn_credentials",
+        lambda _db_name, **_kwargs: {
+            "league_id": 222,
+            "league_name": "Registry Name",
+            "espn_s2": "s2",
+            "swid": "{SWID}",
+        },
+    )
+    monkeypatch.setattr(espn_api_client, "ESPNAPIClient", Client)
+    monkeypatch.setattr(espn_context, "ESPNContext", Context)
+    monkeypatch.setattr(espn_context, "build_manager_names", lambda _teams: {1: "Manager One"})
+
+    ctx, _, _, _ = _build_context(
+        reader=SimpleNamespace(),
+        db_name="private_espn",
+        active_year=2026,
+        active_league_id="222",
+        league_ids={"2024": "222", "2025": "222", "2026": "222"},
+        work_dir=tmp_path,
+        frontend_settings={
+            "league_name": "Canonical Name",
+            "manager_name_overrides": {},
+            "franchise_merges": [],
+            "keeper_rules": None,
+            "league_rules": None,
+            "standings_weights": None,
+            "is_private": True,
+        },
+    )
+
+    assert ctx.league_ids == {"2024": 222, "2025": 222, "2026": 222}
+
+
 def _draft_payload(*, drafted=True, pick_count=6, rounds=2):
     return {
         "draftDetail": {

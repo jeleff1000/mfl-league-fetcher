@@ -27,6 +27,17 @@ def test_background_refresh_call_overlaps_main_work_and_returns_value():
         assert future.result(timeout=1) == "cache-ready"
 
 
+def test_start_background_refresh_call_surfaces_failure():
+    from multi_league.core.league_refresh import start_background_refresh_call
+
+    def fail():
+        raise RuntimeError("claim lost")
+
+    future = start_background_refresh_call(fail)
+    with pytest.raises(RuntimeError, match="claim lost"):
+        future.result(timeout=1)
+
+
 def test_provider_roster_merge_guard_rejects_silent_player_collapse():
     import duckdb
 

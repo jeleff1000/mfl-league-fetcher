@@ -36,6 +36,14 @@ def background_refresh_call(call: Callable[[], Any]):
         executor.shutdown(wait=True, cancel_futures=True)
 
 
+def start_background_refresh_call(call: Callable[[], Any]):
+    """Start one bounded independent call and return its result future."""
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="refresh-input")
+    future = executor.submit(call)
+    future.add_done_callback(lambda _future: executor.shutdown(wait=False))
+    return future
+
+
 def run_independent_refresh_preflight(
     tasks: Mapping[str, Callable[[], Any]],
 ) -> dict[str, Any]:

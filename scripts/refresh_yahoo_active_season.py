@@ -1723,6 +1723,7 @@ def main(argv: list[str] | None = None) -> int:
         finalized_source_boundary,
         hydrate_local_refresh_sources,
         run_independent_refresh_preflight,
+        start_background_refresh_call,
         stage_refresh_partitions,
     )
     from multi_league.core.local_db import LocalLeagueDB
@@ -2017,6 +2018,11 @@ def main(argv: list[str] | None = None) -> int:
                     history=history,
                 )
             local_db.connect()
+            from multi_league.core.league_update_publish_claim import renew_claim_for_publication
+
+            claim_future = start_background_refresh_call(
+                lambda: renew_claim_for_publication(reader, database_name=args.db, platform="yahoo")
+            )
             stage_timer = PhaseTimer()
             from multi_league.core.league_update_ownership import (
                 assert_refresh_preservation,
@@ -2075,9 +2081,7 @@ def main(argv: list[str] | None = None) -> int:
             stage_timer.mark("bundle_build")
             receipt["homepage_preservation_stage_seconds"] = stage_timer.finish()
             timer.mark("homepage_preservation_stage")
-            from multi_league.core.league_update_publish_claim import renew_claim_for_publication
-
-            renew_claim_for_publication(reader, database_name=args.db, platform="yahoo")
+            claim_future.result()
             timer.mark("prepublish_claim")
             result = FlyTarget().merge_fleet_partition(
                 bundle.path,

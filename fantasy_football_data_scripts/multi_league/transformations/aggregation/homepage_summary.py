@@ -1990,7 +1990,7 @@ def _compute_profiles_concurrently(
     rows: Sequence[Any],
     build: Callable[[Any, Any], dict[str, Any] | Any],
     *,
-    max_workers: int = 4,
+    max_workers: int = 8,
 ) -> list[Any]:
     """Map independent manager reads across cursors, preserving row order."""
     if not rows:

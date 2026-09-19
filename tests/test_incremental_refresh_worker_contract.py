@@ -404,6 +404,17 @@ def test_all_platforms_overlap_active_ops_cache_with_provider_fetch():
         assert start < fetch < wait
 
 
+def test_all_platforms_overlap_publication_claim_with_local_staging():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        main = text.split("def main(", 1)[1]
+        start = main.index("claim_future = start_background_refresh_call(")
+        stage = main.index("stage_refresh_partitions(", start)
+        wait = main.index("claim_future.result()", stage)
+        publish = main.index("merge_fleet_partition(", wait)
+        assert start < stage < wait < publish
+
+
 def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     text = (ROOT / "scripts" / "refresh_sleeper_active_season.py").read_text(encoding="utf-8")
     ownership = (

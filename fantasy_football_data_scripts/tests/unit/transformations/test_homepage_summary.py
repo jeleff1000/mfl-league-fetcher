@@ -23,6 +23,13 @@ from multi_league.transformations.aggregation.homepage_summary import (
 from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext
 
 
+def test_manager_profile_parallelism_uses_eight_bounded_workers_by_default():
+    import inspect
+
+    parameter = inspect.signature(_compute_profiles_concurrently).parameters["max_workers"]
+    assert parameter.default == 8
+
+
 def test_manager_profile_tasks_use_independent_concurrent_cursors():
     conn = duckdb.connect(":memory:")
     barrier = threading.Barrier(2)

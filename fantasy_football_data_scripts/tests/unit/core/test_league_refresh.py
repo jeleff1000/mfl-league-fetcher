@@ -1,9 +1,30 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 import pandas as pd
 import pytest
+
+
+def test_background_refresh_call_overlaps_main_work_and_returns_value():
+    from multi_league.core.league_refresh import background_refresh_call
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def background():
+        started.set()
+        assert release.wait(timeout=1)
+        return "cache-ready"
+
+    with background_refresh_call(background) as future:
+        assert started.wait(timeout=1)
+        assert not future.done()
+        time.sleep(0.01)
+        release.set()
+        assert future.result(timeout=1) == "cache-ready"
 
 
 def test_provider_roster_merge_guard_rejects_silent_player_collapse():

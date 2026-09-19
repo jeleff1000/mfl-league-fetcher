@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -1717,6 +1718,7 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION, build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
         active_refresh_publish_tables,
+        background_refresh_call,
         completed_weeks_to_refresh,
         finalized_source_boundary,
         hydrate_local_refresh_sources,
@@ -1742,9 +1744,8 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.league_update_lineage import assert_canonical_history_complete
 
     preflight = run_independent_refresh_preflight({
-        "entitlement": lambda: assert_league_update_entitled(
-            reader, database_name=args.db
-        ) if args.execute else None,
+        "entitlement": lambda: assert_league_update_entitled(reader, database_name=args.db)
+        if args.execute else None,
         "canonical_history": lambda: assert_canonical_history_complete(
             reader, database_name=args.db, active_season=active_year
         ),
@@ -1887,33 +1888,49 @@ def main(argv: list[str] | None = None) -> int:
             # otherwise correctly restored historical source rows appear new.
             preservation_before = preservation_witnesses
             timer.mark("local_hydration")
-            receipt["fetch_rows"] = _merge_refresh_payloads(
-                ctx=ctx,
-                local_db=local_db,
-                oauth=oauth,
+            active_scoring = _active_year_scoring_info(
+                local_db,
+                db_name=args.db,
                 year=active_year,
-                refresh_weeks=refresh_weeks,
-                finalized_ops=finalized_ops,
             )
-            receipt["source_manifest_complete"] = yahoo_source_manifest_complete(
-                refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"],
-                plan=persisted_plan, year=active_year,
-            )
-            from multi_league.core.league_update_plan import active_publication_covers_plan
-            receipt["source_manifest_scope_complete"] = (
-                active_publication_covers_plan(
-                    persisted_plan, year=active_year, weeks=refresh_weeks,
+            ops_context = background_refresh_call(
+                lambda: _ensure_active_year_ops_cache(
+                    reader,
+                    year=active_year,
+                    work_dir=work_dir,
+                    scoring_info=active_scoring,
                 )
-                and receipt["fetch_rows"].get("draft_validated") is True
-            )
-            timer.mark("provider_fetch")
-            if not args.execute:
-                receipt["status"] = "DRY_RUN_READY"
-                receipt["phase_seconds"] = timer.finish()
-                print(json.dumps(receipt, sort_keys=True))
-                if args.json_out:
-                    args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
-                return 0
+            ) if args.execute else nullcontext(None)
+            with ops_context as ops_future:
+                receipt["fetch_rows"] = _merge_refresh_payloads(
+                    ctx=ctx,
+                    local_db=local_db,
+                    oauth=oauth,
+                    year=active_year,
+                    refresh_weeks=refresh_weeks,
+                    finalized_ops=finalized_ops,
+                )
+                receipt["source_manifest_complete"] = yahoo_source_manifest_complete(
+                    refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"],
+                    plan=persisted_plan, year=active_year,
+                )
+                from multi_league.core.league_update_plan import active_publication_covers_plan
+                receipt["source_manifest_scope_complete"] = (
+                    active_publication_covers_plan(
+                        persisted_plan, year=active_year, weeks=refresh_weeks,
+                    )
+                    and receipt["fetch_rows"].get("draft_validated") is True
+                )
+                timer.mark("provider_fetch")
+                if not args.execute:
+                    receipt["status"] = "DRY_RUN_READY"
+                    receipt["phase_seconds"] = timer.finish()
+                    print(json.dumps(receipt, sort_keys=True))
+                    if args.json_out:
+                        args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+                    return 0
+                ops_future.result()
+            timer.mark("player_ops_seed")
 
             from multi_league.core.league_update_validation import (
                 assert_transformed_active_matchup_scope,
@@ -1938,18 +1955,6 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             active_connection = local_db.connect()
-            active_scoring = _active_year_scoring_info(
-                local_db,
-                db_name=args.db,
-                year=active_year,
-            )
-            _ensure_active_year_ops_cache(
-                reader,
-                year=active_year,
-                work_dir=work_dir,
-                scoring_info=active_scoring,
-            )
-            timer.mark("player_ops_seed")
             receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(
                 reader,
                 ops_cache=Path(os.environ.get("OPS_CACHE_PATH", "")),

@@ -389,6 +389,21 @@ def test_direct_execute_runs_enforce_the_same_paid_entitlement_as_ui_runs():
         )
 
 
+def test_all_platforms_overlap_active_ops_cache_with_provider_fetch():
+    provider_calls = {
+        "yahoo": '_merge_refresh_payloads(',
+        "espn": '_merge_active_payloads(',
+        "sleeper": '_merge_active_payloads(',
+    }
+    for platform, provider_call in provider_calls.items():
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        main = text.split("def main(", 1)[1]
+        start = main.index("ops_context = background_refresh_call(")
+        fetch = main.index(provider_call, start)
+        wait = main.index("ops_future.result()", fetch)
+        assert start < fetch < wait
+
+
 def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     text = (ROOT / "scripts" / "refresh_sleeper_active_season.py").read_text(encoding="utf-8")
     ownership = (

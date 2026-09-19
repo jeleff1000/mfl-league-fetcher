@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
 from pathlib import Path
 import re
@@ -22,6 +23,17 @@ import pandas as pd
 
 class RefreshScopeError(RuntimeError):
     """The refresh input cannot prove a safe finalized-game boundary."""
+
+
+@contextmanager
+def background_refresh_call(call: Callable[[], Any]):
+    """Run one independent refresh input alongside the caller's main work."""
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="refresh-input")
+    future = executor.submit(call)
+    try:
+        yield future
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def run_independent_refresh_preflight(

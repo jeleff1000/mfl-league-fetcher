@@ -45,4 +45,13 @@ jobs:
             sleep 1
           done
           timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes
-          curl --fail --silent --max-time 10 https://league-history-duckdb.fly.dev/ready | jq -e '.accepting_queries == true'
+          ready=false
+          for attempt in $(seq 1 20); do
+            state="$(curl --fail --silent --max-time 5 https://league-history-duckdb.fly.dev/ready || true)"
+            if echo "$state" | jq -e '.accepting_queries == true' >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 3
+          done
+          test "$ready" = true

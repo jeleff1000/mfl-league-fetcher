@@ -14,6 +14,8 @@ import logging
 
 import pandas as pd
 
+from multi_league.core.league_refresh import espn_schedule_is_final
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,6 +172,13 @@ def _raw_schedule_matches_period(schedule: list[dict] | None, scoring_period: in
     if not periods:
         return None
     return scoring_period in periods
+
+
+def _matchup_period_is_final(schedule: list[dict]) -> bool:
+    """Respect explicit outcomes without changing legacy missing-winner fallback."""
+    if not any(str(row.get("winner") or "").strip() for row in schedule):
+        return True
+    return espn_schedule_is_final(schedule)
 
 
 def _box_score_snapshot_signature(box_scores: list) -> tuple:
@@ -385,6 +394,9 @@ def fetch_espn_matchups_modern(
                 f"  [MATCHUPS] {year}: ESPN returned a stale schedule for "
                 f"requested week {week}; skipping it"
             )
+            continue
+        if not _matchup_period_is_final(raw_schedule):
+            log(f"  [MATCHUPS] {year} week {week}: fantasy outcomes not final; holding matchup rows")
             continue
         raw_schedule_lookup = _index_raw_schedule(raw_schedule, week)
         previous_snapshot_signature = snapshot_signature
@@ -658,6 +670,9 @@ def fetch_espn_matchups_legacy(
                 f"  [MATCHUPS] {year}: ESPN returned a stale schedule for "
                 f"requested week {week}; skipping it"
             )
+            continue
+        if not _matchup_period_is_final(raw_schedule):
+            log(f"  [MATCHUPS] {year} week {week}: fantasy outcomes not final; holding matchup rows")
             continue
         raw_schedule_lookup = _index_raw_schedule(raw_schedule, week)
 

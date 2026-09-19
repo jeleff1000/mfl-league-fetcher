@@ -533,6 +533,41 @@ def aggregate_homepage_rollups(
                     return pd.notna(new_player) and old_identity != new_identity
                 return False
 
+            def transaction_highlight_recomputed_empty(column: str) -> bool:
+                """Recognize a valid transaction correction with no winner.
+
+                Transaction highlights intentionally require a positive value.
+                A later stat correction can leave the persisted source event in
+                place while making it ineligible.  The calculation raises on SQL
+                failure, so a missing new anchor plus the still-present old source
+                row means the empty result was computed rather than lost.
+                """
+                transaction_kinds = {
+                    f"{scope}_best_pickup": "add"
+                    for scope in ("season", "alltime")
+                } | {
+                    f"{scope}_worst_drop": "drop"
+                    for scope in ("season", "alltime")
+                }
+                for prefix, transaction_type in transaction_kinds.items():
+                    if not column.startswith(f"{prefix}_"):
+                        continue
+                    if pd.notna(summary.get(f"{prefix}_player")):
+                        return False
+                    player = previous.iloc[0].get(f"{prefix}_player")
+                    year = previous.iloc[0].get(f"{prefix}_year")
+                    week = previous.iloc[0].get(f"{prefix}_week")
+                    if pd.isna(player) or pd.isna(year) or pd.isna(week):
+                        return False
+                    return conn.execute(
+                        f"SELECT 1 FROM {central_table('transactions')} "
+                        "WHERE db_name = ? AND transaction_type = ? "
+                        "AND player = ? AND TRY_CAST(year AS INTEGER) = ? "
+                        "AND TRY_CAST(week AS INTEGER) = ? LIMIT 1",
+                        [db_name, transaction_type, player, int(year), int(week)],
+                    ).fetchone() is not None
+                return False
+
             for column, old_value in previous.iloc[0].items():
                 if column in {"db_name", "last_updated"} or pd.isna(old_value):
                     continue
@@ -554,6 +589,8 @@ def aggregate_homepage_rollups(
                 # common cross-season case). The new anchor player must still
                 # exist; losing the whole highlight remains a hard rejection.
                 if (column not in summary or pd.isna(summary[column])) and highlight_identity_changed(column):
+                    continue
+                if (column not in summary or pd.isna(summary[column])) and transaction_highlight_recomputed_empty(column):
                     continue
                 if column not in summary or pd.isna(summary[column]):
                     raise HomepageValidationError(f"Homepage summary lost populated value: {column}")

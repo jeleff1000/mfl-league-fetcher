@@ -656,6 +656,34 @@ def test_homepage_same_season_does_not_erase_populated_highlight(homepage_chain)
     assert conn.execute("SELECT season_best_pickup_player FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == ('Missing Pickup',)
 
 
+def test_homepage_allows_recomputed_transaction_highlight_to_clear_without_erasing_row(homepage_chain):
+    """A backed source event may stop qualifying without deleting the summary."""
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name, year, week, transaction_type, player, manager,
+             franchise_id, manager_lamar_ros_managed)
+        VALUES ('test_league', 2026, 1, 'add', 'Corrected Pickup',
+                'Shared Alias', 'f1', 4)
+    """)
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("""
+        SELECT season_best_pickup_player, season_best_pickup_lamar
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == ('Corrected Pickup', 4)
+
+    conn.execute("""
+        UPDATE public.transactions
+        SET manager_lamar_ros_managed = -5
+        WHERE db_name='test_league' AND player='Corrected Pickup'
+    """)
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("""
+        SELECT COUNT(*), MAX(season_best_pickup_player), MAX(season_best_pickup_lamar)
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == (1, None, None)
+
+
 def test_homepage_allows_optional_draft_value_to_clear_when_highlight_identity_changes(homepage_chain):
     conn = homepage_chain
     conn.execute("""

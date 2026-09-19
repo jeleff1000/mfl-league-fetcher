@@ -1233,7 +1233,7 @@ def _compute_transaction_highlights(
                 platform_player_id=row[6],
             )
     except Exception as e:
-        log(f"  [WARN] Failed to compute best pickup: {e}")
+        raise RuntimeError(f"Failed to compute best pickup: {e}") from e
 
     # Worst drop - need meaningful value (> 0) to be considered a "bad" drop
     try:
@@ -1263,7 +1263,7 @@ def _compute_transaction_highlights(
                 platform_player_id=row[6],
             )
     except Exception as e:
-        log(f"  [WARN] Failed to compute worst drop: {e}")
+        raise RuntimeError(f"Failed to compute worst drop: {e}") from e
 
     return highlights
 

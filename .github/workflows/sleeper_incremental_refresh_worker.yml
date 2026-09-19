@@ -88,9 +88,6 @@ jobs:
             exit 1
           fi
 
-      - name: Set hard update deadline
-        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 90 ))" >> "$GITHUB_ENV"
-
       - name: Checkout application code
         uses: actions/checkout@v5
         with:
@@ -151,6 +148,10 @@ jobs:
                    --claim-version "${INPUT_CLAIM_VERSION}")
           fi
           python scripts/recover_league_update_cache.py "${args[@]}"
+
+      - name: Set hard refresh deadline
+        if: ${{ !inputs.cache_only }}
+        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" >> "$GITHUB_ENV"
 
       - name: Refresh Sleeper active season
         if: ${{ !inputs.cache_only }}

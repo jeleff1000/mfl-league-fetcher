@@ -30,6 +30,19 @@ def _workflow_timeout(platform, phase):
     return shlex.join(prefix)
 
 
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+def test_two_minute_deadline_starts_after_setup_and_claim(platform):
+    path = ROOT / ".github/workflows" / f"{platform}_incremental_refresh_worker.yml"
+    workflow = path.read_text(encoding="utf-8")
+    deadline = workflow.index("- name: Set hard refresh deadline")
+    claim = workflow.index("- name: Claim paid manual update")
+    display_name = {"yahoo": "Yahoo", "espn": "ESPN", "sleeper": "Sleeper"}[platform]
+    refresh = workflow.index(f"- name: Refresh {display_name} active season")
+
+    assert claim < deadline < refresh
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in workflow
+
+
 @pytest.mark.skipif(not BASH, reason="Requires Bash and GNU timeout as on Actions")
 @pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
 @pytest.mark.parametrize("phase", ["refresh", "status"])

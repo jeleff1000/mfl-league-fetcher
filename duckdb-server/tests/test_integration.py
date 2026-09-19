@@ -1862,6 +1862,45 @@ def test_query_rw_ops_write_does_not_hold_league_merge_lock(data_dir, client, mo
     assert merge_states == ["ops_writing"]
 
 
+def test_homepage_fleet_merge_serializes_with_ops_metadata_write(monkeypatch):
+    """A homepage merge's OPS reference cannot race its lifecycle status write."""
+    import main as main_mod
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+
+    merge_entered = Event()
+    release_merge = Event()
+    status_entered = Event()
+
+    def held_merge(*args, **kwargs):
+        merge_entered.set()
+        assert release_merge.wait(2)
+        return {"status": "COMMITTED"}
+
+    def status_write(sql):
+        status_entered.set()
+        return [{"database_name": "fixture"}]
+
+    monkeypatch.setattr(main_mod, "_merge_fleet_bundle", held_merge)
+    monkeypatch.setattr(main_mod, "_execute_ops_query_rw", status_write)
+    manifest = {"schema_version": main_mod.fleet_merge.FLEET_HOMEPAGE_SCHEMA_VERSION}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        merge = pool.submit(
+            main_mod._merge_fleet_bundle_serialized,
+            object(), manifest, object(),
+        )
+        assert merge_entered.wait(1)
+        status = pool.submit(main_mod._execute_ops_query_rw_serialized, "UPDATE accounts.fixture SET value=1")
+        with pytest.raises(FutureTimeout):
+            status.result(timeout=0.05)
+        assert not status_entered.is_set()
+        release_merge.set()
+        assert merge.result(timeout=1) == {"status": "COMMITTED"}
+        assert status.result(timeout=1) == [{"database_name": "fixture"}]
+
+    assert status_entered.is_set()
+
+
 def test_replace_db_requires_admin(client):
     resp = client.post(
         "/replace-db",

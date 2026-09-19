@@ -3613,6 +3613,33 @@ def _merge_fleet_bundle(
             conn.close()
 
 
+def _merge_fleet_bundle_serialized(
+    leagues_path: Path,
+    manifest: dict,
+    extract_dir: Path,
+    *,
+    step_timeout_seconds: float = FLEET_MERGE_STEP_TIMEOUT_SECONDS,
+) -> dict:
+    """Keep OPS-backed rollups from racing their lifecycle metadata writes."""
+    if manifest.get("schema_version") in {
+        fleet_merge.FLEET_CAREER_SCHEMA_VERSION,
+        fleet_merge.FLEET_HOMEPAGE_SCHEMA_VERSION,
+    }:
+        with _ops_rebuild_lock:
+            return _merge_fleet_bundle(
+                leagues_path,
+                manifest,
+                extract_dir,
+                step_timeout_seconds=step_timeout_seconds,
+            )
+    return _merge_fleet_bundle(
+        leagues_path,
+        manifest,
+        extract_dir,
+        step_timeout_seconds=step_timeout_seconds,
+    )
+
+
 @app.post("/merge-fleet-partition")
 async def merge_fleet_partition(
     request: Request,
@@ -3683,7 +3710,7 @@ async def merge_fleet_partition(
             )
             try:
                 result = await asyncio.to_thread(
-                    _merge_fleet_bundle,
+                    _merge_fleet_bundle_serialized,
                     leagues_path,
                     manifest,
                     extract_dir,

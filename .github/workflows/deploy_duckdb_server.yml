@@ -36,14 +36,19 @@ jobs:
           # fly.toml must not undo a temporary, verified recovery capacity change.
           machines="$(flyctl machines list --app league-history-duckdb --json)"
           echo "$machines" | jq -e 'length == 1 and .[0].id == "1781e011b69068" and .[0].state == "started"' >/dev/null
+          safe_to_update=false
           for attempt in 1 2 3 4 5; do
-            state="$(curl --fail --silent --max-time 5 https://league-history-duckdb.fly.dev/ready)"
-            if echo "$state" | jq -e '.accepting_queries == true and .ops_writes == 0 and .delta_publishes == 0' >/dev/null; then
+            # /ready intentionally returns 503 during startup.  Use the
+            # always-available state endpoint so a startup regression can be
+            # repaired without requiring the broken image to become ready.
+            state="$(curl --silent --show-error --max-time 10 https://league-history-duckdb.fly.dev/internal/server-state || true)"
+            if echo "$state" | jq -e '.ops_writes == 0 and .delta_publishes == 0' >/dev/null 2>&1; then
+              safe_to_update=true
               break
             fi
-            test "$attempt" != 5
             sleep 1
           done
+          test "$safe_to_update" = true
           update_ok=false
           for update_attempt in 1 2 3; do
             if timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes; then

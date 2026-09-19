@@ -1085,6 +1085,25 @@ def merge_provider_refresh_table(
             roster_hints, on=list(contract.key_columns), how="left", validate="one_to_one",
         )
         protected = resolve_roster_defense_keys(protected, platform).drop(columns=["nfl_team_api"])
+    if table_name == "schedule" and str(platform).strip().lower() == "yahoo":
+        # Yahoo's stable team key can replace a legacy display-name key during
+        # refresh. Replace only the complete incoming week partitions in this
+        # disposable local DB so the obsolete key cannot survive beside it.
+        scope = normalized[["db_name", "year", "week"]].drop_duplicates()
+        conn = local_db.connect()
+        conn.register("_schedule_refresh_scope", scope)
+        try:
+            conn.execute(
+                """
+                DELETE FROM public.schedule AS target
+                USING _schedule_refresh_scope AS source
+                WHERE target.db_name = source.db_name
+                  AND target.year = source.year
+                  AND target.week = source.week
+                """
+            )
+        finally:
+            conn.unregister("_schedule_refresh_scope")
     local_db.merge_table(
         table_name,
         protected,

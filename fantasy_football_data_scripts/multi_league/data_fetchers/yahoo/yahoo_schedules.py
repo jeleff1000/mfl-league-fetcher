@@ -40,6 +40,7 @@ except ImportError:
 setup_module_path()
 
 from multi_league.core.date_utils import get_current_nfl_season_year
+from multi_league.core.join_keys import manager_identity_series
 
 import pandas as pd
 import yahoo_fantasy_api as yfa
@@ -357,6 +358,8 @@ def _derive_schedule_df_from_matchup_df(df: pd.DataFrame, year: int, manager_ove
         "year",
         "manager",
         "manager_guid",
+        "franchise_id",
+        "team_key",
         "team_name",
         "opponent",
         "team_points",
@@ -378,10 +381,19 @@ def _derive_schedule_df_from_matchup_df(df: pd.DataFrame, year: int, manager_ove
     sched["opponent_week"] = sched["week"]
     sched["opponent_year"] = sched["year"]
 
-    # Composite keys (manager name without spaces + identifier)
-    mgr_clean = sched["manager"].str.replace(" ", "", regex=False)
-    sched["manager_week"] = mgr_clean + sched["cumulative_week"].astype(str)
-    sched["manager_year"] = mgr_clean + sched["year"].astype(str)
+    # A Yahoo account may own multiple teams in one league, and unrelated
+    # managers may share a display name.  The season-scoped team key is the
+    # provider's unique schedule identity; use it before the canonical
+    # franchise/guid/name fallbacks so every team-week remains one-to-one.
+    identity = manager_identity_series(sched)
+    if "team_key" in sched.columns:
+        team_key = sched["team_key"].astype("string").str.strip()
+        team_key = team_key.mask(team_key.isna() | team_key.isin({"", "--", "None", "nan", "<NA>"}), pd.NA)
+        identity = team_key.fillna(identity)
+    year_key = pd.to_numeric(sched["year"], errors="coerce").round().astype("Int64").astype("string")
+    week_key = pd.to_numeric(sched["week"], errors="coerce").round().astype("Int64").astype("string")
+    sched["manager_week"] = identity + "_" + year_key + "_" + week_key
+    sched["manager_year"] = identity + "_" + year_key
 
     # Placeholders for playoff flags (enrichment step fills these later)
     if "is_playoffs" not in sched.columns:

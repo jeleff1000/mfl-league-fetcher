@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from multi_league.data_fetchers.yahoo.yahoo_schedules import (
+    _derive_schedule_df_from_matchup_df,
     build_and_save_for_year,
     coerce_dtypes,
     fetch_schedule_for_year,
@@ -127,6 +128,29 @@ class TestFetchScheduleForYear:
 
 
 class TestScheduleCoercion:
+    def test_derived_schedule_uses_team_key_when_one_owner_has_multiple_teams(self):
+        matchup = pd.DataFrame(
+            {
+                "year": [2026, 2026],
+                "week": [1, 1],
+                "manager": ["Shared Owner", "Shared Owner"],
+                "manager_guid": ["same-guid", "same-guid"],
+                "team_key": ["470.l.1.t.3", "470.l.1.t.9"],
+                "team_name": ["Alpha", "Omega"],
+                "opponent": ["Shared Owner", "Shared Owner"],
+                "team_points": [101.0, 99.0],
+                "opponent_points": [99.0, 101.0],
+                "win": [1, 0],
+                "loss": [0, 1],
+            }
+        )
+
+        result = _derive_schedule_df_from_matchup_df(matchup, 2026, {})
+
+        assert result["manager_week"].is_unique
+        assert result["manager_week"].tolist() == ["470.l.1.t.3_2026_1", "470.l.1.t.9_2026_1"]
+        assert result["manager_year"].tolist() == ["470.l.1.t.3_2026", "470.l.1.t.9_2026"]
+
     def test_coerce_dtypes_accepts_nullable_boolean_columns(self):
         df = pd.DataFrame(
             {

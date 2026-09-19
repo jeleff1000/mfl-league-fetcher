@@ -198,3 +198,40 @@ def test_matchup_refresh_replaces_a_prior_enriched_team_week_by_provider_identit
         assert stored["team_points"].tolist() == [102.0]
     finally:
         local.close()
+
+
+def test_schedule_refresh_replaces_only_the_incoming_week_when_identity_key_changes(tmp_path):
+    """A corrected Yahoo team key must not leave the old name-keyed row behind."""
+    local = LocalLeagueDB(tmp_path, "domination_league")
+    try:
+        local.ensure_table("schedule")
+        local._insert_into_table("schedule", pd.DataFrame([
+            {
+                "db_name": "domination_league", "year": 2025, "week": 17,
+                "manager": "Shared Owner", "manager_week": "SharedOwner202517",
+                "team_name": "Alpha", "team_points": 90.0,
+            },
+            {
+                "db_name": "domination_league", "year": 2026, "week": 1,
+                "manager": "Shared Owner", "manager_week": "SharedOwner202601",
+                "team_name": "Alpha", "team_points": 100.0,
+            },
+        ]))
+        incoming = pd.DataFrame([{
+            "year": 2026, "week": 1, "manager": "Shared Owner",
+            "manager_week": "470.l.1.t.3_2026_1", "manager_year": "470.l.1.t.3_2026",
+            "team_name": "Alpha", "team_points": 101.0,
+        }])
+
+        merge_provider_refresh_table(
+            local, "schedule", incoming, platform="yahoo", league_id="470.l.1",
+        )
+
+        stored = local.read_table("schedule")
+        assert len(stored) == 2
+        assert stored.loc[stored["year"] == 2025, "manager_week"].tolist() == ["SharedOwner202517"]
+        active = stored.loc[stored["year"] == 2026]
+        assert active["manager_week"].tolist() == ["470.l.1.t.3_2026_1"]
+        assert active["team_points"].tolist() == [101.0]
+    finally:
+        local.close()

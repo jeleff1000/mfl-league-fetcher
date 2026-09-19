@@ -2160,6 +2160,15 @@ def test_repair_matchup_season_swaps_only_that_table_and_preserves_homepage(data
     assert response.json()["status"] == "COMMITTED"
     assert response.json()["rows"] == 2
     assert response.json()["homepage_tables_verified"] == 2
+    quarantine = response.json()["quarantined_table"]
+    assert quarantine.startswith("__replaced_matchup_season_")
+    tables = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE '__replaced_matchup_season_%'"},
+    )
+    assert tables.status_code == 200, tables.text
+    assert tables.json() == [{"table_name": quarantine}]
     matchup_rows = client.post(
         "/query",
         headers={"Authorization": "Bearer test-read"},

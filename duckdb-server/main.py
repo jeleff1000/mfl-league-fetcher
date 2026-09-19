@@ -3648,7 +3648,6 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
     replaced_name = f"__replaced_matchup_season_{time.time_ns()}"
     target_ref = 'public."matchup_season"'
     staging_ref = f"public.{_quote_identifier(staging_name)}"
-    replaced_ref = f"public.{_quote_identifier(replaced_name)}"
     conn = db.acquire_connection(timeout=10.0)
     expired = threading.Event()
 
@@ -3714,7 +3713,6 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
             conn.execute(
                 f"ALTER TABLE {staging_ref} RENAME TO {_quote_identifier('matchup_season')}"
             )
-            conn.execute(f"DROP TABLE {replaced_ref}")
 
             final_rows = int(conn.execute(f"SELECT COUNT(*) FROM {target_ref}").fetchone()[0])
             final_keys = int(conn.execute(
@@ -3731,6 +3729,10 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
             }
             if homepage_after != homepage_before:
                 raise RuntimeError("homepage table fingerprint changed during matchup_season repair")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"matchup_season repair exceeded {MATCHUP_SEASON_REPAIR_TIMEOUT_SECONDS:g}s deadline"
+                )
             conn.execute("COMMIT")
             committed = True
         except Exception:
@@ -3743,6 +3745,7 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
             "table": "matchup_season",
             **receipts,
             "homepage_tables_verified": len(homepage_tables),
+            "quarantined_table": replaced_name,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "checkpointed": False,
         }
@@ -4253,7 +4256,24 @@ async def repair_matchup_season(request: Request):
     database_path = db.get_data_dir() / "___leagues.duckdb"
     async with _merge_lock:
         try:
-            result = await asyncio.to_thread(_rebuild_canonical_matchup_season, database_path)
+            worker = asyncio.create_task(
+                asyncio.to_thread(_rebuild_canonical_matchup_season, database_path)
+            )
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # A disconnected caller cannot abandon the live SQL thread or
+                # release the sole merge lock while its bounded repair runs.
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not worker.cancelled():
+                    worker.exception()
+                raise
         except TimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except Exception as exc:

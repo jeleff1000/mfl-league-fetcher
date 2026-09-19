@@ -143,7 +143,7 @@ def test_preservation_gate_rejects_homepage_value_becoming_null():
         assert_refresh_preservation(before, after, active_year=2026)
 
 
-def test_refresh_aggregates_rebuild_player_career_from_complete_hydrated_history(tmp_path):
+def test_refresh_aggregates_leave_atomic_server_rollups_out_of_worker_scratch(tmp_path):
     from multi_league.core.local_db import LocalLeagueDB
     from scripts.refresh_yahoo_active_season import _run_refresh_aggregates
 
@@ -151,52 +151,7 @@ def test_refresh_aggregates_rebuild_player_career_from_complete_hydrated_history
     try:
         for table_name in ("player_fantasy", "draft", "transactions"):
             local.ensure_table(table_name)
-        rows = []
-        for index in range(101):
-            year = 2025 if index < 100 else 2026
-            week = index % 17 + 1
-            rows.append({
-                "db_name": "league_a",
-                "player_week": f"p1_{year}_{week}_{index}",
-                "NFL_player_id": "p1",
-                "year": year,
-                "week": week,
-                "manager": "Joe",
-                "franchise_id": "f1",
-                "player": "Player One",
-                "fantasy_position": "RB",
-                "fantasy_points": 10.0,
-                "player_lamar": 1.5,
-                "manager_lamar": 1.2,
-                "clutch_equity": 0.5,
-                "is_started": 1,
-                "is_playoffs": 0,
-                "is_consolation": 0,
-                "win": 1 if index < 61 else 0,
-                "loss": 0 if index < 61 else 1,
-            })
-        local._insert_into_table("player_fantasy", pd.DataFrame(rows))
         conn = local.connect()
-        conn.execute("ATTACH ':memory:' AS ___ops")
-        conn.execute("CREATE SCHEMA ___ops.nfl_historical")
-        conn.execute(
-            "CREATE TABLE ___ops.nfl_historical.player_bio "
-            "(NFL_player_id VARCHAR, player VARCHAR)"
-        )
-        conn.execute(
-            "INSERT INTO ___ops.nfl_historical.player_bio VALUES ('p1', 'Player One')"
-        )
-        conn.execute(
-            "CREATE TABLE ___ops.nfl_historical.nfl_player_stats_all "
-            "(player_week VARCHAR, player VARCHAR, NFL_player_id VARCHAR, nfl_team VARCHAR, "
-            "year INTEGER, week INTEGER)"
-        )
-        conn.execute(
-            "INSERT INTO ___ops.nfl_historical.nfl_player_stats_all "
-            "SELECT player_week, 'Player One', 'p1', 'BUF', year, week "
-            "FROM public.player_fantasy"
-        )
-
         _run_refresh_aggregates(
             local,
             db_name="league_a",
@@ -205,10 +160,13 @@ def test_refresh_aggregates_rebuild_player_career_from_complete_hydrated_history
             has_finalized_matchups=False,
         )
 
-        assert conn.execute(
-            "SELECT games_rostered, wins, losses, manager_lamar, clutch_equity "
-            "FROM public.player_fantasy_career WHERE NFL_player_id = 'p1'"
-        ).fetchone() == (101, 61, 40, pytest.approx(121.2), pytest.approx(50.5))
+        tables = {
+            row[0] for row in conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+            ).fetchall()
+        }
+        assert "player_fantasy_career" not in tables
+        assert "player_fantasy_season" not in tables
     finally:
         local.close()
 

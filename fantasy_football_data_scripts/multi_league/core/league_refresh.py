@@ -1126,7 +1126,10 @@ def active_refresh_publish_tables(
     """
     from multi_league.core.delta_publish import CADENCE_ACTIVE_SEASON, canonical_table_registry
     from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION
-    from multi_league.transformations.aggregation.aggregation_utils import HOMEPAGE_ROLLUP_TABLES
+    from multi_league.transformations.aggregation.aggregation_utils import (
+        COMPLETE_CHAIN_SEASON_ROLLUP_TABLES,
+        HOMEPAGE_ROLLUP_TABLES,
+    )
 
     registry = canonical_table_registry()
     # Frontend-owned configuration is an enrichment input, not active-season
@@ -1146,6 +1149,10 @@ def active_refresh_publish_tables(
     }
     if publication_schema_version == FLEET_HOMEPAGE_SCHEMA_VERSION:
         rebuilt_rollups -= set(HOMEPAGE_ROLLUP_TABLES)
+        # V3 rebuilds these from the just-merged full chain in the same Fly
+        # transaction. Uploading scratch copies first is duplicate work and
+        # briefly writes values that the server immediately replaces.
+        excluded_config_tables |= set(COMPLETE_CHAIN_SEASON_ROLLUP_TABLES)
     available = {
         str(row[0])
         for row in source.execute(

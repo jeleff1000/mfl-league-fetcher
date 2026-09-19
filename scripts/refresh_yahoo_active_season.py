@@ -1483,94 +1483,18 @@ def _run_refresh_aggregates(
     work_dir: Path,
     has_finalized_matchups: bool,
 ) -> None:
-    """Rebuild active-season aggregate outputs without career-only work.
+    """Build only the local standings payload not owned by atomic Fly rollups.
 
-    A scoped weekly Fleet bundle publishes only season aggregates.  Reuse the
-    existing aggregate functions directly so the worker does not create
-    unpublished career tables or pay two child-process startup costs.  The
-    full quick SQL enrichment has already run before this function.
-
-    Matchup/standings aggregation stays on its existing subprocess path while
-    finalized-score output equivalence is verified separately.
+    SQL enrichment already builds the active matchup-derived tables.  V3 Fly
+    publication rebuilds season, career, and homepage aggregates from the
+    complete persisted chain after merging source facts.  Rebuilding those in
+    scratch first was duplicate work and those copies were never authoritative.
     """
-    from multi_league.transformations.aggregation.aggregate_draft_context import (
-        aggregate_draft_manager_career,
-        aggregate_draft_manager_season,
-        aggregate_draft_player_career,
-        create_draft_manager_career_table,
-        create_draft_manager_season_table,
-        create_draft_player_career_table,
-    )
-    from multi_league.transformations.aggregation.aggregate_fantasy_context import (
-        aggregate_fantasy_career,
-        aggregate_fantasy_career_all,
-        aggregate_fantasy_season,
-        aggregate_fantasy_season_all,
-        create_fantasy_career_table,
-        create_fantasy_career_table_all,
-        create_fantasy_season_table,
-        create_fantasy_season_table_all,
-    )
-    from multi_league.transformations.aggregation.aggregate_transaction_context import (
-        aggregate_transaction_manager_career,
-        aggregate_transaction_manager_season,
-        aggregate_transaction_player_career,
-        aggregate_transaction_report_card,
-        create_transaction_manager_career_table,
-        create_transaction_manager_season_table,
-        create_transaction_player_career_table,
-        create_transaction_report_card_table,
-    )
-    from multi_league.transformations.aggregation.aggregation_utils import configure_table_catalog
-
-    conn = local_db.connect()
-    _attach_ops_cache_for_enrichment(local_db)
-    configure_table_catalog(conn)
-    create_fantasy_season_table(conn, db_name)
-    aggregate_fantasy_season(conn, db_name, year=active_year)
-    create_fantasy_season_table_all(conn, db_name)
-    aggregate_fantasy_season_all(conn, db_name, year=active_year)
-    create_fantasy_career_table(conn, db_name)
-    aggregate_fantasy_career(conn, db_name)
-    create_fantasy_career_table_all(conn, db_name)
-    aggregate_fantasy_career_all(conn, db_name)
-    create_draft_manager_season_table(conn, db_name)
-    aggregate_draft_manager_season(conn, db_name)
-    create_draft_manager_career_table(conn, db_name)
-    aggregate_draft_manager_career(conn, db_name)
-    create_draft_player_career_table(conn, db_name)
-    aggregate_draft_player_career(conn, db_name)
-    create_transaction_manager_season_table(conn, db_name)
-    aggregate_transaction_manager_season(conn, db_name)
-    create_transaction_manager_career_table(conn, db_name)
-    aggregate_transaction_manager_career(conn, db_name)
-    create_transaction_player_career_table(conn, db_name)
-    aggregate_transaction_player_career(conn, db_name)
-    create_transaction_report_card_table(conn, db_name)
-    aggregate_transaction_report_card(conn, db_name)
-
     if not has_finalized_matchups:
         return
+    from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
 
-    local_db.close()
-    try:
-        subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts" / "refresh_aggregates.py"),
-                "--db",
-                db_name,
-                "--data-dir",
-                str(work_dir),
-                "--steps",
-                "matchup,standings",
-            ],
-            cwd=ROOT,
-            env=_aggregate_subprocess_env(),
-            check=True,
-        )
-    finally:
-        local_db.connect()
+    aggregate_standings(local_db.connect(), db_name, [int(active_year)])
 
 
 def _run_local_pipeline(

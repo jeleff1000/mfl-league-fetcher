@@ -621,33 +621,34 @@ def assert_refresh_derived_output_health(
         ).fetchone()[0]
         if int(summary or 0) != 1:
             raise IncompleteSourceError("homepage_league_summary must contain exactly one league row")
-    for table in ("player_fantasy_career", "player_fantasy_career_all"):
-        if not active_players:
-            continue
-        rows = _derived_id_rows(
-            conn, db_name=db_name, table_name=table, identity_column="NFL_player_id",
-            required_columns=frozenset({"db_name", "NFL_player_id", "games_rostered", "fantasy_points"}),
-        )
-        missing = active_players - rows.keys()
-        if missing:
-            raise IncompleteSourceError(
-                f"{table} lacks {len(missing)} scored active provider player(s)"
+    if not atomic_homepage:
+        for table in ("player_fantasy_career", "player_fantasy_career_all"):
+            if not active_players:
+                continue
+            rows = _derived_id_rows(
+                conn, db_name=db_name, table_name=table, identity_column="NFL_player_id",
+                required_columns=frozenset({"db_name", "NFL_player_id", "games_rostered", "fantasy_points"}),
             )
-        for player_id in active_players:
-            row = rows[player_id]
-            try:
-                games = int(row["games_rostered"])
-            except (TypeError, ValueError) as exc:
-                raise IncompleteSourceError(f"{table} has invalid career values for {player_id}") from exc
-            if row["fantasy_points"] is None or games < 1:
-                raise IncompleteSourceError(f"{table} has invalid career values for {player_id}")
+            missing = active_players - rows.keys()
+            if missing:
+                raise IncompleteSourceError(
+                    f"{table} lacks {len(missing)} scored active provider player(s)"
+                )
+            for player_id in active_players:
+                row = rows[player_id]
+                try:
+                    games = int(row["games_rostered"])
+                except (TypeError, ValueError) as exc:
+                    raise IncompleteSourceError(f"{table} has invalid career values for {player_id}") from exc
+                if row["fantasy_points"] is None or games < 1:
+                    raise IncompleteSourceError(f"{table} has invalid career values for {player_id}")
     for table, metric, positive in (
         ("matchup_career", "games", True),
         ("homepage_manager_rankings", "seasons", True),
         ("homepage_current_standings", "wins", False),
     ):
-        if atomic_homepage and table in HOMEPAGE_ROLLUP_TABLES:
-            continue  # V3 server checks complete-chain homepage outputs before COMMIT.
+        if atomic_homepage and (table in HOMEPAGE_ROLLUP_TABLES or table in CAREER_ROLLUP_TABLES):
+            continue  # V3 server checks complete-chain career/homepage outputs before COMMIT.
         if not active_franchises:
             continue
         rows = _derived_id_rows(

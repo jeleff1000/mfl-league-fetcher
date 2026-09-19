@@ -547,6 +547,13 @@ def main(argv: list[str] | None = None) -> int:
                 fetch_rows=receipt["fetch_rows"],
                 plan=persisted_plan, year=active_year,
             )
+            from multi_league.core.league_update_plan import active_publication_covers_plan
+            receipt["source_manifest_scope_complete"] = (
+                active_publication_covers_plan(
+                    persisted_plan, year=active_year, weeks=refresh_weeks,
+                )
+                and receipt["fetch_rows"].get("draft_validated") is True
+            )
             timer.mark("provider_fetch")
             if not args.execute:
                 receipt["status"] = "DRY_RUN_READY"

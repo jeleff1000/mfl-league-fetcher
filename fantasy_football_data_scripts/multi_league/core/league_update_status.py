@@ -99,10 +99,14 @@ def build_cache_recovery_receipt(
     digest = str(row.get("source_fingerprint") or "")
     if not digest or digest != str(receipt.get("source_manifest_digest") or ""):
         raise ValueError("Committed publication manifest identity changed")
-    if receipt.get("source_manifest_complete") is True \
+    manifest_scope_admitted = (
+        receipt.get("source_manifest_complete") is True
+        or receipt.get("source_manifest_scope_complete") is True
+    )
+    if manifest_scope_admitted \
        and digest != str(row.get("published_manifest_digest") or ""):
         raise ValueError("published manifest does not match the committed receipt")
-    if receipt.get("source_manifest_complete") is True \
+    if manifest_scope_admitted \
        and not receipt.get("source_manifest_json"):
         raise ValueError("Committed publication manifest is missing")
     if str(receipt.get("bundle_id") or "") != str(row.get("bundle_id") or "") \
@@ -178,8 +182,18 @@ def record_league_update_status(
     manifest_aware_publication = bool(
         has_publication and receipt.get("source_manifest_digest")
     )
+    # ``source_manifest_complete`` records whether every game in the captured
+    # week is final. ``source_manifest_scope_complete`` separately proves that
+    # every changed manifest partition was admitted, even when games remain
+    # live. A committed, scope-complete partial snapshot is the next delta
+    # baseline; a historical correction outside the fetched scope is not.
+    manifest_scope_admitted = (
+        receipt.get("source_manifest_complete") is True
+        or receipt.get("source_manifest_scope_complete") is True
+    )
     can_promote_manifest = (
-        manifest_aware_publication and receipt.get("source_manifest_complete") is True
+        manifest_aware_publication
+        and manifest_scope_admitted
     )
     source_year = int(receipt["source_year"]) if has_publication else None
     source_week = int(receipt["source_week"]) if has_publication else None
@@ -202,6 +216,13 @@ def record_league_update_status(
         if parsed_manifest.active_season != source_year:
             raise ValueError("Published source manifest belongs to a different season")
         captured_manifest_json = canonical_manifest_json(parsed_manifest)
+    require_manifest_promotion = bool(
+        can_promote_manifest
+        and (
+            manifest_scope_admitted
+            or captured_manifest_json is not None
+        )
+    )
     generation = receipt.get("bundle_id") if has_publication else None
     base_generation = receipt.get("base_generation") if has_publication else None
     durable_receipt_json = json.dumps({
@@ -212,6 +233,7 @@ def record_league_update_status(
         "source_manifest_digest": source_fingerprint,
         "source_manifest_json": receipt.get("source_manifest_json"),
         "source_manifest_complete": receipt.get("source_manifest_complete") is True,
+        "source_manifest_scope_complete": receipt.get("source_manifest_scope_complete") is True,
         "bundle_id": generation,
         "base_generation": base_generation,
     }, sort_keys=True, separators=(",", ":")) if has_publication else None
@@ -226,14 +248,14 @@ def record_league_update_status(
         f"WHERE m.database_name = {_literal(database_name)} "
         f"AND m.observed_manifest_digest = {_literal(source_fingerprint)} "
         "AND m.observed_manifest_json IS NOT NULL)"
-        if can_promote_manifest and captured_manifest_json is None
+        if require_manifest_promotion and captured_manifest_json is None
         else "TRUE"
     )
     published_guard = (
         "AND EXISTS (SELECT 1 FROM accounts.league_update_manifests m "
         "WHERE m.database_name = accounts.league_update_dispatches.database_name "
         f"AND m.published_manifest_digest = {_literal(source_fingerprint)})"
-        if can_promote_manifest
+        if require_manifest_promotion
         else ""
     )
     sql = f"""

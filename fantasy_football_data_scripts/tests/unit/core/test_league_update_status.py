@@ -220,7 +220,7 @@ def test_recovery_receipt_requires_durable_matching_publication_and_generation()
     assert recovered["source_manifest_complete"] is False
 
 
-def test_partial_commit_cache_recovery_does_not_promote_incomplete_source_current():
+def test_partial_commit_cache_recovery_keeps_the_committed_delta_baseline():
     from pathlib import Path
     from multi_league.core.league_update_manifest import canonical_manifest_json
     from multi_league.core.league_update_status import build_cache_recovery_receipt
@@ -237,6 +237,7 @@ def test_partial_commit_cache_recovery_does_not_promote_incomplete_source_curren
         "source_manifest_digest": digest,
         "source_manifest_json": canonical_manifest_json(manifest),
         "source_manifest_complete": False,
+        "source_manifest_scope_complete": True,
         "bundle_id": "bundle-4", "base_generation": 3,
     }
     writer = LocalWriter()
@@ -272,7 +273,7 @@ def test_partial_commit_cache_recovery_does_not_promote_incomplete_source_curren
         "WHERE database_name = 'the_league'"
     ).fetchone()[0]
     assert status == "succeeded"
-    assert published is None
+    assert published == digest
 
 
 def test_running_claim_has_a_short_crash_recovery_lease():
@@ -364,8 +365,8 @@ def test_missing_source_completeness_never_promotes_an_observed_manifest():
     ).fetchone() == (None,)
 
 
-def test_partial_espn_score_publication_does_not_mark_observed_manifest_current():
-    """Sunday's safe rows may commit while Monday's Chiefs game remains live."""
+def test_partial_espn_score_publication_becomes_the_next_delta_baseline():
+    """A validated partial week must not force the next refresh to replay it."""
     writer = LocalWriter()
     assert record_league_update_status(
         writer, database_name="the_league", platform="espn", status="running",
@@ -375,6 +376,7 @@ def test_partial_espn_score_publication_does_not_mark_observed_manifest_current(
     receipt = _committed_receipt() | {
         "source_manifest_digest": "manifest-digest",
         "source_manifest_complete": False,
+        "source_manifest_scope_complete": True,
         "pending_nfl_teams": ["DEN", "KC"],
     }
 
@@ -385,7 +387,7 @@ def test_partial_espn_score_publication_does_not_mark_observed_manifest_current(
     assert writer.connection.execute(
         "SELECT published_manifest_digest FROM accounts.league_update_manifests "
         "WHERE database_name = 'the_league'"
-    ).fetchone() == (None,)
+    ).fetchone() == ("manifest-digest",)
     assert writer.connection.execute(
         "SELECT status, publish_generation FROM accounts.league_update_dispatches "
         "WHERE database_name = 'the_league'"
@@ -399,7 +401,7 @@ def test_partial_espn_score_publication_does_not_mark_observed_manifest_current(
     assert writer.connection.execute(
         "SELECT published_manifest_digest FROM accounts.league_update_manifests "
         "WHERE database_name = 'the_league'"
-    ).fetchone() == (None,)
+    ).fetchone() == ("manifest-digest",)
 
 
 def test_commit_rejects_manifest_that_changed_after_dispatch():

@@ -380,6 +380,7 @@ def _merge_active_payloads(
     active_year: int,
     refresh_weeks: list[int],
     finalized_ops: pd.DataFrame,
+    player_cache: Any = None,
 ) -> dict[str, int]:
     """Fetch narrow Sleeper state while preserving earlier active-season rows."""
     from multi_league.core.canonical_settings import flatten_settings
@@ -408,7 +409,8 @@ def _merge_active_payloads(
         local_db, "league_settings", settings, platform="sleeper", league_id=league_id
     )
 
-    player_cache = SleeperPlayerCache(ctx.cache_directory)
+    if player_cache is None:
+        player_cache = SleeperPlayerCache(ctx.cache_directory)
     player_cache.refresh_if_stale(client)
     final_matchup_weeks = [week for week in refresh_weeks if _sleeper_week_is_final(active_league, week)]
     matchups = pd.DataFrame()
@@ -565,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
         hydrate_local_refresh_sources,
         stage_refresh_partitions,
         sync_player_bio_cache_from_fly,
+        sync_sleeper_scored_bio_crosswalk,
     )
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.league_update_plan import load_persisted_refresh_plan
@@ -703,6 +706,9 @@ def main(argv: list[str] | None = None) -> int:
             # otherwise correctly restored historical source rows appear new.
             preservation_before = preservation_witnesses
             timer.mark("local_hydration")
+            from multi_league.data_fetchers.sleeper.sleeper_player_cache import SleeperPlayerCache
+
+            player_cache = SleeperPlayerCache(ctx.cache_directory)
             receipt["fetch_rows"] = _merge_active_payloads(
                 ctx=ctx,
                 client=client,
@@ -711,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 refresh_weeks=refresh_weeks,
                 finalized_ops=finalized_ops,
+                player_cache=player_cache,
             )
             receipt["source_manifest_complete"] = sleeper_source_manifest_complete(
                 refresh_weeks=refresh_weeks,
@@ -759,6 +766,11 @@ def main(argv: list[str] | None = None) -> int:
                 player_names=active_platform_player_names(active_connection, platform="sleeper"),
                 nfl_player_ids=active_nfl_player_ids(active_connection),
                 provider_name_hints=active_platform_player_name_hints(active_connection, platform="sleeper"),
+            )
+            receipt["player_bio_crosswalk"] = sync_sleeper_scored_bio_crosswalk(
+                reader, active_connection, ops_cache=Path(os.environ.get("OPS_CACHE_PATH", "")),
+                player_cache=player_cache, db_name=args.db,
+                active_year=active_year,
             )
             timer.mark("player_bio_sync")
             receipt["ops_cache"] = str(

@@ -1,8 +1,8 @@
 """Build guarded NFL operations refresh inputs from live NFLverse releases.
 
-This module deliberately contains no Fly writes.  The action runner uses these
-guards to decide which completed games may enter its local ``___ops_nfl``
-artifact before that complete artifact is atomically promoted.
+The action runner uses these guards to build its local ``___ops_nfl`` artifact.
+Ordinary refreshes also use the finite mapping hook on their disposable local
+bio cache. This module contains no remote publication adapter.
 """
 
 from __future__ import annotations
@@ -10,15 +10,28 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from io import StringIO
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+import requests
 
 
 class RefreshGateError(RuntimeError):
     """The source does not prove that a live NFL refresh is safe to publish."""
+
+
+def load_nflverse_identity_roster(year: int) -> pd.DataFrame:
+    """Read the small current-season identity directory with a bounded timeout."""
+    response = requests.get(
+        "https://github.com/nflverse/nflverse-data/releases/download/rosters/"
+        f"roster_{int(year)}.csv", timeout=15,
+    )
+    response.raise_for_status()
+    return pd.read_csv(StringIO(response.text), dtype=str)
 
 
 _SCHEDULE_COLUMNS = {
@@ -368,6 +381,89 @@ def align_facts_to_wide_schema(
         additions = pd.DataFrame({column: pd.NA for column in missing}, index=out.index)
         out = pd.concat([out, additions], axis=1)
     return out.reindex(columns=columns)
+
+
+def _provider_identity(value: object, *, numeric: bool = True) -> str | None:
+    if value is None or pd.isna(value) or not str(value).strip():
+        return None
+    token = str(value).strip()
+    if not numeric:
+        return token
+    try:
+        number = Decimal(token)
+        if number.is_finite() and number > 0 and number == number.to_integral_value():
+            return str(int(number))
+    except InvalidOperation:
+        pass
+    raise RefreshGateError("player bio crosswalk contains an invalid provider ID")
+
+
+def build_sleeper_bio_mapping_rows(
+    players: pd.DataFrame, sleeper_players: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build only requested Sleeper mappings from agreeing, unique stable IDs.
+
+    ``players`` is the NFLverse roster; ``sleeper_players`` is an explicitly
+    selected provider subset, not a nickname/league-specific override. ESPN,
+    Rotowire and GSIS anchors must be unambiguous and must not contradict one
+    another. Names, teams and birthdays never establish an identity here.
+    The existing population hook emits only the two mapping columns.
+    """
+    columns = [("NFL_player_id", "VARCHAR"), ("sleeper_player_id", "DOUBLE")]
+    if "gsis_id" not in players or "player_id" not in sleeper_players:
+        raise RefreshGateError("player bio crosswalk is missing identity columns")
+    roster = players.copy(deep=True)
+    roster["gsis_id"] = roster["gsis_id"].map(lambda v: _provider_identity(v, numeric=False))
+    roster = roster[roster["gsis_id"].notna()].copy()
+    anchors = ("gsis_id", "espn_id", "rotowire_id")
+    indexes: dict[str, dict[str, set[str]]] = {}
+    for anchor in (*anchors, "sleeper_id"):
+        if anchor not in roster:
+            continue
+        roster[anchor] = roster[anchor].map(
+            lambda v: _provider_identity(v, numeric=anchor != "gsis_id")
+        )
+        index: dict[str, set[str]] = {}
+        for value, gsis in zip(roster[anchor], roster["gsis_id"]):
+            if value is not None:
+                index.setdefault(value, set()).add(gsis)
+        indexes[anchor] = index
+    resolved: dict[str, str] = {}
+    seen_provider_ids: set[str] = set()
+    for provider in sleeper_players.to_dict("records"):
+        provider_id = _provider_identity(provider.get("player_id"))
+        if provider_id is None or provider_id in seen_provider_ids:
+            raise RefreshGateError("player bio crosswalk requires unique nonempty provider IDs")
+        seen_provider_ids.add(provider_id)
+        candidates: set[str] = set()
+        supplied: dict[str, str] = {}
+        for anchor in anchors:
+            value = _provider_identity(provider.get(anchor), numeric=anchor != "gsis_id")
+            if value is None:
+                continue
+            supplied[anchor] = value
+            matches = indexes.get(anchor, {}).get(value, set())
+            if len(matches) > 1:
+                raise RefreshGateError(f"ambiguous player bio crosswalk: {anchor}")
+            candidates.update(matches)
+        if len(candidates) != 1:
+            raise RefreshGateError("player bio crosswalk has missing or disagreeing stable anchors")
+        (gsis,) = candidates
+        if gsis in resolved:
+            raise RefreshGateError("multiple Sleeper players claim one NFL identity")
+        target = roster[roster["gsis_id"] == gsis]
+        for anchor, value in supplied.items():
+            if anchor in target and any(v != value for v in target[anchor].dropna()):
+                raise RefreshGateError(f"conflicting player bio crosswalk: {anchor}")
+        if "sleeper_id" in target and any(v != provider_id for v in target["sleeper_id"].dropna()):
+            raise RefreshGateError("NFL roster already has a conflicting Sleeper ID")
+        if indexes.get("sleeper_id", {}).get(provider_id, set()) - {gsis}:
+            raise RefreshGateError("Sleeper ID already belongs to another NFL identity")
+        resolved[gsis] = provider_id
+    selected = roster[roster["gsis_id"].isin(resolved)].drop_duplicates("gsis_id").copy()
+    selected["sleeper_id"] = selected["gsis_id"].map(resolved)
+    facts = pd.DataFrame(columns=["NFL_player_id", "player", "position", "nfl_team"])
+    return build_player_bio_rows(facts, selected, columns)
 
 
 def build_player_bio_rows(
@@ -725,6 +821,7 @@ def upsert_player_bio_rows(
     rows: pd.DataFrame,
     *,
     table: str = "nfl_historical.player_bio",
+    mapping_only: bool = False,
 ) -> tuple[int, int]:
     """Refresh finalized-game bios without erasing fields absent from NFLverse.
 
@@ -733,7 +830,13 @@ def upsert_player_bio_rows(
     game keeps ``player_bio`` and the aggregate headshot/name fields coherent;
     it also means a rookie's first appearance does not require a separate
     backfill.  Null source fields intentionally retain their existing value.
+
+    ``mapping_only`` instead accepts just NFL_player_id/sleeper_player_id from
+    ``build_sleeper_bio_mapping_rows``. It fills absent links on existing bios,
+    rejects both directions of identity conflict, and never changes metadata.
     """
+    if mapping_only:
+        return _upsert_sleeper_bio_mappings(con, rows, table=table)
     if rows.empty:
         return 0, 0
     target = _qident(table)
@@ -802,6 +905,81 @@ def upsert_player_bio_rows(
     finally:
         con.execute("DROP TABLE IF EXISTS _live_refresh_bio_merged")
         con.unregister("_live_refresh_bio")
+
+
+def _upsert_sleeper_bio_mappings(
+    con: duckdb.DuckDBPyConnection, rows: pd.DataFrame, *, table: str,
+) -> tuple[int, int]:
+    """Fill absent IDs in the local bio cache using one guarded transaction."""
+    sql = _sleeper_bio_mapping_sql(rows, table=table)
+    if not sql:
+        return 0, 0
+    try:
+        for statement in sql.split(";"):
+            if statement.strip():
+                result = con.execute(statement)
+        inserted, updated = result.fetchone()
+        return int(inserted), int(updated)
+    except duckdb.Error as exc:
+        try:
+            con.execute("ROLLBACK")
+        except duckdb.TransactionException:
+            pass
+        raise RefreshGateError(f"mapping-only transaction rejected: {exc}") from exc
+
+
+def _sleeper_bio_mapping_sql(rows: pd.DataFrame, *, table: str) -> str:
+    """Compile the guarded local-cache mapping transaction."""
+    if list(rows.columns) != ["NFL_player_id", "sleeper_player_id"]:
+        raise RefreshGateError("mapping-only rows must contain exactly the two identity columns")
+    source = rows.copy(deep=True)
+    source["NFL_player_id"] = source["NFL_player_id"].map(lambda v: _provider_identity(v, numeric=False))
+    source["sleeper_player_id"] = source["sleeper_player_id"].map(_provider_identity)
+    if source.isna().any().any() or any(source[c].duplicated().any() for c in source):
+        raise RefreshGateError("mapping-only rows must be complete and one-to-one")
+    if source.empty:
+        return ""
+    if ";" in table or source["NFL_player_id"].str.contains(";", regex=False).any():
+        raise RefreshGateError("mapping identity is incompatible with the SQL script transport")
+    target = _qident(table)
+    values = ", ".join(
+        "('" + nfl_id.replace("'", "''") + "', " + provider_id + ")"
+        for nfl_id, provider_id in source.itertuples(index=False, name=None)
+    )
+    return f"""
+        BEGIN TRANSACTION;
+        CREATE OR REPLACE TEMP TABLE _live_refresh_bio_mappings AS
+            SELECT * FROM (VALUES {values}) AS v(NFL_player_id, sleeper_player_id);
+        SELECT CASE WHEN EXISTS (
+            SELECT source.NFL_player_id
+            FROM _live_refresh_bio_mappings source
+            LEFT JOIN {target} existing USING (NFL_player_id)
+            GROUP BY source.NFL_player_id
+            HAVING COUNT(existing.NFL_player_id) <> 1
+        ) THEN error('mapping-only target is missing or ambiguous') ELSE true END;
+        SELECT CASE WHEN EXISTS (
+            SELECT source.NFL_player_id
+            FROM _live_refresh_bio_mappings source
+            JOIN {target} existing
+              ON existing.NFL_player_id = source.NFL_player_id
+              OR existing.sleeper_player_id = CAST(source.sleeper_player_id AS DOUBLE)
+            WHERE (existing.NFL_player_id IS DISTINCT FROM source.NFL_player_id)
+               OR (existing.sleeper_player_id IS NOT NULL
+                   AND existing.sleeper_player_id <> CAST(source.sleeper_player_id AS DOUBLE))
+        ) THEN error('mapping-only update conflicts with existing provider identities') ELSE true END;
+        CREATE OR REPLACE TEMP TABLE _live_refresh_bio_receipt AS
+            SELECT 0 AS inserted, COUNT(*) AS updated
+            FROM {target} existing JOIN _live_refresh_bio_mappings source USING (NFL_player_id)
+            WHERE existing.sleeper_player_id IS NULL;
+            UPDATE {target} AS existing
+            SET sleeper_player_id = CAST(source.sleeper_player_id AS DOUBLE)
+            FROM _live_refresh_bio_mappings source
+            WHERE existing.NFL_player_id = source.NFL_player_id
+              AND existing.sleeper_player_id IS NULL
+            ;
+        COMMIT;
+        SELECT inserted, updated FROM _live_refresh_bio_receipt;
+    """
 
 
 def _hydrate_primary_position(

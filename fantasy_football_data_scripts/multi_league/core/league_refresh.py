@@ -570,6 +570,63 @@ def sync_player_bio_cache_from_fly(
     return {"provider_ids": len(canonical_ids), "player_bio_rows": int(len(source))}
 
 
+def sync_sleeper_scored_bio_crosswalk(
+    reader: Any, conn: duckdb.DuckDBPyConnection, *, ops_cache: Path | str,
+    player_cache: Any, db_name: str, active_year: int,
+) -> dict[str, int]:
+    """Resolve only scored, unmapped active players using the already fetched cache.
+
+    The NFLverse roster is fetched only if exact cached bio links remain absent.
+    Canonical bio remains read-only here; normal refresh uses the disposable Ops
+    cache, then its existing exact-ID resolver. No provider/name override exists.
+    """
+    from multi_league.data_fetchers.live_nfl_ops_refresh import (
+        build_sleeper_bio_mapping_rows, load_nflverse_identity_roster, upsert_player_bio_rows,
+    )
+
+    candidates = conn.execute("""
+        SELECT DISTINCT CAST(TRY_CAST(sleeper_player_id AS BIGINT) AS VARCHAR)
+        FROM public.player_fantasy
+        WHERE db_name = ? AND year = ? AND fantasy_points <> 0
+          AND (NFL_player_id IS NULL OR TRIM(NFL_player_id) = ''
+               OR UPPER(NFL_player_id) LIKE 'SLEEPER-%')
+          AND TRY_CAST(sleeper_player_id AS BIGINT) IS NOT NULL
+    """, [db_name, int(active_year)]).fetchall()
+    ids = {value for (value,) in candidates}
+    if not ids:
+        return {"mapped": 0}
+    cache = duckdb.connect(str(ops_cache), read_only=True)
+    try:
+        known = cache.execute(
+            "SELECT CAST(TRY_CAST(sleeper_player_id AS BIGINT) AS VARCHAR) "
+            "FROM nfl_historical.player_bio WHERE sleeper_player_id IN ("
+            + ",".join(ids) + ") AND NFL_player_id IS NOT NULL"
+        ).fetchall()
+    finally:
+        cache.close()
+    ids -= {value for (value,) in known}
+    if not ids:
+        return {"mapped": 0}
+    players = []
+    for provider_id in sorted(ids):
+        player = player_cache.get_player(provider_id)
+        if not player or str(player.get("player_id")) != provider_id:
+            raise RefreshScopeError("scored Sleeper identity is absent from the fetched player cache")
+        players.append(player)
+    roster = load_nflverse_identity_roster(active_year)
+    mappings = build_sleeper_bio_mapping_rows(roster, pd.DataFrame(players))
+    sync_player_bio_cache_from_fly(
+        reader, ops_cache=ops_cache, platform="sleeper", provider_ids=set(),
+        nfl_player_ids=set(mappings["NFL_player_id"]),
+    )
+    cache = duckdb.connect(str(ops_cache))
+    try:
+        _, updated = upsert_player_bio_rows(cache, mappings, mapping_only=True)
+    finally:
+        cache.close()
+    return {"mapped": updated}
+
+
 def _team_code(value: object) -> str:
     if value is None or pd.isna(value):
         return ""

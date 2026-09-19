@@ -218,13 +218,17 @@ class ESPNAPIClient:
         trades = client.get_raw_transactions(2024, scoring_period=1)
     """
 
-    def __init__(self, league_id: int, espn_s2: str = None, swid: str = None):
+    def __init__(
+        self, league_id: int, espn_s2: str = None, swid: str = None,
+        *, request_timeout: float = 30,
+    ):
         self.league_id = league_id
         self.espn_s2 = espn_s2
         self.swid = swid
         self._league_cache: dict[int, Any] = {}
         self._history_routes: dict[int, bool] = {}
         self._session = requests.Session()
+        self._request_timeout = request_timeout
 
         # Set cookies for private league access
         if espn_s2 and swid:
@@ -696,7 +700,7 @@ class ESPNAPIClient:
                 query["seasonId"] = str(year)
             resp = self._session.get(
                 self._build_league_url(year, history=history),
-                params=query, headers=headers, timeout=30,
+                params=query, headers=headers, timeout=self._request_timeout,
             )
             try:
                 resp.raise_for_status()

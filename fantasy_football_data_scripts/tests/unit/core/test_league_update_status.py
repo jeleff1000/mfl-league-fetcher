@@ -6,7 +6,11 @@ import duckdb
 
 from multi_league.core.league_refresh import finalized_source_boundary
 from multi_league.core.league_update_manifest import manifest_digest, source_manifest_from_mapping
-from multi_league.core.league_update_status import assert_league_update_entitled, record_league_update_status
+from multi_league.core.league_update_status import (
+    assert_league_update_entitled,
+    record_league_update_status,
+    start_league_update_execution,
+)
 
 
 def test_finalized_source_boundary_is_deterministic_and_game_scoped():
@@ -53,6 +57,47 @@ class Writer:
         self.sql = sql
         assert database == "___ops"
         return [("the_league",)]
+
+
+def test_start_execution_combines_entitlement_and_running_claim():
+    class Reader:
+        def query_scalar(self, sql, *, database):
+            assert "league_inventory" in sql
+            assert database == "___ops"
+            return 1
+
+    writer = Writer()
+    assert start_league_update_execution(
+        Reader(),
+        writer,
+        database_name="the_league",
+        platform="sleeper",
+        dispatch_token="opaque",
+        attempt_id="attempt",
+        claim_version=3,
+        workflow_run_id=42,
+    )
+    assert "status = 'running'" in writer.sql
+    assert "dispatch_token = 'opaque'" in writer.sql
+    assert "workflow_run_id = COALESCE(workflow_run_id, 42)" in writer.sql
+
+
+def test_start_execution_keeps_direct_execute_entitlement_without_status_write():
+    class Reader:
+        def query_scalar(self, sql, *, database):
+            assert "league_inventory" in sql
+            assert database == "___ops"
+            return 1
+
+    writer = Writer()
+    assert start_league_update_execution(
+        Reader(),
+        writer,
+        database_name="the_league",
+        platform="espn",
+        dispatch_token=None,
+    )
+    assert writer.sql == ""
 
 
 def test_entitlement_uses_paid_fly_rows_and_only_explicit_grandfathers():

@@ -129,34 +129,6 @@ jobs:
           --run-id "${{ github.run_id }}"
           --run-attempt "${{ github.run_attempt }}"
 
-      - name: Claim paid UI update
-        if: inputs.execute && !inputs.cache_only && inputs.dispatch_token != ''
-        run: >-
-          python scripts/record_league_update_status.py
-          --db "${INPUT_DB_NAME}"
-          --platform espn
-          --status running
-          --dispatch-token "${INPUT_DISPATCH_TOKEN}"
-          --attempt-id "${INPUT_ATTEMPT_ID}"
-          --claim-version "${INPUT_CLAIM_VERSION}"
-          --require-entitled
-
-      - name: Start paid manual update
-        if: inputs.execute && !inputs.cache_only && steps.manual_claim.outcome == 'success'
-        env:
-          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token }}
-          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id }}
-          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version }}
-        run: >-
-          python scripts/record_league_update_status.py
-          --db "${INPUT_DB_NAME}"
-          --platform espn
-          --status running
-          --dispatch-token "${UPDATE_TOKEN}"
-          --attempt-id "${UPDATE_ATTEMPT_ID}"
-          --claim-version "${UPDATE_CLAIM_VERSION}"
-          --require-entitled
-
       - name: Validate cache-only recovery request
         if: inputs.cache_only
         env:

@@ -145,6 +145,49 @@ def assert_league_update_entitled(reader: Any, *, database_name: str) -> None:
         raise PermissionError(f"League update is not entitled: {database_name}")
 
 
+def start_league_update_execution(
+    reader: Any,
+    writer: Any,
+    *,
+    database_name: str,
+    platform: str,
+    dispatch_token: str | None,
+    attempt_id: str | None = None,
+    claim_version: int = 1,
+    workflow_run_id: int | str | None = None,
+) -> bool:
+    """Authorize an update and claim its running state in the worker process.
+
+    UI dispatch already creates the durable claim.  Starting a second Python
+    process solely to move that claim from ``dispatched`` to ``running`` added
+    material latency before every provider fetch.  Keeping the same guarded
+    transition in the refresh preflight preserves ownership while allowing it
+    to overlap the other independent Fly reads.
+
+    Direct/local execute calls may not have a dispatch token.  They still pass
+    the paid/grandfathered entitlement gate but do not create lifecycle state.
+    """
+    assert_league_update_entitled(reader, database_name=database_name)
+    normalized_token = str(dispatch_token or "").strip()
+    if not normalized_token:
+        return True
+    if writer is None:
+        raise RuntimeError("A claimed league update requires a Fly writer")
+    claimed = record_league_update_status(
+        writer,
+        database_name=database_name,
+        platform=platform,
+        status="running",
+        dispatch_token=normalized_token,
+        attempt_id=attempt_id,
+        claim_version=claim_version,
+        workflow_run_id=workflow_run_id,
+    )
+    if not claimed:
+        raise RuntimeError("Worker no longer owns this league update claim")
+    return True
+
+
 def record_league_update_status(
     writer: Any,
     *,

@@ -1736,7 +1736,8 @@ def main(argv: list[str] | None = None) -> int:
 
     timer = PhaseTimer()
     reader = FlyReader()
-    from multi_league.core.league_update_status import assert_league_update_entitled
+    from multi_league.core.fly_writer import FlyWriter
+    from multi_league.core.league_update_status import start_league_update_execution
     active_year = args.year
     if active_year is None:
         active_year = int(
@@ -1745,8 +1746,16 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.league_update_lineage import assert_canonical_history_complete
 
     preflight = run_independent_refresh_preflight({
-        "entitlement": lambda: assert_league_update_entitled(reader, database_name=args.db)
-        if args.execute else None,
+        "entitlement": lambda: start_league_update_execution(
+            reader,
+            FlyWriter(),
+            database_name=args.db,
+            platform="yahoo",
+            dispatch_token=os.environ.get("LEAGUE_UPDATE_TOKEN"),
+            attempt_id=os.environ.get("LEAGUE_UPDATE_ATTEMPT_ID"),
+            claim_version=int(os.environ.get("LEAGUE_UPDATE_CLAIM_VERSION") or 1),
+            workflow_run_id=os.environ.get("GITHUB_RUN_ID"),
+        ) if args.execute else None,
         "canonical_history": lambda: assert_canonical_history_complete(
             reader, database_name=args.db, active_season=active_year
         ),

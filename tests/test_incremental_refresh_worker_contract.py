@@ -188,12 +188,12 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert "observed_manifest_digest:" in text
     assert "push:" not in text
     assert "scripts/record_league_update_status.py" in text
-    assert "--status running" in text
-    assert text.count('--attempt-id "${INPUT_ATTEMPT_ID}"') >= 2
-    assert text.count('--claim-version "${INPUT_CLAIM_VERSION}"') >= 2
+    assert "- name: Claim paid UI update" not in text
+    assert "- name: Start paid manual update" not in text
+    assert text.count('--attempt-id "${INPUT_ATTEMPT_ID}"') >= 1
+    assert text.count('--claim-version "${INPUT_CLAIM_VERSION}"') >= 1
     assert text.count('--attempt-id "${UPDATE_ATTEMPT_ID}"') >= 3
     assert text.count('--claim-version "${UPDATE_CLAIM_VERSION}"') >= 3
-    assert "--require-entitled" in text
     assert f"scripts/refresh_{platform}_active_season.py" in text
     assert '--observed-manifest-digest "${OBSERVED_MANIFEST_DIGEST}"' in text
     assert "scripts/warm_vercel_cache.py" in text
@@ -366,6 +366,14 @@ def test_post_commit_diagnostics_are_nonfatal_and_separate_from_publication(file
     assert "if-no-files-found: error" in artifact
 
 
+def test_all_platform_refreshes_start_claim_inside_parallel_preflight():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        assert "start_league_update_execution(" in text
+        preflight = text.split("preflight = run_independent_refresh_preflight({", 1)[1].split("})", 1)[0]
+        assert '"entitlement": lambda: start_league_update_execution(' in preflight
+
+
 def test_all_platform_updates_publish_against_the_hydrated_source_generation():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
@@ -383,8 +391,8 @@ def test_all_platform_updates_publish_against_the_hydrated_source_generation():
 def test_direct_execute_runs_enforce_the_same_paid_entitlement_as_ui_runs():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
-        assert "assert_league_update_entitled(reader, database_name=args.db)" in text
-        assert text.index("assert_league_update_entitled(reader, database_name=args.db)") < text.index(
+        assert "start_league_update_execution(" in text
+        assert text.index("start_league_update_execution(") < text.index(
             "bundle = build_fleet_partition_bundle("
         )
 

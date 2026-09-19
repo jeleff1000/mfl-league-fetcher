@@ -316,7 +316,12 @@ def assert_retained_season_rollup_coverage(conn, db_name: str, *, season_years: 
         )
 
 
-def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:
+def aggregate_career_rollups(
+    conn,
+    db_name: str,
+    *,
+    refresh_game_ranks: bool = True,
+) -> dict[str, int]:
     """Run the normal career aggregations on a complete, merged league connection.
 
     Weekly publication must call this on Fly after merging changed partitions,
@@ -361,11 +366,13 @@ def aggregate_career_rollups(conn, db_name: str) -> dict[str, int]:
     # Validate the centralized shell before the first destructive operation.
     for table in (*aggregations, "matchup_h2h_career", "matchup_h2h_season"):
         ensure_aggregate_table(conn, get_active_catalog(), table)
-    # v2 publication has no season pass. v3 already refreshed these ranks;
-    # this idempotent call writes zero cells when the game inputs are unchanged.
-    from multi_league.transformations.aggregation.modules.optimal_lineup import refresh_position_game_ranks
+    # V2 publication has no season pass and still owns this refresh. V3 calls
+    # the season builder immediately beforehand, so repeating the all-history
+    # rank scan adds write latency without changing a cell.
+    if refresh_game_ranks:
+        from multi_league.transformations.aggregation.modules.optimal_lineup import refresh_position_game_ranks
 
-    refresh_position_game_ranks(conn, central_table("player_fantasy"), db_name=db_name)
+        refresh_position_game_ranks(conn, central_table("player_fantasy"), db_name=db_name)
     result = {table: aggregate(conn, db_name) for table, aggregate in aggregations.items()}
     _, result["matchup_h2h_career"] = aggregate_matchup_h2h(conn, db_name, season_years=set())
     return result

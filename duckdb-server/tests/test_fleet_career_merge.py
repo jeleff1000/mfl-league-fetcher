@@ -385,6 +385,24 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == historical
 
 
+def test_homepage_merge_refreshes_game_ranks_only_once(client, tmp_path, monkeypatch):  # noqa: F811
+    """Season publication owns the all-history rank refresh for v3 bundles."""
+    from multi_league.transformations.aggregation import aggregation_utils
+
+    original = aggregation_utils.aggregate_career_rollups
+    calls: list[bool] = []
+
+    def recorded(conn, db_name, *, refresh_game_ranks=True):
+        calls.append(refresh_game_ranks)
+        return original(conn, db_name, refresh_game_ranks=refresh_game_ranks)
+
+    monkeypatch.setattr(aggregation_utils, "aggregate_career_rollups", recorded)
+    response = _publish(client, _bundle(tmp_path, homepage=True))
+
+    assert response.status_code == 200, response.text
+    assert calls == [False]
+
+
 @pytest.mark.parametrize('data_dir', ['missing_historical_franchise'], indirect=True)
 def test_http_missing_historical_aggregate_is_repaired_inside_scoped_publication(client, tmp_path):  # noqa: F811
     source_before = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025")

@@ -772,7 +772,13 @@ def apply_fleet_merge(
                     season_rollup_years[db_name] = sorted(rollup_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
-                career_rollups[db_name] = aggregate_career_rollups(aggregation_conn, db_name)
+                career_rollups[db_name] = aggregate_career_rollups(
+                    aggregation_conn,
+                    db_name,
+                    refresh_game_ranks=(
+                        manifest.get("schema_version") != FLEET_HOMEPAGE_SCHEMA_VERSION
+                    ),
+                )
                 career_seconds[db_name] = round(time.perf_counter() - career_start, 4)
                 if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
                     from multi_league.transformations.aggregation.aggregation_utils import (

@@ -608,6 +608,32 @@ def _startup_db_sync(data_dir: Path) -> None:
     # fails, init_pool raises and startup exits without serving stale data.
     logger.info("DuckDB startup: pool init begin")
     db.init_pool()
+    # A narrowly repaired database may intentionally retain its post-repair
+    # WAL until a separate maintenance window. Honor the persisted marker so
+    # startup and shutdown do not turn a lightweight recovery into a 16 GB
+    # checkpoint.
+    conn = db.acquire_connection(timeout=10.0)
+    try:
+        recovery_table = conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_catalog=current_database() AND table_schema='merge_admin' "
+            "AND table_name='storage_recovery_state'"
+        ).fetchone()
+        recovery_active = bool(
+            recovery_table
+            and conn.execute(
+                "SELECT 1 FROM merge_admin.storage_recovery_state "
+                "WHERE recovery_key='matchup_season_corruption_wal_only' AND active LIMIT 1"
+            ).fetchone()
+        )
+        if recovery_active:
+            conn.execute("SET checkpoint_threshold='100TB'")
+            conn.execute("PRAGMA disable_checkpoint_on_shutdown")
+            logger.warning(
+                "DuckDB storage recovery mode active: automatic checkpoints disabled"
+            )
+    finally:
+        db.release_connection(conn)
     logger.info("DuckDB startup: pool init complete")
 
 
@@ -3661,6 +3687,11 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
     timer.start()
     committed = False
     try:
+        # The existing corrupt block is only encountered by CHECKPOINT. Keep
+        # this one-table repair WAL-only; a persisted marker reapplies the same
+        # guardrail on future starts until controlled storage maintenance.
+        conn.execute("SET checkpoint_threshold='100TB'")
+        conn.execute("PRAGMA disable_checkpoint_on_shutdown")
         target_row = conn.execute(
             "SELECT sql FROM duckdb_tables() WHERE database_name = current_database() "
             "AND schema_name = 'public' AND table_name = 'matchup_season'"
@@ -3733,6 +3764,17 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
                 raise TimeoutError(
                     f"matchup_season repair exceeded {MATCHUP_SEASON_REPAIR_TIMEOUT_SECONDS:g}s deadline"
                 )
+            conn.execute("CREATE SCHEMA IF NOT EXISTS merge_admin")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS merge_admin.storage_recovery_state ("
+                "recovery_key VARCHAR PRIMARY KEY, active BOOLEAN NOT NULL, "
+                "updated_at TIMESTAMP NOT NULL, detail VARCHAR)"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO merge_admin.storage_recovery_state VALUES "
+                "('matchup_season_corruption_wal_only', TRUE, current_timestamp, "
+                "'canonical matchup_season rebuilt; checkpoint deferred')"
+            )
             conn.execute("COMMIT")
             committed = True
         except Exception:
@@ -3740,12 +3782,28 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
                 conn.execute("ROLLBACK")
             raise
 
+        quarantine_cleanup = "retained"
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            conn.execute(
+                f"DROP TABLE public.{_quote_identifier(replaced_name)}"
+            )
+            conn.execute("COMMIT")
+            quarantine_cleanup = "dropped"
+        except Exception:
+            with suppress(Exception):
+                conn.execute("ROLLBACK")
+            logger.exception(
+                "Canonical matchup_season is live, but corrupt quarantine cleanup was deferred"
+            )
+
         return {
             "status": "COMMITTED",
             "table": "matchup_season",
             **receipts,
             "homepage_tables_verified": len(homepage_tables),
             "quarantined_table": replaced_name,
+            "quarantine_cleanup": quarantine_cleanup,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "checkpointed": False,
         }

@@ -2162,13 +2162,31 @@ def test_repair_matchup_season_swaps_only_that_table_and_preserves_homepage(data
     assert response.json()["homepage_tables_verified"] == 2
     quarantine = response.json()["quarantined_table"]
     assert quarantine.startswith("__replaced_matchup_season_")
+    assert response.json()["quarantine_cleanup"] == "dropped"
     tables = client.post(
         "/query",
         headers={"Authorization": "Bearer test-read"},
         json={"sql": "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE '__replaced_matchup_season_%'"},
     )
     assert tables.status_code == 200, tables.text
-    assert tables.json() == [{"table_name": quarantine}]
+    assert tables.json() == []
+    recovery = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT recovery_key, active FROM merge_admin.storage_recovery_state"},
+    )
+    assert recovery.status_code == 200, recovery.text
+    assert recovery.json() == [{
+        "recovery_key": "matchup_season_corruption_wal_only",
+        "active": True,
+    }]
+    threshold = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"sql": "SELECT current_setting('checkpoint_threshold') AS value"},
+    )
+    assert threshold.status_code == 200, threshold.text
+    assert "TiB" in threshold.json()[0]["value"]
     matchup_rows = client.post(
         "/query",
         headers={"Authorization": "Bearer test-read"},

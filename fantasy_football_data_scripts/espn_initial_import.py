@@ -304,7 +304,11 @@ def main():
                 log("[TARGETED FETCH] Running SQL enrichments (local)...")
                 from multi_league.transformations.sql_enrichments import SQLEnrichments
 
-                eng = SQLEnrichments(db_name=db_name, data_dir=str(data_dir), quick=is_quick_import, conn=db.connect())
+                eng = SQLEnrichments(
+                    db_name=db_name, data_dir=str(data_dir), quick=is_quick_import, conn=db.connect(),
+                    manager_name_overrides=ctx.manager_name_overrides,
+                    franchise_merges=ctx.franchise_merges,
+                )
                 eng.load_settings_from_db()
                 eng.run_all()
                 eng.close()  # no-op — db owns the connection
@@ -929,7 +933,11 @@ def main():
             from multi_league.transformations.sql_enrichments import SQLEnrichments
 
             md_db_name = runtime.db_name
-            eng = SQLEnrichments(db_name=md_db_name, data_dir=str(data_dir), quick=is_quick_import, conn=db.connect())
+            eng = SQLEnrichments(
+                db_name=md_db_name, data_dir=str(data_dir), quick=is_quick_import, conn=db.connect(),
+                manager_name_overrides=ctx.manager_name_overrides,
+                franchise_merges=ctx.franchise_merges,
+            )
             roster_by_year, scoring_params = eng.load_settings_from_db()
             eng.roster_by_year = roster_by_year
             eng._update_scoring_params(scoring_params)

@@ -715,16 +715,15 @@ class TransactionEnrichmentsMixin:
         settings_table = self._qualified_name("league_settings")
         add_like_predicate = _add_like_predicate("t")
 
-        # Initialize fa_lamar_ros / player_lamar_ros_total to 0 for all adds
-        # BEFORE the main UPDATE. Adds where the player has no player_fantasy
-        # rows after the transaction week (injured / suspended / taxi / cut)
-        # would otherwise stay NULL because the INNER JOIN yields nothing.
-        # 0 is the correct default — the player produced 0 LAMAR ROS.
+        # Initialize only missing ROS values before the main UPDATE. New rows
+        # with no player window correctly become 0. Hydrated rows keep their
+        # prior finalized value until a matching recalculation below replaces
+        # it (including a legitimate corrected zero).
         init_ros_cols = []
         if "fa_lamar_ros" in self._get_table_columns("transactions"):
-            init_ros_cols.append("fa_lamar_ros = 0")
+            init_ros_cols.append("fa_lamar_ros = COALESCE(fa_lamar_ros, 0)")
         if "player_lamar_ros_total" in self._get_table_columns("transactions"):
-            init_ros_cols.append("player_lamar_ros_total = 0")
+            init_ros_cols.append("player_lamar_ros_total = COALESCE(player_lamar_ros_total, 0)")
         if init_ros_cols:
             sql_init_fa_ros = f"""
                 UPDATE {trans_table}
@@ -794,12 +793,12 @@ class TransactionEnrichmentsMixin:
         # For drops: 0 (player leaving, no value to manager)
         # For trades: 0 for sender, calculated for receiver
         #
-        # First, initialize managed LAMAR to 0 for all adds/trades so same-week
-        # add+drop combos (where no player_fantasy rows match) default to 0
-        # instead of retaining stale values from a previous run.
+        # Initialize only missing managed values. This still gives new
+        # same-week add/drop rows a 0 default without erasing a finalized value
+        # merely because the current partial-week window has no player row.
         sql_init_managed = f"""
             UPDATE {trans_table}
-            SET manager_lamar_ros_managed = 0
+            SET manager_lamar_ros_managed = COALESCE(manager_lamar_ros_managed, 0)
             WHERE {self._db_filter()}
               AND {add_like_predicate.replace('t.', '')}
         """

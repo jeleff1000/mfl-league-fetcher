@@ -1,6 +1,7 @@
 """Exercise normal career aggregations on the merged publication connection."""
 
 import duckdb
+import pandas as pd
 import pytest
 import importlib.util
 from pathlib import Path
@@ -653,6 +654,39 @@ def test_homepage_same_season_does_not_erase_populated_highlight(homepage_chain)
     with pytest.raises(RuntimeError, match='season_best_pickup_player'):
         aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
     assert conn.execute("SELECT season_best_pickup_player FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == ('Missing Pickup',)
+
+
+def test_homepage_allows_optional_draft_value_to_clear_when_highlight_identity_changes(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.draft
+            (db_name, year, round, pick, manager, franchise_id, player,
+             NFL_player_id, manager_lamar, cost, draft_value_zscore, position)
+        VALUES ('test_league', 2025, 1, 1, 'Old', 'f1', 'Old Worst',
+                'old', 5, 30, -1, 'QB')
+    """)
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("""
+        SELECT alltime_worst_pick_player, alltime_worst_pick_cost
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == ('Old Worst', 30)
+
+    conn.execute("""
+        INSERT INTO public.draft
+            (db_name, year, round, pick, manager, franchise_id, player,
+             NFL_player_id, manager_lamar, cost, draft_value_zscore, position)
+        VALUES ('test_league', 2026, 1, 2, 'New', 'f1', 'New Worst',
+                'new', 1, NULL, -2, 'QB')
+    """)
+    from multi_league.transformations.aggregation.homepage_summary import compute_homepage_frames
+    candidate = compute_homepage_frames(conn, 'test_league')['homepage_league_summary'].iloc[0]
+    assert candidate['alltime_worst_pick_player'] == 'New Worst'
+    assert candidate.get('alltime_worst_pick_cost') is None or pd.isna(candidate.get('alltime_worst_pick_cost'))
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    assert conn.execute("""
+        SELECT alltime_worst_pick_player, alltime_worst_pick_cost
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == ('New Worst', None)
 
 
 @pytest.mark.parametrize('highlight_year', [2025, 2026, None])

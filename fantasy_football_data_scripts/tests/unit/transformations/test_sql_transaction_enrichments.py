@@ -116,6 +116,27 @@ def _setup_managed_window_db(tmp_path):
     return runner
 
 
+def test_incremental_transaction_enrichment_keeps_prior_value_when_source_window_is_pending(tmp_path):
+    """A partial-week rerun must not zero a value earned by a finalized week."""
+    runner = _setup_managed_window_db(tmp_path)
+    conn = runner.conn
+    conn.execute("""
+        INSERT INTO public.transactions (
+            NFL_player_id, year, week, cumulative_week, transaction_type,
+            manager, franchise_id, transaction_id,
+            manager_lamar_ros_managed, fa_lamar_ros, player_lamar_ros_total
+        ) VALUES ('DEF-5', 2026, 1, 202601, 'add', 'Owner', 'owner', 'add', 1, 1, 1)
+    """)
+    try:
+        runner.transaction_lamar_ros()
+        assert conn.execute("""
+            SELECT manager_lamar_ros_managed, fa_lamar_ros, player_lamar_ros_total
+            FROM public.transactions WHERE transaction_id='add'
+        """).fetchone() == (1, 1, 1)
+    finally:
+        conn.close()
+
+
 def test_managed_transaction_reacquisition_does_not_double_credit_scoring_week(tmp_path):
     runner = _setup_managed_window_db(tmp_path)
     conn = runner.conn

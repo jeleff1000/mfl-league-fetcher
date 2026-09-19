@@ -502,6 +502,37 @@ def aggregate_homepage_rollups(
                 for field in HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES
                 if field != "db_name"
             }
+            highlight_identity_columns = {
+                **{
+                    f"{scope}_{kind}": ("player", "manager", "year", "round", "pick")
+                    for scope in ("season", "alltime")
+                    for kind in ("best_pick", "worst_pick")
+                },
+                **{
+                    f"{scope}_{kind}": ("player", "manager", "year", "week")
+                    for scope in ("season", "alltime")
+                    for kind in ("best_pickup", "worst_drop")
+                },
+            }
+
+            def highlight_identity_changed(column: str) -> bool:
+                """Allow optional attributes to clear only for a new winner."""
+                for prefix, identity_suffixes in highlight_identity_columns.items():
+                    marker = f"{prefix}_"
+                    if not column.startswith(marker) or column == f"{prefix}_player":
+                        continue
+                    old_identity = tuple(
+                        previous.iloc[0].get(f"{prefix}_{suffix}")
+                        for suffix in identity_suffixes
+                    )
+                    new_identity = tuple(
+                        summary.get(f"{prefix}_{suffix}")
+                        for suffix in identity_suffixes
+                    )
+                    new_player = summary.get(f"{prefix}_player")
+                    return pd.notna(new_player) and old_identity != new_identity
+                return False
+
             for column, old_value in previous.iloc[0].items():
                 if column in {"db_name", "last_updated"} or pd.isna(old_value):
                     continue
@@ -517,6 +548,12 @@ def aggregate_homepage_rollups(
                 if season_advanced and column.startswith("season_"):
                     continue
                 if stale_highlight_prefixes and column.startswith(stale_highlight_prefixes):
+                    continue
+                # A new winner can legitimately lack an optional attribute
+                # held by the prior winner (auction cost vs. snake pick is the
+                # common cross-season case). The new anchor player must still
+                # exist; losing the whole highlight remains a hard rejection.
+                if (column not in summary or pd.isna(summary[column])) and highlight_identity_changed(column):
                     continue
                 if column not in summary or pd.isna(summary[column]):
                     raise HomepageValidationError(f"Homepage summary lost populated value: {column}")

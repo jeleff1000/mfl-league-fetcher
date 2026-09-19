@@ -107,7 +107,10 @@ def duckdb_connection_config(data_dir: Path | None = None, *, threads: int | Non
         "memory_limit": limit,
         "threads": str(thread_count),
         "preserve_insertion_order": "false",
-        "checkpoint_threshold": _effective_checkpoint_threshold(),
+        # Connect-time options must match every handle already open on this
+        # database instance. Recovery mode is applied immediately after open
+        # with SET/PRAGMA so it does not create a configuration conflict.
+        "checkpoint_threshold": DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD,
     }
     if data_dir:
         tmp_dir = data_dir / "duckdb_tmp"

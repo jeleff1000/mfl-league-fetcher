@@ -550,6 +550,7 @@ def apply_fleet_merge(
     merged: dict[str, int] = {}
     season_rollups: dict[str, dict[str, int]] = {}
     season_seconds: dict[str, float] = {}
+    season_stage_seconds: dict[str, dict[str, float]] = {}
     season_rollup_years: dict[str, list[int]] = {}
     career_rollups: dict[str, dict[str, int]] = {}
     career_seconds: dict[str, float] = {}
@@ -756,19 +757,30 @@ def apply_fleet_merge(
                     # and homepage outputs still read the complete live chain.
                     changed_years = set(manifest.get("quick_years") or [manifest["active_year"]])
                     try:
+                        gap_scan_start = time.perf_counter()
                         missing_by_table = find_missing_retained_season_rollup_years(
                             aggregation_conn, db_name, season_years=changed_years
                         )
+                        gap_scan_seconds = time.perf_counter() - gap_scan_start
                         repair_years = set().union(*missing_by_table.values()) if missing_by_table else set()
                         rollup_years = changed_years | repair_years
+                        rollup_start = time.perf_counter()
                         season_rollups[db_name] = aggregate_complete_chain_season_rollups(
                             aggregation_conn, db_name, season_years=rollup_years
                         )
+                        rollup_seconds = time.perf_counter() - rollup_start
+                        validation_start = time.perf_counter()
                         assert_retained_season_rollup_coverage(
                             aggregation_conn, db_name, season_years=changed_years
                         )
+                        validation_seconds = time.perf_counter() - validation_start
                     except HomepageValidationError as exc:
                         raise FleetValidationError(str(exc)) from exc
+                    season_stage_seconds[db_name] = {
+                        "historical_gap_scan": round(gap_scan_seconds, 4),
+                        "rollup_build": round(rollup_seconds, 4),
+                        "retained_validation": round(validation_seconds, 4),
+                    }
                     season_rollup_years[db_name] = sorted(rollup_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
@@ -820,6 +832,7 @@ def apply_fleet_merge(
         "tables": merged,
         "season_rollups": season_rollups,
         "season_seconds": season_seconds,
+        "season_stage_seconds": season_stage_seconds,
         "season_rollup_years": season_rollup_years,
         "career_rollups": career_rollups,
         "career_seconds": career_seconds,

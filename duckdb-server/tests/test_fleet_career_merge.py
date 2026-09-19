@@ -375,6 +375,9 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     if homepage:
         assert response.json()['season_rollups']['test_league']['matchup_season'] == 1
         assert response.json()['season_rollup_years']['test_league'] == [2026]
+        stage_seconds = response.json()['season_stage_seconds']['test_league']
+        assert set(stage_seconds) == {'historical_gap_scan', 'rollup_build', 'retained_validation'}
+        assert all(seconds >= 0 for seconds in stage_seconds.values())
         assert response.json()['homepage_rollups']['test_league']['homepage_manager_rankings'] == 1
         assert _query(client, "SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'") == [{'highest_score_points': 140.0}]
         assert _query(client, "SELECT manager,seasons,wins,losses FROM public.homepage_manager_rankings WHERE db_name='test_league'") == [{'manager':'Shared Alias','seasons':2,'wins':1,'losses':1}]

@@ -988,6 +988,282 @@ def test_ops_writer_drains_reference_readers_before_opening_write_handle(client,
     assert main_mod._execute_ops_query('SELECT COUNT(*) AS n FROM main.handoff_write') == [{'n': 0}]
 
 
+def test_ops_metadata_writer_with_split_nfl_and_concurrent_readers_finishes(tmp_path):
+    """Real native ATTACH deadlock must fail bounded, not hang the pytest process."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = r'''
+import os, threading, faulthandler, logging
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+faulthandler.dump_traceback_later(6)
+import db, main
+logging.getLogger().setLevel(logging.WARNING)
+logging.getLogger('main').setLevel(logging.INFO)
+watch = threading.Timer(9, lambda: os._exit(2)); watch.daemon = True; watch.start()
+p = Path(os.environ['DATA_DIR'])
+c = db.connect_database(p / '___ops_nfl.duckdb')
+c.execute('CREATE TABLE stats AS SELECT 1 AS n'); c.close()
+c = db.connect_database(p / '___ops.duckdb')
+c.execute('CREATE TABLE canary AS SELECT 1 AS n'); c.close()
+db.init_pool(); main._state['status'] = 'serving'
+stop, read_started = threading.Event(), threading.Event()
+def reader():
+    while not stop.is_set():
+        c = db.acquire_connection(timeout=1)
+        try:
+            assert main._execute_query(c, 'SELECT n FROM ___ops.main.canary') == [{'n': 1}]
+            read_started.set()
+        except TimeoutError:
+            pass
+        finally:
+            db.release_connection(c)
+def writer():
+    assert read_started.wait(2)
+    for _ in range(5):
+        main._execute_ops_query_rw_serialized(
+            'CREATE SCHEMA IF NOT EXISTS accounts;'
+            'CREATE TABLE IF NOT EXISTS accounts.rate_buckets(n INTEGER);'
+            'INSERT INTO accounts.rate_buckets VALUES (1)')
+with ThreadPoolExecutor(max_workers=5) as pool:
+    readers = [pool.submit(reader) for _ in range(4)]
+    try:
+        pool.submit(writer).result(timeout=5)
+    finally:
+        stop.set()
+    for f in readers:
+        f.result(timeout=1)
+assert main._execute_ops_query('SELECT COUNT(*) AS n FROM accounts.rate_buckets') == [{'n': 5}]
+assert main._state['status'] == 'serving'
+assert main._ops_attachment_users == main._ops_write_count == 0
+assert db._pool.qsize() == 8
+db.close_all(); watch.cancel(); faulthandler.cancel_dump_traceback_later()
+print('five metadata writes committed; readers and all eight pool connections preserved')
+'''
+    env = dict(os.environ, DATA_DIR=str(tmp_path), DB_POOL_SIZE='8', DUCKDB_THREADS='8')
+    env['PYTHONPATH'] = os.pathsep.join([str(Path(__file__).resolve().parents[1]), env.get('PYTHONPATH', '')])
+    try:
+        result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True, timeout=14)
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"OPS subprocess timed out: {exc.stdout!r}\n{exc.stderr!r}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("endpoint", ["/query", "/query-parquet"])
+def test_split_nfl_reads_keep_view_binding_and_cleanup_after_metadata_reopen(tmp_path, endpoint):
+    """Exercise the native split catalogs and both transports, bounded in a child."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = r'''
+import asyncio, faulthandler, os, sys
+from io import BytesIO
+from pathlib import Path
+faulthandler.dump_traceback_later(10)
+import db, main
+from fastapi.testclient import TestClient
+import pyarrow.parquet as pq
+
+p = Path(os.environ['DATA_DIR'])
+c = db.connect_database(p / '___ops_nfl.duckdb')
+c.execute('CREATE TABLE stats AS SELECT 2026 AS year, 1 AS week, 7 AS rank_ppr')
+c.close()
+c = db.connect_database(p / '___ops.duckdb')
+c.execute('CREATE SCHEMA accounts; CREATE TABLE accounts.rate_buckets(n INTEGER)')
+c.execute('CREATE TABLE accounts.source_bucket AS SELECT 1 AS n')
+c.execute('CREATE SCHEMA nfl_historical')
+c.execute(f"ATTACH '{(p / '___ops_nfl.duckdb').as_posix()}' AS ___ops_nfl (READ_ONLY)")
+c.execute('CREATE VIEW nfl_historical.nfl_player_stats_all AS SELECT year, week, rank_ppr FROM ___ops_nfl.main.stats')
+c.close()
+db.init_pool()
+main._state['status'] = 'serving'
+main._query_semaphore = asyncio.Semaphore(main.MAX_CONCURRENT_QUERIES)
+pool_ids = {id(c) for c in db._pool.queue}
+assert len(pool_ids) == 8
+assert {c.execute("SELECT current_setting('threads')").fetchone()[0] for c in db._pool.queue} == {8}
+acquired, attached = [], []
+real_acquire, real_attach = db.acquire_connection, main._acquire_ops_attachment
+
+def acquire(*args, **kwargs):
+    c = real_acquire(*args, **kwargs)
+    acquired.append(id(c))
+    assert id(c) in pool_ids and db.get_active_count() == 1
+    return c
+
+def attach(c):
+    real_attach(c)
+    attached.append(id(c))
+    assert id(c) in pool_ids and main._ops_attachment_users == 1
+    assert db.get_active_count() == 1
+
+db.acquire_connection, main._acquire_ops_attachment = acquire, attach
+
+def assert_clean():
+    assert db.get_active_count() == 0
+    assert main._ops_attachment_users == main._ops_write_count == 0
+    assert db._pool.qsize() == 8
+    assert {id(c) for c in db._pool.queue} == pool_ids
+    for c in db._pool.queue:
+        assert c.execute('SELECT current_database()').fetchone() == ('___leagues',)
+        catalogs = {r[0] for r in c.execute('SELECT database_name FROM duckdb_databases()').fetchall()}
+        assert '___ops' not in catalogs and '___ops_nfl' in catalogs
+    reader = db.get_ops_connection()
+    assert reader is not None
+    catalogs = {r[0] for r in reader.execute('SELECT database_name FROM duckdb_databases()').fetchall()}
+    assert '___ops_nfl' not in catalogs, 'dedicated OPS metadata reader must not attach NFL'
+
+endpoint = sys.argv[1]
+tc = TestClient(main.app)
+
+def read(sql, *, pooled, status=200):
+    before = len(acquired), len(attached)
+    response = tc.post(endpoint, json={'database': '___ops', 'sql': sql},
+                       headers={'Authorization': 'Bearer test-read'})
+    assert response.status_code == status, response.text
+    assert (len(acquired) - before[0], len(attached) - before[1]) == ((1, 1) if pooled else (0, 0))
+    assert_clean()
+    if status == 200:
+        if endpoint == '/query':
+            return response.json()
+        assert response.headers['content-type'] == 'application/vnd.apache.parquet'
+        return pq.read_table(BytesIO(response.content)).to_pylist()
+
+nfl_sources = [
+    'nfl_historical.nfl_player_stats_all',
+    '"nfl_historical"."nfl_player_stats_all"',
+    '"___ops"."nfl_historical"."nfl_player_stats_all"',
+    '"___ops_nfl"."main"."stats"',
+    'nfl_historical.nfl_player_stats_all',
+]
+try:
+    assert_clean()
+    for cycle, source in enumerate(nfl_sources, 1):
+        # The view must bind both before and after the dedicated reader is reopened.
+        assert read(f'SELECT year, week, rank_ppr FROM {source}', pooled=True) == [
+            {'year': 2026, 'week': 1, 'rank_ppr': 7}]
+        main._execute_ops_query_rw_serialized(
+            'INSERT INTO accounts.rate_buckets SELECT n FROM accounts.source_bucket')
+        assert_clean()
+        assert read('SELECT COUNT(*) AS n FROM accounts.rate_buckets', pooled=False) == [{'n': cycle}]
+        assert read("SELECT table_name FROM information_schema.tables WHERE table_schema = 'nfl_historical'",
+                    pooled=True) == [{'table_name': 'nfl_player_stats_all'}]
+        assert read("SELECT column_name FROM information_schema.columns "
+                    "WHERE table_catalog = '___ops_nfl' AND table_schema = 'main' "
+                    "AND table_name = 'stats' ORDER BY ordinal_position", pooled=True) == [
+            {'column_name': 'year'}, {'column_name': 'week'}, {'column_name': 'rank_ppr'}]
+        assert read('SELECT year, week, rank_ppr FROM nfl_historical.nfl_player_stats_all', pooled=True) == [
+            {'year': 2026, 'week': 1, 'rank_ppr': 7}]
+        # Binder failures must restore USE, detach OPS, and return the same pool handle too.
+        read('SELECT missing_column FROM nfl_historical.nfl_player_stats_all', pooled=True, status=500)
+    assert main._state['status'] == 'serving'
+finally:
+    tc.close()
+    db.close_all()
+    faulthandler.cancel_dump_traceback_later()
+print(endpoint, 'five split-NFL write/reopen/read cycles passed; eight original pool handles retained')
+'''
+    env = dict(os.environ, DATA_DIR=str(tmp_path), DB_POOL_SIZE="8", DUCKDB_THREADS="8",
+               DUCKDB_WRITE_THREADS="8", DATABASE_READ_TOKEN="test-read")
+    env["PYTHONPATH"] = os.pathsep.join([
+        str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", "")])
+    try:
+        result = subprocess.run([sys.executable, "-c", script, endpoint], env=env,
+                                capture_output=True, text=True, timeout=14)
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"Split NFL subprocess timed out: {exc.stdout!r}\n{exc.stderr!r}")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ops_writer_retains_nfl_attachment_for_source_sql(client, data_dir):
+    import main
+    conn = main.db.connect_database(data_dir / '___ops_nfl.duckdb')
+    conn.execute('CREATE TABLE stats AS SELECT 7 AS n')
+    conn.close()
+    main._execute_ops_query_rw_serialized(
+        'CREATE SCHEMA IF NOT EXISTS accounts;'
+        'CREATE TABLE accounts.nfl_witness AS SELECT n FROM "___ops_nfl".main.stats')
+    assert main._execute_ops_query('SELECT n FROM accounts.nfl_witness') == [{'n': 7}]
+
+
+@pytest.mark.parametrize('sql, needed', [
+    ('CREATE SCHEMA IF NOT EXISTS accounts; CREATE TABLE accounts.bucket (n INTEGER)', False),
+    ("INSERT INTO accounts.bucket VALUES ('SELECT ___ops_nfl')", False),
+    ('UPDATE accounts.bucket SET n=1 /* SELECT FROM nfl_historical */', False),
+    ('SELECT 1', False),
+    ('INSERT INTO accounts.bucket SELECT n FROM accounts.source_bucket', False),
+    ('SELECT n FROM ___ops_nfl.main.stats', True),
+    ('SELECT n FROM "___ops_nfl"."main"."stats"', True),
+    ('CREATE VIEW nfl_historical.stats AS SELECT n FROM ___ops_nfl.main.stats', True),
+    ('CREATE OR REPLACE VIEW accounts.stats AS SELECT n FROM nfl_historical.stats', True),
+    ('CREATE TABLE accounts.copy AS FROM nfl_historical.stats', True),
+    ("SET schema = 'nfl_historical'", True),
+    ("CREATE SCHEMA accounts; SET search_path = 'nfl_historical'", True),
+    ('USE "___ops_nfl"', True),
+    ('CALL nfl_historical.refresh()', True),
+    ('EXECUTE prepared_nfl_query', True),
+])
+def test_ops_writer_nfl_attachment_scanner_preserves_source_and_session_sql(sql, needed):
+    import main
+    assert main._ops_write_needs_nfl_attachment(sql) is needed
+
+
+def test_ops_writer_handle_conflict_never_closes_public_pool(client, monkeypatch):
+    import main
+    connect = main.db.connect_database
+    def conflict(path, **kwargs):
+        if path.name == '___ops.duckdb' and not kwargs.get('read_only'):
+            raise duckdb.BinderException('Unique file handle conflict: retained read-only handle')
+        return connect(path, **kwargs)
+    closed = []
+    monkeypatch.setattr(main.db, 'connect_database', conflict)
+    monkeypatch.setattr(main.db, 'close_pool', lambda: closed.append(True))
+    monkeypatch.setattr(main.time, 'sleep', lambda _: None)
+    with pytest.raises(duckdb.BinderException, match='file handle conflict'):
+        main._execute_ops_query_rw('CREATE SCHEMA IF NOT EXISTS accounts')
+    assert not closed, 'An OPS conflict must never close unrelated league readers'
+    conn = main.db.acquire_connection(timeout=0.1)
+    try:
+        assert conn.execute('SELECT COUNT(*) FROM public.matchup').fetchone() == (2,)
+    finally:
+        main.db.release_connection(conn)
+    assert main._state['status'] == 'serving'
+    assert main._ops_write_count == 0
+
+
+def test_ops_write_phase_logs_stalled_owner_without_sql_or_values(client, monkeypatch, caplog):
+    import main
+    import logging
+    entered, release = Event(), Event()
+    execute = main._execute_script_with_timeout
+    def held(conn, sql, timeout):
+        entered.set()
+        assert release.wait(2)
+        return execute(conn, sql, timeout)
+    monkeypatch.setattr(main, '_execute_script_with_timeout', held)
+    monkeypatch.setattr(main, 'OPS_WRITE_STALL_DIAGNOSTIC_SECONDS', 0.02, raising=False)
+    caplog.set_level(logging.INFO, logger='main')
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(main._execute_ops_query_rw, "SELECT 'private-cookie-sentinel' AS value")
+        try:
+            assert entered.wait(2)
+            until = time.monotonic() + 0.3
+            while 'ops_write_stalled phase=sql' not in caplog.text and time.monotonic() < until:
+                time.sleep(0.01)
+            assert 'ops_write_stalled phase=sql' in caplog.text
+        finally:
+            release.set()
+        assert future.result(timeout=2) == [{'value': 'private-cookie-sentinel'}]
+    assert 'private-cookie-sentinel' not in caplog.text
+    assert 'phase=sql' in caplog.text and 'thread_id=' in caplog.text
+    assert 'held' in caplog.text  # Only the blocked owner's code locations, no locals/source text.
+    for phase in ('conn_open', 'sql', 'checkpoint', 'close', 'reopen'):
+        assert f'phase={phase}' in caplog.text
+
+
 def test_ops_writer_drain_timeout_leaves_read_connections_and_state_untouched(client, monkeypatch):
     import db as db_mod
     import main as main_mod

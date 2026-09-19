@@ -235,7 +235,9 @@ def init_pool():
     # Dedicated ___ops connection — bypasses the pool entirely
     if ops_path.exists():
         _ops_conn = connect_database(ops_path, read_only=True, data_dir=_data_dir)
-        _attach_ops_nfl(_ops_conn)
+        # Metadata never needs the NFL catalog. NFL reads use the existing
+        # league pool's permanent attachment; repeated cross-instance ATTACH
+        # here can deadlock native DuckDB after a metadata write.
 
     _active_count = 0
     _metadata = _compute_metadata()
@@ -332,7 +334,6 @@ def reopen_ops_connection():
     close_ops_connection()
     if ops_path.exists():
         _ops_conn = connect_database(ops_path, read_only=True, data_dir=get_data_dir())
-        _attach_ops_nfl(_ops_conn)
     return _ops_conn
 
 

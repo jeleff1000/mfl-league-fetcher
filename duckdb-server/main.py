@@ -9,11 +9,12 @@ import os
 import random
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
 import threading
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +125,7 @@ FLEET_MERGE_HARD_EXIT_SECONDS = _env_float("FLEET_MERGE_HARD_EXIT_SECONDS", 900.
 # rollback/cleanup and transport. Never kill the process at this SQL deadline.
 DERIVED_REBUILD_TIMEOUT_SECONDS = 35.0
 RENAME_TIMEOUT_SECONDS = 35.0
+OPS_WRITE_STALL_DIAGNOSTIC_SECONDS = 10.0
 # /merge-ops replaces whole ___ops reference tables (the ~1.2M x 820 super table takes minutes to
 # CREATE OR REPLACE), so it needs its own generous ceilings independent of the 120s admin default.
 OPS_MERGE_TIMEOUT = _env_float("OPS_MERGE_TIMEOUT", 900.0, min_value=120.0)  # per-table statement
@@ -913,6 +915,11 @@ async def query_endpoint(req: QueryRequest, request: Request):
     # ___ops-only queries use a dedicated connection — no pool contention.
     # These work even during draining since they don't touch ___leagues.
     if req.database == "___ops" and not re.search(r"\b___leagues\b", req.sql, re.IGNORECASE):
+        pooled = _ops_read_uses_pool(req.sql)
+        if pooled and _state["status"] not in {"serving", "ops_snapshotting"}:
+            return _query_busy_response(reason=_state["status"])
+        if pooled:
+            await _acquire_query_slot(req.database)
         t0 = time.perf_counter()
         try:
             result = await asyncio.wait_for(
@@ -941,6 +948,9 @@ async def query_endpoint(req: QueryRequest, request: Request):
             logger.error("___ops query failed: %s", req.sql[:500], exc_info=True)
             track_event("query_failed", {"database": "___ops", "error": type(e).__name__})
             raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+        finally:
+            if pooled:
+                _query_semaphore.release()
 
     # ___ops reads use the dedicated connection above and continue on the old snapshot during an
     # online rebuild. League reads remain conservative for ordinary ___ops writes, which still
@@ -1009,6 +1019,11 @@ async def query_parquet_endpoint(req: QueryRequest, request: Request):
         raise HTTPException(status_code=403, detail="Write operations not allowed")
     if _state["status"] == "starting":
         return _query_busy_response(reason="starting")
+    pooled = _ops_read_uses_pool(req.sql)
+    if pooled and _state["status"] not in {"serving", "ops_snapshotting"}:
+        return _query_busy_response(reason=_state["status"])
+    if pooled:
+        await _acquire_query_slot(req.database)
     try:
         payload = await asyncio.wait_for(
             asyncio.to_thread(_execute_ops_query_parquet, req.sql),
@@ -1028,6 +1043,9 @@ async def query_parquet_endpoint(req: QueryRequest, request: Request):
     except Exception as exc:
         logger.error("___ops Parquet query failed: %s", req.sql[:500], exc_info=True)
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        if pooled:
+            _query_semaphore.release()
 
 
 @app.post("/query-rw")
@@ -1212,14 +1230,50 @@ def _start_merge_hard_exit_timer(db_name: str, seconds: float | None = None) -> 
     return timer
 
 
-def _execute_ops_query(sql: str) -> list[dict]:
-    """Execute a query on the dedicated ___ops connection (thread-safe via lock)."""
-    import db as _db
+def _ops_read_uses_pool(sql: str) -> bool:
+    """Registered NFL relations use the pool's already attached NFL catalog."""
+    scrubbed = _strip_sql_literals_and_comments(sql, strip_double_quoted_identifiers=False)
+    nfl_reference = r"\b(?:___ops_nfl|nfl_historical)\b"
+    if re.search(nfl_reference, scrubbed, re.IGNORECASE):
+        return True
+    # Existing schema discovery filters catalogs by string literals. Those
+    # literals name the catalog to inspect, not a harmless projected value.
+    introspection = r"\b(?:information_schema|duckdb_columns|duckdb_tables|duckdb_views|duckdb_databases)\b"
+    return bool(re.search(introspection, scrubbed, re.IGNORECASE)
+                and re.search(nfl_reference, sql, re.IGNORECASE))
 
-    with _db._ops_lock:
-        conn = _db.get_ops_connection() or _db.reopen_ops_connection()
-        if conn is None:
-            raise RuntimeError("___ops connection is unavailable")
+
+@contextmanager
+def _ops_read_connection(sql: str):
+    """Own the connection until native execution/serialization actually finishes."""
+    if not _ops_read_uses_pool(sql):
+        with db._ops_lock:
+            conn = db.get_ops_connection() or db.reopen_ops_connection()
+            if conn is None:
+                raise RuntimeError("___ops connection is unavailable")
+            yield conn
+        return
+    conn = db.acquire_connection(timeout=min(2.0, PUBLIC_QUERY_TIMEOUT))
+    attached = False
+    try:
+        _acquire_ops_attachment(conn)
+        attached = True
+        conn.execute('USE "___ops"')
+        yield conn
+    finally:
+        try:
+            conn.execute('USE "___leagues"')
+        finally:
+            try:
+                if attached:
+                    _release_ops_attachment(conn)
+            finally:
+                db.release_connection(conn)
+
+
+def _execute_ops_query(sql: str) -> list[dict]:
+    """Metadata stays dedicated; NFL reads reuse the existing admitted pool."""
+    with _ops_read_connection(sql) as conn:
         return _execute_with_timeout(conn, sql, PUBLIC_QUERY_TIMEOUT)
 
 
@@ -1228,12 +1282,7 @@ def _execute_ops_query_parquet(sql: str) -> bytes:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    import db as _db
-
-    with _db._ops_lock:
-        conn = _db.get_ops_connection() or _db.reopen_ops_connection()
-        if conn is None:
-            raise RuntimeError("___ops connection is unavailable")
+    with _ops_read_connection(sql) as conn:
         timer = threading.Timer(PUBLIC_QUERY_TIMEOUT, conn.interrupt)
         timer.start()
         try:
@@ -1253,6 +1302,54 @@ def _sql_requests_checkpoint(sql: str) -> bool:
     return re.search(r"\b(?:FORCE\s+)?CHECKPOINT\b", scrubbed, flags=re.IGNORECASE) is not None
 
 
+def _ops_write_needs_nfl_attachment(sql: str) -> bool:
+    """Source-free metadata DDL/VALUES/UPDATE does not need the NFL catalog.
+
+    Keep attachment for source queries, view publication and session-changing
+    scripts rather than trying to resolve their indirect view dependencies.
+    """
+    scrubbed = _strip_sql_literals_and_comments(sql, strip_double_quoted_identifiers=False)
+    return bool(re.search(
+        r"\b(?:___ops_nfl|nfl_historical|USE|CALL|EXECUTE)\b|(?:^|;)\s*SET\b",
+        scrubbed, flags=re.IGNORECASE,
+    ))
+
+
+@contextmanager
+def _ops_write_phase(phase: str):
+    """One bounded owner-stack diagnostic per slow phase; never SQL or locals."""
+    started = time.monotonic()
+    owner = threading.get_ident()
+    logger.info("ops_write phase=%s status=started thread_id=%s", phase, owner)
+
+    def stalled():
+        frame = sys._current_frames().get(owner)
+        locations = []
+        try:
+            while frame is not None and len(locations) < 16:
+                locations.append(f"{Path(frame.f_code.co_filename).name}:{frame.f_lineno}:{frame.f_code.co_name}")
+                frame = frame.f_back
+        finally:
+            del frame  # Do not retain SQL/connection locals through frame references.
+        logger.warning("ops_write_stalled phase=%s elapsed_seconds=%.3f thread_id=%s stack=%s",
+                       phase, time.monotonic() - started, owner, " <- ".join(locations))
+
+    timer = threading.Timer(OPS_WRITE_STALL_DIAGNOSTIC_SECONDS, stalled)
+    timer.daemon = True
+    timer.start()
+    status = "completed"
+    try:
+        yield
+    except BaseException:
+        status = "failed"
+        raise
+    finally:
+        timer.cancel()
+        timer.join()
+        logger.info("ops_write phase=%s status=%s elapsed_seconds=%.3f thread_id=%s",
+                    phase, status, time.monotonic() - started, owner)
+
+
 def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = None):
     """Execute an admin write against ___ops without draining ___leagues reads."""
     import db as _db
@@ -1261,7 +1358,6 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
     ops_path = data_dir / "___ops.duckdb"
     conn = None
     result = None
-    pool_closed = False
 
     # Autocommit DDL/DML and connection close can checkpoint implicitly.
     # Interrupt queries, but never terminate the server inside those writes.
@@ -1290,59 +1386,60 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
         remaining()
         _begin_ops_write_state()
         try:
-            _db.close_ops_connection()
+            with _ops_write_phase("reader_close"):
+                _db.close_ops_connection()
             last_connect_error: Exception | None = None
             for attempt in range(8):
                 remaining()
                 try:
-                    conn = _db.connect_database(ops_path, data_dir=data_dir)
+                    with _ops_write_phase("conn_open"):
+                        conn = _db.connect_database(ops_path, data_dir=data_dir)
                     break
                 except _duckdb.BinderException as exc:
                     last_connect_error = exc
                     if "unique file handle conflict" not in str(exc).lower() or attempt == 7:
                         raise
-                    # A public query can still be detaching ___ops while the
-                    # ops write starts. Give DuckDB a short moment to release
-                    # the read-only handle. The public pool no longer keeps
-                    # ___ops attached while idle, so rebuilding the pool is a
-                    # rare fallback rather than the normal path.
+                    # Let a read-only handle finish detaching, but never close
+                    # unrelated public connections to force an OPS write.
                     time.sleep(min(0.25 * (attempt + 1), remaining()))
                     _db.close_ops_connection()
-                    if operation is None and attempt >= 3 and not pool_closed:
-                        logger.warning("Closing public pool during ___ops write after repeated handle conflicts")
-                        _db.close_pool()
-                        pool_closed = True
             if conn is None:
                 raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
             if operation is not None:
                 # Rename reuses the exclusive OPS lifecycle, not SQL-script
                 # checkpointing or the legacy public-pool-close fallback.
-                result = operation(conn)
+                with _ops_write_phase("sql"):
+                    result = operation(conn)
                 return result
-            _db._attach_ops_nfl(conn)  # so admin writes (e.g. the one-time view cutover) can bind ___ops_nfl
-            result = _execute_script_with_timeout(
-                conn,
-                sql,
-                DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
-            )
-            _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
+            if _ops_write_needs_nfl_attachment(sql):
+                with _ops_write_phase("nfl_attach"):
+                    _db._attach_ops_nfl(fleet_merge._AggregationConnection(
+                        conn, lambda raw, statement, params=None, **_: _interrupting_execute(
+                            raw, statement, params, step="OPS NFL attachment",
+                            timeout_seconds=min(MERGE_STEP_TIMEOUT_SECONDS, remaining()))))
+            with _ops_write_phase("sql"):
+                result = _execute_script_with_timeout(
+                    conn, sql, DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
+                )
+            with _ops_write_phase("checkpoint"):
+                _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
             return result
         finally:
             cleanup_error: Exception | None = None
             try:
                 if conn is not None:
-                    conn.close()
+                    with _ops_write_phase("close"):
+                        conn.close()
             except Exception as exc:
                 cleanup_error = exc
                 logger.exception("Failed closing ___ops writer")
             reopen_actions = [("reopen ___ops connection", _db.reopen_ops_connection)]
-            if pool_closed:
-                reopen_actions.append(("reopen ___leagues pool", _db.reopen_pool))
             if operation is None:
                 reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
             for label, action in reopen_actions:
                 try:
-                    action()
+                    with _ops_write_phase("reopen" if label == "reopen ___ops connection" else "metadata"):
+                        action()
                 except Exception as exc:
                     if cleanup_error is None:
                         cleanup_error = exc

@@ -1020,6 +1020,68 @@ def _bind_provider_db_name(
     return normalized
 
 
+def _select_matchup_identity_witnesses(
+    existing: pd.DataFrame,
+    incoming: pd.DataFrame,
+    key_columns: tuple[str, ...],
+) -> pd.DataFrame:
+    """Resolve only a legacy duplicate team-week that the provider is replacing.
+
+    Old identity disambiguation could leave two rows for the same provider
+    ``team_key`` while assigning them different ``manager_week`` values.  A
+    refresh already replaces every row matching the incoming provider key, but
+    the preservation overlay first needs one unambiguous derived-value witness.
+    Select it by the incoming provider identity; unrelated rows and weeks are
+    left untouched, and an ambiguous tie still fails closed.
+    """
+    keys = list(key_columns)
+    if existing.empty or not existing.duplicated(keys, keep=False).any():
+        return existing
+    if incoming.duplicated(keys, keep=False).any():
+        return existing
+
+    identity_columns = [
+        column
+        for column in (
+            "manager_guid", "manager", "team_name", "opponent_team_key", "opponent"
+        )
+        if column in existing.columns and column in incoming.columns
+    ]
+    result = existing.copy()
+    drop_indexes: list[object] = []
+
+    for _, provider_row in incoming.iterrows():
+        mask = pd.Series(True, index=result.index)
+        for column in keys:
+            mask &= result[column].eq(provider_row[column])
+        candidates = result.loc[mask]
+        if len(candidates) <= 1:
+            continue
+
+        scores: dict[object, int] = {}
+        for index, candidate in candidates.iterrows():
+            score = 0
+            for column in identity_columns:
+                incoming_value = provider_row[column]
+                existing_value = candidate[column]
+                if pd.isna(incoming_value) or pd.isna(existing_value):
+                    continue
+                if str(existing_value).strip().casefold() == str(incoming_value).strip().casefold():
+                    score += 1
+            scores[index] = score
+        best_score = max(scores.values(), default=0)
+        winners = [index for index, score in scores.items() if score == best_score]
+        if best_score < 1 or len(winners) != 1:
+            raise RefreshScopeError(
+                "matchup existing provider-key duplicates do not have one incoming identity match"
+            )
+        drop_indexes.extend(index for index in candidates.index if index != winners[0])
+
+    if drop_indexes:
+        result = result.drop(index=drop_indexes)
+    return result
+
+
 def merge_provider_refresh_table(
     local_db: Any,
     table_name: str,
@@ -1093,6 +1155,10 @@ def merge_provider_refresh_table(
         if local_db.table_exists(table_name)
         else pd.DataFrame(columns=list(contract.classified_columns))
     )
+    if table_name == "matchup" and not existing.empty:
+        existing = _select_matchup_identity_witnesses(
+            existing, normalized, contract.key_columns
+        )
     if table_name == "player_fantasy" and not existing.empty:
         existing = existing.loc[existing[provider_id].notna()].copy()
     protected = overlay_provider_columns(existing, normalized, contract)

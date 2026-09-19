@@ -200,6 +200,48 @@ def test_matchup_refresh_replaces_a_prior_enriched_team_week_by_provider_identit
         local.close()
 
 
+def test_matchup_refresh_collapses_legacy_duplicate_team_week_by_incoming_identity(tmp_path):
+    """A duplicate identity artifact cannot block replacement of one provider team-week."""
+    local = LocalLeagueDB(tmp_path, "bethany_beach_league")
+    try:
+        local.ensure_table("matchup")
+        local._insert_into_table("matchup", pd.DataFrame([
+            {
+                "db_name": "bethany_beach_league", "year": 2026, "week": 1,
+                "team_key": "470.l.37879.t.8", "manager": "Scottb",
+                "team_name": "Bavarian Pretzel as an Entree", "opponent": "Hope",
+                "manager_week": "owner_3_2026_1", "power_rating": 111.0,
+                "team_points": 126.82, "opponent_points": 164.66,
+            },
+            {
+                "db_name": "bethany_beach_league", "year": 2026, "week": 1,
+                "team_key": "470.l.37879.t.8",
+                "manager": "Scottb - Bavarian Pretzel as an Entree",
+                "team_name": "Bavarian Pretzel as an Entree", "opponent": "Hope",
+                "manager_week": "owner_1_2026_1", "power_rating": 222.0,
+                "team_points": 126.82, "opponent_points": 164.66,
+            },
+        ]))
+        incoming = pd.DataFrame([{
+            "year": 2026, "week": 1, "team_key": "470.l.37879.t.8",
+            "manager": "Scottb", "team_name": "Bavarian Pretzel as an Entree",
+            "opponent": "Hope", "team_points": 127.0, "opponent_points": 164.66,
+        }])
+
+        merge_provider_refresh_table(
+            local, "matchup", incoming,
+            platform="yahoo", league_id="470.l.37879",
+        )
+
+        stored = local.read_table("matchup")
+        assert len(stored) == 1
+        assert stored["manager"].tolist() == ["Scottb"]
+        assert stored["team_points"].tolist() == [127.0]
+        assert stored["power_rating"].tolist() == [111.0]
+    finally:
+        local.close()
+
+
 def test_schedule_refresh_replaces_only_the_incoming_week_when_identity_key_changes(tmp_path):
     """A corrected Yahoo team key must not leave the old name-keyed row behind."""
     local = LocalLeagueDB(tmp_path, "domination_league")

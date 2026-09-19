@@ -791,7 +791,21 @@ def apply_fleet_merge(
                     homepage_start = time.perf_counter()
                     try:
                         _repair_legacy_null_trade_pick_mirrors(conn, db_name, run)
-                        homepage_rollups[db_name] = aggregate_homepage_rollups(aggregation_conn, db_name)
+                        changed_year_sql = ", ".join(str(year) for year in sorted(changed_years))
+                        active_profile_ids = {
+                            str(row[0])
+                            for row in aggregation_conn.execute(
+                                "SELECT DISTINCT franchise_id FROM public.matchup "
+                                f"WHERE db_name = ? AND year IN ({changed_year_sql}) "
+                                "AND franchise_id IS NOT NULL",
+                                [db_name],
+                            ).fetchall()
+                        }
+                        homepage_rollups[db_name] = aggregate_homepage_rollups(
+                            aggregation_conn,
+                            db_name,
+                            manager_profile_franchise_ids=active_profile_ids,
+                        )
                     except HomepageValidationError as exc:
                         raise FleetValidationError(str(exc)) from exc
                     homepage_seconds[db_name] = round(time.perf_counter() - homepage_start, 4)

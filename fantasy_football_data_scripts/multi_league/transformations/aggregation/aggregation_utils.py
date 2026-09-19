@@ -378,7 +378,12 @@ def aggregate_career_rollups(
     return result
 
 
-def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
+def aggregate_homepage_rollups(
+    conn,
+    db_name: str,
+    *,
+    manager_profile_franchise_ids: set[str] | None = None,
+) -> dict[str, int]:
     """Reuse the import homepage builder on Fly's uncommitted full chain.
 
     Publication owns the transaction. No remote reader, worker history copy,
@@ -399,7 +404,42 @@ def aggregate_homepage_rollups(conn, db_name: str) -> dict[str, int]:
     ):
         if not table_exists_in_catalog(conn, source):
             raise HomepageValidationError(f"Homepage publication source is missing: {source}")
-    frames = compute_homepage_frames(conn, db_name)
+    if manager_profile_franchise_ids is None:
+        frames = compute_homepage_frames(conn, db_name)
+    else:
+        manager_profile_franchise_ids = {
+            str(value) for value in manager_profile_franchise_ids if str(value).strip()
+        }
+        frames = compute_homepage_frames(
+            conn,
+            db_name,
+            manager_profile_franchise_ids=manager_profile_franchise_ids,
+        )
+        expected_profile_ids = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT franchise_id FROM public.matchup WHERE db_name = ? "
+                "AND franchise_id IS NOT NULL AND team_points IS NOT NULL "
+                "AND COALESCE(CAST(is_bye_week AS INTEGER), 0) = 0",
+                [db_name],
+            ).fetchall()
+        }
+        if table_exists_in_catalog(conn, "homepage_manager_profiles"):
+            previous_profiles = conn.execute(
+                "SELECT * FROM public.homepage_manager_profiles WHERE db_name = ?",
+                [db_name],
+            ).fetchdf()
+            if not previous_profiles.empty:
+                previous_ids = previous_profiles["franchise_id"].astype(str)
+                preserved = previous_profiles[
+                    previous_ids.isin(expected_profile_ids)
+                    & ~previous_ids.isin(manager_profile_franchise_ids)
+                ].copy()
+                frames["homepage_manager_profiles"] = pd.concat(
+                    [frames["homepage_manager_profiles"], preserved],
+                    ignore_index=True,
+                    sort=False,
+                ).drop_duplicates(subset=["franchise_id"], keep="first")
     if set(frames) != set(HOMEPAGE_ROLLUP_TABLES):
         raise HomepageValidationError("Homepage builder did not return all canonical outputs")
     if len(frames["homepage_league_summary"]) != 1:

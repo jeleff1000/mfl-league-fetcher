@@ -490,6 +490,36 @@ def test_shared_homepage_rebuild_reads_full_chain_and_joins_callers_transaction(
     assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
 
 
+def test_scoped_homepage_profiles_recompute_active_and_preserve_inactive(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.matchup
+            (db_name,year,week,manager,franchise_id,opponent,opponent_franchise_id,
+             team_name,platform,team_points,opponent_points,win,loss,tie,
+             is_playoffs,is_consolation,is_bye_week)
+        VALUES ('test_league',2025,2,'Archive Manager','f_old','Shared Alias','f1',
+                'Archive Team','yahoo',90,100,0,1,0,0,0,0)
+    """)
+    aggregation_utils.aggregate_career_rollups(conn, 'test_league')
+    aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+    archive_before = conn.execute("""
+        SELECT * FROM public.homepage_manager_profiles
+        WHERE db_name='test_league' AND franchise_id='f_old'
+    """).fetchone()
+
+    counts = aggregation_utils.aggregate_homepage_rollups(
+        conn,
+        'test_league',
+        manager_profile_franchise_ids={'f1'},
+    )
+
+    assert counts['homepage_manager_profiles'] == 2
+    assert conn.execute("""
+        SELECT * FROM public.homepage_manager_profiles
+        WHERE db_name='test_league' AND franchise_id='f_old'
+    """).fetchone() == archive_before
+
+
 def test_homepage_coverage_ignores_historical_placeholder_franchises(homepage_chain):
     conn = homepage_chain
     conn.execute("""

@@ -962,6 +962,9 @@ async def query_endpoint(req: QueryRequest, request: Request):
     # These work even during draining since they don't touch ___leagues.
     if req.database == "___ops" and not re.search(r"\b___leagues\b", req.sql, re.IGNORECASE):
         pooled = _ops_read_uses_pool(req.sql)
+        if pooled and _state["status"] == "ops_writing" \
+                and not await _wait_for_ops_write_to_finish():
+            return _query_busy_response(reason=_state["status"])
         if pooled and _state["status"] not in {"serving", "ops_snapshotting"}:
             return _query_busy_response(reason=_state["status"])
         if pooled:

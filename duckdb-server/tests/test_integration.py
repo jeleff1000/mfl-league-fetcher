@@ -801,6 +801,34 @@ def test_ops_query_parquet_returns_the_same_rows_without_json_materialization(cl
     ]
 
 
+def test_pooled_ops_query_waits_for_short_ops_write(client, monkeypatch):
+    import main as main_mod
+
+    waited = []
+
+    async def finish_write():
+        waited.append(True)
+        main_mod._state["status"] = "serving"
+        return True
+
+    monkeypatch.setattr(main_mod, "_ops_read_uses_pool", lambda _sql: True)
+    monkeypatch.setattr(main_mod, "_wait_for_ops_write_to_finish", finish_write)
+    monkeypatch.setattr(main_mod, "_execute_ops_query", lambda _sql: [{"ok": 1}])
+    main_mod._state["status"] = "ops_writing"
+    try:
+        resp = client.post(
+            "/query",
+            json={"sql": "SELECT 1", "database": "___ops"},
+            headers={"Authorization": "Bearer test-read"},
+        )
+    finally:
+        main_mod._state["status"] = "serving"
+
+    assert resp.status_code == 200
+    assert resp.json() == [{"ok": 1}]
+    assert waited == [True]
+
+
 def test_query_returns_retryable_busy_when_primary_writing(client):
     import main as main_mod
 

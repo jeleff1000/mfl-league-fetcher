@@ -165,6 +165,8 @@ def build_refresh_plan(
     observed: SourceManifest,
     published: SourceManifest,
     materialized_keys: Iterable[object],
+    *,
+    required_reasons: Iterable[str] = (),
 ) -> RefreshPlan:
     """Retain changed chain partitions without a newest-week lower bound."""
     delta = diff_manifests(observed, published)
@@ -174,7 +176,7 @@ def build_refresh_plan(
     materialized = _materialized_weeks(materialized_keys, season=season)
     observed_weeks = _observed_nfl_weeks(observed)
     weeks: set[int] = set()
-    reasons: set[str] = set()
+    reasons: set[str] = {str(reason) for reason in required_reasons if str(reason).strip()}
 
     full_active = delta.identity_changed or delta.segments_changed
     if full_active:
@@ -233,6 +235,40 @@ def build_refresh_plan(
             (year, tuple(sorted(selected))) for year, selected in sorted(partitions.items())
         ),
     )
+
+
+def _missing_derived_aggregate_years(reader, *, safe_db: str) -> set[int]:
+    """Find only the three source-backed partitions lost in the storage incident."""
+    rows = reader.query(
+        "WITH missing_years AS ("
+        "SELECT DISTINCT year FROM ("
+        "SELECT TRY_CAST(year AS INTEGER) AS year, NFL_player_id "
+        "FROM public.player_fantasy "
+        f"WHERE db_name = '{safe_db}' AND NFL_player_id IS NOT NULL "
+        "AND ((TRY_CAST(year AS INTEGER) >= 2021 AND TRY_CAST(week AS INTEGER) <= 18) "
+        "OR (TRY_CAST(year AS INTEGER) < 2021 AND TRY_CAST(week AS INTEGER) <= 17)) "
+        "EXCEPT SELECT TRY_CAST(year AS INTEGER), NFL_player_id "
+        f"FROM public.player_fantasy_season WHERE db_name = '{safe_db}') "
+        "UNION SELECT DISTINCT year FROM ("
+        "SELECT TRY_CAST(year AS INTEGER) AS year, NFL_player_id "
+        "FROM public.player_fantasy "
+        f"WHERE db_name = '{safe_db}' AND NFL_player_id IS NOT NULL "
+        "EXCEPT SELECT TRY_CAST(year AS INTEGER), NFL_player_id "
+        f"FROM public.player_fantasy_season_all WHERE db_name = '{safe_db}') "
+        "UNION SELECT DISTINCT year FROM ("
+        "SELECT TRY_CAST(year AS INTEGER) AS year, franchise_id "
+        "FROM public.matchup "
+        f"WHERE db_name = '{safe_db}' AND franchise_id IS NOT NULL "
+        "AND NULLIF(TRIM(CAST(manager AS VARCHAR)), '') IS NOT NULL "
+        "AND TRY_CAST(week AS INTEGER) IS NOT NULL "
+        "EXCEPT SELECT TRY_CAST(year AS INTEGER), franchise_id "
+        f"FROM public.standings_by_year WHERE db_name = '{safe_db}')"
+        ") SELECT string_agg(CAST(year AS VARCHAR), ',' ORDER BY year) "
+        "AS missing_derived_years FROM missing_years WHERE year IS NOT NULL",
+        database="___leagues",
+    )
+    raw = str((rows[0] if rows else {}).get("missing_derived_years") or "")
+    return {int(year) for year in raw.split(",") if year.strip()}
 
 
 def _parse_manifest(raw: object, *, label: str) -> SourceManifest:
@@ -352,7 +388,13 @@ def load_persisted_refresh_plan(
         for item in materialized_rows
         if item.get("year") is not None and item.get("week") is not None
     }
-    plan = build_refresh_plan(observed, published, materialized)
+    missing_derived_years = _missing_derived_aggregate_years(reader, safe_db=safe_db)
+    plan = build_refresh_plan(
+        observed,
+        published,
+        materialized,
+        required_reasons=("missing_derived_aggregate",) if missing_derived_years else (),
+    )
     return PersistedRefreshPlan(
         plan=plan,
         observed_manifest=observed,

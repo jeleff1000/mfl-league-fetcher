@@ -93,6 +93,22 @@ def test_identical_complete_manifest_is_a_no_op():
     assert plan.changed_resources == ()
 
 
+def test_missing_derived_aggregate_forces_latest_materialized_week_refresh():
+    nfl = (resource("nfl", "game", "2026:1:A@B", "n1"),)
+    current = manifest(nfl=nfl)
+
+    plan = build_refresh_plan(
+        current,
+        current,
+        materialized_keys={(2026, 1)},
+        required_reasons={"missing_derived_aggregate"},
+    )
+
+    assert plan.requires_refresh is True
+    assert plan.weeks == (1,)
+    assert plan.reasons == ("missing_derived_aggregate",)
+
+
 def test_prior_season_correction_retains_its_year_and_week():
     old = manifest(
         nfl=(resource("nfl", "game", "2026:1:A@B", "same"),),
@@ -154,15 +170,39 @@ def test_different_database_manifests_are_rejected():
 
 
 class Reader:
-    def __init__(self, manifest_row, weeks=(1, 2, 3)):
+    def __init__(self, manifest_row, weeks=(1, 2, 3), missing_derived_years=()):
         self.manifest_row = manifest_row
         self.weeks = weeks
+        self.missing_derived_years = missing_derived_years
 
     def query(self, sql, *, database):
         if database == "___ops":
             return [self.manifest_row] if self.manifest_row else []
         assert database == "___leagues"
+        if "missing_derived_years" in sql:
+            value = ",".join(str(year) for year in self.missing_derived_years) or None
+            return [{"missing_derived_years": value}]
         return [{"year": 2026, "week": week} for week in self.weeks]
+
+
+def test_persisted_plan_treats_missing_derived_aggregate_as_refresh_work():
+    current = manifest(nfl=(resource("nfl", "game", "2026:1:A@B", "one"),))
+    row = {
+        "observed_manifest_json": canonical_manifest_json(current),
+        "observed_manifest_digest": manifest_digest(current),
+        "published_manifest_json": canonical_manifest_json(current),
+        "published_manifest_digest": manifest_digest(current),
+    }
+    plan = load_persisted_refresh_plan(
+        Reader(row, weeks=(1,), missing_derived_years=(2024, 2025)),
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=manifest_digest(current),
+    )
+
+    assert plan is not None
+    assert plan.weeks == (1,)
+    assert plan.reasons == ("missing_derived_aggregate",)
 
 
 def test_persisted_plan_verifies_the_exact_ui_observation_and_selects_changed_week():
@@ -246,6 +286,8 @@ def test_persisted_plan_reads_historical_week_keys_without_other_leagues():
             def query(self, sql, *, database):
                 if database == "___ops":
                     return [row]
+                if "missing_derived_years" in sql:
+                    return [{"missing_derived_years": None}]
                 result = conn.execute(sql)
                 columns = [item[0] for item in result.description]
                 return [dict(zip(columns, values)) for values in result.fetchall()]
@@ -282,6 +324,8 @@ def test_persisted_plan_replays_active_week_when_only_player_rows_exist():
             def query(self, sql, *, database):
                 if database == "___ops":
                     return [row]
+                if "missing_derived_years" in sql:
+                    return [{"missing_derived_years": None}]
                 result = conn.execute(sql)
                 columns = [item[0] for item in result.description]
                 return [dict(zip(columns, values)) for values in result.fetchall()]
@@ -339,6 +383,8 @@ def test_persisted_plan_replays_active_week_when_nonzero_offense_is_missing_ppg(
             def query(self, sql, *, database):
                 if database == "___ops":
                     return [row]
+                if "missing_derived_years" in sql:
+                    return [{"missing_derived_years": None}]
                 result = conn.execute(sql)
                 columns = [item[0] for item in result.description]
                 return [dict(zip(columns, values)) for values in result.fetchall()]
@@ -364,12 +410,14 @@ def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
     }
 
     class CapturingReader(Reader):
-        league_sql = ""
+        league_sql: list[str] = []
 
         def query(self, sql, *, database):
             if database == "___ops":
                 return [row]
-            self.league_sql = sql
+            self.league_sql.append(sql)
+            if "missing_derived_years" in sql:
+                return [{"missing_derived_years": None}]
             return [{"year": 2026, "week": 1}]
 
     reader = CapturingReader(row)
@@ -380,11 +428,16 @@ def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
         expected_observed_digest=manifest_digest(current),
     )
 
-    assert "WITH player_weeks AS MATERIALIZED" in reader.league_sql
-    assert "matchup_weeks AS MATERIALIZED" in reader.league_sql
-    assert "schedule_weeks AS MATERIALIZED" in reader.league_sql
-    assert "GROUP BY" in reader.league_sql
-    assert "EXISTS (SELECT" not in reader.league_sql
+    assert len(reader.league_sql) == 2
+    materialization_sql, aggregate_gap_sql = reader.league_sql
+    assert "WITH player_weeks AS MATERIALIZED" in materialization_sql
+    assert "matchup_weeks AS MATERIALIZED" in materialization_sql
+    assert "schedule_weeks AS MATERIALIZED" in materialization_sql
+    assert "GROUP BY" in materialization_sql
+    assert "EXISTS (SELECT" not in materialization_sql
+    assert "player_fantasy_season" in aggregate_gap_sql
+    assert "player_fantasy_season_all" in aggregate_gap_sql
+    assert "standings_by_year" in aggregate_gap_sql
 
 
 def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():

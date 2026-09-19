@@ -1664,27 +1664,22 @@ def test_startup_preserves_ops_wal_and_fails_when_replay_fails(data_dir, monkeyp
     wal_path = data_dir / "___ops.duckdb.wal"
     wal_path.write_bytes(b"bad wal")
 
-    checkpoint_ops_calls = []
-
-    def fake_checkpoint_large(*args, **kwargs):
-        return False
-
-    def fake_checkpoint_ops(db_path, **kwargs):
-        if db_path.name == "___ops.duckdb":
-            checkpoint_ops_calls.append(db_path)
-            raise RuntimeError("forced WAL replay failure")
-        return False
-
     monkeypatch.setattr(main_mod, "startup_recovery", lambda path: None)
     monkeypatch.setattr(main_mod, "cleanup_stale_uploads", lambda path: None)
-    monkeypatch.setattr(main_mod, "_checkpoint_database_if_wal_large", fake_checkpoint_large)
-    monkeypatch.setattr(main_mod, "_checkpoint_database_if_wal_exists", fake_checkpoint_ops)
-    monkeypatch.setattr(main_mod.db, "init_pool", lambda: None)
+    monkeypatch.setattr(
+        main_mod,
+        "_checkpoint_database_if_wal_exists",
+        lambda *args, **kwargs: pytest.fail("startup must not force a checkpoint"),
+    )
+    monkeypatch.setattr(
+        main_mod.db,
+        "init_pool",
+        lambda: (_ for _ in ()).throw(RuntimeError("forced WAL replay failure")),
+    )
 
     with pytest.raises(RuntimeError, match="forced WAL replay failure"):
         main_mod._startup_db_sync(data_dir)
 
-    assert len(checkpoint_ops_calls) == 1
     assert wal_path.read_bytes() == b"bad wal"
     assert not list(data_dir.glob("___ops.duckdb.wal.quarantine.*"))
 
@@ -1694,27 +1689,24 @@ def test_startup_preserves_leagues_wal_and_fails_when_replay_fails(data_dir, mon
 
     wal_path = data_dir / "___leagues.duckdb.wal"
     wal_path.write_bytes(b"bad leagues wal")
-    checkpoint_leagues_calls = []
-
-    def fake_checkpoint(db_path, **kwargs):
-        if db_path.name == "___leagues.duckdb":
-            checkpoint_leagues_calls.append(db_path)
-            raise RuntimeError("forced leagues WAL replay failure")
-        return False
-
     monkeypatch.setattr(main_mod, "startup_recovery", lambda path: None)
     monkeypatch.setattr(main_mod, "cleanup_stale_uploads", lambda path: None)
-    monkeypatch.setattr(main_mod, "_checkpoint_database_if_wal_exists", fake_checkpoint)
-    pool_calls = []
-    monkeypatch.setattr(main_mod.db, "init_pool", lambda: pool_calls.append(True))
+    monkeypatch.setattr(
+        main_mod,
+        "_checkpoint_database_if_wal_exists",
+        lambda *args, **kwargs: pytest.fail("startup must not force a checkpoint"),
+    )
+    monkeypatch.setattr(
+        main_mod.db,
+        "init_pool",
+        lambda: (_ for _ in ()).throw(RuntimeError("forced leagues WAL replay failure")),
+    )
 
     with pytest.raises(RuntimeError, match="forced leagues WAL replay failure"):
         main_mod._startup_db_sync(data_dir)
 
-    assert len(checkpoint_leagues_calls) == 1
     assert wal_path.read_bytes() == b"bad leagues wal"
     assert not list(data_dir.glob("___leagues.duckdb.wal.quarantine.*"))
-    assert not pool_calls
 
 
 def test_startup_preserves_wal_and_stops_before_pool_on_checkpoint_error(data_dir, monkeypatch):
@@ -1725,28 +1717,24 @@ def test_startup_preserves_wal_and_stops_before_pool_on_checkpoint_error(data_di
     wal_path = data_dir / "___leagues.duckdb.wal"
     wal_path.write_bytes(b"committed publication awaiting checkpoint")
     pool_calls = []
-    close_calls = []
-
-    class Connection:
-        def close(self):
-            close_calls.append(True)
-
-    def failed_checkpoint(*args, **kwargs):
+    def failed_replay():
         raise RuntimeError("Corrupt database file: checksum mismatch in block 90714112")
 
     monkeypatch.setattr(main_mod, "DUCKDB_CHECKPOINT_WAL_MB", 512)
     monkeypatch.setattr(main_mod, "startup_recovery", lambda path: None)
     monkeypatch.setattr(main_mod, "cleanup_stale_uploads", lambda path: None)
-    monkeypatch.setattr(main_mod.db, "connect_database", lambda *args, **kwargs: Connection())
-    monkeypatch.setattr(main_mod, "_interrupting_execute", failed_checkpoint)
-    monkeypatch.setattr(main_mod.db, "init_pool", lambda: pool_calls.append(True))
+    monkeypatch.setattr(
+        main_mod,
+        "_checkpoint_database_if_wal_exists",
+        lambda *args, **kwargs: pytest.fail("startup must not force a checkpoint"),
+    )
+    monkeypatch.setattr(main_mod.db, "init_pool", failed_replay)
 
     with pytest.raises(RuntimeError, match="checksum mismatch"):
         main_mod._startup_db_sync(data_dir)
 
     assert wal_path.read_bytes() == b"committed publication awaiting checkpoint"
     assert not list(data_dir.glob("*.quarantine.*"))
-    assert close_calls == [True]
     assert not pool_calls
 
 

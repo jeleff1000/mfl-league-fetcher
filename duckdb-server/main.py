@@ -601,19 +601,10 @@ def _startup_db_sync(data_dir: Path) -> None:
     startup_recovery(data_dir)
     logger.info("DuckDB startup: cleanup begin")
     cleanup_stale_uploads(data_dir)
-    logger.info("DuckDB startup: checkpoint begin")
-    # A WAL may contain acknowledged publications. Never hide it on a replay
-    # or checkpoint failure and then serve the older checkpoint as current.
-    _checkpoint_database_if_wal_exists(
-        data_dir / "___leagues.duckdb",
-        data_dir=data_dir,
-        reason="startup ___leagues",
-    )
-    _checkpoint_database_if_wal_exists(
-        data_dir / "___ops.duckdb",
-        data_dir=data_dir,
-        reason="startup ___ops",
-    )
+    # Opening the pool is the WAL replay gate.  Do not force a CHECKPOINT for
+    # every non-empty WAL here: even a tiny WAL can make DuckDB rewrite the
+    # full 16 GB database and keep /ready unavailable for minutes.  If replay
+    # fails, init_pool raises and startup exits without serving stale data.
     logger.info("DuckDB startup: pool init begin")
     db.init_pool()
     logger.info("DuckDB startup: pool init complete")

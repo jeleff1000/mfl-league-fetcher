@@ -44,7 +44,16 @@ jobs:
             test "$attempt" != 5
             sleep 1
           done
-          timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes
+          update_ok=false
+          for update_attempt in 1 2 3; do
+            if timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes; then
+              update_ok=true
+              break
+            fi
+            test "$update_attempt" != 3
+            sleep 2
+          done
+          test "$update_ok" = true
           ready=false
           for attempt in $(seq 1 20); do
             state="$(curl --fail --silent --max-time 5 https://league-history-duckdb.fly.dev/ready || true)"

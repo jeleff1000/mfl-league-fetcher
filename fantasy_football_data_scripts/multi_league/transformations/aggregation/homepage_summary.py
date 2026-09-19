@@ -1891,7 +1891,7 @@ def compute_all_manager_profiles(
             badges = _compute_manager_badges(local, db_name, manager, career)
             profile["badges_list"] = badges
 
-            draft = _compute_manager_draft_profile(local, db_name, franchise_id, manager, platform=platform)
+            draft = _compute_manager_draft_profile(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
             profile.update(draft)
 
             if current_year:
@@ -1903,10 +1903,11 @@ def compute_all_manager_profiles(
                     year=current_year,
                     prefix="season_",
                     platform=platform,
+                    cache=ctx.cache,
                 )
                 profile.update(draft_season)
 
-            txn = _compute_manager_txn_profile(local, db_name, franchise_id, manager, platform=platform)
+            txn = _compute_manager_txn_profile(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
             profile.update(txn)
 
             if current_year:
@@ -1918,10 +1919,11 @@ def compute_all_manager_profiles(
                     year=current_year,
                     prefix="season_",
                     platform=platform,
+                    cache=ctx.cache,
                 )
                 profile.update(txn_season)
 
-            trade = _compute_manager_best_trade(local, db_name, franchise_id, manager, platform=platform)
+            trade = _compute_manager_best_trade(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
             profile.update(trade)
 
             if current_year:
@@ -1933,17 +1935,19 @@ def compute_all_manager_profiles(
                     year=current_year,
                     prefix="season_",
                     platform=platform,
+                    cache=ctx.cache,
                 )
                 profile.update(trade_season)
 
-            rivalries = _compute_manager_rivalries(local, db_name, franchise_id, manager)
+            rivalries = _compute_manager_rivalries(local, db_name, franchise_id, manager, cache=ctx.cache)
             profile.update(rivalries)
 
-            leaders = _compute_manager_player_leaders(local, db_name, franchise_id, manager, platform=platform)
+            leaders = _compute_manager_player_leaders(local, db_name, franchise_id, manager, platform=platform, cache=ctx.cache)
             profile.update(leaders)
 
             timeline = _compute_manager_timeline(
-                local, db_name, franchise_id, manager, median_years=median_years, matchup_cols=matchup_cols
+                local, db_name, franchise_id, manager, median_years=median_years, matchup_cols=matchup_cols,
+                cache=ctx.cache,
             )
             profile["timeline_data"] = timeline
 
@@ -2153,6 +2157,7 @@ def _compute_manager_draft_profile(
     year: int = None,
     prefix: str = "",
     platform: str = "yahoo",
+    cache: "ColumnCache | None" = None,
 ) -> dict[str, Any]:
     """Compute draft profile for a manager, optionally for a specific year.
 
@@ -2170,7 +2175,7 @@ def _compute_manager_draft_profile(
 
     # Check which pick quality column exists
     # Prefer draft_value_zscore (uses slot baselines, stable across years)
-    draft_cols = get_available_columns(conn, db_name, "draft")
+    draft_cols = cache.columns("draft") if cache else get_available_columns(conn, db_name, "draft")
     if "franchise_id" not in draft_cols:
         raise KeyError("franchise_id is required for manager identity")
     franchise_filter = _franchise_filter_sql(franchise_id, "d")
@@ -2329,6 +2334,7 @@ def _compute_manager_txn_profile(
     year: int = None,
     prefix: str = "",
     platform: str = "yahoo",
+    cache: "ColumnCache | None" = None,
 ) -> dict[str, Any]:
     """Compute transaction profile for a manager, optionally for a specific year.
 
@@ -2345,11 +2351,11 @@ def _compute_manager_txn_profile(
     profile_label = _profile_log_label(manager, franchise_id)
     year_filter = f"AND t.year = {year}" if year else ""
 
-    if not table_exists(conn, db_name, "transactions"):
+    if not (cache.exists("transactions") if cache else table_exists(conn, db_name, "transactions")):
         return profile
 
     # Check which columns exist in transactions table
-    trans_cols = get_available_columns(conn, db_name, "transactions")
+    trans_cols = cache.columns("transactions") if cache else get_available_columns(conn, db_name, "transactions")
     if "franchise_id" not in trans_cols:
         raise KeyError("franchise_id is required for manager identity")
     franchise_filter = _franchise_filter_sql(franchise_id, "t")
@@ -2492,6 +2498,7 @@ def _compute_manager_best_trade(
     year: int = None,
     prefix: str = "",
     platform: str = "yahoo",
+    cache: "ColumnCache | None" = None,
 ) -> dict[str, Any]:
     """Compute the best trade for a manager as a full bilateral trade card.
 
@@ -2502,10 +2509,10 @@ def _compute_manager_best_trade(
     profile_label = _profile_log_label(manager, franchise_id)
     year_filter = f"AND t.year = {year}" if year else ""
 
-    if not table_exists(conn, db_name, "transactions"):
+    if not (cache.exists("transactions") if cache else table_exists(conn, db_name, "transactions")):
         return result
 
-    txn_cols = get_available_columns(conn, db_name, "transactions")
+    txn_cols = cache.columns("transactions") if cache else get_available_columns(conn, db_name, "transactions")
     if "franchise_id" not in txn_cols:
         return result
     franchise_filter = _franchise_filter_sql(franchise_id, "t")
@@ -2623,11 +2630,13 @@ def _compute_manager_best_trade(
     return result
 
 
-def _compute_manager_rivalries(conn, db_name: str, franchise_id: str, manager: str | None = None) -> dict[str, Any]:
+def _compute_manager_rivalries(
+    conn, db_name: str, franchise_id: str, manager: str | None = None, cache: "ColumnCache | None" = None
+) -> dict[str, Any]:
     """Compute rivalries for a manager (nemesis, victim, closest)."""
     profile = {}
     profile_label = _profile_log_label(manager, franchise_id)
-    matchup_cols = get_available_columns(conn, db_name, "matchup")
+    matchup_cols = cache.columns("matchup") if cache else get_available_columns(conn, db_name, "matchup")
     if "franchise_id" not in matchup_cols or "opponent_franchise_id" not in matchup_cols:
         return profile
 
@@ -2693,12 +2702,13 @@ def _compute_manager_player_leaders(
     franchise_id: str,
     manager: str | None = None,
     platform: str = "yahoo",
+    cache: "ColumnCache | None" = None,
 ) -> dict[str, Any]:
     """Compute best players for a manager (LAMAR and clutch)."""
     profile = {}
 
     # Check if clutch_equity exists
-    player_cols = get_available_columns(conn, db_name, "player_fantasy")
+    player_cols = cache.columns("player_fantasy") if cache else get_available_columns(conn, db_name, "player_fantasy")
     if "franchise_id" not in player_cols:
         return profile
     franchise_filter = _franchise_filter_sql(franchise_id, "f")
@@ -2856,6 +2866,7 @@ def _compute_manager_timeline(
     use_median: bool = False,
     median_years: Sequence[int] | None = None,
     matchup_cols: set = None,
+    cache: "ColumnCache | None" = None,
 ) -> str:
     """Compute career timeline for a manager. Returns pipe-delimited string.
 
@@ -2867,7 +2878,7 @@ def _compute_manager_timeline(
     Playoff wins are H2H only (median doesn't apply in playoffs).
     """
     if matchup_cols is None:
-        matchup_cols = get_available_columns(conn, db_name, "matchup")
+        matchup_cols = cache.columns("matchup") if cache else get_available_columns(conn, db_name, "matchup")
     if "franchise_id" not in matchup_cols:
         return ""
     profile_label = _profile_log_label(manager, franchise_id)
@@ -3035,8 +3046,8 @@ def _compute_manager_timeline(
         enrich_draft_grade: dict[int, str] = {}
 
         # matchup_season: avg_team_points, power_rating, total_team_points, optimal_ceiling_pts
-        if table_exists(conn, db_name, "matchup_season"):
-            ms_cols = get_available_columns(conn, db_name, "matchup_season")
+        if cache.exists("matchup_season") if cache else table_exists(conn, db_name, "matchup_season"):
+            ms_cols = cache.columns("matchup_season") if cache else get_available_columns(conn, db_name, "matchup_season")
             ms_select_parts = ["year"]
             if "franchise_id" in ms_cols and "avg_team_points" in ms_cols:
                 ms_select_parts.append("avg_team_points")
@@ -3067,8 +3078,8 @@ def _compute_manager_timeline(
                     pass
 
         # player_fantasy_season: total LAMAR per franchise+year
-        if table_exists(conn, db_name, "player_fantasy_season"):
-            pfs_cols = get_available_columns(conn, db_name, "player_fantasy_season")
+        if cache.exists("player_fantasy_season") if cache else table_exists(conn, db_name, "player_fantasy_season"):
+            pfs_cols = cache.columns("player_fantasy_season") if cache else get_available_columns(conn, db_name, "player_fantasy_season")
             if "manager_lamar" in pfs_cols and "franchise_id" in pfs_cols:
                 try:
                     lamar_df = conn.execute(f"""
@@ -3082,8 +3093,8 @@ def _compute_manager_timeline(
                             enrich_lamar[int(lr["year"])] = float(lr["total_lamar"])
                 except Exception:
                     pass
-        if not enrich_lamar and table_exists(conn, db_name, "player_fantasy"):
-            pf_cols = get_available_columns(conn, db_name, "player_fantasy")
+        if not enrich_lamar and (cache.exists("player_fantasy") if cache else table_exists(conn, db_name, "player_fantasy")):
+            pf_cols = cache.columns("player_fantasy") if cache else get_available_columns(conn, db_name, "player_fantasy")
             if "manager_lamar" in pf_cols and "franchise_id" in pf_cols:
                 pf_started_filter = "AND COALESCE(is_started, 0) = 1" if "is_started" in pf_cols else ""
                 try:
@@ -3102,8 +3113,8 @@ def _compute_manager_timeline(
                     pass
 
         # draft: avg manager_draft_score -> letter grade per year
-        if table_exists(conn, db_name, "draft"):
-            draft_cols = get_available_columns(conn, db_name, "draft")
+        if cache.exists("draft") if cache else table_exists(conn, db_name, "draft"):
+            draft_cols = cache.columns("draft") if cache else get_available_columns(conn, db_name, "draft")
             if "manager_draft_score" in draft_cols and "franchise_id" in draft_cols:
                 manager_grade_expr = (
                     "ARG_MAX(manager_draft_grade, manager_draft_score) AS manager_draft_grade"

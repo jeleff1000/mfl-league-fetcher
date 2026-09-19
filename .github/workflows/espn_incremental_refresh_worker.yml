@@ -53,7 +53,7 @@ concurrency:
 jobs:
   espn-active-season-refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     outputs:
       data_committed: ${{ steps.publication.outputs.committed == 'true' || steps.cache_recovery.outcome == 'success' }}
       cache_verified: ${{ steps.cache_publish.outcome == 'success' || steps.cache_recovery.outcome == 'success' }}

@@ -970,6 +970,10 @@ def _active_year_scoring_info(local_db: Any, *, db_name: str, year: int) -> dict
         data_dir=str(local_db.data_dir),
         conn=local_db.connect(),
     )
+    # This lookup reads only public.league_settings. Attaching the disposable
+    # NFL cache here pins a file handle just before a changed scoring variant
+    # may need to replace that cache.
+    planner._ops_attached = True
     planner.load_settings_from_db()
     return planner._get_scoring_for_year(year)
 

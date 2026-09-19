@@ -2375,6 +2375,42 @@ def test_weekly_ops_projection_uses_the_hydrated_active_league_scoring(tmp_path,
     conn.close()
 
 
+def test_active_year_scoring_lookup_never_attaches_the_ops_cache(tmp_path, monkeypatch):
+    import duckdb
+    import os
+
+    from scripts.refresh_yahoo_active_season import _active_year_scoring_info
+
+    ops_cache = tmp_path / "ops_cache.duckdb"
+    ops = duckdb.connect(str(ops_cache))
+    ops.execute("CREATE SCHEMA nfl_historical")
+    ops.execute("CREATE TABLE nfl_historical.nfl_player_stats_all (year INTEGER)")
+    ops.close()
+    monkeypatch.setenv("OPS_CACHE_PATH", str(ops_cache))
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.league_settings "
+        "(db_name VARCHAR, year INTEGER, scoring_rec DOUBLE, scoring_pass_td DOUBLE)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('league_a', 2026, 0.0, 4.0)")
+
+    class _LocalDB:
+        data_dir = tmp_path
+
+        @staticmethod
+        def connect():
+            return conn
+
+    scoring = _active_year_scoring_info(_LocalDB(), db_name="league_a", year=2026)
+
+    assert scoring["ppr"] == 0.0
+    assert "___ops" not in {row[1] for row in conn.execute("PRAGMA database_list").fetchall()}
+    assert os.environ["OPS_CACHE_PATH"] == str(ops_cache)
+    conn.close()
+
+
 def test_weekly_worker_patches_its_disposable_ops_cache_in_place(tmp_path, monkeypatch):
     """Avoid copying the 739 MB Actions cache before a one-week quick rebuild."""
     from scripts import refresh_yahoo_active_season

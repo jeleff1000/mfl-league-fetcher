@@ -8,7 +8,8 @@ week with a zero placeholder score.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from pathlib import Path
 import re
@@ -20,6 +21,25 @@ import pandas as pd
 
 class RefreshScopeError(RuntimeError):
     """The refresh input cannot prove a safe finalized-game boundary."""
+
+
+def run_independent_refresh_preflight(
+    tasks: Mapping[str, Callable[[], Any]],
+) -> dict[str, Any]:
+    """Run independent read-only refresh gates in one bounded fan-out.
+
+    These gates protect the same publication but do not depend on each other.
+    Running them serially made long-history leagues pay several network round
+    trips before provider fetch without adding any safety.
+    """
+    if not tasks:
+        return {}
+    with ThreadPoolExecutor(
+        max_workers=min(4, len(tasks)),
+        thread_name_prefix="refresh-preflight",
+    ) as executor:
+        futures = {name: executor.submit(task) for name, task in tasks.items()}
+        return {name: future.result() for name, future in futures.items()}
 
 
 def finalized_source_boundary(finalized_ops: pd.DataFrame, *, year: int) -> dict[str, Any]:

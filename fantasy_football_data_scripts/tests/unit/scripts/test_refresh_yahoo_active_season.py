@@ -433,6 +433,14 @@ def test_active_refresh_inputs_read_independent_fly_scopes_concurrently():
         def __init__(self):
             self.barrier = threading.Barrier(2)
 
+        def query(self, _sql, *, database):
+            assert database == "___ops"
+            return [
+                {"column_name": "NFL_player_id"},
+                {"column_name": "nfl_team"},
+                {"column_name": "opponent_nfl_team"},
+            ]
+
         def query_df(self, _sql, *, database):
             assert database == "___ops"
             try:

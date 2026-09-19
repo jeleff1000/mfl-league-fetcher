@@ -1789,6 +1789,7 @@ def main(argv: list[str] | None = None) -> int:
         completed_weeks_to_refresh,
         finalized_source_boundary,
         hydrate_local_refresh_sources,
+        run_independent_refresh_preflight,
         stage_refresh_partitions,
     )
     from multi_league.core.local_db import LocalLeagueDB
@@ -1801,10 +1802,7 @@ def main(argv: list[str] | None = None) -> int:
 
     timer = PhaseTimer()
     reader = FlyReader()
-    if args.execute:
-        from multi_league.core.league_update_status import assert_league_update_entitled
-
-        assert_league_update_entitled(reader, database_name=args.db)
+    from multi_league.core.league_update_status import assert_league_update_entitled
     active_year = args.year
     if active_year is None:
         active_year = int(
@@ -1812,26 +1810,32 @@ def main(argv: list[str] | None = None) -> int:
         )
     from multi_league.core.league_update_lineage import assert_canonical_history_complete
 
-    canonical_history = assert_canonical_history_complete(
-        reader,
-        database_name=args.db,
-        active_season=active_year,
-    )
-    finalized_ops, last_materialized_week = _load_active_refresh_inputs(
-        reader,
-        db_name=args.db,
-        year=active_year,
-        through_week=args.through_week,
-    )
+    preflight = run_independent_refresh_preflight({
+        "entitlement": lambda: assert_league_update_entitled(
+            reader, database_name=args.db
+        ) if args.execute else None,
+        "canonical_history": lambda: assert_canonical_history_complete(
+            reader, database_name=args.db, active_season=active_year
+        ),
+        "active_inputs": lambda: _load_active_refresh_inputs(
+            reader,
+            db_name=args.db,
+            year=active_year,
+            through_week=args.through_week,
+        ),
+        "persisted_plan": lambda: load_persisted_refresh_plan(
+            reader,
+            database_name=args.db,
+            active_season=active_year,
+            expected_observed_digest=args.observed_manifest_digest,
+        ),
+    })
+    canonical_history = preflight["canonical_history"]
+    finalized_ops, last_materialized_week = preflight["active_inputs"]
     if finalized_ops.empty:
         raise RuntimeError(f"No finalized regular-season ops facts for {active_year}")
     finalized_weeks = sorted({int(value) for value in finalized_ops["week"].dropna().tolist()})
-    persisted_plan = load_persisted_refresh_plan(
-        reader,
-        database_name=args.db,
-        active_season=active_year,
-        expected_observed_digest=args.observed_manifest_digest,
-    )
+    persisted_plan = preflight["persisted_plan"]
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
     captured_league_id = active_provider_league_id(persisted_plan, provider="yahoo")

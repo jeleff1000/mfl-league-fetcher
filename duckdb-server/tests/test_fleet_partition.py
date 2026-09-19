@@ -369,6 +369,39 @@ def test_fleet_partition_rejects_older_bundle(data_dir, client, tmp_path):  # no
     assert resp.status_code == 409
 
 
+def test_fleet_partition_accepts_out_of_order_independent_leagues(data_dir, client, tmp_path):
+    """A newer run for beta cannot fence an unchanged alpha snapshot."""
+    newer = _build_bundle(
+        tmp_path, import_run_id="3000", leagues=["league_beta"],
+        generations={"league_beta": 0}, matchup_points=131.5,
+    )
+    assert _post_bundle(client, newer).status_code == 200
+    beta_after = _fingerprint(client, "matchup", "db_name = 'league_beta'")
+    prior_before = _fingerprint(client, "matchup", "year = 2025")
+    older = _build_bundle(
+        tmp_path, import_run_id="2999", leagues=["league_alpha"],
+        generations={"league_alpha": 0}, matchup_points=121.5,
+    )
+    response = _post_bundle(client, older)
+    assert response.status_code == 200, response.text
+    assert _query(client, "SELECT DISTINCT team_points FROM public.matchup "
+                  "WHERE db_name = 'league_alpha' AND year = 2026") == [{"team_points": 121.5}]
+    assert _fingerprint(client, "matchup", "db_name = 'league_beta'") == beta_after
+    assert _fingerprint(client, "matchup", "year = 2025") == prior_before
+    assert _post_bundle(client, older).json()["idempotent_replay"] is True
+
+    # Even a higher run ID cannot bypass alpha's now-stale generation.
+    stale = _build_bundle(
+        tmp_path, import_run_id="3001", leagues=["league_alpha"],
+        generations={"league_alpha": 0}, matchup_points=1.0,
+    )
+    rejected = _post_bundle(client, stale)
+    assert rejected.status_code == 409, rejected.text
+    assert "republished" in rejected.text
+    assert _query(client, "SELECT DISTINCT team_points FROM public.matchup "
+                  "WHERE db_name = 'league_alpha' AND year = 2026") == [{"team_points": 121.5}]
+
+
 def test_fleet_partition_rejects_out_of_scope_year_parquet(data_dir, client, tmp_path):  # noqa: F811
     """A tampered parquet carrying prior-season rows must be rejected before merge."""
     prior_before = _fingerprint(client, "matchup", f"year = {PRIOR_YEAR}")

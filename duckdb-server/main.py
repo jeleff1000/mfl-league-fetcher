@@ -3480,7 +3480,7 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
     """Atomically merge a validated fleet partition bundle into ___leagues.duckdb.
 
     Shares the delta publish-state table (db_name = ``___fleet``) for
-    idempotent replay and ordering, but every table merges with a scoped
+    idempotent replay, but every table merges with a scoped
     delete bounded by the db_names actually present in the uploaded parquet.
     """
     sentinel = fleet_merge.FLEET_DB_SENTINEL
@@ -3502,21 +3502,10 @@ def _merge_fleet_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
                 result["idempotent_replay"] = True
                 return result
 
-        latest_order = _delta_latest_committed_order(conn, sentinel)
-        current_order = None
-        try:
-            current_order = (int(manifest.get("import_run_id") or 0), int(manifest.get("publish_sequence") or 0))
-        except Exception:
-            current_order = None
-        if latest_order is not None and current_order is not None and current_order < latest_order:
-            _delta_upsert_state(
-                conn,
-                manifest,
-                "CONFLICT",
-                error_type="older_bundle",
-                error_message="Bundle order is older than the latest committed fleet publish",
-            )
-            raise DeltaConflictError("Older fleet bundle cannot commit over newer committed state")
+        # ___fleet is a receipt namespace, not a shared data generation.
+        # Independent leagues may finish in any run-ID order. The mandatory
+        # league_generations contract is checked inside apply_fleet_merge's
+        # transaction, before any facts change, across all publication lanes.
 
         _delta_upsert_state(conn, manifest, "RECEIVED")
         _delta_upsert_state(conn, manifest, "VALIDATED")

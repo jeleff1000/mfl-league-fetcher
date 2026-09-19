@@ -1381,6 +1381,9 @@ class MatchupEnrichmentsMixin:
                 continue
             display_name = self._saved_merge_display_name(merge)
             member_sql = ", ".join(self._sql_string(value) for value in dict.fromkeys(members))
+            owner_merge = bool(merge.get("owner_ids")) and not (
+                merge.get("from_franchise_id") or merge.get("into_franchise_id")
+            )
 
             for table, targets in identity_targets.items():
                 if not self._table_exists(table):
@@ -1390,7 +1393,20 @@ class MatchupEnrichmentsMixin:
                 for identity_col, name_col in targets:
                     if identity_col not in cols:
                         continue
-                    assignments = [f"{identity_col} = {self._sql_string(canonical)}"]
+                    member_match = f"t.{identity_col} IN ({member_sql})"
+                    canonical_sql = self._sql_string(canonical)
+                    if owner_merge:
+                        # Registry FIDs append a numeric team index to the owner.
+                        # Merge owners, not their distinct teams; explicit FID
+                        # payloads above retain their exact-match semantics.
+                        owner_sql = f"regexp_replace(t.{identity_col}, '_[0-9]+$', '')"
+                        suffix_sql = f"regexp_extract(t.{identity_col}, '(_[0-9]+)$', 1)"
+                        canonical_sql = (
+                            f"CASE WHEN {member_match} THEN {canonical_sql} "
+                            f"ELSE {canonical_sql} || {suffix_sql} END"
+                        )
+                        member_match = f"({member_match} OR {owner_sql} IN ({member_sql}))"
+                    assignments = [f"{identity_col} = {canonical_sql}"]
                     if display_name and name_col in cols:
                         assignments.append(f"{name_col} = {self._sql_string(display_name)}")
                     if identity_col == "franchise_id" and display_name and "franchise_name" in cols:
@@ -1399,7 +1415,7 @@ class MatchupEnrichmentsMixin:
                         UPDATE {table_ref} t
                         SET {', '.join(assignments)}
                         WHERE {self._identity_scope_filter('t', season_years=season_years)}
-                          AND t.{identity_col} IN ({member_sql})
+                          AND {member_match}
                     """
                     total += self._execute(sql, f"resolve_managers: saved merge {table}.{identity_col}")
         return total

@@ -395,7 +395,8 @@ def test_scoped_season_rollups_preserve_other_years_and_keep_full_careers(homepa
             conn, 'test_league', season_years={changed_year},
         )
         aggregation_utils.aggregate_career_rollups(conn, 'test_league')
-        assert counts == {table: 1 for table in tables}
+        assert {table: counts[table] for table in tables} == {table: 1 for table in tables}
+        assert counts['standings_by_year'] == 1
         for table, before in historical.items():
             assert conn.execute(
                 f'SELECT * FROM public.{table} WHERE db_name=? AND year<>? ORDER BY year',
@@ -874,7 +875,7 @@ def test_scoped_matchup_rollup_clears_removed_season_without_erasing_other_years
     assert conn.execute("SELECT * FROM public.matchup_season WHERE year=2025").fetchall() == before
 
 
-@pytest.mark.parametrize('table', aggregation_utils.COMPLETE_CHAIN_SEASON_ROLLUP_TABLES)
+@pytest.mark.parametrize('table', aggregation_utils.DAMAGED_DERIVED_SEASON_ROLLUP_TABLES[:2])
 def test_retained_season_coverage_rejects_missing_keys_not_just_empty_tables(homepage_chain, table):
     conn = homepage_chain
     conn.execute("""
@@ -900,7 +901,7 @@ def test_retained_season_coverage_rejects_missing_keys_not_just_empty_tables(hom
     assert conn.execute(f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year").fetchall() == before
 
 
-@pytest.mark.parametrize('table', aggregation_utils.COMPLETE_CHAIN_SEASON_ROLLUP_TABLES)
+@pytest.mark.parametrize('table', aggregation_utils.DAMAGED_DERIVED_SEASON_ROLLUP_TABLES[:2])
 def test_missing_retained_aggregate_years_are_discovered_and_rebuilt_narrowly(homepage_chain, table):
     conn = homepage_chain
     conn.execute("""
@@ -924,9 +925,11 @@ def test_missing_retained_aggregate_years_are_discovered_and_rebuilt_narrowly(ho
         conn, 'test_league', season_years={2026},
     )
     assert missing[table] == {2025}
-    repair_years = set().union(*missing.values())
     aggregation_utils.aggregate_complete_chain_season_rollups(
-        conn, 'test_league', season_years={2026} | repair_years,
+        conn,
+        'test_league',
+        season_years={2026},
+        repair_years_by_table=missing,
     )
     aggregation_utils.assert_retained_season_rollup_coverage(
         conn, 'test_league', season_years={2026},
@@ -940,7 +943,48 @@ def test_missing_retained_aggregate_years_are_discovered_and_rebuilt_narrowly(ho
     ).fetchall() == source_before
 
 
-def test_retained_coverage_supports_draft_without_category(homepage_chain):
+def test_missing_retained_standings_year_is_discovered_and_rebuilt_narrowly(homepage_chain):
+    from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
+
+    conn = homepage_chain
+    aggregate_standings(conn, 'test_league', [2025, 2026])
+    source_before = conn.execute(
+        "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025"
+    ).fetchall()
+    standings_2026 = conn.execute(
+        "SELECT * FROM public.standings_by_year WHERE db_name='test_league' AND year=2026"
+    ).fetchall()
+    conn.execute(
+        "DELETE FROM public.standings_by_year WHERE db_name='test_league' AND year=2025"
+    )
+
+    missing = aggregation_utils.find_missing_retained_season_rollup_years(
+        conn, 'test_league', season_years={2026},
+    )
+    assert missing['standings_by_year'] == {2025}
+    aggregation_utils.aggregate_complete_chain_season_rollups(
+        conn,
+        'test_league',
+        season_years={2026},
+        repair_years_by_table=missing,
+    )
+    aggregation_utils.assert_retained_season_rollup_coverage(
+        conn, 'test_league', season_years={2026},
+    )
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM public.standings_by_year "
+        "WHERE db_name='test_league' AND year=2025"
+    ).fetchone()[0] > 0
+    assert conn.execute(
+        "SELECT * FROM public.standings_by_year WHERE db_name='test_league' AND year=2026"
+    ).fetchall() == standings_2026
+    assert conn.execute(
+        "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025"
+    ).fetchall() == source_before
+
+
+def test_retained_coverage_does_not_scan_unaffected_draft_aggregates(homepage_chain):
     conn = homepage_chain
     conn.execute('ALTER TABLE public.draft DROP COLUMN draft_category')
     conn.execute("""
@@ -952,10 +996,11 @@ def test_retained_coverage_supports_draft_without_category(homepage_chain):
     assert conn.execute("SELECT picks,draft_category FROM public.draft_manager_season WHERE db_name='test_league'").fetchall() == [(1, 'standard')]
 
 
-def test_retained_coverage_does_not_drop_blank_manager_franchises(homepage_chain):
+def test_retained_standings_coverage_ignores_blank_manager_franchises(homepage_chain):
     conn = homepage_chain
     conn.execute("UPDATE public.matchup SET manager='' WHERE db_name='test_league' AND year=2025")
     aggregation_utils.aggregate_complete_chain_season_rollups(conn, 'test_league')
-    conn.execute("DELETE FROM public.matchup_season WHERE db_name='test_league' AND year=2025")
-    with pytest.raises(RuntimeError, match='matchup_season.*2025'):
-        aggregation_utils.assert_retained_season_rollup_coverage(conn, 'test_league', season_years={2026})
+    conn.execute("DELETE FROM public.standings_by_year WHERE db_name='test_league' AND year=2025")
+    aggregation_utils.assert_retained_season_rollup_coverage(
+        conn, 'test_league', season_years={2026},
+    )

@@ -247,7 +247,8 @@ def test_quick_two_years_initializes_only_missing_config_and_replays(client, tmp
             assert _query(client, f"SELECT * FROM public.{table} WHERE db_name='test_league' ORDER BY year") == rows
         return
     assert response.status_code == 200, response.text
-    assert response.json()['season_rollup_years']['test_league'] == [2025, 2026]
+    expected_rollup_years = [2024, 2025, 2026] if existing else [2025, 2026]
+    assert response.json()['season_rollup_years']['test_league'] == expected_rollup_years
     assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2024") == historical
     assert _query(client, "SELECT * FROM public.league_settings WHERE db_name='test_league' AND year=2025") == settings
     if existing:
@@ -374,7 +375,7 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     assert _query(client, "SELECT games, seasons FROM public.matchup_career WHERE db_name='test_league'") == [{'games': expected_games, 'seasons': 2}]
     if homepage:
         assert response.json()['season_rollups']['test_league']['matchup_season'] == 1
-        assert response.json()['season_rollup_years']['test_league'] == [2026]
+        assert response.json()['season_rollup_years']['test_league'] == [2025, 2026]
         stage_seconds = response.json()['season_stage_seconds']['test_league']
         assert set(stage_seconds) == {'historical_gap_scan', 'rollup_build', 'retained_validation'}
         assert all(seconds >= 0 for seconds in stage_seconds.values())
@@ -401,39 +402,29 @@ def test_homepage_merge_refreshes_game_ranks_only_once(client, tmp_path, monkeyp
 
     monkeypatch.setattr(aggregation_utils, "aggregate_career_rollups", recorded)
 
-    def no_historical_repair(*_args, **_kwargs):
-        raise AssertionError("weekly publication must not scan or repair retained seasons")
-
-    monkeypatch.setattr(
-        aggregation_utils,
-        "find_missing_retained_season_rollup_years",
-        no_historical_repair,
-    )
-    monkeypatch.setattr(
-        aggregation_utils,
-        "assert_retained_season_rollup_coverage",
-        no_historical_repair,
-    )
     response = _publish(client, _bundle(tmp_path, homepage=True))
 
     assert response.status_code == 200, response.text
     assert calls == [False]
 
 
-@pytest.mark.parametrize('data_dir', ['missing_historical_franchise'], indirect=True)
-def test_http_weekly_merge_leaves_unrelated_historical_aggregate_untouched(client, tmp_path):  # noqa: F811
+@pytest.mark.parametrize('data_dir', ['missing_historical_standings'], indirect=True)
+def test_http_weekly_merge_repairs_only_missing_historical_aggregate(client, tmp_path):  # noqa: F811
     source_before = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025")
     aggregate_before = _query(
         client,
         "SELECT franchise_id,games,wins,losses FROM public.matchup_season "
         "WHERE db_name='test_league' AND year=2025",
     )
-    response = _publish(client, _bundle(tmp_path, homepage=True, generation=7))
+    response = _publish(client, _bundle(tmp_path, homepage=True))
     assert response.status_code == 200, response.text
-    assert response.json()['season_rollup_years']['test_league'] == [2026]
+    assert response.json()['season_rollup_years']['test_league'] == [2025, 2026]
     assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025") == source_before
     assert _query(client, "SELECT franchise_id,games,wins,losses FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == aggregate_before
-    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 8}]
+    assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 1}]
+    assert _query(client, "SELECT games,seasons FROM public.matchup_career WHERE db_name='test_league'") == [
+        {'games': 15, 'seasons': 2}
+    ]
 
 
 def test_error_after_fleet_commit_preserves_receipt_and_does_not_republish(client, tmp_path, monkeypatch):  # noqa: F811

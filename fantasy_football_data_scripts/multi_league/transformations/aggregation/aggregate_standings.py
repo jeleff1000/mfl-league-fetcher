@@ -107,7 +107,8 @@ def aggregate_standings(
     years: list,
     *,
     active_season: int | None = None,
-) -> None:
+    replace_all: bool = True,
+) -> int:
     """Create ``standings_by_year`` table from matchup data.
 
     Parameters
@@ -145,9 +146,15 @@ def aggregate_standings(
     any_median = len(median_years) > 0
 
     ensure_aggregate_table(conn, get_active_catalog(), "standings_by_year")
+    year_scope = sorted({int(year) for year in years})
+    delete_scope = f"db_name = '{db_name}'"
+    if not replace_all:
+        if not year_scope:
+            return 0
+        delete_scope += f" AND year IN ({', '.join(map(str, year_scope))})"
     execute_scoped(
         conn,
-        f"DELETE FROM {central_table('standings_by_year')} WHERE db_name = '{db_name}'",
+        f"DELETE FROM {central_table('standings_by_year')} WHERE {delete_scope}",
         db_name,
         label="standings_by_year:delete",
     )
@@ -357,8 +364,16 @@ def aggregate_standings(
             f"SELECT COUNT(*) FROM {central_table('standings_by_year')} WHERE db_name = '{db_name}'"
         ).fetchone()[0]
         logger.info(f"  [standings_by_year] {row_count} rows across {len(years)} years")
+        if replace_all:
+            return int(row_count)
+        scoped_count = conn.execute(
+            f"SELECT COUNT(*) FROM {central_table('standings_by_year')} "
+            f"WHERE db_name = '{db_name}' AND year IN ({', '.join(map(str, year_scope))})"
+        ).fetchone()[0]
+        return int(scoped_count)
     except Exception:
         logger.warning("  [standings_by_year] table was not created (no valid years)")
+        return 0
 
 
 # ---------------------------------------------------------------------------

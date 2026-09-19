@@ -400,6 +400,20 @@ def test_homepage_merge_refreshes_game_ranks_only_once(client, tmp_path, monkeyp
         return original(conn, db_name, refresh_game_ranks=refresh_game_ranks)
 
     monkeypatch.setattr(aggregation_utils, "aggregate_career_rollups", recorded)
+
+    def no_historical_repair(*_args, **_kwargs):
+        raise AssertionError("weekly publication must not scan or repair retained seasons")
+
+    monkeypatch.setattr(
+        aggregation_utils,
+        "find_missing_retained_season_rollup_years",
+        no_historical_repair,
+    )
+    monkeypatch.setattr(
+        aggregation_utils,
+        "assert_retained_season_rollup_coverage",
+        no_historical_repair,
+    )
     response = _publish(client, _bundle(tmp_path, homepage=True))
 
     assert response.status_code == 200, response.text
@@ -407,17 +421,19 @@ def test_homepage_merge_refreshes_game_ranks_only_once(client, tmp_path, monkeyp
 
 
 @pytest.mark.parametrize('data_dir', ['missing_historical_franchise'], indirect=True)
-def test_http_missing_historical_aggregate_is_repaired_inside_scoped_publication(client, tmp_path):  # noqa: F811
+def test_http_weekly_merge_leaves_unrelated_historical_aggregate_untouched(client, tmp_path):  # noqa: F811
     source_before = _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025")
+    aggregate_before = _query(
+        client,
+        "SELECT franchise_id,games,wins,losses FROM public.matchup_season "
+        "WHERE db_name='test_league' AND year=2025",
+    )
     response = _publish(client, _bundle(tmp_path, homepage=True, generation=7))
     assert response.status_code == 200, response.text
-    assert response.json()['season_rollup_years']['test_league'] == [2025, 2026]
+    assert response.json()['season_rollup_years']['test_league'] == [2026]
     assert _query(client, "SELECT * FROM public.matchup WHERE db_name='test_league' AND year=2025") == source_before
-    assert _query(client, "SELECT franchise_id,games,wins,losses FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == [
-        {'franchise_id': 'f1', 'games': 1, 'wins': 1, 'losses': 0}]
+    assert _query(client, "SELECT franchise_id,games,wins,losses FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == aggregate_before
     assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 8}]
-    assert _query(client, "SELECT games,seasons FROM public.matchup_career WHERE db_name='test_league'") == [
-        {'games': 2, 'seasons': 2}]
 
 
 def test_error_after_fleet_commit_preserves_receipt_and_does_not_republish(client, tmp_path, monkeypatch):  # noqa: F811

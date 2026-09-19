@@ -740,8 +740,6 @@ def apply_fleet_merge(
             from multi_league.transformations.aggregation.aggregation_utils import (
                 aggregate_career_rollups,
                 aggregate_complete_chain_season_rollups,
-                assert_retained_season_rollup_coverage,
-                find_missing_retained_season_rollup_years,
                 HomepageValidationError,
             )
 
@@ -757,29 +755,22 @@ def apply_fleet_merge(
                     # and homepage outputs still read the complete live chain.
                     changed_years = set(manifest.get("quick_years") or [manifest["active_year"]])
                     try:
-                        gap_scan_start = time.perf_counter()
-                        missing_by_table = find_missing_retained_season_rollup_years(
-                            aggregation_conn, db_name, season_years=changed_years
-                        )
-                        gap_scan_seconds = time.perf_counter() - gap_scan_start
-                        repair_years = set().union(*missing_by_table.values()) if missing_by_table else set()
-                        rollup_years = changed_years | repair_years
+                        # Weekly publication is a mini import. It owns only the
+                        # changed season and must never turn into an implicit
+                        # historical repair. The explicit derived-recovery
+                        # endpoint remains available for damaged baselines.
+                        rollup_years = changed_years
                         rollup_start = time.perf_counter()
                         season_rollups[db_name] = aggregate_complete_chain_season_rollups(
                             aggregation_conn, db_name, season_years=rollup_years
                         )
                         rollup_seconds = time.perf_counter() - rollup_start
-                        validation_start = time.perf_counter()
-                        assert_retained_season_rollup_coverage(
-                            aggregation_conn, db_name, season_years=changed_years
-                        )
-                        validation_seconds = time.perf_counter() - validation_start
                     except HomepageValidationError as exc:
                         raise FleetValidationError(str(exc)) from exc
                     season_stage_seconds[db_name] = {
-                        "historical_gap_scan": round(gap_scan_seconds, 4),
+                        "historical_gap_scan": 0.0,
                         "rollup_build": round(rollup_seconds, 4),
-                        "retained_validation": round(validation_seconds, 4),
+                        "retained_validation": 0.0,
                     }
                     season_rollup_years[db_name] = sorted(rollup_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)

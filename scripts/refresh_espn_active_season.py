@@ -586,6 +586,14 @@ def main(argv: list[str] | None = None) -> int:
                     _write_receipt(receipt, args.json_out)
                     return 0
                 ops_future.result()
+                _ensure_active_year_ops_cache(
+                    reader,
+                    year=active_year,
+                    work_dir=work_dir,
+                    scoring_info=_active_year_scoring_info(
+                        local_db, db_name=args.db, year=active_year,
+                    ),
+                )
             timer.mark("player_ops_seed")
 
             from multi_league.core.league_update_validation import (

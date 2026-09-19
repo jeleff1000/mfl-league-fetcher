@@ -412,6 +412,17 @@ def test_all_platforms_overlap_active_ops_cache_with_provider_fetch():
         assert start < fetch < wait
 
 
+def test_all_platforms_recheck_ops_cache_after_provider_settings_are_hydrated():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        main = text.split("def main(", 1)[1]
+        wait = main.index("ops_future.result()")
+        recheck = main.index("_ensure_active_year_ops_cache(", wait)
+        pipeline = main.index("_run_local_pipeline(", recheck)
+        assert wait < recheck < pipeline
+        assert "scoring_info=_active_year_scoring_info(" in main[recheck:pipeline]
+
+
 def test_all_platforms_overlap_publication_claim_with_local_staging():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")

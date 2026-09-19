@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 import duckdb
@@ -34,12 +35,22 @@ def run_independent_refresh_preflight(
     """
     if not tasks:
         return {}
+
+    def timed(task: Callable[[], Any]) -> tuple[Any, float]:
+        started = time.monotonic()
+        return task(), time.monotonic() - started
+
     with ThreadPoolExecutor(
         max_workers=min(4, len(tasks)),
         thread_name_prefix="refresh-preflight",
     ) as executor:
-        futures = {name: executor.submit(task) for name, task in tasks.items()}
-        return {name: future.result() for name, future in futures.items()}
+        futures = {name: executor.submit(timed, task) for name, task in tasks.items()}
+        results: dict[str, Any] = {}
+        for name, future in futures.items():
+            value, seconds = future.result()
+            print(f"[weekly-refresh-preflight] task={name} seconds={seconds:.3f}")
+            results[name] = value
+        return results
 
 
 def finalized_source_boundary(finalized_ops: pd.DataFrame, *, year: int) -> dict[str, Any]:

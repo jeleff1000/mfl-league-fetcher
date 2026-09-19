@@ -5,7 +5,7 @@ from threading import Barrier
 from multi_league.core.league_refresh import run_independent_refresh_preflight
 
 
-def test_refresh_preflight_runs_independent_reads_concurrently() -> None:
+def test_refresh_preflight_runs_independent_reads_concurrently(capsys) -> None:
     barrier = Barrier(2)
 
     def read(value: str) -> str:
@@ -20,3 +20,6 @@ def test_refresh_preflight_runs_independent_reads_concurrently() -> None:
     )
 
     assert result == {"history": "history-ok", "manifest": "manifest-ok"}
+    output = capsys.readouterr().out
+    assert "[weekly-refresh-preflight] task=history" in output
+    assert "[weekly-refresh-preflight] task=manifest" in output

@@ -38,6 +38,23 @@ def test_default_checkpoint_threshold_is_bounded_for_shared_database():
     assert db_mod.DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD == "512MB"
 
 
+def test_storage_recovery_mode_applies_to_every_new_connection(tmp_path):
+    import db as db_mod
+
+    db_mod.set_storage_recovery_mode(True)
+    try:
+        assert db_mod.duckdb_connection_config(tmp_path)["checkpoint_threshold"] == "100TB"
+        conn = db_mod.connect_database(tmp_path / "recovery.duckdb", data_dir=tmp_path)
+        try:
+            assert "TiB" in conn.execute(
+                "SELECT current_setting('checkpoint_threshold')"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    finally:
+        db_mod.set_storage_recovery_mode(False)
+
+
 def test_production_fly_config_does_not_leave_wal_checkpointing_disabled():
     fly_toml = (Path(__file__).parents[1] / "fly.toml").read_text(encoding="utf-8")
 

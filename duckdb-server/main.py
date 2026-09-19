@@ -556,6 +556,12 @@ def _checkpoint_after_merge(conn, db_path: Path, *, reason: str, hard_exit_timer
     database file that the WAL is being folded into.
     """
     hard_exit_timer.cancel()
+    if db.is_storage_recovery_mode():
+        logger.warning(
+            "DuckDB storage recovery mode active; deferring checkpoint after %s",
+            reason,
+        )
+        return False
     return _checkpoint_connection_if_wal_large(conn, db_path, reason=reason)
 
 
@@ -626,6 +632,7 @@ def _startup_db_sync(data_dir: Path) -> None:
                 "WHERE recovery_key='matchup_season_corruption_wal_only' AND active LIMIT 1"
             ).fetchone()
         )
+        db.set_storage_recovery_mode(recovery_active)
         if recovery_active:
             conn.execute("SET checkpoint_threshold='100TB'")
             conn.execute("PRAGMA disable_checkpoint_on_shutdown")
@@ -3777,6 +3784,7 @@ def _rebuild_canonical_matchup_season(database_path: Path) -> dict[str, Any]:
             )
             conn.execute("COMMIT")
             committed = True
+            db.set_storage_recovery_mode(True)
         except Exception:
             with suppress(Exception):
                 conn.execute("ROLLBACK")

@@ -2865,6 +2865,33 @@ def test_post_merge_checkpoint_disarms_merge_kill_timer_first(tmp_path, monkeypa
     assert events == ["timer_cancelled", "checkpoint"]
 
 
+def test_post_merge_checkpoint_is_skipped_in_storage_recovery_mode(tmp_path, monkeypatch):
+    import main as main_mod
+
+    events = []
+
+    class FakeTimer:
+        def cancel(self):
+            events.append("timer_cancelled")
+
+    monkeypatch.setattr(main_mod.db, "is_storage_recovery_mode", lambda: True)
+    monkeypatch.setattr(
+        main_mod,
+        "_checkpoint_connection_if_wal_large",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("known-corrupt quarantine must not be checkpointed")
+        ),
+    )
+
+    assert main_mod._checkpoint_after_merge(
+        object(),
+        tmp_path / "___leagues.duckdb",
+        reason="fleet partition recovery test",
+        hard_exit_timer=FakeTimer(),
+    ) is False
+    assert events == ["timer_cancelled"]
+
+
 def test_uncancelled_merge_watchdog_still_exits_on_deadline(monkeypatch):
     import threading
     import main as main_mod

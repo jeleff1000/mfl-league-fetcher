@@ -23,6 +23,7 @@ DEFAULT_DUCKDB_THREADS = max(
 DEFAULT_DUCKDB_MEMORY_FRACTION = float(os.environ.get("DUCKDB_MEMORY_FRACTION", "0.38"))
 DEFAULT_DUCKDB_TEMP_LIMIT_GIB = int(os.environ.get("DUCKDB_DEFAULT_TEMP_LIMIT_GIB", "20"))
 DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD = os.environ.get("DUCKDB_CHECKPOINT_THRESHOLD", "512MB")
+STORAGE_RECOVERY_CHECKPOINT_THRESHOLD = "100TB"
 
 _data_dir: Path | None = None
 _pool: queue.Queue[duckdb.DuckDBPyConnection] = queue.Queue()
@@ -33,6 +34,30 @@ _active_count: int = 0
 _count_lock = threading.Lock()
 _temp_limit_lock = threading.Lock()
 _temp_limit_by_data_dir: dict[Path, str] = {}
+_storage_recovery_mode = False
+
+
+def set_storage_recovery_mode(active: bool) -> None:
+    """Keep the repaired database WAL-only while corrupt storage is quarantined."""
+    global _storage_recovery_mode
+    _storage_recovery_mode = bool(active)
+
+
+def is_storage_recovery_mode() -> bool:
+    return _storage_recovery_mode
+
+
+def _effective_checkpoint_threshold() -> str:
+    if _storage_recovery_mode:
+        return STORAGE_RECOVERY_CHECKPOINT_THRESHOLD
+    return DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD
+
+
+def _apply_storage_recovery_guardrails(conn) -> None:
+    if not _storage_recovery_mode:
+        return
+    conn.execute(f"SET checkpoint_threshold='{STORAGE_RECOVERY_CHECKPOINT_THRESHOLD}'")
+    conn.execute("PRAGMA disable_checkpoint_on_shutdown")
 
 
 def _compute_memory_limit() -> str:
@@ -82,7 +107,7 @@ def duckdb_connection_config(data_dir: Path | None = None, *, threads: int | Non
         "memory_limit": limit,
         "threads": str(thread_count),
         "preserve_insertion_order": "false",
-        "checkpoint_threshold": DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD,
+        "checkpoint_threshold": _effective_checkpoint_threshold(),
     }
     if data_dir:
         tmp_dir = data_dir / "duckdb_tmp"
@@ -99,7 +124,7 @@ def _log_duckdb_guardrails(data_dir: Path | None = None, *, threads: int | None 
         _compute_memory_limit(),
         thread_count,
         _compute_temp_directory_limit(data_dir),
-        DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD,
+        _effective_checkpoint_threshold(),
     )
 
 
@@ -110,7 +135,7 @@ def get_runtime_config(data_dir: Path | None = None) -> dict[str, str | int]:
         "memory_limit": _compute_memory_limit(),
         "threads": DEFAULT_DUCKDB_THREADS,
         "temp_limit": _compute_temp_directory_limit(data_dir or _data_dir),
-        "checkpoint_threshold": DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD,
+        "checkpoint_threshold": _effective_checkpoint_threshold(),
     }
 
 
@@ -134,6 +159,7 @@ def connect_database(
     conn = duckdb.connect(str(resolved_path), read_only=read_only, config=config)
     _log_duckdb_guardrails(resolved_data_dir)
     _apply_access_hardening(conn, resolved_data_dir)
+    _apply_storage_recovery_guardrails(conn)
     return conn
 
 
@@ -194,7 +220,7 @@ def configure_duckdb(conn, data_dir: Path | None = None, *, threads: int | None 
     conn.execute(f"SET threads = {thread_count}")
     conn.execute("SET preserve_insertion_order = false")
     try:
-        conn.execute(f"SET checkpoint_threshold = '{DEFAULT_DUCKDB_CHECKPOINT_THRESHOLD}'")
+        conn.execute(f"SET checkpoint_threshold = '{_effective_checkpoint_threshold()}'")
     except duckdb.Error as exc:
         logger.warning("DuckDB checkpoint_threshold could not be adjusted; keeping current threshold: %s", exc)
     _log_duckdb_guardrails(data_dir, threads=threads)
@@ -294,6 +320,7 @@ def acquire_connection(timeout: float = 30.0) -> duckdb.DuckDBPyConnection:
     with _count_lock:
         global _active_count
         _active_count += 1
+    _apply_storage_recovery_guardrails(conn)
     return conn
 
 

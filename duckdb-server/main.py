@@ -1182,6 +1182,55 @@ def _execute_with_timeout(conn, sql: str, timeout_seconds: float) -> list[dict]:
         timer.cancel()
 
 
+def _split_sql_statements(sql: str) -> list[str]:
+    """Split a small admin SQL script without breaking quoted literals."""
+    statements: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    line_comment = False
+    block_comment = False
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        following = sql[index + 1] if index + 1 < len(sql) else ""
+        current.append(char)
+        if line_comment:
+            if char in "\r\n":
+                line_comment = False
+        elif block_comment:
+            if char == "*" and following == "/":
+                current.append(following)
+                index += 1
+                block_comment = False
+        elif quote is not None:
+            if char == quote:
+                if following == quote:
+                    current.append(following)
+                    index += 1
+                else:
+                    quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "-" and following == "-":
+            current.append(following)
+            index += 1
+            line_comment = True
+        elif char == "/" and following == "*":
+            current.append(following)
+            index += 1
+            block_comment = True
+        elif char == ";":
+            statement = "".join(current[:-1]).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+        index += 1
+    statement = "".join(current).strip()
+    if statement:
+        statements.append(statement)
+    return statements
+
+
 def _execute_script_with_timeout(conn, sql: str, timeout_seconds: float) -> list[dict]:
     """Execute one or more write statements with a hard wall-clock timeout."""
     timer = threading.Timer(timeout_seconds, conn.interrupt)
@@ -1189,10 +1238,9 @@ def _execute_script_with_timeout(conn, sql: str, timeout_seconds: float) -> list
     try:
         result = None
         # DuckDB versions differ on multi-statement conn.execute() behavior.
-        # query-rw is admin-only, and our maintenance scripts do not contain
-        # semicolon-bearing literals, so a small explicit splitter keeps the
-        # endpoint predictable for staged migrations.
-        statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+        # Keep execution predictable without splitting semicolons embedded in
+        # status/error strings or quoted identifiers.
+        statements = _split_sql_statements(sql)
         for statement in statements:
             result = conn.execute(statement)
         if result is None or result.description is None:

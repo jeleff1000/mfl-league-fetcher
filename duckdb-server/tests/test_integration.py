@@ -2892,6 +2892,24 @@ def test_post_merge_checkpoint_is_skipped_in_storage_recovery_mode(tmp_path, mon
     assert events == ["timer_cancelled"]
 
 
+def test_write_script_keeps_semicolons_inside_sql_literals():
+    import main as main_mod
+
+    conn = duckdb.connect(":memory:")
+    try:
+        rows = main_mod._execute_script_with_timeout(
+            conn,
+            "CREATE TABLE status_message (value VARCHAR); "
+            "INSERT INTO status_message VALUES ('Data published; cache finalization requires retry'); "
+            "SELECT value FROM status_message",
+            5.0,
+        )
+    finally:
+        conn.close()
+
+    assert rows == [{"value": "Data published; cache finalization requires retry"}]
+
+
 def test_uncancelled_merge_watchdog_still_exits_on_deadline(monkeypatch):
     import threading
     import main as main_mod

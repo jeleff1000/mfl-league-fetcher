@@ -3615,11 +3615,18 @@ def _merge_fleet_bundle(
 
 
 def _relation_fingerprint(conn, table_name: str) -> tuple[int, int]:
-    """Return a compact deterministic whole-relation witness."""
+    """Return a compact identity witness without scanning wide payloads."""
     columns = [row[0] for row in conn.execute(f"DESCRIBE public.{_quote_identifier(table_name)}").fetchall()]
     if not columns:
         return (0, 0)
-    args = ", ".join(_quote_identifier(column) for column in columns)
+    identity_candidates = (
+        "db_name", "franchise_id", "franchise_id_1", "franchise_id_2",
+        "manager", "year", "data_year", "data_week", "rank",
+    )
+    identity_columns = [column for column in identity_candidates if column in columns]
+    if not identity_columns:
+        identity_columns = [columns[0]]
+    args = ", ".join(_quote_identifier(column) for column in identity_columns)
     row = conn.execute(
         f"SELECT COUNT(*), COALESCE(BIT_XOR(HASH({args})), 0) "
         f"FROM public.{_quote_identifier(table_name)}"

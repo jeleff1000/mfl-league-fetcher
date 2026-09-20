@@ -226,6 +226,42 @@ def test_draft_fetch_accepts_the_verified_roster_name_map(monkeypatch):
     }]
 
 
+def test_raw_draft_parser_resolves_players_from_espn_player_pool():
+    class FakeLeague:
+        def __init__(self):
+            self.espn_request = SimpleNamespace(
+                get_league_draft=lambda: {
+                    "draftDetail": {
+                        "drafted": False,
+                        "inProgress": False,
+                        "picks": [{
+                            "teamId": 1,
+                            "playerId": 99,
+                            "nominatingTeamId": 1,
+                            "roundId": 1,
+                            "roundPickNumber": 1,
+                            "bidAmount": 0,
+                            "keeper": False,
+                        }],
+                    }
+                },
+                get_pro_players=lambda: [{"id": 99, "fullName": "Pool Player"}],
+            )
+            self.player_map = {}
+            self.teams = []
+            self.draft = []
+
+        @staticmethod
+        def get_team_data(team_id):
+            return f"team-{team_id}"
+
+    league = FakeLeague()
+
+    _fetch_legacy_draft_with_list_ids(league)
+
+    assert league.draft[0].playerName == "Pool Player"
+
+
 def test_legacy_player_parser_normalizes_list_valued_ids():
     league = SimpleNamespace(
         espn_request=SimpleNamespace(

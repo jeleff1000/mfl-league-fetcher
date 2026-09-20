@@ -141,6 +141,20 @@ def _fetch_legacy_draft_with_list_ids(league: Any) -> None:
             )
             if player_id is not None and player_name:
                 player_names.setdefault(str(player_id), str(player_name))
+    needed_player_ids = {
+        str(player_id)
+        for pick in detail.get("picks", [])
+        if (player_id := _legacy_draft_scalar(pick.get("playerId"))) is not None
+    }
+    if needed_player_ids - set(player_names):
+        try:
+            for player in league.espn_request.get_pro_players():
+                player_id = _legacy_draft_scalar(player.get("id"))
+                player_name = player.get("fullName")
+                if player_id is not None and player_name:
+                    player_names.setdefault(str(player_id), str(player_name))
+        except Exception as exc:
+            log(f"  [ESPN] Player-pool draft identity refresh failed: {exc}")
 
     for pick in detail.get("picks", []):
         team_id = _legacy_draft_scalar(pick.get("teamId"))

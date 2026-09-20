@@ -217,6 +217,16 @@ def test_refresh_window_rechecks_partial_current_week_and_collects_all_later_fin
     ) == [1, 2, 3, 4]
 
 
+def test_never_refreshed_league_collects_every_finalized_week_from_week_one():
+    """An untouched league catches up Weeks 1-2 in one update, not one week per click."""
+    from multi_league.core.league_refresh import completed_weeks_to_refresh
+
+    assert completed_weeks_to_refresh(
+        finalized_weeks=[1, 2],
+        last_materialized_week=None,
+    ) == [1, 2]
+
+
 def test_provider_week_scope_never_expands_a_finalized_game_refresh_to_a_full_season():
     """The active-season adapters receive the exact completed week set."""
     from multi_league.core.league_refresh import provider_weeks_to_fetch

@@ -1,11 +1,17 @@
 name: Yahoo Active-Season Refresh Worker
 
 on:
+  schedule:
+    - cron: '17 10 * * *'
   workflow_dispatch:
     inputs:
       db_name:
         description: 'Existing Yahoo league db_name to refresh'
         required: true
+        type: string
+      credential_db_name:
+        description: 'Optional db_name that owns the encrypted Yahoo OAuth credential'
+        required: false
         type: string
       year:
         description: 'Optional active NFL season override, e.g. 2026'
@@ -46,7 +52,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: league-update-${{ inputs.db_name }}
+  group: league-update-${{ github.event_name == 'schedule' && 'demo_league' || inputs.db_name }}
   cancel-in-progress: false
   queue: max
 
@@ -62,8 +68,12 @@ jobs:
     env:
       PYTHONUNBUFFERED: 1
       DATABASE_BACKEND: fly
-      LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}
-      INPUT_DB_NAME: ${{ inputs.db_name }}
+      LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ (github.event_name == 'schedule' || inputs.execute) && '1' || '0' }}
+      INPUT_DB_NAME: ${{ github.event_name == 'schedule' && 'demo_league' || inputs.db_name }}
+      INPUT_CREDENTIAL_DB_NAME: ${{ github.event_name == 'schedule' && 'kmffl' || inputs.credential_db_name || inputs.db_name }}
+      INPUT_EXECUTE: ${{ github.event_name == 'schedule' && 'true' || inputs.execute }}
+      INPUT_CACHE_ONLY: ${{ github.event_name == 'schedule' && 'false' || inputs.cache_only }}
+      INPUT_OBSERVED_MANIFEST_DIGEST: ${{ inputs.observed_manifest_digest }}
       INPUT_DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
       INPUT_ATTEMPT_ID: ${{ inputs.attempt_id }}
       INPUT_CLAIM_VERSION: ${{ inputs.claim_version }}
@@ -78,7 +88,7 @@ jobs:
 
     steps:
       - name: Require canonical public main for publication
-        if: inputs.execute
+        if: env.INPUT_EXECUTE == 'true'
         env:
           INPUT_WORKFLOW_REF: ${{ github.ref }}
         run: |
@@ -112,7 +122,7 @@ jobs:
 
       - name: Capture manual source manifest
         id: manual_probe
-        if: inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''
+        if: env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_OBSERVED_MANIFEST_DIGEST == ''
         run: python scripts/probe_league_update_freshness.py --db "${INPUT_DB_NAME}"
 
       - name: Install dependencies
@@ -120,7 +130,7 @@ jobs:
 
       - name: Claim paid manual update
         id: manual_claim
-        if: inputs.execute && !inputs.cache_only && inputs.dispatch_token == ''
+        if: env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_DISPATCH_TOKEN == ''
         run: >-
           python scripts/claim_manual_league_update.py
           --db "${INPUT_DB_NAME}"
@@ -129,15 +139,15 @@ jobs:
           --run-attempt "${{ github.run_attempt }}"
 
       - name: Validate cache-only recovery request
-        if: inputs.cache_only
+        if: env.INPUT_CACHE_ONLY == 'true'
         env:
-          EXECUTE: ${{ inputs.execute }}
+          EXECUTE: ${{ env.INPUT_EXECUTE }}
         run: |
           test "${EXECUTE}" = "true"
 
       - name: Recover committed cache publication
         id: cache_recovery
-        if: inputs.cache_only && inputs.execute
+        if: env.INPUT_CACHE_ONLY == 'true' && env.INPUT_EXECUTE == 'true'
         run: |
           set -euo pipefail
           args=(--db "${INPUT_DB_NAME}" --platform yahoo)
@@ -149,23 +159,24 @@ jobs:
           python scripts/recover_league_update_cache.py "${args[@]}"
 
       - name: Set hard refresh deadline
-        if: ${{ !inputs.cache_only }}
+        if: ${{ env.INPUT_CACHE_ONLY != 'true' }}
         run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" >> "$GITHUB_ENV"
 
       - name: Refresh Yahoo active season
-        if: ${{ !inputs.cache_only }}
+        if: ${{ env.INPUT_CACHE_ONLY != 'true' }}
         env:
-          DB_NAME: ${{ inputs.db_name }}
+          DB_NAME: ${{ env.INPUT_DB_NAME }}
+          CREDENTIAL_DB_NAME: ${{ env.INPUT_CREDENTIAL_DB_NAME }}
           LEAGUE_UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
           LEAGUE_UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
           LEAGUE_UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
           YEAR: ${{ inputs.year }}
           THROUGH_WEEK: ${{ inputs.through_week }}
-          EXECUTE: ${{ inputs.execute }}
-          OBSERVED_MANIFEST_DIGEST: ${{ steps.manual_probe.outputs.digest || inputs.observed_manifest_digest }}
+          EXECUTE: ${{ env.INPUT_EXECUTE }}
+          OBSERVED_MANIFEST_DIGEST: ${{ steps.manual_probe.outputs.digest || env.INPUT_OBSERVED_MANIFEST_DIGEST }}
         run: |
           set -euo pipefail
-          args=(--db "${DB_NAME}" --json-out yahoo_active_season_refresh.json)
+          args=(--db "${DB_NAME}" --credential-db "${CREDENTIAL_DB_NAME}" --json-out yahoo_active_season_refresh.json)
           if [ -n "${YEAR}" ]; then
             args+=(--year "${YEAR}")
           fi
@@ -190,7 +201,7 @@ jobs:
 
       - name: Classify Fly publication
         id: publication
-        if: ${{ !inputs.cache_only && inputs.execute }}
+        if: ${{ env.INPUT_CACHE_ONLY != 'true' && env.INPUT_EXECUTE == 'true' }}
         env:
           UI_DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
         run: |
@@ -202,7 +213,7 @@ jobs:
           python scripts/league_update_workflow_receipt.py "${args[@]}"
 
       - name: Settle unchanged paid manual update
-        if: inputs.execute && !inputs.cache_only && steps.manual_claim.outputs.token != '' && steps.publication.outputs.no_op == 'true'
+        if: env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && steps.manual_claim.outputs.token != '' && steps.publication.outputs.no_op == 'true'
         env:
           UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token }}
           UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id }}
@@ -218,7 +229,7 @@ jobs:
           --require-entitled
 
       - name: Record Fly commit
-        if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
+        if: env.INPUT_EXECUTE == 'true' && (steps.manual_claim.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != '') && steps.publication.outputs.committed == 'true'
         env:
           UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
           UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
@@ -235,7 +246,7 @@ jobs:
 
       - name: Publish refreshed cache
         id: cache_publish
-        if: inputs.execute && steps.publication.outputs.committed == 'true'
+        if: env.INPUT_EXECUTE == 'true' && steps.publication.outputs.committed == 'true'
         run: >-
           python scripts/warm_vercel_cache.py
           --db "${INPUT_DB_NAME}"
@@ -252,7 +263,7 @@ jobs:
           --hot-verify-attempts 1
 
       - name: Complete league update
-        if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
+        if: env.INPUT_EXECUTE == 'true' && (steps.manual_claim.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != '') && steps.publication.outputs.committed == 'true'
         env:
           UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
           UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
@@ -269,7 +280,7 @@ jobs:
           --cache-verified
 
       - name: Settle failed partial manual claim
-        if: ${{ failure() && inputs.execute && !inputs.cache_only && inputs.dispatch_token == '' && steps.manual_claim.outcome == 'failure' }}
+        if: ${{ failure() && env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_DISPATCH_TOKEN == '' && steps.manual_claim.outcome == 'failure' }}
         continue-on-error: true
         run: >-
           python scripts/claim_manual_league_update.py
@@ -280,7 +291,7 @@ jobs:
           --fail-owned-claim
 
       - name: Fail league update
-        if: ${{ (failure() || cancelled()) && !inputs.cache_only && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') }}
+        if: ${{ (failure() || cancelled()) && env.INPUT_CACHE_ONLY != 'true' && (steps.manual_claim.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != '') }}
         env:
           UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
           UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}

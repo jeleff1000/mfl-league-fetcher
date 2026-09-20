@@ -274,6 +274,7 @@ def _build_context_from_fly(
     *,
     reader=None,
     frontend_settings: dict | None = None,
+    credential_database_name: str | None = None,
 ):
     """Build a LeagueContext by pulling credentials from Fly ops tables.
 
@@ -289,6 +290,8 @@ def _build_context_from_fly(
             When supplied, avoids probing the Sleeper and ESPN registries.
         frontend_settings: Optional already-loaded canonical league-context
             settings for the same database.
+        credential_database_name: Optional database that owns the encrypted
+            Yahoo credential. The resulting context still targets database_name.
 
     Returns:
         (ctx, context_path) — the LeagueContext and the Path where it was saved
@@ -299,11 +302,13 @@ def _build_context_from_fly(
     supplied_reader = reader is not None
     reader = reader or get_reader()
     safe_db = str(database_name).replace("'", "''")
+    credential_db = credential_database_name or database_name
+    safe_credential_db = str(credential_db).replace("'", "''")
 
     # Check Yahoo
     yahoo_rows = reader.query(
         f"SELECT league_id, league_name, encrypted_refresh_token "
-        f"FROM main.league_credentials WHERE database_name = '{safe_db}'",
+        f"FROM main.league_credentials WHERE database_name = '{safe_credential_db}'",
         database="___ops",
     )
     yahoo = tuple(yahoo_rows[0].values()) if yahoo_rows else None

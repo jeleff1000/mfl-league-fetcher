@@ -235,6 +235,73 @@ def test_build_context_from_fly_reuses_supplied_yahoo_reader_and_frontend_settin
     assert context_path.is_file()
 
 
+def test_build_context_from_fly_can_use_shared_yahoo_credential_without_changing_target(tmp_path, monkeypatch):
+    """A demo clone may authenticate as KMFFL while retaining its own identity and aliases."""
+    from multi_league.utils import credential_store
+
+    class Reader:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def query(self, sql, *, database):
+            assert database == "___ops"
+            self.queries.append(sql)
+            assert "database_name = 'kmffl'" in sql
+            return [{
+                "league_id": "470.l.80971",
+                "league_name": "KMFFL",
+                "encrypted_refresh_token": "encrypted-token",
+            }]
+
+    class Context:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        def save(self, path):
+            path.write_text("{}", encoding="utf-8")
+
+    aliases = {"Eleff": "Joe", "Marc": "Tom"}
+    franchise_merges = [{"canonical": "Joe", "members": ["Eleff", "Joseph"]}]
+    keeper_rules = {"enabled": True, "max_keepers": 2}
+    league_rules = {"playoff_teams": 6}
+    standings_weights = {"wins": 1.0, "points": 0.25}
+    monkeypatch.setattr(credential_store, "get_encryption_key", lambda: "test-key")
+    monkeypatch.setattr(credential_store, "decrypt_token", lambda _value, _key: "refresh-token")
+    monkeypatch.setattr(initial_import_v3, "LeagueContext", Context)
+    monkeypatch.setenv("YAHOO_CLIENT_ID", "client-id")
+    monkeypatch.setenv("YAHOO_CLIENT_SECRET", "client-secret")
+    reader = Reader()
+
+    ctx, context_path = initial_import_v3._build_context_from_fly(
+        "demo_league",
+        data_dir_override=str(tmp_path),
+        reader=reader,
+        credential_database_name="kmffl",
+        frontend_settings={
+            "league_name": "Demo League",
+            "league_ids": {"2026": "470.l.80971"},
+            "manager_name_overrides": aliases,
+            "franchise_merges": franchise_merges,
+            "keeper_rules": keeper_rules,
+            "league_rules": league_rules,
+            "standings_weights": standings_weights,
+            "is_private": True,
+        },
+    )
+
+    assert len(reader.queries) == 1
+    assert ctx.database_name == "demo_league"
+    assert ctx.league_name == "Demo League"
+    assert ctx.league_ids == {"2026": "470.l.80971"}
+    assert ctx.manager_name_overrides == aliases
+    assert ctx.franchise_merges == franchise_merges
+    assert ctx.keeper_rules == keeper_rules
+    assert ctx.league_rules == league_rules
+    assert ctx.standings_weights == standings_weights
+    assert ctx.is_private is True
+    assert context_path.is_file()
+
+
 def test_partial_history_source_still_requires_settings_and_players():
     assert initial_import_v3._pre_upload_non_empty_tables(
         allow_empty_quick_startup=False,

@@ -23,6 +23,18 @@ def test_each_worker_builds_the_bounded_ops_cache_for_its_active_scoring_variant
         assert "scoring_info=active_scoring" in source
 
 
+def test_each_worker_uses_shared_catchup_weeks_and_authoritative_active_draft():
+    draft_contract = {
+        "yahoo": "needs_active_season_draft_fetch(",
+        "espn": "refresh_authoritative_draft_partition(",
+        "sleeper": "refresh_authoritative_draft_partition(",
+    }
+    for provider in ("yahoo", "espn", "sleeper"):
+        source = Path(f"scripts/refresh_{provider}_active_season.py").read_text(encoding="utf-8")
+        assert "completed_weeks_to_refresh(" in source
+        assert draft_contract[provider] in source
+
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -89,7 +101,12 @@ def test_imports_share_the_update_league_execution_boundary(filename: str):
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
 def test_active_updates_share_the_import_execution_boundary(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
-    assert "group: league-update-${{ inputs.db_name }}" in text
+    expected_group = (
+        "group: league-update-${{ github.event_name == 'schedule' && 'demo_league' || inputs.db_name }}"
+        if filename.startswith("yahoo_")
+        else "group: league-update-${{ inputs.db_name }}"
+    )
+    assert expected_group in text
     assert "cancel-in-progress: false" in text
     assert "queue: max" in text
 
@@ -154,7 +171,8 @@ def test_executing_manual_or_ui_update_is_main_only_before_checkout(filename: st
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     guard = text.split("- name: Require canonical public main for publication", 1)[1]
     checkout = text.split("- name: Checkout", 1)[0]
-    assert "if: inputs.execute" in guard.split("- name:", 1)[0]
+    expected_guard = "if: env.INPUT_EXECUTE == 'true'" if filename.startswith("yahoo_") else "if: inputs.execute"
+    assert expected_guard in guard.split("- name:", 1)[0]
     assert "INPUT_WORKFLOW_REF: ${{ github.ref }}" in guard.split("- name:", 1)[0]
     assert 'if [ "${INPUT_WORKFLOW_REF}" != "refs/heads/main" ]; then' in guard.split("- name:", 1)[0]
     assert "Require canonical public main for publication" in checkout
@@ -185,9 +203,14 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert "cache_only:" in text
     assert "scripts/recover_league_update_cache.py" in text
     assert f"--platform {platform}" in text
-    assert "if: ${{ !inputs.cache_only }}" in text
-    assert "if: ${{ !inputs.cache_only && inputs.execute }}" in text
-    assert "if: ${{ (failure() || cancelled()) && !inputs.cache_only" in text
+    if platform == "yahoo":
+        assert "if: ${{ env.INPUT_CACHE_ONLY != 'true' }}" in text
+        assert "if: ${{ env.INPUT_CACHE_ONLY != 'true' && env.INPUT_EXECUTE == 'true' }}" in text
+        assert "if: ${{ (failure() || cancelled()) && env.INPUT_CACHE_ONLY != 'true'" in text
+    else:
+        assert "if: ${{ !inputs.cache_only }}" in text
+        assert "if: ${{ !inputs.cache_only && inputs.execute }}" in text
+        assert "if: ${{ (failure() || cancelled()) && !inputs.cache_only" in text
     assert "attempt_id:" in text
     assert "claim_version:" in text
     assert "observed_manifest_digest:" in text
@@ -235,10 +258,19 @@ def test_worker_captures_source_manifest_when_ui_did_not(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "id: manual_probe" in text
     assert "scripts/probe_league_update_freshness.py" in text
-    assert "inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''" in text
+    expected_capture = (
+        "env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_OBSERVED_MANIFEST_DIGEST == ''"
+        if filename.startswith("yahoo_")
+        else "inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''"
+    )
+    assert expected_capture in text
     assert "inputs.dispatch_token == '' && inputs.observed_manifest_digest == ''" not in text
-    assert "inputs.observed_manifest_digest == ''" in text
-    assert "steps.manual_probe.outputs.digest || inputs.observed_manifest_digest" in text
+    expected_digest = (
+        "steps.manual_probe.outputs.digest || env.INPUT_OBSERVED_MANIFEST_DIGEST"
+        if filename.startswith("yahoo_")
+        else "steps.manual_probe.outputs.digest || inputs.observed_manifest_digest"
+    )
+    assert expected_digest in text
     assert text.index("scripts/probe_league_update_freshness.py") < text.index(
         "scripts/claim_manual_league_update.py"
     )
@@ -267,7 +299,12 @@ def test_paid_manual_execute_uses_the_same_attempt_and_terminal_lifecycle(platfo
     assert "steps.manual_claim.outputs.token || inputs.dispatch_token" in text
     assert "steps.manual_claim.outputs.attempt_id || inputs.attempt_id" in text
     assert "steps.manual_claim.outputs.claim_version || inputs.claim_version" in text
-    assert "steps.manual_claim.outputs.token != '' || inputs.dispatch_token != ''" in text
+    expected_token_guard = (
+        "steps.manual_claim.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != ''"
+        if platform == "yahoo"
+        else "steps.manual_claim.outputs.token != '' || inputs.dispatch_token != ''"
+    )
+    assert expected_token_guard in text
     assert "--require-entitled" in text
     assert text.count('--dispatch-token "${UPDATE_TOKEN}"') >= 3
     assert text.count('--attempt-id "${UPDATE_ATTEMPT_ID}"') >= 3
@@ -282,7 +319,12 @@ def test_exact_claim_is_rechecked_immediately_before_existing_fleet_publish(plat
         "FlyTarget().merge_fleet_partition("
     )
     workflow = (ROOT / ".github/workflows" / WORKFLOWS[platform]).read_text(encoding="utf-8")
-    assert "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}" in workflow
+    expected_claim = (
+        "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ (github.event_name == 'schedule' || inputs.execute) && '1' || '0' }}"
+        if platform == "yahoo"
+        else "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}"
+    )
+    assert expected_claim in workflow
     assert "LEAGUE_UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}" in workflow
     assert "LEAGUE_UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}" in workflow
     assert "LEAGUE_UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}" in workflow
@@ -293,7 +335,12 @@ def test_dispatch_inputs_never_expand_as_shell_program_text(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     for name in ("db_name", "dispatch_token", "attempt_id", "claim_version"):
         assert f'--{name.replace("_", "-")} "${{{{ inputs.{name} }}}}"' not in text
-    assert "INPUT_DB_NAME: ${{ inputs.db_name }}" in text
+    expected_db_input = (
+        "INPUT_DB_NAME: ${{ github.event_name == 'schedule' && 'demo_league' || inputs.db_name }}"
+        if filename.startswith("yahoo_")
+        else "INPUT_DB_NAME: ${{ inputs.db_name }}"
+    )
+    assert expected_db_input in text
     assert '--db "${INPUT_DB_NAME}"' in text
 
 
@@ -320,7 +367,12 @@ def test_partial_manual_claim_failure_has_an_owned_cleanup_step(filename: str):
 def test_blank_token_manual_cache_retry_uses_verified_pending_claim(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     recovery = text.split("- name: Recover committed cache publication", 1)[1].split("- name: Refresh", 1)[0]
-    assert "if: inputs.cache_only && inputs.execute" in recovery
+    expected_recovery = (
+        "if: env.INPUT_CACHE_ONLY == 'true' && env.INPUT_EXECUTE == 'true'"
+        if filename.startswith("yahoo_")
+        else "if: inputs.cache_only && inputs.execute"
+    )
+    assert expected_recovery in recovery
     assert 'if [ -n "${INPUT_DISPATCH_TOKEN}" ]; then' in recovery
     assert "scripts/recover_league_update_cache.py" in recovery
     validation = text.split("- name: Validate cache-only recovery request", 1)[1].split("- name: Recover", 1)[0]

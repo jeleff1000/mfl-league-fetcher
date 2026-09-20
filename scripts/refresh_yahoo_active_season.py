@@ -1806,6 +1806,11 @@ def _scope_counts(reader: Any, *, db_name: str, active_year: int, tables: list[s
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="Yahoo league db_name")
+    parser.add_argument(
+        "--credential-db",
+        default=None,
+        help="Optional db_name that owns the encrypted Yahoo OAuth credential",
+    )
     parser.add_argument("--year", type=int, default=None, help="Active NFL season (default: current ops season)")
     parser.add_argument("--through-week", type=int, default=None, help="Optional final-week ceiling")
     parser.add_argument("--observed-manifest-digest")
@@ -1965,6 +1970,7 @@ def main(argv: list[str] | None = None) -> int:
             data_dir_override=str(work_dir),
             reader=reader,
             frontend_settings=frontend_settings,
+            credential_database_name=args.credential_db,
         )
         oauth = ctx.get_oauth_session()
         history = _active_yahoo_history(

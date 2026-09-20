@@ -288,6 +288,11 @@ def fetch_espn_matchups_modern(
     ctx: "ESPNContext",
     year: int,
     weeks: list[int] | None = None,
+    *,
+    client=None,
+    league=None,
+    box_scores_by_week: dict[int, list] | None = None,
+    raw_schedules_by_week: dict[int, list[dict]] | None = None,
 ) -> pd.DataFrame | None:
     """
     Fetch matchups for 2019+ using box_scores.
@@ -300,10 +305,12 @@ def fetch_espn_matchups_modern(
     """
     from .espn_api_client import ESPNAPIClient
 
-    client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
+    if client is None:
+        client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
 
     try:
-        league = client.get_league(year)
+        if league is None:
+            league = client.get_league(year)
     except Exception as e:
         log(f"  [MATCHUPS] Failed to load league for {year}: {e}")
         return None
@@ -345,7 +352,11 @@ def fetch_espn_matchups_modern(
 
     for week in weeks_to_fetch:
         try:
-            box_scores = league.box_scores(week)
+            box_scores = (
+                box_scores_by_week[int(week)]
+                if box_scores_by_week is not None and int(week) in box_scores_by_week
+                else league.box_scores(week)
+            )
         except Exception:
             consecutive_empty += 1
             if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
@@ -387,7 +398,11 @@ def fetch_espn_matchups_modern(
                 f"snapshot for requested week {week}; skipping it"
             )
             continue
-        raw_schedule = client.get_raw_schedule(year, week)
+        raw_schedule = (
+            raw_schedules_by_week[int(week)]
+            if raw_schedules_by_week is not None and int(week) in raw_schedules_by_week
+            else client.get_raw_schedule(year, week)
+        )
         period_matches = _raw_schedule_matches_period(raw_schedule, week)
         if period_matches is False:
             log(
@@ -928,6 +943,11 @@ def fetch_espn_matchups(
     ctx: "ESPNContext",
     year: int,
     weeks: list[int] | None = None,
+    *,
+    client=None,
+    league=None,
+    box_scores_by_week: dict[int, list] | None = None,
+    raw_schedules_by_week: dict[int, list[dict]] | None = None,
 ) -> pd.DataFrame | None:
     """
     Fetch matchups for a single year, choosing modern or legacy path.
@@ -940,9 +960,23 @@ def fetch_espn_matchups(
         DataFrame with matchup data
     """
     if year >= 2019:
-        return fetch_espn_matchups_modern(ctx, year, weeks=weeks)
+        return fetch_espn_matchups_modern(
+            ctx,
+            year,
+            weeks=weeks,
+            client=client,
+            league=league,
+            box_scores_by_week=box_scores_by_week,
+            raw_schedules_by_week=raw_schedules_by_week,
+        )
     else:
-        return fetch_espn_matchups_legacy(ctx, year, weeks=weeks)
+        return fetch_espn_matchups_legacy(
+            ctx,
+            year,
+            weeks=weeks,
+            client=client,
+            league=league,
+        )
 
 
 def fetch_all_espn_matchups(ctx: "ESPNContext") -> pd.DataFrame:

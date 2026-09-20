@@ -93,6 +93,64 @@ def test_fetch_espn_matchups_modern_preserves_commissioner_adjustment(monkeypatc
     assert away_row["tiebreak"] == 0.0
 
 
+def test_fetch_espn_matchups_modern_reuses_prefetched_provider_payloads(monkeypatch):
+    """Weekly refresh must not fetch the same box score or schedule twice."""
+    from multi_league.data_fetchers.espn import espn_matchups
+
+    home_team = SimpleNamespace(team_id=3, team_name="Home")
+    away_team = SimpleNamespace(team_id=9, team_name="Away")
+    box_score = SimpleNamespace(
+        home_team=home_team,
+        away_team=away_team,
+        home_score=101.5,
+        away_score=99.0,
+        is_playoff=False,
+        matchup_type="NONE",
+    )
+
+    class _NoFetchLeague:
+        _uses_league_history = False
+
+        def box_scores(self, _week):
+            raise AssertionError("prefetched box scores must be reused")
+
+    class _NoFetchClient:
+        def get_league(self, _year):
+            raise AssertionError("the supplied league must be reused")
+
+        def get_raw_schedule(self, _year, _week):
+            raise AssertionError("prefetched raw schedules must be reused")
+
+        def get_raw_team_playoff_seed_map(self, _year):
+            return {}
+
+    monkeypatch.setattr(
+        "multi_league.data_fetchers.espn.espn_league_settings.load_espn_settings",
+        lambda _ctx, _year: {"end_week": 1, "playoff_matchup_period_length": 1},
+    )
+
+    frame = espn_matchups.fetch_espn_matchups_modern(
+        _FakeCtx(),
+        2024,
+        weeks=[1],
+        client=_NoFetchClient(),
+        league=_NoFetchLeague(),
+        box_scores_by_week={1: [box_score]},
+        raw_schedules_by_week={
+            1: [{
+                "matchupPeriodId": 1,
+                "winner": "HOME",
+                "home": {"teamId": 3, "totalPoints": 101.5},
+                "away": {"teamId": 9, "totalPoints": 99.0},
+            }],
+        },
+    )
+
+    assert frame is not None
+    assert frame.loc[frame["team_key"] == "3", "team_points"].iloc[0] == 101.5
+    assert frame.loc[frame["team_key"] == "9", "team_points"].iloc[0] == 99.0
+
+
 def test_fetch_espn_matchups_legacy_uses_raw_winner_and_playoff_bonus_for_away_tie(monkeypatch):
     """Pre-2019 ESPN scoreboards can flatten a playoff bonus game as a tie.
 

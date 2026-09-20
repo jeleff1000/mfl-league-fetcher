@@ -396,6 +396,7 @@ def _merge_active_payloads(
     # This lower-level fetcher has an explicit week scope and does not call
     # LocalLeagueDB.save_table(), which would delete all prior active-season
     # rows before the narrow refresh can merge its safe replacement rows.
+    box_scores_by_week: dict[int, list] = {}
     rosters = fetch_espn_rosters_modern(
         ctx,
         active_year,
@@ -404,6 +405,7 @@ def _merge_active_payloads(
         weeks=refresh_weeks,
         client=client,
         league=league,
+        box_scores_out=box_scores_by_week,
     )
     provider_roster_team_weeks = validate_active_roster_frame(
         provider="espn",
@@ -452,7 +454,15 @@ def _merge_active_payloads(
     )
     matchup_rows = 0
     if final_matchup_weeks:
-        matchups = fetch_espn_matchups(ctx, active_year, weeks=final_matchup_weeks)
+        matchups = fetch_espn_matchups(
+            ctx,
+            active_year,
+            weeks=final_matchup_weeks,
+            client=client,
+            league=league,
+            box_scores_by_week=box_scores_by_week,
+            raw_schedules_by_week=final_schedule_graphs,
+        )
         for week in final_matchup_weeks:
             weekly_matchups = (
                 matchups.loc[matchups["week"].astype(int) == int(week)].copy()
@@ -505,7 +515,11 @@ def _merge_active_payloads(
         provider_manifest=draft_manifest,
         key_columns=("pick", "espn_player_id", "player"),
         fetch_full=lambda: fetch_espn_draft(
-            ctx, active_year, player_names_by_id=draft_player_names,
+            ctx,
+            active_year,
+            player_names_by_id=draft_player_names,
+            client=client,
+            league=league,
         ),
         year=active_year,
         platform="espn",

@@ -323,6 +323,7 @@ def fetch_espn_rosters_modern(
     *,
     client=None,
     league=None,
+    box_scores_out: dict[int, list] | None = None,
 ) -> pd.DataFrame | None:
     """
     Fetch roster/player data for 2019+ using box_scores.
@@ -359,6 +360,8 @@ def fetch_espn_rosters_modern(
     for week in weeks_to_fetch:
         try:
             box_scores = league.box_scores(week)
+            if box_scores_out is not None:
+                box_scores_out[int(week)] = box_scores
         except Exception:
             consecutive_empty += 1
             if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:

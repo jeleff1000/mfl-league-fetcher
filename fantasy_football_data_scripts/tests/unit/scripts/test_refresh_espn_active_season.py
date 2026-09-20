@@ -59,6 +59,70 @@ def test_espn_draft_names_are_hydrated_from_the_fetched_roster():
     assert [pick.playerName for pick in league.draft] == ["Roster Player", "Already Named"]
 
 
+def test_espn_roster_fetch_exposes_box_scores_for_matchup_reuse():
+    from multi_league.data_fetchers.espn.espn_rosters import fetch_espn_rosters_modern
+
+    cached = {}
+    league = SimpleNamespace(
+        _uses_league_history=False,
+        box_scores=lambda week: [] if week == 1 else (_ for _ in ()).throw(AssertionError(week)),
+    )
+    ctx = SimpleNamespace(get_league_id_for_year=lambda _year: 123, espn_s2=None, swid=None)
+
+    assert fetch_espn_rosters_modern(
+        ctx,
+        2026,
+        max_weeks=1,
+        weeks=[1],
+        client=SimpleNamespace(),
+        league=league,
+        box_scores_out=cached,
+    ) is None
+    assert cached == {1: []}
+
+
+def test_espn_draft_fetch_reuses_the_loaded_league(monkeypatch):
+    from multi_league.data_fetchers.espn import espn_draft
+
+    monkeypatch.setattr(
+        "multi_league.data_fetchers.espn.espn_api_client.ESPNAPIClient",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a supplied league must not be fetched again")
+        ),
+    )
+    monkeypatch.setattr(espn_draft, "_resolve_espn_nfl_id", lambda _player_id: "nfl-1")
+    team = SimpleNamespace(team_id=1, team_name="One", roster=[])
+    pick = SimpleNamespace(
+        playerId=1001,
+        playerName="Player One",
+        round_num=1,
+        round_pick=1,
+        bid_amount=0,
+        keeper_status=False,
+        team=team,
+        position="QB",
+        proTeam="KC",
+    )
+    league = SimpleNamespace(draft=[pick], teams=[team])
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda *_args, **_kwargs: "Manager One",
+        get_manager_guid=lambda *_args, **_kwargs: "guid-1",
+        get_franchise_id=lambda *_args, **_kwargs: "franchise-1",
+        espn_s2=None,
+        swid=None,
+    )
+
+    frame = espn_draft.fetch_espn_draft(ctx, 2026, league=league)
+
+    assert frame is not None
+    assert frame[["espn_player_id", "NFL_player_id", "manager"]].iloc[0].tolist() == [
+        1001,
+        "nfl-1",
+        "Manager One",
+    ]
+
+
 def test_build_context_reuses_supplied_frontend_settings(tmp_path, monkeypatch):
     """The active worker must not re-read context after it has already hydrated it."""
     from multi_league.data_fetchers.espn import espn_api_client, espn_context

@@ -114,6 +114,8 @@ def fetch_espn_draft(
     year: int,
     *,
     player_names_by_id: dict[str, str] | None = None,
+    client=None,
+    league=None,
 ) -> pd.DataFrame | None:
     """
     Fetch draft data for a single year.
@@ -127,10 +129,12 @@ def fetch_espn_draft(
     """
     from .espn_api_client import ESPNAPIClient
 
-    client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
+    if client is None and league is None:
+        client = ESPNAPIClient(ctx.get_league_id_for_year(year), ctx.espn_s2, ctx.swid)
 
     try:
-        league = client.get_league(year)
+        if league is None:
+            league = client.get_league(year)
     except Exception as e:
         log(f"  [DRAFT] Failed to load league for {year}: {e}")
         return None

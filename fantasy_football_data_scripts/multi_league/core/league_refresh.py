@@ -310,6 +310,7 @@ def resolve_active_player_nfl_ids_from_bio(
     db_name: str,
     active_year: int,
     platform: str,
+    ops_cache: Path | str | None = None,
 ) -> int:
     """Resolve current-season provider IDs from the freshly synced bio cache.
 
@@ -339,25 +340,37 @@ def resolve_active_player_nfl_ids_from_bio(
         f"COALESCE(CAST(TRY_CAST({_qident(bio_column)} AS BIGINT) AS VARCHAR), "
         f"TRIM(CAST({_qident(bio_column)} AS VARCHAR)))"
     )
-    rows = conn.execute(
-        f"""
-        UPDATE public.player_fantasy AS t
-        SET NFL_player_id = mapped.NFL_player_id
-        FROM (
-            SELECT {bio_id} AS provider_id, MIN(NFL_player_id) AS NFL_player_id
-            FROM ___ops.nfl_historical.player_bio
-            WHERE {_qident(bio_column)} IS NOT NULL AND NFL_player_id IS NOT NULL
-            GROUP BY provider_id
-            HAVING provider_id IS NOT NULL AND COUNT(DISTINCT NFL_player_id) = 1
-        ) AS mapped
-        WHERE t.db_name = ? AND t.year = ?
-          AND {local_id} = mapped.provider_id
-          AND COALESCE(TRIM(CAST(t.NFL_player_id AS VARCHAR)), '') <> mapped.NFL_player_id
-        RETURNING 1
-        """,
-        [str(db_name), int(active_year)],
-    ).fetchall()
-    return len(rows)
+    attached_for_lookup = False
+    catalogs = {str(row[1]) for row in conn.execute("PRAGMA database_list").fetchall()}
+    if "___ops" not in catalogs:
+        cache_path = Path(ops_cache or "")
+        if not cache_path.is_file():
+            raise RefreshScopeError("active player identity lookup requires the local Ops cache")
+        conn.execute(f"ATTACH {_sql_literal(cache_path)} AS ___ops (READ_ONLY)")
+        attached_for_lookup = True
+    try:
+        rows = conn.execute(
+            f"""
+            UPDATE public.player_fantasy AS t
+            SET NFL_player_id = mapped.NFL_player_id
+            FROM (
+                SELECT {bio_id} AS provider_id, MIN(NFL_player_id) AS NFL_player_id
+                FROM ___ops.nfl_historical.player_bio
+                WHERE {_qident(bio_column)} IS NOT NULL AND NFL_player_id IS NOT NULL
+                GROUP BY provider_id
+                HAVING provider_id IS NOT NULL AND COUNT(DISTINCT NFL_player_id) = 1
+            ) AS mapped
+            WHERE t.db_name = ? AND t.year = ?
+              AND {local_id} = mapped.provider_id
+              AND COALESCE(TRIM(CAST(t.NFL_player_id AS VARCHAR)), '') <> mapped.NFL_player_id
+            RETURNING 1
+            """,
+            [str(db_name), int(active_year)],
+        ).fetchall()
+        return len(rows)
+    finally:
+        if attached_for_lookup:
+            conn.execute("DETACH ___ops")
 
 
 def sync_player_bio_cache_from_fly(

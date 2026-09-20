@@ -802,6 +802,7 @@ def main(argv: list[str] | None = None) -> int:
                 db_name=args.db,
                 active_year=active_year,
                 platform="sleeper",
+                ops_cache=Path(os.environ.get("OPS_CACHE_PATH", "")),
             )
             timer.mark("player_bio_sync")
             receipt["ops_cache"] = str(

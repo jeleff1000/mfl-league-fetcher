@@ -435,7 +435,7 @@ def test_active_player_bio_cache_sync_updates_only_fetched_sleeper_identities(tm
         updated.close()
 
 
-def test_active_player_id_resolution_uses_synced_sleeper_id_despite_name_alias():
+def test_active_player_id_resolution_uses_synced_sleeper_id_despite_name_alias(tmp_path):
     """Current-season provider identity outranks a harmless display-name alias."""
     import duckdb
 
@@ -454,23 +454,26 @@ def test_active_player_id_resolution_uses_synced_sleeper_id_despite_name_alias()
         "('franchise_mode_fantasy', 2025, '7670', NULL, 'Joshua Palmer'), "
         "('franchise_mode_fantasy', 2026, '9999', NULL, 'Reused ID')"
     )
-    league.execute("ATTACH ':memory:' AS ___ops")
-    league.execute("CREATE SCHEMA ___ops.nfl_historical")
-    league.execute(
-        "CREATE TABLE ___ops.nfl_historical.player_bio ("
+    ops_path = tmp_path / "ops.duckdb"
+    ops = duckdb.connect(str(ops_path))
+    ops.execute("CREATE SCHEMA nfl_historical")
+    ops.execute(
+        "CREATE TABLE nfl_historical.player_bio ("
         "NFL_player_id VARCHAR, player VARCHAR, sleeper_player_id DOUBLE)"
     )
-    league.execute(
-        "INSERT INTO ___ops.nfl_historical.player_bio VALUES "
+    ops.execute(
+        "INSERT INTO nfl_historical.player_bio VALUES "
         "('00-0036988', 'Josh Palmer', 7670), "
         "('00-a', 'First Reuse', 9999), ('00-b', 'Second Reuse', 9999)"
     )
+    ops.close()
 
     changed = resolve_active_player_nfl_ids_from_bio(
         league,
         db_name="franchise_mode_fantasy",
         active_year=2026,
         platform="sleeper",
+        ops_cache=ops_path,
     )
 
     assert changed == 1

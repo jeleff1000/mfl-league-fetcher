@@ -73,6 +73,31 @@ def test_saved_commit_survives_later_worker_failure(tmp_path, error):
     assert saved["source_manifest_complete"] is False
 
 
+def test_commit_receipt_keeps_server_stage_timings(tmp_path):
+    path = tmp_path / "receipt.json"
+    receipt = _committed_input()
+    result = {
+        "status": "COMMITTED",
+        "elapsed_seconds": 12.5,
+        "merge_seconds": 13.0,
+        "lock_wait_seconds": 0.2,
+        "season_stage_seconds": {"receipt_canary": {"rollup_build": 2.1}},
+        "timings": {"matchup": 0.4},
+    }
+
+    subject.record_publication_commit(
+        receipt, result=result, bundle_id="bundle-1", path=path,
+    )
+
+    assert receipt["publication_timing"] == {
+        "elapsed_seconds": 12.5,
+        "merge_seconds": 13.0,
+        "lock_wait_seconds": 0.2,
+        "season_stage_seconds": {"receipt_canary": {"rollup_build": 2.1}},
+        "timings": {"matchup": 0.4},
+    }
+
+
 @pytest.mark.parametrize("status,executed,bundle_id", [
     ("VALIDATED", True, "bundle-1"), ("FAILED_MERGE", True, "bundle-1"),
     ("COMMITTED", False, "bundle-1"), ("COMMITTED", True, ""),

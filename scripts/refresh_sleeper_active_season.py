@@ -579,6 +579,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     from multi_league.core.league_update_lineage import assert_canonical_history_complete
 
+    # The source-plan and active-input scans share the same Fly DuckDB. Run
+    # them serially so two safe league-scoped reads do not amplify each other
+    # into a slow no-op preflight.
     preflight = run_independent_refresh_preflight({
         "entitlement": lambda: start_league_update_execution(
             reader,
@@ -593,24 +596,22 @@ def main(argv: list[str] | None = None) -> int:
         "canonical_history": lambda: assert_canonical_history_complete(
             reader, database_name=args.db, active_season=active_year
         ),
-        "active_inputs": lambda: _load_active_refresh_inputs(
-            reader,
-            db_name=args.db,
-            year=active_year,
-            through_week=args.through_week,
-        ),
-        "persisted_plan": lambda: load_persisted_refresh_plan(
-            reader,
-            database_name=args.db,
-            active_season=active_year,
-            expected_observed_digest=args.observed_manifest_digest,
-        ),
     })
     canonical_history = preflight["canonical_history"]
-    finalized_ops, last_materialized_week = preflight["active_inputs"]
+    persisted_plan = load_persisted_refresh_plan(
+        reader,
+        database_name=args.db,
+        active_season=active_year,
+        expected_observed_digest=args.observed_manifest_digest,
+    )
+    finalized_ops, last_materialized_week = _load_active_refresh_inputs(
+        reader,
+        db_name=args.db,
+        year=active_year,
+        through_week=args.through_week,
+    )
     if finalized_ops.empty:
         raise RuntimeError(f"No finalized regular-season ops facts for {active_year}")
-    persisted_plan = preflight["persisted_plan"]
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
     captured_league_id = active_provider_league_id(persisted_plan, provider="sleeper")

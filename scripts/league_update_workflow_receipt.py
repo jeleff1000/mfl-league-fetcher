@@ -36,10 +36,22 @@ def record_publication_commit(
         raise ValueError("scoped refresh did not return a confirmed COMMITTED publication")
     if receipt.get("executed") is not True or not bundle_id:
         raise ValueError("commit receipt requires an executed publication and bundle identity")
+    timing_keys = (
+        "elapsed_seconds",
+        "merge_seconds",
+        "lock_wait_seconds",
+        "season_stage_seconds",
+        "timings",
+    )
+    publication_timing = {
+        key: result[key] for key in timing_keys if result.get(key) is not None
+    }
     receipt.update(
         status="COMMITTED", bundle_id=bundle_id, data_bundle_id=bundle_id,
         homepage_bundle_id=bundle_id,
     )
+    if publication_timing:
+        receipt["publication_timing"] = publication_timing
     write_refresh_receipt(receipt, path)
 
 

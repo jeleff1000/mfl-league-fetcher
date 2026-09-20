@@ -262,6 +262,37 @@ def test_raw_draft_parser_resolves_players_from_espn_player_pool():
     assert league.draft[0].playerName == "Pool Player"
 
 
+def test_raw_draft_parser_ignores_undrafted_placeholder_slots():
+    league = SimpleNamespace(
+        espn_request=SimpleNamespace(
+            get_league_draft=lambda: {
+                "draftDetail": {
+                    "drafted": False,
+                    "inProgress": False,
+                    "picks": [{
+                        "teamId": 1,
+                        "playerId": -1,
+                        "nominatingTeamId": 1,
+                        "roundId": 1,
+                        "roundPickNumber": 1,
+                        "bidAmount": 0,
+                        "keeper": False,
+                    }],
+                }
+            },
+            get_pro_players=lambda: [],
+        ),
+        player_map={},
+        teams=[],
+        draft=[],
+        get_team_data=lambda team_id: f"team-{team_id}",
+    )
+
+    _fetch_legacy_draft_with_list_ids(league)
+
+    assert league.draft == []
+
+
 def test_legacy_player_parser_normalizes_list_valued_ids():
     league = SimpleNamespace(
         espn_request=SimpleNamespace(

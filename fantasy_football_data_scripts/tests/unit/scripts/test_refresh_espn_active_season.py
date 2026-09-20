@@ -328,6 +328,73 @@ def test_espn_draft_manifest_confirms_absence_only_from_raw_undrafted_status():
     assert absent is True
 
 
+def test_espn_draft_manifest_confirms_undrafted_placeholder_slots_are_not_picks():
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    payload = _draft_payload(drafted=False, pick_count=6)
+    for pick in payload["draftDetail"]["picks"]:
+        pick["playerId"] = -1
+    client = SimpleNamespace(get_raw_league=lambda *_args: payload)
+
+    manifest, absent = _espn_draft_manifest(client, SimpleNamespace(draft=[]), 2026)
+
+    assert manifest.empty
+    assert absent is True
+
+
+def test_espn_placeholder_cleanup_removes_only_unresolved_active_draft_rows():
+    import pytest
+    from multi_league.core.league_refresh import RefreshScopeError
+    import refresh_espn_active_season as worker
+
+    class Connection:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+
+    class LocalDB:
+        def __init__(self):
+            self.conn = Connection()
+
+        def table_exists(self, table):
+            return table == "draft"
+
+        def read_table(self, table, *, year):
+            assert (table, year) == ("draft", 2026)
+            return pd.DataFrame({
+                "db_name": ["league", "league"],
+                "year": [2026, 2026],
+                "platform": ["espn", "espn"],
+                "espn_player_id": [-1, -1],
+                "player": ["Unknown", "Unknown"],
+            })
+
+        def connect(self):
+            return self.conn
+
+    local_db = LocalDB()
+    discard = getattr(worker, "_discard_espn_placeholder_draft", lambda *_args, **_kwargs: 0)
+
+    removed = discard(local_db, db_name="league", year=2026, league_id="123")
+
+    assert removed == 2
+    assert len(local_db.conn.calls) == 1
+    assert "DELETE FROM public.draft" in local_db.conn.calls[0][0]
+
+    local_db.read_table = lambda *_args, **_kwargs: pd.DataFrame({
+        "db_name": ["league"],
+        "year": [2026],
+        "platform": ["espn"],
+        "espn_player_id": [1001],
+        "player": ["Real Player"],
+    })
+    with pytest.raises(RefreshScopeError, match="refusing to remove real picks"):
+        discard(local_db, db_name="league", year=2026, league_id="123")
+    assert len(local_db.conn.calls) == 1
+
+
 def test_espn_draft_manifest_accepts_complete_picks_when_drafted_flag_is_stale():
     from refresh_espn_active_season import _espn_draft_manifest
 

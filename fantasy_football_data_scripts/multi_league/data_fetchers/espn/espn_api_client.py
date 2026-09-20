@@ -123,8 +123,18 @@ def _fetch_legacy_draft_with_list_ids(league: Any) -> None:
 
     data = league.espn_request.get_league_draft()
     detail = data.get("draftDetail", {})
-    if not detail.get("drafted") and not detail.get("picks"):
-        return
+    raw_picks = detail.get("picks") or []
+    if not detail.get("drafted"):
+        raw_player_ids = [
+            _legacy_draft_scalar(pick.get("playerId"))
+            for pick in raw_picks
+        ]
+        if not raw_picks or all(
+            player_id in (None, "")
+            or (str(player_id).lstrip("-").isdigit() and int(player_id) <= 0)
+            for player_id in raw_player_ids
+        ):
+            return
 
     player_names = {
         str(player_id): player_name
@@ -143,7 +153,7 @@ def _fetch_legacy_draft_with_list_ids(league: Any) -> None:
                 player_names.setdefault(str(player_id), str(player_name))
     needed_player_ids = {
         str(player_id)
-        for pick in detail.get("picks", [])
+        for pick in raw_picks
         if (player_id := _legacy_draft_scalar(pick.get("playerId"))) is not None
     }
     if needed_player_ids - set(player_names):
@@ -156,7 +166,7 @@ def _fetch_legacy_draft_with_list_ids(league: Any) -> None:
         except Exception as exc:
             log(f"  [ESPN] Player-pool draft identity refresh failed: {exc}")
 
-    for pick in detail.get("picks", []):
+    for pick in raw_picks:
         team_id = _legacy_draft_scalar(pick.get("teamId"))
         player_id = _legacy_draft_scalar(pick.get("playerId"))
         nominating_team_id = _legacy_draft_scalar(pick.get("nominatingTeamId"))

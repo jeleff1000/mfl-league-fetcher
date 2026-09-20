@@ -192,6 +192,14 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
         raise RefreshScopeError("ESPN draft witness lacks an explicit pick list")
     if detail.get("drafted") is False and not picks and not parsed:
         return pd.DataFrame(columns=["pick"]), True
+    raw_player_ids = [pick.get("playerId") for pick in picks]
+    placeholder_slots = bool(picks) and all(
+        player_id in (None, "")
+        or (str(player_id).lstrip("-").isdigit() and int(player_id) <= 0)
+        for player_id in raw_player_ids
+    )
+    if detail.get("drafted") is False and placeholder_slots and not parsed:
+        return pd.DataFrame(columns=["pick"]), True
     if detail.get("inProgress") is True:
         raise RefreshScopeError(
             "ESPN active draft is not confirmed complete "
@@ -240,6 +248,39 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
         "player": parsed_player_names,
     }).sort_values("pick", ignore_index=True)
     return manifest, False
+
+
+def _discard_espn_placeholder_draft(
+    local_db: Any,
+    *,
+    db_name: str,
+    year: int,
+    league_id: str,
+) -> int:
+    """Remove only the invalid pre-draft slots emitted by ESPN as picks."""
+    from multi_league.core.league_refresh import RefreshScopeError
+
+    if not local_db.table_exists("draft"):
+        return 0
+    active = local_db.read_table("draft", year=year)
+    if active is None or active.empty:
+        return 0
+    required = {"espn_player_id", "player"}
+    if not required.issubset(active.columns):
+        raise RefreshScopeError("ESPN placeholder draft lacks identity columns")
+    player_ids = pd.to_numeric(active["espn_player_id"], errors="coerce")
+    names = active["player"].fillna("").astype(str).str.strip().str.lower()
+    placeholders = (player_ids.isna() | player_ids.le(0)) & names.isin({"", "unknown"})
+    if not placeholders.all():
+        raise RefreshScopeError("ESPN draft is undrafted; refusing to remove real picks")
+    local_db.connect().execute(
+        """
+        DELETE FROM public.draft
+        WHERE db_name = ? AND year = ? AND platform = 'espn' AND league_id = ?
+        """,
+        [str(db_name), int(year), str(league_id)],
+    )
+    return int(len(active))
 
 
 def _hydrate_espn_draft_player_names(league: Any, rosters: pd.DataFrame) -> dict[str, str]:
@@ -408,6 +449,15 @@ def _merge_active_payloads(
         )
     draft_rows = 0
     draft_manifest, confirmed_no_draft = _espn_draft_manifest(client, league, active_year)
+    placeholder_draft_rows_removed = (
+        _discard_espn_placeholder_draft(
+            local_db,
+            db_name=local_db.league_name,
+            year=active_year,
+            league_id=league_id,
+        )
+        if confirmed_no_draft else 0
+    )
     draft_rows = refresh_authoritative_draft_partition(
         local_db,
         provider_manifest=draft_manifest,
@@ -427,6 +477,7 @@ def _merge_active_payloads(
         "final_matchup_weeks": len(final_matchup_weeks),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
+        "placeholder_draft_rows_removed": placeholder_draft_rows_removed,
         "draft_validated": True,
         "pending_nfl_teams": sorted(pending_nfl_teams),
     }

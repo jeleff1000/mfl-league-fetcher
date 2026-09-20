@@ -791,7 +791,12 @@ def validate_espn_final_matchup_frame(
         raise IncompleteSourceError("ESPN raw final matchup graph is incomplete")
     required = {"year", "week", "team_key", "matchup_id", "is_bye_week", "team_points", "opponent_points"}
     if not isinstance(matchups, pd.DataFrame) or not required <= set(matchups):
-        raise IncompleteSourceError("ESPN fetched final matchup identity/score keys are missing")
+        columns = sorted(str(column) for column in getattr(matchups, "columns", []))
+        row_count = len(matchups) if isinstance(matchups, pd.DataFrame) else None
+        raise IncompleteSourceError(
+            "ESPN fetched final matchup identity/score keys are missing "
+            f"(rows={row_count}, columns={columns})"
+        )
     if matchups[["year", "week", "team_key", "matchup_id", "is_bye_week"]].isna().any().any():
         raise IncompleteSourceError("ESPN fetched final matchup has null identity keys")
     try:

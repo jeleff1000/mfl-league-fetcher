@@ -400,6 +400,10 @@ def fetch_espn_matchups_modern(
             if raw_schedules_by_week is not None and int(week) in raw_schedules_by_week
             else client.get_raw_schedule(year, week)
         )
+        log(
+            f"  [MATCHUPS] {year} week {week}: "
+            f"box_scores={len(box_scores)}, raw_pairs={len(raw_schedule or [])}"
+        )
         period_matches = _raw_schedule_matches_period(raw_schedule, week)
         if period_matches is False:
             log(

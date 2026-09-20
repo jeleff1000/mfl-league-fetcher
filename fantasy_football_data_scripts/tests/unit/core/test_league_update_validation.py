@@ -508,6 +508,26 @@ def test_espn_final_matchup_frame_accepts_period_points_when_total_points_lag():
     ) == 2
 
 
+def test_espn_final_matchup_frame_reports_empty_frame_shape():
+    raw = [{
+        "home": {"teamId": 1, "totalPoints": 100.0},
+        "away": {"teamId": 2, "totalPoints": 90.0},
+        "winner": "HOME",
+    }]
+
+    with pytest.raises(
+        IncompleteSourceError,
+        match=r"identity/score keys are missing \(rows=0, columns=\[\]\)",
+    ):
+        validate_espn_final_matchup_frame(
+            season=2026,
+            week=1,
+            expected_team_ids=("1", "2"),
+            raw_schedule=raw,
+            matchups=pd.DataFrame(),
+        )
+
+
 def test_espn_final_matchup_frame_rejects_missing_raw_score_witness():
     raw, frame = _espn_final_graph_fixture()
     del raw[0]["home"]["totalPoints"]

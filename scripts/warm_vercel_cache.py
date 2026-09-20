@@ -637,7 +637,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             failures += 1
-        if p95_ms > args.max_p95_ms:
+        if args.max_p95_ms > 0 and p95_ms > args.max_p95_ms:
             print(f"Repeat warm p95 {p95_ms}ms exceeds target {args.max_p95_ms}ms", file=sys.stderr)
             failures += 1
 

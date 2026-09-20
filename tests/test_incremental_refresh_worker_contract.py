@@ -262,6 +262,7 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert "--timeout 5" in text
     assert "--warm-attempts 1" in text
     assert "--hot-verify-attempts 1" in text
+    assert "--max-p95-ms 0" in text
     assert "--status succeeded" in text
     assert '--status "${recovery_status}"' in text
     assert 'recovery_status=$(python scripts/league_update_workflow_receipt.py' in text

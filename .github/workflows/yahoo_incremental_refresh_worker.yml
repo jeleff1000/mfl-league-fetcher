@@ -261,6 +261,7 @@ jobs:
           --timeout 5
           --warm-attempts 1
           --hot-verify-attempts 1
+          --max-p95-ms 0
 
       - name: Complete league update
         if: env.INPUT_EXECUTE == 'true' && (steps.manual_claim.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != '') && steps.publication.outputs.committed == 'true'

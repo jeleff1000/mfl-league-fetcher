@@ -122,10 +122,11 @@ def _fetch_legacy_draft_with_list_ids(league: Any) -> None:
     from espn_api.base_pick import BasePick
 
     data = league.espn_request.get_league_draft()
-    if not data.get("draftDetail", {}).get("drafted"):
+    detail = data.get("draftDetail", {})
+    if not detail.get("drafted") and not detail.get("picks"):
         return
 
-    for pick in data.get("draftDetail", {}).get("picks", []):
+    for pick in detail.get("picks", []):
         team_id = _legacy_draft_scalar(pick.get("teamId"))
         player_id = _legacy_draft_scalar(pick.get("playerId"))
         nominating_team_id = _legacy_draft_scalar(pick.get("nominatingTeamId"))
@@ -281,6 +282,12 @@ class ESPNAPIClient:
                 except Exception:
                     log(f"  [ESPN] Legacy {year} initialization traceback:\n{traceback.format_exc()}")
                     raise
+
+            # ESPN occasionally returns a complete pick list while leaving
+            # ``drafted`` false. espn_api then discards every pick. Re-read
+            # only that small view and retain its explicit picks.
+            if not getattr(league, "draft", None):
+                _fetch_legacy_draft_with_list_ids(league)
 
             # espn_api can discover an archive after a modern endpoint's 401.
             # Raw views must reuse that route; archive rosters are season

@@ -170,7 +170,7 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
         raise RefreshScopeError("ESPN draft witness lacks an explicit pick list")
     if detail.get("drafted") is False and not picks and not parsed:
         return pd.DataFrame(columns=["pick"]), True
-    if detail.get("drafted") is not True or detail.get("inProgress") is True:
+    if detail.get("inProgress") is True:
         raise RefreshScopeError(
             "ESPN active draft is not confirmed complete "
             f"(drafted={detail.get('drafted')!r}, "

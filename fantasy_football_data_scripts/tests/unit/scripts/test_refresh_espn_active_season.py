@@ -269,16 +269,32 @@ def test_espn_draft_manifest_confirms_absence_only_from_raw_undrafted_status():
     assert absent is True
 
 
+def test_espn_draft_manifest_accepts_complete_picks_when_drafted_flag_is_stale():
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    client = SimpleNamespace(
+        get_raw_league=lambda *_args: _draft_payload(drafted=False, pick_count=6)
+    )
+    manifest, absent = _espn_draft_manifest(
+        client,
+        SimpleNamespace(draft=[SimpleNamespace() for _ in range(6)]),
+        2026,
+    )
+
+    assert manifest["pick"].tolist() == [1, 2, 3, 4, 5, 6]
+    assert absent is False
+
+
 def test_espn_draft_manifest_reports_the_rejected_completion_witness():
     import pytest
     from multi_league.core.league_refresh import RefreshScopeError
     from refresh_espn_active_season import _espn_draft_manifest
 
-    client = SimpleNamespace(
-        get_raw_league=lambda *_args: _draft_payload(drafted=False, pick_count=1)
-    )
+    payload = _draft_payload(drafted=True, pick_count=1)
+    payload["draftDetail"]["inProgress"] = True
+    client = SimpleNamespace(get_raw_league=lambda *_args: payload)
     with pytest.raises(
         RefreshScopeError,
-        match=r"drafted=False, in_progress=False, raw_picks=1, parsed_picks=1",
+        match=r"drafted=True, in_progress=True, raw_picks=1, parsed_picks=1",
     ):
         _espn_draft_manifest(client, SimpleNamespace(draft=[SimpleNamespace()]), 2026)

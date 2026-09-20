@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from multi_league.data_fetchers.espn.espn_api_client import (
+    ESPNAPIClient,
     _fetch_legacy_draft_with_list_ids,
     _fetch_legacy_players_with_list_ids,
     _find_legacy_key,
@@ -53,6 +54,88 @@ def test_legacy_draft_parser_normalizes_list_valued_ids():
     assert league.draft[0].playerName == "Legacy Player"
     assert league.draft[0].team == "team-1"
     assert league.draft[0].nominatingTeam == "team-2"
+
+
+def test_raw_draft_parser_keeps_complete_picks_when_espn_drafted_flag_is_stale():
+    class FakeLeague:
+        def __init__(self):
+            self.espn_request = SimpleNamespace(
+                get_league_draft=lambda: {
+                    "draftDetail": {
+                        "drafted": False,
+                        "inProgress": False,
+                        "picks": [
+                            {
+                                "teamId": 1,
+                                "playerId": 99,
+                                "nominatingTeamId": 1,
+                                "roundId": 1,
+                                "roundPickNumber": 1,
+                                "bidAmount": 0,
+                                "keeper": False,
+                            }
+                        ],
+                    }
+                }
+            )
+            self.player_map = {99: "Current Player"}
+            self.draft = []
+
+        @staticmethod
+        def get_team_data(team_id):
+            return f"team-{team_id}"
+
+    league = FakeLeague()
+
+    _fetch_legacy_draft_with_list_ids(league)
+
+    assert [(pick.playerId, pick.playerName) for pick in league.draft] == [
+        (99, "Current Player")
+    ]
+
+
+def test_get_league_populates_complete_raw_draft_when_espn_flag_is_stale(monkeypatch):
+    import espn_api.football
+
+    class FakeLeague:
+        def __init__(self, **_kwargs):
+            self.espn_request = SimpleNamespace(
+                LEAGUE_ENDPOINT="https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2026",
+                get_league_draft=lambda: {
+                    "draftDetail": {
+                        "drafted": False,
+                        "inProgress": False,
+                        "picks": [
+                            {
+                                "teamId": 1,
+                                "playerId": 99,
+                                "nominatingTeamId": 1,
+                                "roundId": 1,
+                                "roundPickNumber": 1,
+                                "bidAmount": 0,
+                                "keeper": False,
+                            }
+                        ],
+                    }
+                },
+            )
+            self.player_map = {99: "Current Player"}
+            self.draft = []
+            self.finalScoringPeriod = 17
+            self.current_week = 2
+            self.scoringPeriodId = 2
+
+        @staticmethod
+        def get_team_data(team_id):
+            return f"team-{team_id}"
+
+    monkeypatch.setattr(espn_api.football, "League", FakeLeague)
+
+    league = ESPNAPIClient(12345).get_league(2026)
+
+    assert [(pick.playerId, pick.playerName) for pick in league.draft] == [
+        (99, "Current Player")
+    ]
 
 
 def test_legacy_player_parser_normalizes_list_valued_ids():

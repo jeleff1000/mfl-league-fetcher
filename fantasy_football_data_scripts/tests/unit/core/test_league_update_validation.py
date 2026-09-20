@@ -190,7 +190,7 @@ def test_new_scored_provider_players_require_published_career_aggregates(provide
         )
     conn.execute("UPDATE public.player_fantasy_career SET games_rostered=1 WHERE NFL_player_id='00-rookie'")
     # V2 publishes careers on Fly, not from the active-season upload. The
-    # preflight still validates the local derived values and homepage output.
+    # worker validates its uploaded homepage while Fly owns career validation.
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
@@ -202,14 +202,19 @@ def test_new_scored_provider_players_require_published_career_aggregates(provide
             provider_id_column=provider_id_column, published_tables=(),
             publication_schema_version="fleet-partition-v2",
         )
-    conn.execute("UPDATE public.player_fantasy_career SET games_rostered=0")
-    with pytest.raises(IncompleteSourceError, match="invalid career values"):
-        assert_refresh_derived_output_health(
-            conn, db_name="afi_data", year=2026, weeks=(1,),
-            provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
-            publication_schema_version="fleet-partition-v2",
+    conn.execute("DROP TABLE public.player_fantasy_career")
+    conn.execute("DROP TABLE public.player_fantasy_career_all")
+    assert assert_refresh_derived_output_health(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
+        publication_schema_version="fleet-partition-v2",
+    )["active_scored_career_players"] == 1
+    for table in ("player_fantasy_career", "player_fantasy_career_all"):
+        conn.execute(
+            f"CREATE TABLE public.{table} (db_name VARCHAR, NFL_player_id VARCHAR, "
+            "games_rostered INTEGER, fantasy_points DOUBLE)"
         )
-    conn.execute("UPDATE public.player_fantasy_career SET games_rostered=1")
+        conn.execute(f"INSERT INTO public.{table} VALUES ('afi_data','00-rookie',1,14.0)")
     with pytest.raises(IncompleteSourceError, match="careers must be rebuilt on Fly"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),

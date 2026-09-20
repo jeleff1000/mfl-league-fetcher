@@ -548,6 +548,10 @@ def assert_refresh_derived_output_health(
     if publication_schema_version not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
         raise IncompleteSourceError("unsupported publication schema for derived validation")
     atomic_homepage = publication_schema_version == FLEET_HOMEPAGE_SCHEMA_VERSION
+    server_rebuilds_careers = publication_schema_version in {
+        FLEET_CAREER_SCHEMA_VERSION,
+        FLEET_HOMEPAGE_SCHEMA_VERSION,
+    }
     if provider_id_column not in _ACTIVE_PROVIDER_PLAYER_COLUMNS:
         raise IncompleteSourceError("unsupported provider player identity column")
     selected_weeks = tuple(sorted({int(week) for week in weeks}))
@@ -621,7 +625,7 @@ def assert_refresh_derived_output_health(
         ).fetchone()[0]
         if int(summary or 0) != 1:
             raise IncompleteSourceError("homepage_league_summary must contain exactly one league row")
-    if not atomic_homepage:
+    if not server_rebuilds_careers:
         for table in ("player_fantasy_career", "player_fantasy_career_all"):
             if not active_players:
                 continue
@@ -647,8 +651,10 @@ def assert_refresh_derived_output_health(
         ("homepage_manager_rankings", "seasons", True),
         ("homepage_current_standings", "wins", False),
     ):
-        if atomic_homepage and (table in HOMEPAGE_ROLLUP_TABLES or table in CAREER_ROLLUP_TABLES):
-            continue  # V3 server checks complete-chain career/homepage outputs before COMMIT.
+        if (server_rebuilds_careers and table in CAREER_ROLLUP_TABLES) or (
+            atomic_homepage and table in HOMEPAGE_ROLLUP_TABLES
+        ):
+            continue  # Server-owned complete-chain rollups are checked before COMMIT.
         if not active_franchises:
             continue
         rows = _derived_id_rows(

@@ -405,25 +405,39 @@ def test_sleeper_validates_the_actual_active_draft_not_an_empty_placeholder():
     assert "draft=draft" in fetch
 
 
-def test_shared_active_refresh_rebuilds_data_and_homepage_atomically_on_fly():
+def test_shared_active_refresh_publishes_bounded_worker_homepage_output_atomically():
     for script_name in (
         "refresh_yahoo_active_season.py",
         "refresh_espn_active_season.py",
         "refresh_sleeper_active_season.py",
     ):
         text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
-        assert "prepare_homepage_refresh" not in text
+        assert "prepare_homepage_refresh" in text
         assert "publish_homepage_refresh_bundle" not in text
         bundle_call = text.split("bundle = build_fleet_partition_bundle(", 1)[1].split(")", 1)[0]
         assert "rebuild_career_rollups=True" in bundle_call
-        assert "rebuild_homepage_rollups=True" in bundle_call
+        assert "rebuild_homepage_rollups=False" in bundle_call
         assert text.count("merge_fleet_partition(") == 1
-        assert 'receipt["homepage_rows"] = result.get("homepage_rollups", {}).get(args.db, {})' in text
-        assert 'receipt["homepage_seconds"] = result.get("homepage_seconds", {}).get(args.db)' in text
+        assert 'receipt["homepage_rows"] = receipt["homepage_refresh"]["rows"]' in text
+        assert 'receipt["homepage_seconds"] = round(time.monotonic() - homepage_started, 3)' in text
         assert 'parser.add_argument("--observed-manifest-digest")' in text
         assert "load_persisted_refresh_plan(" in text
         assert 'receipt["source_manifest_digest"]' in text
         assert 'receipt["source_manifest_json"]' in text
+
+
+def test_active_refresh_callers_do_not_select_wire_schema_versions():
+    for script_name in (
+        "refresh_yahoo_active_season.py",
+        "refresh_espn_active_season.py",
+        "refresh_sleeper_active_season.py",
+    ):
+        text = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+        assert "FLEET_CAREER_SCHEMA_VERSION" not in text
+        assert "FLEET_HOMEPAGE_SCHEMA_VERSION" not in text
+        assert "publication_schema_version" not in text
+        assert "server_rebuilds_career_rollups=True" in text
+        assert "server_rebuilds_homepage_rollups=False" in text
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())

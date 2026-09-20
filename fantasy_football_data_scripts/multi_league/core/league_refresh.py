@@ -1209,7 +1209,10 @@ def merge_provider_refresh_table(
 
 
 def active_refresh_publish_tables(
-    source: duckdb.DuckDBPyConnection, *, publication_schema_version: str = "fleet-partition-v2",
+    source: duckdb.DuckDBPyConnection,
+    *,
+    server_rebuilds_career_rollups: bool = True,
+    server_rebuilds_homepage_rollups: bool = False,
 ) -> list[str]:
     """Return locally-built tables safe to replace in an active-season refresh.
 
@@ -1219,11 +1222,13 @@ def active_refresh_publish_tables(
     out of a weekly bundle unless they were rebuilt from full history.
     """
     from multi_league.core.delta_publish import CADENCE_ACTIVE_SEASON, canonical_table_registry
-    from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION
     from multi_league.transformations.aggregation.aggregation_utils import (
         COMPLETE_CHAIN_SEASON_ROLLUP_TABLES,
         HOMEPAGE_ROLLUP_TABLES,
     )
+
+    if server_rebuilds_homepage_rollups and not server_rebuilds_career_rollups:
+        raise ValueError("Server homepage rebuilding requires server career rebuilding")
 
     registry = canonical_table_registry()
     # Frontend-owned configuration is an enrichment input, not active-season
@@ -1241,9 +1246,9 @@ def active_refresh_publish_tables(
         "homepage_manager_rankings",
         "homepage_top_rivalries",
     }
-    if publication_schema_version == FLEET_HOMEPAGE_SCHEMA_VERSION:
+    if server_rebuilds_homepage_rollups:
         rebuilt_rollups -= set(HOMEPAGE_ROLLUP_TABLES)
-        # V3 rebuilds these from the just-merged full chain in the same Fly
+        # The server rebuilds these from the just-merged full chain in the same Fly
         # transaction. Uploading scratch copies first is duplicate work and
         # briefly writes values that the server immediately replaces.
         excluded_config_tables |= set(COMPLETE_CHAIN_SEASON_ROLLUP_TABLES)

@@ -529,29 +529,23 @@ def _derived_id_rows(
 def assert_refresh_derived_output_health(
     conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
     provider_id_column: str, published_tables: tuple[str, ...] | list[str],
-    publication_schema_version: str = "fleet-partition-v1",
+    server_rebuilds_career_rollups: bool = False,
+    server_rebuilds_homepage_rollups: bool = False,
 ) -> dict[str, int | str | None]:
     """Check derived coverage and ownership under the actual publication contract.
 
-    V2 rebuilds careers on the full Fly connection inside the merge transaction;
+    The server can rebuild careers on the full Fly connection inside the merge transaction;
     active-season scratch careers are checked here but must not be uploaded.
-    V3 also moves homepage generation and coverage validation into that atomic
+    Server-owned homepage generation and coverage validation also run in that atomic
     transaction; no historical homepage inputs are hydrated into worker scratch.
     """
-    from multi_league.core.fleet_publish import (
-        FLEET_CAREER_SCHEMA_VERSION, FLEET_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION,
-    )
     from multi_league.transformations.aggregation.aggregation_utils import (
         CAREER_ROLLUP_TABLES, HOMEPAGE_ROLLUP_TABLES,
     )
 
-    if publication_schema_version not in {FLEET_SCHEMA_VERSION, FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
-        raise IncompleteSourceError("unsupported publication schema for derived validation")
-    atomic_homepage = publication_schema_version == FLEET_HOMEPAGE_SCHEMA_VERSION
-    server_rebuilds_careers = publication_schema_version in {
-        FLEET_CAREER_SCHEMA_VERSION,
-        FLEET_HOMEPAGE_SCHEMA_VERSION,
-    }
+    if server_rebuilds_homepage_rollups and not server_rebuilds_career_rollups:
+        raise IncompleteSourceError("server homepage rebuilding requires server career rebuilding")
+    atomic_homepage = server_rebuilds_homepage_rollups
     if provider_id_column not in _ACTIVE_PROVIDER_PLAYER_COLUMNS:
         raise IncompleteSourceError("unsupported provider player identity column")
     selected_weeks = tuple(sorted({int(week) for week in weeks}))
@@ -600,13 +594,13 @@ def assert_refresh_derived_output_health(
         required_publish |= {
             "matchup_career", "homepage_manager_rankings", "homepage_current_standings",
         }
-    if publication_schema_version in {FLEET_CAREER_SCHEMA_VERSION, FLEET_HOMEPAGE_SCHEMA_VERSION}:
+    if server_rebuilds_career_rollups:
         if set(published_tables) & set(CAREER_ROLLUP_TABLES):
-            raise IncompleteSourceError("V2 careers must be rebuilt on Fly, not uploaded from scratch")
+            raise IncompleteSourceError("server-owned careers must not be uploaded from scratch")
         required_publish -= set(CAREER_ROLLUP_TABLES)
     if atomic_homepage:
         if set(published_tables) & set(HOMEPAGE_ROLLUP_TABLES):
-            raise IncompleteSourceError("V3 homepages must be rebuilt on Fly, not uploaded from scratch")
+            raise IncompleteSourceError("server-owned homepages must not be uploaded from scratch")
         required_publish -= set(HOMEPAGE_ROLLUP_TABLES)
         if active_players:
             required_publish.add("player_fantasy")
@@ -625,7 +619,7 @@ def assert_refresh_derived_output_health(
         ).fetchone()[0]
         if int(summary or 0) != 1:
             raise IncompleteSourceError("homepage_league_summary must contain exactly one league row")
-    if not server_rebuilds_careers:
+    if not server_rebuilds_career_rollups:
         for table in ("player_fantasy_career", "player_fantasy_career_all"):
             if not active_players:
                 continue
@@ -651,7 +645,7 @@ def assert_refresh_derived_output_health(
         ("homepage_manager_rankings", "seasons", True),
         ("homepage_current_standings", "wins", False),
     ):
-        if (server_rebuilds_careers and table in CAREER_ROLLUP_TABLES) or (
+        if (server_rebuilds_career_rollups and table in CAREER_ROLLUP_TABLES) or (
             atomic_homepage and table in HOMEPAGE_ROLLUP_TABLES
         ):
             continue  # Server-owned complete-chain rollups are checked before COMMIT.

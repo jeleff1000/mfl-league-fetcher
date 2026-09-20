@@ -189,25 +189,25 @@ def test_new_scored_provider_players_require_published_career_aggregates(provide
             provider_id_column=provider_id_column, published_tables=publish,
         )
     conn.execute("UPDATE public.player_fantasy_career SET games_rostered=1 WHERE NFL_player_id='00-rookie'")
-    # V2 publishes careers on Fly, not from the active-season upload. The
+    # Server-owned publication rebuilds careers on Fly, not from the active-season upload. The
     # worker validates its uploaded homepage while Fly owns career validation.
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
-        publication_schema_version="fleet-partition-v2",
+        server_rebuilds_career_rollups=True,
     )["active_scored_career_players"] == 1
     with pytest.raises(IncompleteSourceError, match="not in the publication bundle"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
             provider_id_column=provider_id_column, published_tables=(),
-            publication_schema_version="fleet-partition-v2",
+            server_rebuilds_career_rollups=True,
         )
     conn.execute("DROP TABLE public.player_fantasy_career")
     conn.execute("DROP TABLE public.player_fantasy_career_all")
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column=provider_id_column, published_tables=("homepage_league_summary",),
-        publication_schema_version="fleet-partition-v2",
+        server_rebuilds_career_rollups=True,
     )["active_scored_career_players"] == 1
     for table in ("player_fantasy_career", "player_fantasy_career_all"):
         conn.execute(
@@ -215,17 +215,17 @@ def test_new_scored_provider_players_require_published_career_aggregates(provide
             "games_rostered INTEGER, fantasy_points DOUBLE)"
         )
         conn.execute(f"INSERT INTO public.{table} VALUES ('afi_data','00-rookie',1,14.0)")
-    with pytest.raises(IncompleteSourceError, match="careers must be rebuilt on Fly"):
+    with pytest.raises(IncompleteSourceError, match="careers must not be uploaded"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
             provider_id_column=provider_id_column, published_tables=publish,
-            publication_schema_version="fleet-partition-v2",
+            server_rebuilds_career_rollups=True,
         )
-    with pytest.raises(IncompleteSourceError, match="unsupported publication"):
+    with pytest.raises(IncompleteSourceError, match="homepage rebuilding requires"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
             provider_id_column=provider_id_column, published_tables=publish,
-            publication_schema_version="unknown",
+            server_rebuilds_homepage_rollups=True,
         )
     with pytest.raises(IncompleteSourceError, match="not in the publication bundle"):
         assert_refresh_derived_output_health(
@@ -280,7 +280,7 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column="espn_player_id",
         published_tables=("homepage_league_summary", "homepage_manager_rankings", "homepage_current_standings"),
-        publication_schema_version="fleet-partition-v2",
+        server_rebuilds_career_rollups=True,
     )["active_scored_career_franchises"] == 1
     conn.execute("DELETE FROM public.homepage_current_standings WHERE db_name='afi_data'")
     with pytest.raises(IncompleteSourceError, match="homepage_current_standings lacks"):
@@ -294,23 +294,26 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     health = assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column="espn_player_id", published_tables=("matchup",),
-        publication_schema_version="fleet-partition-v3",
+        server_rebuilds_career_rollups=True,
+        server_rebuilds_homepage_rollups=True,
     )
     assert health["active_scored_career_franchises"] == 1
     assert health["homepage_summary_rows"] is None
     assert health["homepage_validation_location"] == "atomic_fly"
-    with pytest.raises(IncompleteSourceError, match="homepages must be rebuilt on Fly"):
+    with pytest.raises(IncompleteSourceError, match="homepages must not be uploaded"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
             provider_id_column="espn_player_id", published_tables=("matchup", "homepage_league_summary"),
-            publication_schema_version="fleet-partition-v3",
+            server_rebuilds_career_rollups=True,
+            server_rebuilds_homepage_rollups=True,
         )
-    # V3 validates careers/homepages inside the atomic Fly transaction; the
+    # Server-owned mode validates careers/homepages inside the atomic Fly transaction; the
     # worker scratch database intentionally does not build either family.
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column="espn_player_id", published_tables=("matchup",),
-        publication_schema_version="fleet-partition-v3",
+        server_rebuilds_career_rollups=True,
+        server_rebuilds_homepage_rollups=True,
     )["homepage_validation_location"] == "atomic_fly"
 
 

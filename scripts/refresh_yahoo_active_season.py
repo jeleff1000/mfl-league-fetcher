@@ -1944,7 +1944,7 @@ def main(argv: list[str] | None = None) -> int:
 
     os.environ["DATABASE_BACKEND"] = "fly"
     from initial_import_v3 import YahooCredentialRequiredError, _build_context_from_fly
-    from multi_league.core.fleet_publish import FLEET_CAREER_SCHEMA_VERSION, build_fleet_partition_bundle
+    from multi_league.core.fleet_publish import build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
         active_refresh_publish_tables,
         background_refresh_call,
@@ -2346,7 +2346,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             stage_timer.mark("preservation_validation")
             publish_tables = active_refresh_publish_tables(
-                local_db.connect(), publication_schema_version=FLEET_CAREER_SCHEMA_VERSION,
+                local_db.connect(),
+                server_rebuilds_career_rollups=True,
+                server_rebuilds_homepage_rollups=False,
             )
             if receipt["renewal_chain_backfilled"]:
                 publish_tables.append("league_context")
@@ -2357,7 +2359,8 @@ def main(argv: list[str] | None = None) -> int:
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="yahoo_player_id",
                 published_tables=publish_tables,
-                publication_schema_version=FLEET_CAREER_SCHEMA_VERSION,
+                server_rebuilds_career_rollups=True,
+                server_rebuilds_homepage_rollups=False,
             )
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 

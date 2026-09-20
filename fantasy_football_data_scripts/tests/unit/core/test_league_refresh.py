@@ -941,7 +941,9 @@ def test_weekly_publish_selects_source_and_rebuilt_homepage_tables():
             "homepage_league_summary", "matchup", "matchup_season", "player_fantasy_season",
         ]
         assert active_refresh_publish_tables(
-            conn, publication_schema_version="fleet-partition-v3",
+            conn,
+            server_rebuilds_career_rollups=True,
+            server_rebuilds_homepage_rollups=True,
         ) == ["matchup"]
     finally:
         conn.close()

@@ -754,7 +754,7 @@ def main(argv: list[str] | None = None) -> int:
         active_platform_player_name_hints,
         active_refresh_publish_tables,
         background_refresh_call,
-        completed_weeks_to_refresh,
+        refresh_weeks_for_run,
         finalized_source_boundary,
         hydrate_local_refresh_sources,
         run_independent_refresh_preflight,
@@ -843,13 +843,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
     captured_league_id = active_provider_league_id(persisted_plan, provider="espn")
-    refresh_weeks = (
-        list(persisted_plan.weeks)
-        if persisted_plan is not None
-        else completed_weeks_to_refresh(
-            finalized_weeks=finalized_ops["week"].dropna().tolist(),
-            last_materialized_week=last_materialized_week,
-        )
+    refresh_weeks = refresh_weeks_for_run(
+        planned_weeks=persisted_plan.weeks if persisted_plan is not None else None,
+        finalized_weeks=finalized_ops["week"].dropna().tolist(),
+        last_materialized_week=last_materialized_week,
+        through_week=args.through_week,
     )
     receipt: dict[str, Any] = {
         "db_name": args.db,

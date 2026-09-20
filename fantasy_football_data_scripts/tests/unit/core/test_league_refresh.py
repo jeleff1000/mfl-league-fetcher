@@ -235,6 +235,18 @@ def test_never_refreshed_league_collects_every_finalized_week_from_week_one():
     ) == [1, 2]
 
 
+def test_explicit_week_ceiling_limits_a_captured_midweek_manifest():
+    """A manual correction may revisit Week 1 while the live manifest includes Week 2."""
+    from multi_league.core.league_refresh import refresh_weeks_for_run
+
+    assert refresh_weeks_for_run(
+        planned_weeks=[1, 2],
+        finalized_weeks=[1],
+        last_materialized_week=1,
+        through_week=1,
+    ) == [1]
+
+
 def test_provider_week_scope_never_expands_a_finalized_game_refresh_to_a_full_season():
     """The active-season adapters receive the exact completed week set."""
     from multi_league.core.league_refresh import provider_weeks_to_fetch

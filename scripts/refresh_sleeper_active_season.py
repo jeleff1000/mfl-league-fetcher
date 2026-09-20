@@ -543,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
         active_platform_player_name_hints,
         active_refresh_publish_tables,
         background_refresh_call,
-        completed_weeks_to_refresh,
+        refresh_weeks_for_run,
         finalized_source_boundary,
         hydrate_local_refresh_sources,
         resolve_active_player_nfl_ids_from_bio,
@@ -626,13 +626,11 @@ def main(argv: list[str] | None = None) -> int:
     captured_league_id = active_provider_league_id(persisted_plan, provider="sleeper")
     if args.league_id and captured_league_id and str(args.league_id) != captured_league_id:
         raise RuntimeError("caller and captured manifest have conflicting active Sleeper league IDs")
-    refresh_weeks = (
-        list(persisted_plan.weeks)
-        if persisted_plan is not None
-        else completed_weeks_to_refresh(
-            finalized_weeks=finalized_ops["week"].dropna().tolist(),
-            last_materialized_week=last_materialized_week,
-        )
+    refresh_weeks = refresh_weeks_for_run(
+        planned_weeks=persisted_plan.weeks if persisted_plan is not None else None,
+        finalized_weeks=finalized_ops["week"].dropna().tolist(),
+        last_materialized_week=last_materialized_week,
+        through_week=args.through_week,
     )
     receipt: dict[str, Any] = {
         "db_name": args.db,

@@ -725,6 +725,40 @@ def completed_weeks_to_refresh(
     return [week for week in sorted(weeks) if week >= first_week]
 
 
+def refresh_weeks_for_run(
+    *,
+    planned_weeks: Iterable[int | str] | None,
+    finalized_weeks: Iterable[int | str],
+    last_materialized_week: int | None,
+    through_week: int | None = None,
+) -> list[int]:
+    """Resolve one run's week scope while honoring an explicit manual ceiling."""
+    if planned_weeks is None:
+        weeks = completed_weeks_to_refresh(
+            finalized_weeks=finalized_weeks,
+            last_materialized_week=last_materialized_week,
+        )
+    else:
+        weeks = sorted(
+            {
+                week
+                for value in planned_weeks
+                if (week := _positive_int(value)) is not None
+            }
+        )
+    if through_week is not None:
+        weeks = [week for week in weeks if week <= int(through_week)]
+    return weeks
+
+
+def _positive_int(value: object) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def provider_weeks_to_fetch(*, max_week: int, requested_weeks: Iterable[int | str] | None) -> list[int]:
     """Return a bounded, de-duplicated provider fetch scope.
 

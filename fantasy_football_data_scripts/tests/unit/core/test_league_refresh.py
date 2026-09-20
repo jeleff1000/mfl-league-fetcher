@@ -1044,6 +1044,52 @@ def test_active_profile_scope_includes_every_active_franchise_not_only_started_p
     assert actual == {"started", "bench_only"}
 
 
+def test_lightweight_homepage_refresh_passes_changed_year_trade_preservation_contract(monkeypatch):
+    """The pre-publish pass uses the same strict legacy-trade contract as Fly."""
+    from multi_league.core import homepage_refresh
+    from multi_league.transformations.aggregation import homepage_summary
+
+    class EmptyReader:
+        @staticmethod
+        def query(_sql, *, database):
+            assert database == "___leagues"
+            return []
+
+    frames = homepage_refresh._load_homepage_source_frames(EmptyReader(), "gotham")
+    frames["homepage_league_summary"] = pd.DataFrame(
+        [{
+            "db_name": "gotham",
+            "alltime_trade_winner": "Legacy Winner",
+            "alltime_trade_year": 2025,
+        }]
+    )
+    captured = {}
+
+    def compute(_conn, db_name, **kwargs):
+        captured.update(db_name=db_name, **kwargs)
+        return {
+            "homepage_league_summary": pd.DataFrame(
+                [{"db_name": db_name, "highest_score_points": 150.0}]
+            ),
+            "homepage_manager_profiles": pd.DataFrame(),
+        }
+
+    monkeypatch.setattr(homepage_refresh, "_load_homepage_source_frames", lambda *_args: frames)
+    monkeypatch.setattr(homepage_summary, "compute_homepage_frames", compute)
+
+    result = homepage_refresh.compute_homepage_frames_from_fly(
+        EmptyReader(),
+        "gotham",
+        active_year=2026,
+    )
+
+    assert captured["db_name"] == "gotham"
+    assert captured["changed_years"] == {2026}
+    assert captured["preserved_alltime_trade"]["alltime_trade_winner"] == "Legacy Winner"
+    assert captured["preserved_alltime_trade"]["alltime_trade_year"] == 2025
+    assert result["homepage_league_summary"].iloc[0]["alltime_trade_winner"] == "Legacy Winner"
+
+
 def test_shared_homepage_prepare_writes_into_the_existing_atomic_bundle(monkeypatch):
     """All three platforms prepare homepage rows without a second Fly publish."""
     from multi_league.core import homepage_refresh

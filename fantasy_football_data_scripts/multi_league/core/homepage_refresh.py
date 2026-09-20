@@ -399,10 +399,21 @@ def compute_homepage_frames_from_fly(
             "ON p.NFL_player_id = b.NFL_player_id"
         )
         profile_scope = active_franchise_ids if not existing_profiles.empty else None
+        homepage_kwargs: dict[str, Any] = {}
+        if active_year is not None:
+            homepage_kwargs = {
+                "preserved_alltime_trade": (
+                    existing_summary.iloc[0].to_dict()
+                    if len(existing_summary) == 1
+                    else None
+                ),
+                "changed_years": {int(active_year)},
+            }
         homepage = compute_homepage_frames(
             conn,
             db_name,
             manager_profile_franchise_ids=profile_scope,
+            **homepage_kwargs,
         )
         homepage["homepage_league_summary"] = _preserve_existing_summary_values(
             existing_summary,

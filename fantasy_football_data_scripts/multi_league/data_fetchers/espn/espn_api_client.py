@@ -346,14 +346,18 @@ class ESPNAPIClient:
 
         try:
             data = self._request_league(year, params)
+            id_match = isinstance(data, dict) and str(data.get("id")) == str(self.league_id)
+            season_match = isinstance(data, dict) and str(data.get("seasonId")) == str(year)
+            period_match = isinstance(data, dict) and str(data.get("scoringPeriodId")) == str(scoring_period)
+            status_type = type(data.get("status")).__name__ if isinstance(data, dict) else "missing"
             verified_empty_envelope = (
                 strict
                 and isinstance(data, dict)
                 and "transactions" not in data
-                and str(data.get("id")) == str(self.league_id)
-                and str(data.get("seasonId")) == str(year)
-                and str(data.get("scoringPeriodId")) == str(scoring_period)
-                and isinstance(data.get("status"), dict)
+                and id_match
+                and season_match
+                and period_match
+                and status_type == "dict"
             )
             if verified_empty_envelope:
                 return []
@@ -371,7 +375,9 @@ class ESPNAPIClient:
                 )
                 raise ESPNAPIError(
                     f"ESPN raw transactions for {year} week {scoring_period} are malformed "
-                    f"(payload_type={payload_type}, keys={keys}, transactions_type={transactions_type})"
+                    f"(payload_type={payload_type}, keys={keys}, transactions_type={transactions_type}, "
+                    f"id_match={id_match}, season_match={season_match}, period_match={period_match}, "
+                    f"status_type={status_type})"
                 )
             return data.get("transactions", [])
         except requests.exceptions.HTTPError as e:

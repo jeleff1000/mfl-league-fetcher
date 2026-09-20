@@ -219,7 +219,7 @@ def test_strict_espn_transaction_endpoint_rejects_timeout_and_malformed_empty(mo
             }
         ),
     )
-    with pytest.raises(ESPNAPIError, match="malformed"):
+    with pytest.raises(ESPNAPIError, match=r"malformed.*id_match=False.*status_type=dict"):
         client.get_raw_transactions(2026, 1, strict=True)
     monkeypatch.setattr(client, "_session", Session({}))
     with pytest.raises(

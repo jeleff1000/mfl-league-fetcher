@@ -100,6 +100,10 @@ def test_homepage_source_snapshot_uses_one_tagged_fly_read():
                     "source_table": "league_context",
                     "payload": json.dumps({"db_name": "league_a", "platform": "yahoo"}),
                 },
+                {
+                    "source_table": "player_fantasy_season",
+                    "payload": None,
+                },
             ]
 
     reader = Reader()
@@ -116,6 +120,8 @@ def test_homepage_source_snapshot_uses_one_tagged_fly_read():
     assert frames["league_context"].to_dict("records") == [
         {"db_name": "league_a", "platform": "yahoo"}
     ]
+    assert frames["player_fantasy_season"].empty
+    assert "db_name" in frames["player_fantasy_season"].columns
 
 
 def test_homepage_snapshot_overlays_new_active_season_before_atomic_publish():

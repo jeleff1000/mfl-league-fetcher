@@ -138,7 +138,10 @@ def _load_homepage_source_frames(reader: Any, db_name: str) -> dict[str, pd.Data
         payload = row.get("payload")
         if isinstance(payload, str):
             payload = json.loads(payload)
-        records = payload if isinstance(payload, list) else [payload]
+        if payload is None:
+            records = []
+        else:
+            records = payload if isinstance(payload, list) else [payload]
         if not all(isinstance(record, dict) for record in records):
             raise RuntimeError(f"homepage source snapshot returned invalid {table_name} payload")
         payloads[table_name].extend(records)

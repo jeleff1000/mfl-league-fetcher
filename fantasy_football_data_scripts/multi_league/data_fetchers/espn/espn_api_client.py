@@ -356,7 +356,6 @@ class ESPNAPIClient:
                 and "transactions" not in data
                 and id_match
                 and season_match
-                and period_match
                 and status_type == "dict"
             )
             if verified_empty_envelope:

@@ -201,6 +201,21 @@ def test_strict_espn_transaction_endpoint_rejects_timeout_and_malformed_empty(mo
             {
                 "id": 12345,
                 "seasonId": 2026,
+                # ESPN echoes the league's current scoring period here even
+                # when the transaction request filters an earlier week.
+                "scoringPeriodId": 2,
+                "status": {"currentMatchupPeriod": 2},
+            }
+        ),
+    )
+    assert client.get_raw_transactions(2026, 1, strict=True) == []
+    monkeypatch.setattr(
+        client,
+        "_session",
+        Session(
+            {
+                "id": 12345,
+                "seasonId": 2026,
                 "scoringPeriodId": 1,
                 "status": {"currentMatchupPeriod": 1},
             }

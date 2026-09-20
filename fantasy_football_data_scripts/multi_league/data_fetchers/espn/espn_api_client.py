@@ -346,6 +346,17 @@ class ESPNAPIClient:
 
         try:
             data = self._request_league(year, params)
+            verified_empty_envelope = (
+                strict
+                and isinstance(data, dict)
+                and "transactions" not in data
+                and str(data.get("id")) == str(self.league_id)
+                and str(data.get("seasonId")) == str(year)
+                and str(data.get("scoringPeriodId")) == str(scoring_period)
+                and isinstance(data.get("status"), dict)
+            )
+            if verified_empty_envelope:
+                return []
             if strict and (
                 not isinstance(data, dict)
                 or not isinstance(data.get("transactions"), list)

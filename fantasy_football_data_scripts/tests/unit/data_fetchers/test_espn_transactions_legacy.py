@@ -194,6 +194,33 @@ def test_strict_espn_transaction_endpoint_rejects_timeout_and_malformed_empty(mo
     client = ESPNAPIClient(12345)
     monkeypatch.setattr(client, "_session", Session({"transactions": []}))
     assert client.get_raw_transactions(2026, 1, strict=True) == []
+    monkeypatch.setattr(
+        client,
+        "_session",
+        Session(
+            {
+                "id": 12345,
+                "seasonId": 2026,
+                "scoringPeriodId": 1,
+                "status": {"currentMatchupPeriod": 1},
+            }
+        ),
+    )
+    assert client.get_raw_transactions(2026, 1, strict=True) == []
+    monkeypatch.setattr(
+        client,
+        "_session",
+        Session(
+            {
+                "id": 99999,
+                "seasonId": 2026,
+                "scoringPeriodId": 1,
+                "status": {"currentMatchupPeriod": 1},
+            }
+        ),
+    )
+    with pytest.raises(ESPNAPIError, match="malformed"):
+        client.get_raw_transactions(2026, 1, strict=True)
     monkeypatch.setattr(client, "_session", Session({}))
     with pytest.raises(
         ESPNAPIError,

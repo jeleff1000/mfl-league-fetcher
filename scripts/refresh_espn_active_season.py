@@ -53,7 +53,29 @@ def _finalized_espn_matchup_weeks(
             if schedule_out is not None:
                 schedule_out[int(week)] = schedule_rows
         else:
-            print(f"[ESPN] {year} week {week}: fantasy outcomes are still live; holding matchup rows", flush=True)
+            outcomes = sorted({str(row.get("winner") or "") for row in schedule_rows})
+            matchup_periods = sorted(
+                {
+                    row.get("matchupPeriodId")
+                    for row in schedule_rows
+                    if row.get("matchupPeriodId") is not None
+                },
+                key=str,
+            )
+            teams = sorted(
+                {
+                    str(side.get("teamId"))
+                    for row in schedule_rows
+                    for side in (row.get("home"), row.get("away"))
+                    if isinstance(side, dict) and side.get("teamId") is not None
+                }
+            )
+            print(
+                f"[ESPN] {year} week {week}: fantasy outcomes are still live; "
+                f"holding matchup rows (outcomes={outcomes}, "
+                f"matchup_periods={matchup_periods}, teams={teams})",
+                flush=True,
+            )
     return finalized
 
 

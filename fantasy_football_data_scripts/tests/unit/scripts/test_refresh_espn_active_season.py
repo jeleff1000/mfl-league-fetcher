@@ -14,6 +14,32 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 
+def test_unfinalized_espn_schedule_log_exposes_the_safe_period_witness(capsys):
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    client = SimpleNamespace(
+        get_raw_schedule=lambda *_args: [
+            {
+                "matchupPeriodId": 2,
+                "winner": "UNDECIDED",
+                "home": {"teamId": 1},
+                "away": {"teamId": 2},
+            }
+        ]
+    )
+
+    assert _finalized_espn_matchup_weeks(
+        client,
+        year=2026,
+        weeks=[1],
+        expected_team_ids=("1", "2"),
+    ) == []
+    output = capsys.readouterr().out
+    assert "outcomes=['UNDECIDED']" in output
+    assert "matchup_periods=[2]" in output
+    assert "teams=['1', '2']" in output
+
+
 def test_build_context_reuses_supplied_frontend_settings(tmp_path, monkeypatch):
     """The active worker must not re-read context after it has already hydrated it."""
     from multi_league.data_fetchers.espn import espn_api_client, espn_context

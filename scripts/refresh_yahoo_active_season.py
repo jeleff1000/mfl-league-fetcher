@@ -214,6 +214,7 @@ def _active_yahoo_history(
     oauth: Any,
     active_year: int,
     source_active_key: str | None = None,
+    has_persisted_chain: bool = True,
     discover: Any,
 ) -> dict[str, str]:
     """Use a saved or retained active key; discover only as a legacy fallback."""
@@ -229,6 +230,31 @@ def _active_yahoo_history(
     saved_active_key = history.get(str(active_year))
     if saved_active_key and active_key and saved_active_key != active_key:
         raise RuntimeError("Fly context and settings have conflicting active Yahoo league keys")
+
+    if not has_persisted_chain:
+        # ``history`` was inferred from league_settings rather than saved by
+        # the provider-native chain finder. Legacy rows can contain a context
+        # fallback repeated under multiple years, so they are not authority.
+        # Walk Yahoo once from the verified active key and persist that exact
+        # chain; subsequent weekly updates use the normal fast path.
+        saved_anchors: list[tuple[int, str]] = []
+        for season, league_key in history.items():
+            try:
+                season_number = int(season)
+            except (TypeError, ValueError):
+                continue
+            if YAHOO_LEAGUE_KEY_RE.fullmatch(league_key):
+                saved_anchors.append((season_number, league_key))
+        anchor = active_key or (max(saved_anchors)[1] if saved_anchors else str(ctx.league_id))
+        discovered = {
+            str(year): str(league_key)
+            for year, league_key in discover(anchor, oauth=oauth, end_year=active_year).items()
+            if str(year).strip() and YAHOO_LEAGUE_KEY_RE.fullmatch(str(league_key).strip())
+        }
+        if not YAHOO_LEAGUE_KEY_RE.fullmatch(str(discovered.get(str(active_year)) or "")):
+            raise RuntimeError("Yahoo renewal chain has no valid active Yahoo league key")
+        return dict(sorted(discovered.items(), key=lambda item: int(item[0])))
+
     if saved_active_key and YAHOO_LEAGUE_KEY_RE.fullmatch(saved_active_key):
         return history
 
@@ -1930,6 +1956,7 @@ def main(argv: list[str] | None = None) -> int:
         # league_settings is the canonical imported provider timeline. Carry
         # every persisted Yahoo season into the quick context so refreshes do
         # not collapse a complete renewal chain to the context's active key.
+        has_persisted_chain = bool(frontend_settings.get("league_ids"))
         frontend_settings["league_ids"] = merge_provider_chain_ids(
             frontend_settings.get("league_ids"), active_segment,
         )
@@ -1940,13 +1967,12 @@ def main(argv: list[str] | None = None) -> int:
             frontend_settings=frontend_settings,
         )
         oauth = ctx.get_oauth_session()
-        saved_history = getattr(ctx, "league_ids", None) or {}
-        had_saved_active_key = str(active_year) in {str(year) for year in saved_history}
         history = _active_yahoo_history(
             ctx,
             oauth=oauth,
             active_year=active_year,
             source_active_key=source_active_key,
+            has_persisted_chain=has_persisted_chain,
             discover=discover_league_history,
         )
         if str(active_year) not in history:
@@ -2097,11 +2123,10 @@ def main(argv: list[str] | None = None) -> int:
                 weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
             timer.mark("transformed_scope_validation")
-            # A retained active key is deliberately only a one-year fast path.
-            # Persist context only after a real full chain discovery, never as
-            # a side effect of a weekly update.
+            # Persist only the provider-native chain discovered for a legacy
+            # context that never saved one. Every later refresh is fast-path.
             receipt["renewal_chain_backfilled"] = False
-            if source_active_key is None and not had_saved_active_key:
+            if not has_persisted_chain:
                 receipt["renewal_chain_backfilled"] = _persist_yahoo_renewal_chain(
                     local_db,
                     source_context=source_frames["league_context"],

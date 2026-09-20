@@ -280,6 +280,51 @@ def test_active_yahoo_key_fast_path_retains_saved_multiplatform_lineage():
     assert history == {"2014": "331.l.1", "2024": "sleeper-2024", "2025": "461.l.9", "2026": "470.l.10"}
 
 
+def test_unpersisted_yahoo_context_rediscovers_native_chain_from_active_key():
+    """Imported settings are not authority when the context never saved a chain."""
+    from refresh_yahoo_active_season import _active_yahoo_history
+
+    discovered_from: list[str] = []
+
+    def discover(anchor: str, **_kwargs):
+        discovered_from.append(anchor)
+        return {
+            "2014": "331.l.1",
+            "2015": "348.l.2",
+            "2016": "359.l.3",
+            "2025": "461.l.9",
+            "2026": "470.l.10",
+        }
+
+    history = _active_yahoo_history(
+        SimpleNamespace(
+            league_id="461.l.9",
+            # These were inferred from damaged legacy settings, not persisted
+            # by the provider-native import chain finder.
+            league_ids={
+                "2014": "331.l.1",
+                "2015": "461.l.9",
+                "2016": "461.l.9",
+                "2025": "461.l.9",
+            },
+        ),
+        oauth=object(),
+        active_year=2026,
+        source_active_key="470.l.10",
+        has_persisted_chain=False,
+        discover=discover,
+    )
+
+    assert discovered_from == ["470.l.10"]
+    assert history == {
+        "2014": "331.l.1",
+        "2015": "348.l.2",
+        "2016": "359.l.3",
+        "2025": "461.l.9",
+        "2026": "470.l.10",
+    }
+
+
 def test_source_frames_select_the_current_multiplatform_leg_before_provider_fetch():
     """A Yahoo worker must stop before fetch when the 2026 leg belongs to Sleeper."""
     import pandas as pd

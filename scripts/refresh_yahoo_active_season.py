@@ -1659,18 +1659,52 @@ def _run_refresh_aggregates(
     work_dir: Path,
     has_finalized_matchups: bool,
 ) -> None:
-    """Build only the local standings payload not owned by atomic Fly rollups.
+    """Build the small active-season rollups carried by the atomic Fly delta.
 
-    SQL enrichment already builds the active matchup-derived tables.  V3 Fly
-    publication rebuilds season, career, and homepage aggregates from the
-    complete persisted chain after merging source facts.  Rebuilding those in
-    scratch first was duplicate work and those copies were never authoritative.
+    The worker owns only the requested year's season rows.  Fly rebuilds career
+    rows from the complete persisted chain after those rows commit.  Keeping
+    these scoped builders local avoids both a server lifecycle operation and a
+    whole-history scratch rebuild.
     """
+    from multi_league.transformations.aggregation.aggregate_draft_context import (
+        aggregate_draft_manager_season,
+        create_draft_manager_season_table,
+    )
+    from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+        aggregate_fantasy_season,
+        aggregate_fantasy_season_all,
+        create_fantasy_season_table,
+        create_fantasy_season_table_all,
+    )
+    from multi_league.transformations.aggregation.aggregate_transaction_context import (
+        aggregate_transaction_manager_season,
+        aggregate_transaction_report_card,
+        create_transaction_manager_season_table,
+        create_transaction_report_card_table,
+    )
+
+    conn = local_db.connect()
+    _attach_ops_cache_for_enrichment(local_db)
+    create_fantasy_season_table(conn, db_name)
+    aggregate_fantasy_season(conn, db_name, year=active_year)
+    create_fantasy_season_table_all(conn, db_name)
+    aggregate_fantasy_season_all(conn, db_name, year=active_year)
+    create_draft_manager_season_table(conn, db_name)
+    aggregate_draft_manager_season(conn, db_name, year=active_year)
+    create_transaction_manager_season_table(conn, db_name)
+    aggregate_transaction_manager_season(conn, db_name, year=active_year)
+    create_transaction_report_card_table(conn, db_name)
+    aggregate_transaction_report_card(conn, db_name, year=active_year)
+
     if not has_finalized_matchups:
         return
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_season,
+    )
     from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
 
-    aggregate_standings(local_db.connect(), db_name, [int(active_year)])
+    aggregate_matchup_season(conn, db_name, year=active_year)
+    aggregate_standings(conn, db_name, [int(active_year)])
 
 
 def _run_local_pipeline(

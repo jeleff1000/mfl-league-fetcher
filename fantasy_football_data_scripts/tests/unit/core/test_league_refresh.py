@@ -1883,13 +1883,19 @@ def test_yahoo_refresh_rebuilds_windows_when_retained_schedule_has_a_gap():
     ) is None
 
 
-def test_yahoo_refresh_only_rebuilds_local_standings_when_scores_are_final(
+def test_yahoo_refresh_rebuilds_only_active_season_rollups_and_standings(
     tmp_path,
     monkeypatch,
 ):
-    """Fly owns season/career rollups; scratch only needs the standings payload."""
+    """Worker builds active-season inputs; Fly owns complete-chain careers."""
     from scripts import refresh_yahoo_active_season
-    from multi_league.transformations.aggregation import aggregate_standings
+    from multi_league.transformations.aggregation import (
+        aggregate_draft_context,
+        aggregate_fantasy_context,
+        aggregate_matchup_context,
+        aggregate_standings,
+        aggregate_transaction_context,
+    )
 
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
     connection = object()
@@ -1904,6 +1910,18 @@ def test_yahoo_refresh_only_rebuilds_local_standings_when_scores_are_final(
 
         return _record
 
+    monkeypatch.setattr(refresh_yahoo_active_season, "_attach_ops_cache_for_enrichment", lambda _local: None)
+    monkeypatch.setattr(aggregate_fantasy_context, "create_fantasy_season_table", record("create_fantasy_season"))
+    monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_season", record("fantasy_season"))
+    monkeypatch.setattr(aggregate_fantasy_context, "create_fantasy_season_table_all", record("create_fantasy_season_all"))
+    monkeypatch.setattr(aggregate_fantasy_context, "aggregate_fantasy_season_all", record("fantasy_season_all"))
+    monkeypatch.setattr(aggregate_draft_context, "create_draft_manager_season_table", record("create_draft_season"))
+    monkeypatch.setattr(aggregate_draft_context, "aggregate_draft_manager_season", record("draft_season"))
+    monkeypatch.setattr(aggregate_transaction_context, "create_transaction_manager_season_table", record("create_transaction_season"))
+    monkeypatch.setattr(aggregate_transaction_context, "aggregate_transaction_manager_season", record("transaction_season"))
+    monkeypatch.setattr(aggregate_transaction_context, "create_transaction_report_card_table", record("create_transaction_report"))
+    monkeypatch.setattr(aggregate_transaction_context, "aggregate_transaction_report_card", record("transaction_report"))
+    monkeypatch.setattr(aggregate_matchup_context, "aggregate_matchup_season", record("matchup_season"))
     monkeypatch.setattr(aggregate_standings, "aggregate_standings", record("standings"))
 
     refresh_yahoo_active_season._run_refresh_aggregates(
@@ -1914,7 +1932,20 @@ def test_yahoo_refresh_only_rebuilds_local_standings_when_scores_are_final(
         has_finalized_matchups=True,
     )
 
-    assert calls == [("standings", (connection, "league_a", [2026]), {})]
+    assert calls == [
+        ("create_fantasy_season", (connection, "league_a"), {}),
+        ("fantasy_season", (connection, "league_a"), {"year": 2026}),
+        ("create_fantasy_season_all", (connection, "league_a"), {}),
+        ("fantasy_season_all", (connection, "league_a"), {"year": 2026}),
+        ("create_draft_season", (connection, "league_a"), {}),
+        ("draft_season", (connection, "league_a"), {"year": 2026}),
+        ("create_transaction_season", (connection, "league_a"), {}),
+        ("transaction_season", (connection, "league_a"), {"year": 2026}),
+        ("create_transaction_report", (connection, "league_a"), {}),
+        ("transaction_report", (connection, "league_a"), {"year": 2026}),
+        ("matchup_season", (connection, "league_a"), {"year": 2026}),
+        ("standings", (connection, "league_a", [2026]), {}),
+    ]
 
 
 def test_weekly_simulations_are_scoped_to_the_active_season(tmp_path, monkeypatch):

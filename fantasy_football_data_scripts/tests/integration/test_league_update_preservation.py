@@ -143,16 +143,33 @@ def test_preservation_gate_rejects_homepage_value_becoming_null():
         assert_refresh_preservation(before, after, active_year=2026)
 
 
-def test_refresh_aggregates_leave_atomic_server_rollups_out_of_worker_scratch(tmp_path):
+def test_refresh_aggregates_build_active_season_rollups_but_not_careers(tmp_path, monkeypatch):
     from multi_league.core.local_db import LocalLeagueDB
-    from scripts.refresh_yahoo_active_season import _run_refresh_aggregates
+    from scripts import refresh_yahoo_active_season
+
+    monkeypatch.setattr(
+        refresh_yahoo_active_season,
+        "_attach_ops_cache_for_enrichment",
+        lambda _local: None,
+    )
 
     local = LocalLeagueDB(tmp_path, "league_a")
     try:
         for table_name in ("player_fantasy", "draft", "transactions"):
             local.ensure_table(table_name)
         conn = local.connect()
-        _run_refresh_aggregates(
+        conn.execute("ATTACH ':memory:' AS ___ops")
+        conn.execute("CREATE SCHEMA ___ops.nfl_historical")
+        conn.execute(
+            "CREATE TABLE ___ops.nfl_historical.player_bio "
+            "(NFL_player_id VARCHAR, player VARCHAR)"
+        )
+        conn.execute(
+            "CREATE TABLE ___ops.nfl_historical.nfl_player_stats_all "
+            "(NFL_player_id VARCHAR, player_week VARCHAR, player VARCHAR, "
+            "nfl_team VARCHAR, year INTEGER, week INTEGER)"
+        )
+        refresh_yahoo_active_season._run_refresh_aggregates(
             local,
             db_name="league_a",
             active_year=2026,
@@ -166,7 +183,13 @@ def test_refresh_aggregates_leave_atomic_server_rollups_out_of_worker_scratch(tm
             ).fetchall()
         }
         assert "player_fantasy_career" not in tables
-        assert "player_fantasy_season" not in tables
+        assert {
+            "player_fantasy_season",
+            "player_fantasy_season_all",
+            "draft_manager_season",
+            "transaction_manager_season",
+            "transaction_report_card",
+        }.issubset(tables)
     finally:
         local.close()
 

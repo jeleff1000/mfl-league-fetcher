@@ -92,7 +92,14 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /fantasy_football_data_scripts/
-            /scripts/
+            /scripts/claim_manual_league_update.py
+            /scripts/league_update_workflow_receipt.py
+            /scripts/probe_league_update_freshness.py
+            /scripts/record_league_update_status.py
+            /scripts/recover_league_update_cache.py
+            /scripts/refresh_espn_active_season.py
+            /scripts/refresh_yahoo_active_season.py
+            /scripts/warm_vercel_cache.py
             /requirements-weekly-update.txt
             /requirements-weekly-update-espn.txt
             /pyproject.toml

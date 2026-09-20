@@ -123,6 +123,24 @@ def test_active_updates_use_bounded_ops_and_runtime_dependencies(platform: str, 
     assert "hashFiles('requirements.txt')" not in text
 
 
+def test_espn_update_sparse_checkout_excludes_unrelated_scripts():
+    text = (ROOT / ".github" / "workflows" / "espn_incremental_refresh_worker.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "            /scripts/\n" not in text
+    for script in (
+        "claim_manual_league_update.py",
+        "league_update_workflow_receipt.py",
+        "probe_league_update_freshness.py",
+        "record_league_update_status.py",
+        "recover_league_update_cache.py",
+        "refresh_espn_active_season.py",
+        "refresh_yahoo_active_season.py",
+        "warm_vercel_cache.py",
+    ):
+        assert f"            /scripts/{script}" in text
+
+
 @pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())
 def test_active_updates_reserve_time_to_fail_and_exit_after_setup(
     platform: str, filename: str
@@ -271,8 +289,8 @@ def test_worker_captures_source_manifest_when_ui_did_not(filename: str):
         else "steps.manual_probe.outputs.digest || inputs.observed_manifest_digest"
     )
     assert expected_digest in text
-    assert text.index("scripts/probe_league_update_freshness.py") < text.index(
-        "scripts/claim_manual_league_update.py"
+    assert text.index("- name: Capture manual source manifest") < text.index(
+        "- name: Claim paid manual update"
     )
 
 
@@ -289,7 +307,7 @@ def test_paid_manual_execute_uses_the_same_attempt_and_terminal_lifecycle(platfo
     assert "id: manual_claim" in text
     assert "scripts/claim_manual_league_update.py" in text
     assert f"--platform {platform}" in text
-    assert text.index("Install dependencies") < text.index("scripts/claim_manual_league_update.py")
+    assert text.index("Install dependencies") < text.index("- name: Claim paid manual update")
     assert "Install Fly claim dependency" not in text
     assert "uses: astral-sh/setup-uv@v5" in text
     assert "enable-cache: true" in text

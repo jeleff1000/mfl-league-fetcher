@@ -504,11 +504,7 @@ def _merge_active_payloads(
             year=active_year,
             weeks=refresh_weeks,
             expected_team_ids=expected_team_ids,
-            current_matchup_period=(
-                int(getattr(league, "currentMatchupPeriod", 0) or 0)
-                or int(getattr(league, "current_week", 0) or 0)
-                or None
-            ),
+            current_matchup_period=max(refresh_weeks),
             schedule_out=schedules,
         )
         transaction_rows = fetch_espn_transactions(

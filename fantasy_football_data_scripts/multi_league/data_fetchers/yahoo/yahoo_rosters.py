@@ -513,7 +513,6 @@ class YahooRosterFetcher:
         manager_guid: str = None,
         *,
         include_stats: bool = True,
-        include_official_values: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Fetch roster for a specific team and week.
@@ -554,7 +553,6 @@ class YahooRosterFetcher:
                 team_key=team_key,
                 manager_name=manager_name,
                 manager_guid=manager_guid,
-                include_points=include_stats and include_official_values,
             )
 
         except Exception as e:
@@ -573,7 +571,6 @@ class YahooRosterFetcher:
         team_key: str,
         manager_name: str,
         manager_guid: str | None,
-        include_points: bool,
     ) -> list[dict[str, Any]]:
         """Parse Yahoo roster player nodes into canonical weekly roster rows."""
         roster_data: list[dict[str, Any]] = []
@@ -627,36 +624,12 @@ class YahooRosterFetcher:
                     if position_elem is not None:
                         player_info["fantasy_position"] = position_elem.text
 
-                if include_points:
-                    # Treat missing Yahoo points as DNP/bye/inactive, not a real zero.
-                    # A literal "0" is still a valid played game and should remain 0.0.
-                    pts_node = player_elem.find("player_points/total")
-                    try:
-                        pts_text = pts_node.text.strip() if pts_node is not None and pts_node.text is not None else None
-                        player_info["fantasy_points"] = round(float(pts_text), 2) if pts_text else None
-                        player_info["yahoo_official_points"] = player_info["fantasy_points"]
-                    except (ValueError, TypeError):
-                        player_info["fantasy_points"] = None
-                        player_info["yahoo_official_points"] = None
-                else:
-                    player_info["fantasy_points"] = None
-                    player_info["yahoo_official_points"] = None
-
-                if include_points:
-                    yahoo_stat_count = 0
-                    for stat_elem in player_elem.findall("player_stats/stats/stat"):
-                        stat_id = (stat_elem.findtext("stat_id") or "").strip()
-                        if not stat_id:
-                            continue
-                        value_text = (stat_elem.findtext("value") or "").strip()
-                        try:
-                            value = float(value_text) if value_text else None
-                        except (TypeError, ValueError):
-                            value = None
-                        player_info[f"yahoo_stat_{stat_id}"] = value
-                        yahoo_stat_count += 1
-                    if yahoo_stat_count:
-                        player_info["yahoo_stats_available"] = True
+                # Yahoo is authoritative only for roster membership here. Its
+                # historical points/stat payloads can disappear and are never
+                # scoring inputs. The shared scorer derives points from NFL
+                # data using this league year's Yahoo scoring settings.
+                player_info["fantasy_points"] = None
+                player_info["yahoo_official_points"] = None
 
                 roster_data.append(player_info)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -111,6 +112,13 @@ def test_fetch_roster_for_week_ignores_yahoo_raw_stats_by_default(monkeypatch, t
     assert "yahoo_stat_11" not in rows[0]
 
 
+def test_yahoo_roster_fetch_has_no_official_points_opt_in():
+    """Yahoo is roster membership only; NFL stats plus settings own scoring."""
+    assert "include_official_values" not in inspect.signature(
+        YahooRosterFetcher.fetch_roster_for_week
+    ).parameters
+
+
 def test_fetch_roster_for_week_blank_points_stays_null(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
     monkeypatch.setattr(
@@ -124,7 +132,7 @@ def test_fetch_roster_for_week_blank_points_stays_null(monkeypatch, tmp_path):
     assert rows[0]["fantasy_points"] is None
 
 
-def test_fetch_roster_for_week_can_parse_yahoo_stat_ids_only_when_explicitly_requested(monkeypatch, tmp_path):
+def test_fetch_roster_for_week_never_stores_expanded_yahoo_values(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
     requested_urls = []
 
@@ -145,20 +153,14 @@ def test_fetch_roster_for_week_can_parse_yahoo_stat_ids_only_when_explicitly_req
 
     monkeypatch.setattr(fetcher, "_fetch_url_xml", _fetch_url_xml)
 
-    rows = fetcher.fetch_roster_for_week(
-        2024,
-        6,
-        "414.l.413370.t.1",
-        "Adin",
-        include_official_values=True,
-    )
+    rows = fetcher.fetch_roster_for_week(2024, 6, "414.l.413370.t.1", "Adin")
 
-    assert rows[0]["fantasy_points"] == 16.5
-    assert rows[0]["yahoo_official_points"] == 16.5
-    assert rows[0]["yahoo_stats_available"] is True
-    assert rows[0]["yahoo_stat_11"] == 5.0
-    assert rows[0]["yahoo_stat_12"] == 40.0
-    assert rows[0]["yahoo_stat_13"] == 1.0
+    assert rows[0]["fantasy_points"] is None
+    assert rows[0]["yahoo_official_points"] is None
+    assert "yahoo_stats_available" not in rows[0]
+    assert "yahoo_stat_11" not in rows[0]
+    assert "yahoo_stat_12" not in rows[0]
+    assert "yahoo_stat_13" not in rows[0]
     assert requested_urls == [
         "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/"
         "roster;week=6/players/stats"

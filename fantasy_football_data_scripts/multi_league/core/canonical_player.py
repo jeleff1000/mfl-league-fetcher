@@ -279,9 +279,9 @@ PLAYER_FANTASY_SCHEMA: list[tuple[str, str, str]] = [
     ("max_faab_bid_to_date", "DOUBLE", "sql"),
 ]
 
-# Yahoo's individual roster endpoint can return the platform-native weekly
-# player_stats block. Keep it in the canonical table so the scorer can rebuild
-# Yahoo points from Yahoo stat IDs instead of losing that substrate at upload.
+# Legacy nullable Yahoo value columns remain for schema compatibility only.
+# Import and refresh scoring never consume them: Yahoo supplies roster
+# membership, while NFL data plus league-year settings determine points.
 PLAYER_FANTASY_SCHEMA.extend(
     [
         ("yahoo_official_points", "DOUBLE", "api"),

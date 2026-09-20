@@ -375,6 +375,49 @@ def _store_league_credentials_fly(
         return False
 
 
+def persist_rotated_league_refresh_token(
+    *,
+    league_id: str,
+    database_name: str,
+    refresh_token: str,
+    encryption_key: str | None = None,
+) -> None:
+    """Persist an OAuth rotation on exactly one existing Yahoo owner row.
+
+    Weekly refreshes must not reuse the broad onboarding upsert: one database
+    can retain multiple historical credential identities. A missing exact row
+    is a hard failure because continuing would strand the next refresh on a
+    revoked token.
+    """
+    if not CRYPTO_AVAILABLE:
+        raise RuntimeError("cryptography not available - cannot persist rotated credential")
+    key = encryption_key or get_encryption_key()
+    if not key:
+        raise RuntimeError("No encryption key available")
+    encrypted = encrypt_token(refresh_token, key)
+
+    from multi_league.core.fly_writer import FlyWriter
+
+    rows = FlyWriter().execute(
+        f"""
+        UPDATE main.league_credentials
+        SET encrypted_refresh_token = {_sql_literal(encrypted)},
+            updated_at = current_timestamp
+        WHERE league_id = {_sql_literal(league_id)}
+          AND database_name = {_sql_literal(database_name)}
+        RETURNING league_id
+        """,
+        database="___ops",
+        timeout_seconds=3,
+        server_timeout_seconds=1,
+        max_retries=1,
+    )
+    if not rows:
+        raise RuntimeError(
+            f"Yahoo credential owner row is missing for {database_name}/{league_id}"
+        )
+
+
 def _store_yahoo_cookie_credentials_fly(
     league_id: str,
     league_name: str,

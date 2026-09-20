@@ -1803,6 +1803,28 @@ def _scope_counts(reader: Any, *, db_name: str, active_year: int, tables: list[s
     return {str(row["table_name"]): int(row["rows"] or 0) for row in rows}
 
 
+def _persist_rotated_oauth_refresh_token(
+    *,
+    original_refresh_token: str,
+    oauth: Any,
+    credential_database_name: str,
+    credential_league_id: str,
+) -> bool:
+    """Durably save a Yahoo replacement refresh token on its exact owner."""
+    refreshed = str(getattr(oauth, "refresh_token", "") or "").strip()
+    if not refreshed or refreshed == str(original_refresh_token or "").strip():
+        return False
+
+    from multi_league.utils.credential_store import persist_rotated_league_refresh_token
+
+    persist_rotated_league_refresh_token(
+        league_id=credential_league_id,
+        database_name=credential_database_name,
+        refresh_token=refreshed,
+    )
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="Yahoo league db_name")
@@ -1972,7 +1994,15 @@ def main(argv: list[str] | None = None) -> int:
             frontend_settings=frontend_settings,
             credential_database_name=args.credential_db,
         )
+        oauth_payload = json.loads(Path(ctx.oauth_file_path).read_text(encoding="utf-8"))
+        original_refresh_token = str(oauth_payload.get("refresh_token") or "")
         oauth = ctx.get_oauth_session()
+        _persist_rotated_oauth_refresh_token(
+            original_refresh_token=original_refresh_token,
+            oauth=oauth,
+            credential_database_name=args.credential_db or args.db,
+            credential_league_id=str(ctx.league_id),
+        )
         history = _active_yahoo_history(
             ctx,
             oauth=oauth,

@@ -364,7 +364,15 @@ def test_populate_fantasy_points_applies_custom_offense_corrections():
             pts_idp_std DOUBLE,
             pts_k_std DOUBLE,
             passing_yards DOUBLE,
-            completions DOUBLE
+            completions DOUBLE,
+            passing_tds DOUBLE,
+            passing_interceptions DOUBLE,
+            rushing_yards DOUBLE,
+            rushing_tds DOUBLE,
+            receptions DOUBLE,
+            receiving_yards DOUBLE,
+            receiving_tds DOUBLE,
+            fumbles_lost DOUBLE
         )
         """
     )
@@ -385,7 +393,8 @@ def test_populate_fantasy_points_applies_custom_offense_corrections():
     conn.execute(
         """
         INSERT INTO ___ops.nfl_historical.nfl_player_stats_all VALUES
-            ('00-0020245_2010_12', '00-0020245', 23.32, 4.4, 0.0, 0.0, 7.25, 0.0, 0.0, 0.0, 333.0, 29.0)
+            ('00-0020245_2010_12', '00-0020245', 23.32, 4.4, 0.0, 0.0, 7.25, 0.0, 0.0, 0.0,
+             333.0, 29.0, 2.0, 1.0, 44.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         """
     )
 
@@ -398,8 +407,14 @@ def test_populate_fantasy_points_applies_custom_offense_corrections():
                 "scoring_settings": {
                     "rec": 1.0,
                     "pass_td": 6.0,
+                    "pass_int": -2.0,
                     "pass_cmp": 0.5,
                     "pass_yd": 0.033333333333333,
+                    "rush_yd": 0.1,
+                    "rush_td": 6.0,
+                    "rec_yd": 0.1,
+                    "rec_td": 6.0,
+                    "fum_lost": -2.0,
                 },
             }
         },

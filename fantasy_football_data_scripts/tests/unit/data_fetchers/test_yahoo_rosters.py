@@ -74,7 +74,7 @@ def test_fetch_roster_for_week_missing_points_stays_null(monkeypatch, tmp_path):
     assert rows[0]["fantasy_points"] is None
 
 
-def test_fetch_roster_for_week_zero_points_preserved(monkeypatch, tmp_path):
+def test_fetch_roster_for_week_ignores_yahoo_official_points(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
     monkeypatch.setattr(
         fetcher,
@@ -84,8 +84,31 @@ def test_fetch_roster_for_week_zero_points_preserved(monkeypatch, tmp_path):
 
     rows = fetcher.fetch_roster_for_week(2024, 6, "414.l.413370.t.1", "Adin")
 
-    assert rows[0]["fantasy_points"] == 0.0
-    assert rows[0]["yahoo_official_points"] == 0.0
+    assert rows[0]["fantasy_points"] is None
+    assert rows[0]["yahoo_official_points"] is None
+
+
+def test_fetch_roster_for_week_ignores_yahoo_raw_stats_by_default(monkeypatch, tmp_path):
+    fetcher = _build_fetcher(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_url_xml",
+        lambda url: _player_xml(
+            "<player_points><total>16.5</total></player_points>",
+            """
+            <player_stats><stats>
+              <stat><stat_id>11</stat_id><value>5</value></stat>
+            </stats></player_stats>
+            """,
+        ),
+    )
+
+    rows = fetcher.fetch_roster_for_week(2024, 6, "414.l.413370.t.1", "Adin")
+
+    assert rows[0]["fantasy_points"] is None
+    assert rows[0]["yahoo_official_points"] is None
+    assert "yahoo_stats_available" not in rows[0]
+    assert "yahoo_stat_11" not in rows[0]
 
 
 def test_fetch_roster_for_week_blank_points_stays_null(monkeypatch, tmp_path):
@@ -101,7 +124,7 @@ def test_fetch_roster_for_week_blank_points_stays_null(monkeypatch, tmp_path):
     assert rows[0]["fantasy_points"] is None
 
 
-def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
+def test_fetch_roster_for_week_can_parse_yahoo_stat_ids_only_when_explicitly_requested(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
     requested_urls = []
 
@@ -122,7 +145,13 @@ def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
 
     monkeypatch.setattr(fetcher, "_fetch_url_xml", _fetch_url_xml)
 
-    rows = fetcher.fetch_roster_for_week(2024, 6, "414.l.413370.t.1", "Adin")
+    rows = fetcher.fetch_roster_for_week(
+        2024,
+        6,
+        "414.l.413370.t.1",
+        "Adin",
+        include_official_values=True,
+    )
 
     assert rows[0]["fantasy_points"] == 16.5
     assert rows[0]["yahoo_official_points"] == 16.5
@@ -132,7 +161,7 @@ def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
     assert rows[0]["yahoo_stat_13"] == 1.0
     assert requested_urls == [
         "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/"
-        "roster;week=6/players/stats;type=week;week=6"
+        "roster;week=6/players/stats"
     ]
 
 
@@ -161,7 +190,7 @@ def test_fetch_all_rosters_for_week_uses_native_weekly_team_roster(monkeypatch, 
     assert failures == []
     assert requested_urls == [
         "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/"
-        "roster;week=6/players/stats;type=week;week=6"
+        "roster;week=6/players/stats"
     ]
     assert len(df) == 1
     row = df.iloc[0]

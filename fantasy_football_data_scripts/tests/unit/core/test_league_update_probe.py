@@ -231,6 +231,21 @@ def test_one_missing_team_is_incomplete_not_healthy():
     assert caught.value.observed_count == 1
 
 
+def test_yahoo_empty_roster_shells_are_incomplete_not_fresh():
+    client = FakeYahooClient()
+    client.get_league_rosters = lambda league_id: [
+        {"roster_id": f"{league_id}.t.1", "owner_id": "u1", "players": []},
+        {"roster_id": f"{league_id}.t.2", "owner_id": "u2", "players": []},
+    ]
+
+    with pytest.raises(ProviderProbeError) as caught:
+        probe_yahoo_oauth(client, league_id="470.l.1", season=2026, through_week=3)
+
+    assert caught.value.code == "incomplete_source"
+    assert caught.value.expected_count == 2
+    assert caught.value.observed_count == 0
+
+
 def test_multiplatform_probe_combines_disjoint_segments_deterministically():
     segments = [
         {

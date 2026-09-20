@@ -182,6 +182,19 @@ def probe_yahoo_oauth(
         expected = _expected_team_count(settings)
         _validate_team_count(provider, expected, len(teams))
         _validate_team_count(provider, expected, len(rosters))
+        populated_rosters = 0
+        for roster in rosters:
+            roster_payload = _mapping(roster, provider, "roster")
+            players = _rows(roster_payload.get("players"), provider, "roster players")
+            if players:
+                populated_rosters += 1
+        if populated_rosters != expected:
+            raise ProviderProbeError(
+                "incomplete_source",
+                f"Yahoo returned {populated_rosters} of {expected} populated rosters",
+                expected_count=expected,
+                observed_count=populated_rosters,
+            )
 
         revisions = [
             _resource(provider, "settings", str(season), league),

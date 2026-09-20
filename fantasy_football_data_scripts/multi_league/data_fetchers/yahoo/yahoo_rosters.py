@@ -513,6 +513,7 @@ class YahooRosterFetcher:
         manager_guid: str = None,
         *,
         include_stats: bool = True,
+        include_official_values: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Fetch roster for a specific team and week.
@@ -529,7 +530,11 @@ class YahooRosterFetcher:
         """
         url = f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team_key}/roster;week={week}"
         if include_stats:
-            url += f"/players/stats;type=week;week={week}"
+            # Yahoo intermittently returns an empty players collection when the
+            # weekly type qualifier is repeated on this roster resource.  The
+            # long-standing import route expands stats only to make Yahoo emit
+            # roster membership; official Yahoo values are ignored below.
+            url += "/players/stats"
         else:
             url += "/players"
 
@@ -549,7 +554,7 @@ class YahooRosterFetcher:
                 team_key=team_key,
                 manager_name=manager_name,
                 manager_guid=manager_guid,
-                include_points=include_stats,
+                include_points=include_stats and include_official_values,
             )
 
         except Exception as e:
@@ -637,20 +642,21 @@ class YahooRosterFetcher:
                     player_info["fantasy_points"] = None
                     player_info["yahoo_official_points"] = None
 
-                yahoo_stat_count = 0
-                for stat_elem in player_elem.findall("player_stats/stats/stat"):
-                    stat_id = (stat_elem.findtext("stat_id") or "").strip()
-                    if not stat_id:
-                        continue
-                    value_text = (stat_elem.findtext("value") or "").strip()
-                    try:
-                        value = float(value_text) if value_text else None
-                    except (TypeError, ValueError):
-                        value = None
-                    player_info[f"yahoo_stat_{stat_id}"] = value
-                    yahoo_stat_count += 1
-                if yahoo_stat_count:
-                    player_info["yahoo_stats_available"] = True
+                if include_points:
+                    yahoo_stat_count = 0
+                    for stat_elem in player_elem.findall("player_stats/stats/stat"):
+                        stat_id = (stat_elem.findtext("stat_id") or "").strip()
+                        if not stat_id:
+                            continue
+                        value_text = (stat_elem.findtext("value") or "").strip()
+                        try:
+                            value = float(value_text) if value_text else None
+                        except (TypeError, ValueError):
+                            value = None
+                        player_info[f"yahoo_stat_{stat_id}"] = value
+                        yahoo_stat_count += 1
+                    if yahoo_stat_count:
+                        player_info["yahoo_stats_available"] = True
 
                 roster_data.append(player_info)
 

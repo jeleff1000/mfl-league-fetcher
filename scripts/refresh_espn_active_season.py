@@ -157,6 +157,78 @@ def _finalized_espn_matchup_weeks(
     return finalized
 
 
+def _hydrate_zero_espn_schedule_scores(
+    schedules: dict[int, list[dict[str, Any]]],
+    rosters: pd.DataFrame,
+) -> None:
+    """Fill ESPN's closed 0-0 schedule shell from its weekly started lineups."""
+    from multi_league.core.league_refresh import espn_schedule_is_final
+    from multi_league.core.league_update_validation import IncompleteSourceError
+
+    required = {"week", "team_key", "fantasy_points", "is_started"}
+    if schedules and (not isinstance(rosters, pd.DataFrame) or not required <= set(rosters)):
+        raise IncompleteSourceError("ESPN roster rows cannot witness missing matchup totals")
+
+    for week, schedule_rows in schedules.items():
+        sides = [
+            side
+            for row in schedule_rows
+            for side in (row.get("home"), row.get("away"))
+            if isinstance(side, dict)
+        ]
+
+        def raw_score(side: dict[str, Any], scoring_period: int = week) -> float:
+            points = side.get("pointsByScoringPeriod")
+            value = points.get(str(scoring_period)) if isinstance(points, dict) else None
+            if value is None:
+                value = side.get("totalPoints")
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        if any(abs(raw_score(side)) > 1e-9 for side in sides):
+            continue
+
+        weekly = rosters.loc[pd.to_numeric(rosters["week"], errors="coerce").eq(int(week))].copy()
+        started = weekly["is_started"].astype(str).str.lower().isin({"true", "1"})
+        weekly = weekly.loc[started]
+        weekly["__points"] = pd.to_numeric(weekly["fantasy_points"], errors="coerce")
+        if weekly["__points"].isna().any():
+            raise IncompleteSourceError(f"ESPN week {week} started lineup has missing points")
+        totals = weekly.groupby(weekly["team_key"].astype(str))["__points"].sum().to_dict()
+        expected = {str(side.get("teamId")) for side in sides}
+        if set(totals) != expected:
+            raise IncompleteSourceError(
+                f"ESPN week {week} started-lineup coverage mismatch: "
+                f"missing={sorted(expected - set(totals))}, extra={sorted(set(totals) - expected)}"
+            )
+
+        for row in schedule_rows:
+            scored: dict[str, float] = {}
+            for side_name in ("home", "away"):
+                side = row.get(side_name)
+                if not isinstance(side, dict):
+                    raise IncompleteSourceError(f"ESPN week {week} matchup side is missing")
+                team_id = str(side.get("teamId"))
+                try:
+                    adjustment = float(side.get("adjustment") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise IncompleteSourceError(f"ESPN week {week} matchup adjustment is invalid") from exc
+                score = round(float(totals[team_id]) + adjustment, 2)
+                side["totalPoints"] = score
+                side.setdefault("pointsByScoringPeriod", {})[str(week)] = score
+                scored[side_name] = score
+            row["winner"] = (
+                "HOME" if scored["home"] > scored["away"]
+                else "AWAY" if scored["away"] > scored["home"]
+                else "TIE"
+            )
+
+        if not espn_schedule_is_final(schedule_rows, expected_team_ids=tuple(expected)):
+            raise IncompleteSourceError(f"ESPN week {week} lineup-derived matchup graph is incomplete")
+
+
 def assert_espn_closed_matchup_weeks(
     *,
     refresh_weeks: list[int],
@@ -570,6 +642,7 @@ def _merge_active_payloads(
         roster_rows += len(safe_rows)
 
     final_matchup_weeks, final_schedule_graphs, transactions = secondary_payload_future.result()
+    _hydrate_zero_espn_schedule_scores(final_schedule_graphs, rosters)
     assert_espn_closed_matchup_weeks(
         refresh_weeks=refresh_weeks,
         finalized_matchup_weeks=final_matchup_weeks,

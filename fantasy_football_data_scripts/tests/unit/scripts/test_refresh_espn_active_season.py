@@ -100,6 +100,51 @@ def test_closed_espn_period_still_rejects_an_incomplete_team_graph():
     ) == []
 
 
+def test_zero_espn_schedule_scores_are_hydrated_from_started_lineups():
+    from refresh_espn_active_season import _hydrate_zero_espn_schedule_scores
+
+    schedules = {
+        1: [{
+            "matchupPeriodId": 1,
+            "winner": "TIE",
+            "home": {"teamId": 1, "totalPoints": 0.0},
+            "away": {"teamId": 2, "totalPoints": 0.0},
+        }]
+    }
+    rosters = pd.DataFrame([
+        {"week": 1, "team_key": "1", "fantasy_points": 70.0, "is_started": True},
+        {"week": 1, "team_key": "1", "fantasy_points": 42.5, "is_started": True},
+        {"week": 1, "team_key": "1", "fantasy_points": 10.0, "is_started": False},
+        {"week": 1, "team_key": "2", "fantasy_points": 99.25, "is_started": True},
+    ])
+
+    _hydrate_zero_espn_schedule_scores(schedules, rosters)
+
+    assert schedules[1][0]["home"]["totalPoints"] == 112.5
+    assert schedules[1][0]["away"]["totalPoints"] == 99.25
+    assert schedules[1][0]["winner"] == "HOME"
+
+
+def test_zero_espn_schedule_scores_require_every_team_lineup():
+    from refresh_espn_active_season import _hydrate_zero_espn_schedule_scores
+    from multi_league.core.league_update_validation import IncompleteSourceError
+
+    schedules = {
+        1: [{
+            "matchupPeriodId": 1,
+            "winner": "TIE",
+            "home": {"teamId": 1, "totalPoints": 0.0},
+            "away": {"teamId": 2, "totalPoints": 0.0},
+        }]
+    }
+    rosters = pd.DataFrame([
+        {"week": 1, "team_key": "1", "fantasy_points": 112.5, "is_started": True},
+    ])
+
+    with pytest.raises(IncompleteSourceError, match="coverage mismatch.*2"):
+        _hydrate_zero_espn_schedule_scores(schedules, rosters)
+
+
 def test_espn_refresh_rejects_a_missing_prior_week_matchup():
     from refresh_espn_active_season import assert_espn_closed_matchup_weeks
     from multi_league.core.league_refresh import RefreshScopeError

@@ -16,6 +16,7 @@ import sys
 import tempfile
 from contextlib import nullcontext
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
@@ -440,18 +441,24 @@ def main(argv: list[str] | None = None) -> int:
         ),
     })
     canonical_history = preflight["canonical_history"]
+    source_plan_stage_seconds: dict[str, float] = {}
+    source_stage_started = perf_counter()
     persisted_plan = load_persisted_refresh_plan(
         reader,
         database_name=args.db,
         active_season=active_year,
         expected_observed_digest=args.observed_manifest_digest,
     )
+    source_plan_stage_seconds["persisted_plan"] = round(perf_counter() - source_stage_started, 3)
+    source_stage_started = perf_counter()
     finalized_ops, last_materialized_week = _load_active_refresh_inputs(
         reader,
         db_name=args.db,
         year=active_year,
         through_week=args.through_week,
     )
+    source_plan_stage_seconds["active_inputs"] = round(perf_counter() - source_stage_started, 3)
+    print(f"[weekly-refresh-source] {source_plan_stage_seconds}")
     if finalized_ops.empty:
         raise RuntimeError(f"No finalized regular-season ops facts for {active_year}")
     if args.execute and persisted_plan is None:
@@ -470,6 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         "year": active_year,
         "refresh_weeks": refresh_weeks,
         "executed": bool(args.execute),
+        "source_plan_stage_seconds": source_plan_stage_seconds,
         "canonical_history": canonical_history,
     }
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))

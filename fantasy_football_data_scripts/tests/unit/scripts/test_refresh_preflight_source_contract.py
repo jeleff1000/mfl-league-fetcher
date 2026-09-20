@@ -31,3 +31,4 @@ def test_heavy_source_reads_are_outside_parallel_preflight(entrypoint: str) -> N
     assert source.index("load_persisted_refresh_plan(", source.index("preflight =")) < source.index(
         "_load_active_refresh_inputs(", source.index("preflight =")
     )
+    assert '"source_plan_stage_seconds": source_plan_stage_seconds' in source

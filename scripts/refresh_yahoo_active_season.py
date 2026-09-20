@@ -95,6 +95,10 @@ _DYNAMIC_LEAGUE_SETTINGS_COLUMN_RE = re.compile(
 )
 
 
+class YahooIncompleteSourceError(RuntimeError):
+    """Yahoo exposed league metadata but omitted required active-season facts."""
+
+
 from multi_league.core.ops_cache import (
     _finalized_ops,
     _sql_literal,
@@ -1357,7 +1361,7 @@ def _merge_refresh_payloads(
 
     rosters, roster_failures = fetch_rosters_for_year(ctx, year, oauth_session=oauth, weeks=refresh_weeks)
     if roster_failures:
-        raise RuntimeError(f"Yahoo roster fetch failed for weeks: {roster_failures}")
+        raise YahooIncompleteSourceError(f"Yahoo roster fetch failed for weeks: {roster_failures}")
     expected_team_keys = validate_provider_team_inventory(
         provider="yahoo",
         settings_team_count=settings_row.iloc[0]["num_teams"],
@@ -2126,14 +2130,22 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ) if args.execute else nullcontext(None)
             with ops_context as ops_future:
-                receipt["fetch_rows"] = _merge_refresh_payloads(
-                    ctx=ctx,
-                    local_db=local_db,
-                    oauth=oauth,
-                    year=active_year,
-                    refresh_weeks=refresh_weeks,
-                    finalized_ops=finalized_ops,
-                )
+                try:
+                    receipt["fetch_rows"] = _merge_refresh_payloads(
+                        ctx=ctx,
+                        local_db=local_db,
+                        oauth=oauth,
+                        year=active_year,
+                        refresh_weeks=refresh_weeks,
+                        finalized_ops=finalized_ops,
+                    )
+                except YahooIncompleteSourceError as exc:
+                    receipt["status"] = "INCOMPLETE_SOURCE"
+                    receipt["error_code"] = "yahoo_rosters_unavailable"
+                    receipt["error"] = str(exc)
+                    receipt["phase_seconds"] = timer.finish()
+                    write_refresh_receipt(receipt, args.json_out)
+                    raise
                 receipt["source_manifest_complete"] = yahoo_source_manifest_complete(
                     refresh_weeks=refresh_weeks, fetch_rows=receipt["fetch_rows"],
                     plan=persisted_plan, year=active_year,

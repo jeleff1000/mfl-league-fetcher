@@ -18,6 +18,18 @@ def test_yahoo_active_worker_checks_provider_pair_graph_before_staging():
     assert block.index("validate_yahoo_week_matchup_scope(") < block.index("merge_provider_refresh_table(")
 
 
+def test_yahoo_roster_gaps_write_an_incomplete_source_receipt_before_failing():
+    text = (Path(__file__).resolve().parents[4] / "scripts" / "refresh_yahoo_active_season.py").read_text(
+        encoding="utf-8"
+    )
+    assert "class YahooIncompleteSourceError" in text
+    assert 'raise YahooIncompleteSourceError(f"Yahoo roster fetch failed for weeks: {roster_failures}")' in text
+    catch = text.split("except YahooIncompleteSourceError as exc:", 1)[1].split("raise", 1)[0]
+    assert 'receipt["status"] = "INCOMPLETE_SOURCE"' in catch
+    assert 'receipt["error_code"] = "yahoo_rosters_unavailable"' in catch
+    assert "write_refresh_receipt(receipt, args.json_out)" in catch
+
+
 ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))

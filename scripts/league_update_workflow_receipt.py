@@ -79,7 +79,7 @@ def failure_status(receipt: Mapping[str, Any] | None, *, cancelled: bool = False
         (receipt or {}).get("source_manifest_digest") or (receipt or {}).get("source_fingerprint")
     ):
         return "committed_cache_pending"
-    if status in MANUAL_NO_OP_STATUSES:
+    if status == "INCOMPLETE_SOURCE" or status in MANUAL_NO_OP_STATUSES:
         return "incomplete_source"
     return "cancelled" if cancelled else "failed"
 

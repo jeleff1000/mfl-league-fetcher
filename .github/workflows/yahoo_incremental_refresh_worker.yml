@@ -313,7 +313,12 @@ jobs:
           if [ "${recovery_status}" = "committed_cache_pending" ]; then
             args+=(--receipt yahoo_active_season_refresh.json --error "Data published; cache finalization requires retry")
           else
-            args+=(--error "Yahoo active-season refresh did not publish")
+            if [ "${recovery_status}" = "incomplete_source" ]; then
+              failure_error="Yahoo did not return complete active-season data; historical data was preserved"
+            else
+              failure_error="Yahoo active-season refresh did not publish"
+            fi
+            args+=(--error "${failure_error}")
           fi
           timeout --signal=KILL 8s python scripts/record_league_update_status.py "${args[@]}"
 

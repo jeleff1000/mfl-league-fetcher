@@ -538,6 +538,14 @@ def test_yahoo_refresh_uses_already_fetched_team_keys_to_gate_raw_roster_coverag
     assert text.index("validate_active_roster_frame(") < text.index("bundle = build_fleet_partition_bundle(")
 
 
+def test_yahoo_incomplete_source_failure_is_actionable_and_preserves_history():
+    workflow = (ROOT / ".github" / "workflows" / "yahoo_incremental_refresh_worker.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'if [ "${recovery_status}" = "incomplete_source" ]; then' in workflow
+    assert "Yahoo did not return complete active-season data; historical data was preserved" in workflow
+
+
 def test_yahoo_refresh_accepts_only_complete_declared_postseason_pair_graph():
     text = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")
     assert "validate_yahoo_week_matchup_scope(" in text

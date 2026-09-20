@@ -546,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         completed_weeks_to_refresh,
         finalized_source_boundary,
         hydrate_local_refresh_sources,
+        resolve_active_player_nfl_ids_from_bio,
         run_independent_refresh_preflight,
         start_background_refresh_call,
         stage_refresh_partitions,
@@ -795,6 +796,12 @@ def main(argv: list[str] | None = None) -> int:
                 reader, active_connection, ops_cache=Path(os.environ.get("OPS_CACHE_PATH", "")),
                 player_cache=player_cache, db_name=args.db,
                 active_year=active_year,
+            )
+            receipt["player_bio_exact_id_repairs"] = resolve_active_player_nfl_ids_from_bio(
+                active_connection,
+                db_name=args.db,
+                active_year=active_year,
+                platform="sleeper",
             )
             timer.mark("player_bio_sync")
             receipt["ops_cache"] = str(

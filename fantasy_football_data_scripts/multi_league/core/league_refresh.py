@@ -352,12 +352,7 @@ def resolve_active_player_nfl_ids_from_bio(
         ) AS mapped
         WHERE t.db_name = ? AND t.year = ?
           AND {local_id} = mapped.provider_id
-          AND (
-              t.NFL_player_id IS NULL OR TRIM(CAST(t.NFL_player_id AS VARCHAR)) = ''
-              OR UPPER(CAST(t.NFL_player_id AS VARCHAR)) LIKE 'SLEEPER-%'
-              OR UPPER(CAST(t.NFL_player_id AS VARCHAR)) LIKE 'YAHOO-%'
-              OR UPPER(CAST(t.NFL_player_id AS VARCHAR)) LIKE 'ESPN-%'
-          )
+          AND COALESCE(TRIM(CAST(t.NFL_player_id AS VARCHAR)), '') <> mapped.NFL_player_id
         RETURNING 1
         """,
         [str(db_name), int(active_year)],

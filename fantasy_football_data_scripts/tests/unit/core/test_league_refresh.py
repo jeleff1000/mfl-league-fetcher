@@ -450,7 +450,7 @@ def test_active_player_id_resolution_uses_synced_sleeper_id_despite_name_alias()
     )
     league.execute(
         "INSERT INTO public.player_fantasy VALUES "
-        "('franchise_mode_fantasy', 2026, '7670', NULL, 'Joshua Palmer'), "
+        "('franchise_mode_fantasy', 2026, '7670', 'WAS569019', 'Joshua Palmer'), "
         "('franchise_mode_fantasy', 2025, '7670', NULL, 'Joshua Palmer'), "
         "('franchise_mode_fantasy', 2026, '9999', NULL, 'Reused ID')"
     )
@@ -482,6 +482,22 @@ def test_active_player_id_resolution_uses_synced_sleeper_id_despite_name_alias()
         (2026, "7670", "00-0036988"),
         (2026, "9999", None),
     ]
+
+
+def test_sleeper_refresh_applies_exact_provider_identity_after_bio_sync():
+    """A current exact Sleeper ID must repair a stale same-name NFL identity."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[4]
+    source = (root / "scripts" / "refresh_sleeper_active_season.py").read_text(
+        encoding="utf-8"
+    )
+
+    bio_sync = source.index('receipt["player_bio_sync"] = sync_player_bio_cache_from_fly(')
+    exact_repair = source.index("resolve_active_player_nfl_ids_from_bio(")
+    transforms = source.index("_run_local_pipeline(", exact_repair)
+
+    assert bio_sync < exact_repair < transforms
 
 
 def test_active_player_bio_cache_sync_skips_fly_when_every_provider_id_is_cached(tmp_path):

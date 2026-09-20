@@ -527,39 +527,6 @@ class YahooRosterFetcher:
             root = self._fetch_url_xml(url)
             player_elements = root.findall(".//player")
             if not player_elements:
-                if not getattr(self, "_empty_roster_shape_logged", False):
-                    self._empty_roster_shape_logged = True
-                    players_node = root.find(".//players")
-                    child_tags = [child.tag for child in list(players_node)] if players_node is not None else []
-                    players_attrs = dict(players_node.attrib) if players_node is not None else {}
-                    log(
-                        "[ROSTER-SHAPE] current expansion returned no players "
-                        f"(players_attrs={players_attrs}, "
-                        f"child_tags={child_tags[:10]})"
-                    )
-                    candidates = {
-                        "out_stats_then_week": (
-                            f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team_key}/"
-                            f"roster;week={week}/players;out=stats/stats;type=week;week={week}"
-                        ),
-                        "out_stats": (
-                            f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team_key}/"
-                            f"roster;week={week}/players;out=stats"
-                        ),
-                    }
-                    for label, candidate_url in candidates.items():
-                        candidate_root = self._fetch_url_xml(candidate_url)
-                        candidate_players = candidate_root.findall(".//player")
-                        with_points = sum(
-                            player.find("player_points/total") is not None for player in candidate_players
-                        )
-                        with_stats = sum(
-                            bool(player.findall("player_stats/stats/stat")) for player in candidate_players
-                        )
-                        log(
-                            f"[ROSTER-SHAPE] {label}: players={len(candidate_players)}, "
-                            f"with_points={with_points}, with_stats={with_stats}"
-                        )
                 raise ValueError(
                     "Yahoo weekly roster payload omitted players "
                     f"(team={team_key}, week={week}, roster_nodes={len(root.findall('.//roster'))}, "

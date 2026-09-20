@@ -46,6 +46,8 @@ def test_weekly_refresh_publishes_bounded_local_homepage_frames(entrypoint: str)
     source = (ROOT / "scripts" / entrypoint).read_text(encoding="utf-8")
 
     assert "prepare_homepage_refresh(" in source
+    assert "homepage_source_future = start_background_refresh_call(" in source
+    assert "source_frames=homepage_source_future.result()" in source
     assert "publication_schema_version=FLEET_CAREER_SCHEMA_VERSION" in source
     assert "rebuild_homepage_rollups=False" in source
     assert "FLEET_HOMEPAGE_SCHEMA_VERSION" not in source

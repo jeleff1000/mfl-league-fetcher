@@ -1123,12 +1123,13 @@ def test_shared_homepage_prepare_writes_into_the_existing_atomic_bundle(monkeypa
         def connect(self):
             return "active-source"
 
-    def compute(reader, db_name, *, active_source, active_year):
+    def compute(reader, db_name, *, active_source, active_year, source_frames):
         captured.update(
             reader=reader,
             db_name=db_name,
             active_source=active_source,
             active_year=active_year,
+            source_frames=source_frames,
         )
         return frames
 
@@ -1140,14 +1141,17 @@ def test_shared_homepage_prepare_writes_into_the_existing_atomic_bundle(monkeypa
     )
 
     reader = Reader()
+    preloaded = {"preloaded": pd.DataFrame()}
     result = homepage_refresh.prepare_homepage_refresh(
         reader=reader,
         local_db=Local(),
         db_name="kmffl",
         active_year=2026,
+        source_frames=preloaded,
     )
 
     assert captured.pop("reader") is reader
+    assert captured.pop("source_frames") is preloaded
     assert captured == {
         "db_name": "kmffl",
         "active_source": "active-source",
@@ -1157,6 +1161,38 @@ def test_shared_homepage_prepare_writes_into_the_existing_atomic_bundle(monkeypa
         "published_tables": ["homepage_league_summary"],
         "rows": {"homepage_league_summary": 1},
     }
+
+
+def test_homepage_compute_reuses_preloaded_snapshot_without_second_fly_read(monkeypatch):
+    from multi_league.core import homepage_refresh
+    from multi_league.transformations.aggregation import homepage_summary
+
+    frames = homepage_refresh._load_homepage_source_frames(
+        type("EmptyReader", (), {"query": staticmethod(lambda *_args, **_kwargs: [])})(),
+        "gotham",
+    )
+    monkeypatch.setattr(
+        homepage_refresh,
+        "_load_homepage_source_frames",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected Fly read")),
+    )
+    monkeypatch.setattr(
+        homepage_summary,
+        "compute_homepage_frames",
+        lambda *_args, **_kwargs: {
+            "homepage_league_summary": pd.DataFrame(),
+            "homepage_manager_profiles": pd.DataFrame(),
+        },
+    )
+
+    result = homepage_refresh.compute_homepage_frames_from_fly(
+        object(),
+        "gotham",
+        active_year=2026,
+        source_frames=frames,
+    )
+
+    assert set(result) == {"homepage_league_summary", "homepage_manager_profiles"}
 
 
 def test_weekly_refresh_fetches_a_draft_only_when_the_active_season_has_none():

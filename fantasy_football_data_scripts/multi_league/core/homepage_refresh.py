@@ -337,11 +337,16 @@ def compute_homepage_frames_from_fly(
     *,
     active_source: Any | None = None,
     active_year: int | None = None,
+    source_frames: dict[str, pd.DataFrame] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Compute canonical homepage frames locally from a bounded Fly snapshot."""
     from multi_league.transformations.aggregation.homepage_summary import compute_homepage_frames
 
-    frames = _load_homepage_source_frames(reader, db_name)
+    frames = (
+        {table_name: frame.copy() for table_name, frame in source_frames.items()}
+        if source_frames is not None
+        else _load_homepage_source_frames(reader, db_name)
+    )
     if active_source is not None:
         if active_year is None:
             raise ValueError("active_year is required when overlaying an active source")
@@ -449,6 +454,7 @@ def prepare_homepage_refresh(
     local_db: Any,
     db_name: str,
     active_year: int,
+    source_frames: dict[str, pd.DataFrame] | None = None,
 ) -> dict[str, Any]:
     """Compute the shared homepage slice into the local refresh database.
 
@@ -460,6 +466,7 @@ def prepare_homepage_refresh(
         db_name,
         active_source=local_db.connect(),
         active_year=active_year,
+        source_frames=source_frames,
     )
     rows = write_homepage_frames(local_db.connect(), db_name, frames)
     tables = sorted(frames)

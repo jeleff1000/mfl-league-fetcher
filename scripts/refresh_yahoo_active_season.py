@@ -2063,6 +2063,11 @@ def main(argv: list[str] | None = None) -> int:
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
         timer.mark("source_snapshot")
+        from multi_league.core.homepage_refresh import _load_homepage_source_frames
+
+        homepage_source_future = start_background_refresh_call(
+            lambda: _load_homepage_source_frames(reader, args.db)
+        ) if args.execute else None
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
@@ -2302,6 +2307,7 @@ def main(argv: list[str] | None = None) -> int:
             homepage_started = time.monotonic()
             receipt["homepage_refresh"] = prepare_homepage_refresh(
                 reader=reader, local_db=local_db, db_name=args.db, active_year=active_year,
+                source_frames=homepage_source_future.result(),
             )
             receipt["homepage_seconds"] = round(time.monotonic() - homepage_started, 3)
             timer.mark("homepage_refresh")

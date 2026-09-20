@@ -138,6 +138,48 @@ def test_get_league_populates_complete_raw_draft_when_espn_flag_is_stale(monkeyp
     ]
 
 
+def test_raw_draft_parser_resolves_players_from_team_rosters_when_player_map_lags():
+    class FakeLeague:
+        def __init__(self):
+            self.espn_request = SimpleNamespace(
+                get_league_draft=lambda: {
+                    "draftDetail": {
+                        "drafted": False,
+                        "inProgress": False,
+                        "picks": [
+                            {
+                                "teamId": 1,
+                                "playerId": 99,
+                                "nominatingTeamId": 1,
+                                "roundId": 1,
+                                "roundPickNumber": 1,
+                                "bidAmount": 0,
+                                "keeper": False,
+                            }
+                        ],
+                    }
+                }
+            )
+            self.player_map = {}
+            self.teams = [
+                SimpleNamespace(
+                    team_id=1,
+                    roster=[SimpleNamespace(playerId=99, name="Roster Player")],
+                )
+            ]
+            self.draft = []
+
+        @staticmethod
+        def get_team_data(team_id):
+            return f"team-{team_id}"
+
+    league = FakeLeague()
+
+    _fetch_legacy_draft_with_list_ids(league)
+
+    assert league.draft[0].playerName == "Roster Player"
+
+
 def test_legacy_player_parser_normalizes_list_valued_ids():
     league = SimpleNamespace(
         espn_request=SimpleNamespace(

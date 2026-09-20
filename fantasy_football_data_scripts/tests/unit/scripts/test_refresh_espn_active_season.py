@@ -235,7 +235,10 @@ def _draft_payload(*, drafted=True, pick_count=6, rounds=2):
         "draftDetail": {
             "drafted": drafted,
             "inProgress": False,
-            "picks": [{"overallPickNumber": i} for i in range(1, pick_count + 1)],
+            "picks": [
+                {"overallPickNumber": i, "playerId": 1000 + i}
+                for i in range(1, pick_count + 1)
+            ],
         },
         "settings": {
             "size": 3,
@@ -243,6 +246,13 @@ def _draft_payload(*, drafted=True, pick_count=6, rounds=2):
             "draftSettings": {"type": "SNAKE", "pickOrder": [1, 2, 3]},
         },
     }
+
+
+def _parsed_draft(count):
+    return [
+        SimpleNamespace(playerId=1000 + i, playerName=f"Player {i}")
+        for i in range(1, count + 1)
+    ]
 
 
 def test_espn_draft_manifest_accepts_verified_afi_2026_pick_shape():
@@ -258,7 +268,7 @@ def test_espn_draft_manifest_accepts_verified_afi_2026_pick_shape():
         "20": 5, "21": 2, "23": 1,
     }
     client = SimpleNamespace(get_raw_league=lambda *_args: payload)
-    league = SimpleNamespace(draft=[object()] * 168)
+    league = SimpleNamespace(draft=_parsed_draft(168))
     manifest, no_draft = _espn_draft_manifest(client, league, 2026)
     assert not no_draft
     assert len(manifest) == 168
@@ -268,9 +278,13 @@ def test_espn_draft_manifest_requires_raw_complete_pick_identities():
     from refresh_espn_active_season import _espn_draft_manifest
 
     client = SimpleNamespace(get_raw_league=lambda *_args: _draft_payload())
-    league = SimpleNamespace(draft=[SimpleNamespace() for _ in range(6)])
+    league = SimpleNamespace(draft=_parsed_draft(6))
     manifest, absent = _espn_draft_manifest(client, league, 2026)
-    assert manifest.equals(pd.DataFrame({"pick": [1, 2, 3, 4, 5, 6]}))
+    assert manifest.equals(pd.DataFrame({
+        "pick": [1, 2, 3, 4, 5, 6],
+        "espn_player_id": [1001, 1002, 1003, 1004, 1005, 1006],
+        "player": [f"Player {i}" for i in range(1, 7)],
+    }))
     assert absent is False
 
 
@@ -281,7 +295,7 @@ def test_espn_draft_manifest_rejects_empty_or_short_parsed_and_raw_drafts():
 
     for raw_count, parsed_count in ((6, 0), (3, 3), (6, 3)):
         client = SimpleNamespace(get_raw_league=lambda *_args, n=raw_count: _draft_payload(pick_count=n))
-        league = SimpleNamespace(draft=[SimpleNamespace() for _ in range(parsed_count)])
+        league = SimpleNamespace(draft=_parsed_draft(parsed_count))
         with pytest.raises(RefreshScopeError):
             _espn_draft_manifest(client, league, 2026)
 
@@ -303,12 +317,25 @@ def test_espn_draft_manifest_accepts_complete_picks_when_drafted_flag_is_stale()
     )
     manifest, absent = _espn_draft_manifest(
         client,
-        SimpleNamespace(draft=[SimpleNamespace() for _ in range(6)]),
+        SimpleNamespace(draft=_parsed_draft(6)),
         2026,
     )
 
     assert manifest["pick"].tolist() == [1, 2, 3, 4, 5, 6]
     assert absent is False
+
+
+def test_espn_draft_manifest_rejects_unresolved_player_identity():
+    import pytest
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    parsed = _parsed_draft(6)
+    parsed[0].playerName = ""
+    client = SimpleNamespace(get_raw_league=lambda *_args: _draft_payload())
+
+    with pytest.raises(RefreshScopeError, match="unresolved player identities"):
+        _espn_draft_manifest(client, SimpleNamespace(draft=parsed), 2026)
 
 
 def test_espn_draft_manifest_reports_the_rejected_completion_witness():
@@ -323,4 +350,4 @@ def test_espn_draft_manifest_reports_the_rejected_completion_witness():
         RefreshScopeError,
         match=r"drafted=True, in_progress=True, raw_picks=1, parsed_picks=1",
     ):
-        _espn_draft_manifest(client, SimpleNamespace(draft=[SimpleNamespace()]), 2026)
+        _espn_draft_manifest(client, SimpleNamespace(draft=_parsed_draft(1)), 2026)

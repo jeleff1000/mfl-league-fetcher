@@ -126,12 +126,28 @@ def _fetch_legacy_draft_with_list_ids(league: Any) -> None:
     if not detail.get("drafted") and not detail.get("picks"):
         return
 
+    player_names = {
+        str(player_id): player_name
+        for player_id, player_name in getattr(league, "player_map", {}).items()
+        if isinstance(player_name, str) and player_name.strip()
+    }
+    for team in getattr(league, "teams", []) or []:
+        for player in getattr(team, "roster", []) or []:
+            player_id = _legacy_draft_scalar(getattr(player, "playerId", None))
+            player_name = (
+                getattr(player, "name", None)
+                or getattr(player, "playerName", None)
+                or getattr(player, "fullName", None)
+            )
+            if player_id is not None and player_name:
+                player_names.setdefault(str(player_id), str(player_name))
+
     for pick in detail.get("picks", []):
         team_id = _legacy_draft_scalar(pick.get("teamId"))
         player_id = _legacy_draft_scalar(pick.get("playerId"))
         nominating_team_id = _legacy_draft_scalar(pick.get("nominatingTeamId"))
         team = league.get_team_data(team_id)
-        player_name = league.player_map.get(player_id, "")
+        player_name = player_names.get(str(player_id), "")
         league.draft.append(
             BasePick(
                 team,

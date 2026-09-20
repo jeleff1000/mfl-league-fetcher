@@ -218,7 +218,24 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
     pick_order = (settings.get("draftSettings") or {}).get("pickOrder")
     if pick_order and len(pick_order) != teams:
         raise RefreshScopeError("ESPN draft order disagrees with league team count")
-    return pd.DataFrame({"pick": sorted(pick_numbers)}), False
+
+    parsed_player_ids = [getattr(pick, "playerId", None) for pick in parsed]
+    parsed_player_names = [str(getattr(pick, "playerName", None) or "").strip() for pick in parsed]
+    raw_player_ids = [pick.get("playerId") for pick in picks]
+    unresolved = any(player_id in (None, "") for player_id in parsed_player_ids) or any(
+        not player_name or player_name.lower() == "unknown"
+        for player_name in parsed_player_names
+    )
+    if unresolved:
+        raise RefreshScopeError("ESPN draft has unresolved player identities")
+    if sorted(map(str, parsed_player_ids)) != sorted(map(str, raw_player_ids)):
+        raise RefreshScopeError("ESPN parsed draft player identities disagree with raw picks")
+    manifest = pd.DataFrame({
+        "pick": pick_numbers,
+        "espn_player_id": parsed_player_ids,
+        "player": parsed_player_names,
+    }).sort_values("pick", ignore_index=True)
+    return manifest, False
 
 
 def _merge_active_payloads(
@@ -366,7 +383,7 @@ def _merge_active_payloads(
     draft_rows = refresh_authoritative_draft_partition(
         local_db,
         provider_manifest=draft_manifest,
-        key_columns=("pick",),
+        key_columns=("pick", "espn_player_id", "player"),
         fetch_full=lambda: fetch_espn_draft(ctx, active_year),
         year=active_year,
         platform="espn",

@@ -353,7 +353,10 @@ def test_espn_draft_manifest_rejects_unresolved_player_identity():
     parsed[0].playerName = ""
     client = SimpleNamespace(get_raw_league=lambda *_args: _draft_payload())
 
-    with pytest.raises(RefreshScopeError, match="unresolved player identities"):
+    with pytest.raises(
+        RefreshScopeError,
+        match=r"unresolved player identities \(count=1, sample=\['1001'\]\)",
+    ):
         _espn_draft_manifest(client, SimpleNamespace(draft=parsed), 2026)
 
 

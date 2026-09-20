@@ -222,12 +222,16 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
     parsed_player_ids = [getattr(pick, "playerId", None) for pick in parsed]
     parsed_player_names = [str(getattr(pick, "playerName", None) or "").strip() for pick in parsed]
     raw_player_ids = [pick.get("playerId") for pick in picks]
-    unresolved = any(player_id in (None, "") for player_id in parsed_player_ids) or any(
-        not player_name or player_name.lower() == "unknown"
-        for player_name in parsed_player_names
-    )
-    if unresolved:
-        raise RefreshScopeError("ESPN draft has unresolved player identities")
+    unresolved_player_ids = [
+        "<missing>" if player_id in (None, "") else str(player_id)
+        for player_id, player_name in zip(parsed_player_ids, parsed_player_names)
+        if player_id in (None, "") or not player_name or player_name.lower() == "unknown"
+    ]
+    if unresolved_player_ids:
+        raise RefreshScopeError(
+            "ESPN draft has unresolved player identities "
+            f"(count={len(unresolved_player_ids)}, sample={unresolved_player_ids[:5]})"
+        )
     if sorted(map(str, parsed_player_ids)) != sorted(map(str, raw_player_ids)):
         raise RefreshScopeError("ESPN parsed draft player identities disagree with raw picks")
     manifest = pd.DataFrame({

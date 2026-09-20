@@ -195,6 +195,26 @@ def test_catalog_missing_table_500_is_not_retried_for_thirty_seconds(fly_env):
     mock_sleep.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "error_text",
+    [
+        "ParserException: Parser Error: syntax error at or near years",
+        'Binder Error: Referenced column "missing" not found',
+    ],
+)
+def test_deterministic_query_errors_are_not_retried(fly_env, error_text):
+    reader = FlyReader()
+    response = _resp(500, text=error_text)
+    with (
+        patch("multi_league.core.readers.fly_reader.requests.post", return_value=response) as mock_post,
+        patch("multi_league.core.readers.fly_reader.time.sleep") as mock_sleep,
+    ):
+        with pytest.raises(RuntimeError, match=r"500"):
+            reader.query("SELECT broken", database="___leagues")
+    assert mock_post.call_count == 1
+    mock_sleep.assert_not_called()
+
+
 def test_transient_500_still_retries_after_catalog_fast_fail(fly_env):
     reader = FlyReader()
     sequence = [_resp(500, text="temporary DuckDB ATTACH race"), _resp(200, [{"ok": True}])]

@@ -98,10 +98,20 @@ class FlyReader:
                 and "catalog error" in text_lower
                 and "does not exist" in text_lower
             )
+            deterministic_query_error = resp.status_code == 500 and any(
+                marker in text_lower
+                for marker in (
+                    "parserexception",
+                    "parser error:",
+                    "binderexception",
+                    "binder error:",
+                )
+            )
             if (
                 resp.status_code in self.RETRY_STATUS
                 and attempt < self.MAX_RETRIES - 1
                 and not missing_catalog_table
+                and not deterministic_query_error
                 and not is_permanent_storage_error(resp.text)
             ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"

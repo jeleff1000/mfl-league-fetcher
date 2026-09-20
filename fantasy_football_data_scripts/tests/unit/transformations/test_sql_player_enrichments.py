@@ -424,7 +424,7 @@ def test_populate_fantasy_points_applies_custom_offense_corrections():
     assert row[2] == pytest.approx(0.0, abs=0.01)
 
 
-def test_populate_fantasy_points_preserves_yahoo_rostered_api_points():
+def test_populate_fantasy_points_recomputes_yahoo_rostered_points_from_settings():
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA IF NOT EXISTS public")
     conn.execute("ATTACH ':memory:' AS ___ops")
@@ -441,7 +441,10 @@ def test_populate_fantasy_points_preserves_yahoo_rostered_api_points():
             manager VARCHAR,
             fantasy_points DOUBLE,
             bonus_points DOUBLE,
-            te_premium_points DOUBLE
+            te_premium_points DOUBLE,
+            yahoo_stats_available BOOLEAN,
+            yahoo_stat_4 DOUBLE,
+            yahoo_stat_5 DOUBLE
         )
         """
     )
@@ -456,7 +459,9 @@ def test_populate_fantasy_points_preserves_yahoo_rostered_api_points():
             pts_misc DOUBLE,
             pts_def_std DOUBLE,
             pts_idp_std DOUBLE,
-            pts_k_std DOUBLE
+            pts_k_std DOUBLE,
+            passing_yards DOUBLE,
+            passing_tds DOUBLE
         )
         """
     )
@@ -471,22 +476,27 @@ def test_populate_fantasy_points_preserves_yahoo_rostered_api_points():
     conn.execute(
         """
         INSERT INTO public.player_fantasy VALUES
-            ('test_db', 'qb_2021_1', 'qb_2021', 2021, 1, 'QB', 'Rostered Manager', 17.5, NULL, NULL),
-            ('test_db', 'qb_2021_2', 'qb_2021', 2021, 2, 'QB', 'Unrostered', NULL, NULL, NULL)
+            ('test_db', 'qb_2021_1', 'qb_2021', 2021, 1, 'QB', 'Rostered Manager', 17.5, NULL, NULL, TRUE, 100.0, 1.0),
+            ('test_db', 'qb_2021_2', 'qb_2021', 2021, 2, 'QB', 'Unrostered', NULL, NULL, NULL, TRUE, 100.0, 1.0)
         """
     )
     conn.execute(
         """
         INSERT INTO ___ops.nfl_historical.nfl_player_stats_all VALUES
-            ('qb_2021_1', 'qb_2021', 24.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-            ('qb_2021_2', 'qb_2021', 21.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            ('qb_2021_1', 'qb_2021', 24.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 400.0, 2.0),
+            ('qb_2021_2', 'qb_2021', 21.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 300.0, 2.0)
         """
     )
 
     runner = _PlayerRunner(
         db_name="test_db",
         data_dir="local",
-        roster_by_year={2021: {"QB": 1, "scoring_settings": {"rec": 0.0, "pass_td": 4.0}}},
+        roster_by_year={
+            2021: {
+                "QB": 1,
+                "scoring_settings": {"rec": 0.0, "pass_yd": 0.04, "pass_td": 4.0},
+            }
+        },
     )
     runner._conn = conn
     runner._platform = "yahoo"
@@ -505,8 +515,8 @@ def test_populate_fantasy_points_preserves_yahoo_rostered_api_points():
             runner._conn.close()
 
     assert rows == [
-        (1, "Rostered Manager", 17.5),
-        (2, "Unrostered", 21.0),
+        (1, "Rostered Manager", 24.0),
+        (2, "Unrostered", 20.0),
     ]
 
 

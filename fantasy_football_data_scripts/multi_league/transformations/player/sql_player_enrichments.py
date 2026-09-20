@@ -19,7 +19,6 @@ from multi_league.core.player_week_identity import player_week_publish_dedup_sta
 from multi_league.shared.filters import rostered_filter_sql  # noqa: F401 - used in f-strings
 from multi_league.transformations.player.modules.scoring_calculator import (
     build_components_fantasy_points_sql,
-    build_yahoo_stat_id_fantasy_points_sql,
     get_scoring_columns,
 )
 
@@ -723,14 +722,6 @@ class PlayerEnrichmentsMixin:
                 include_position_bonuses=False,
                 available_columns=numeric_super_cols,
             )
-            yahoo_stat_expr = None
-            if platform == "yahoo" and "yahoo_stats_available" in player_cols:
-                yahoo_stat_expr = build_yahoo_stat_id_fantasy_points_sql(
-                    {"scoring_settings": scoring},
-                    table_alias="p",
-                    position_sql=primary_pos_sql,
-                    available_columns=player_cols,
-                )
             te_component_col = scoring_columns.get("rec_tep")
 
             def_mults = (
@@ -784,7 +775,6 @@ class PlayerEnrichmentsMixin:
                 te_premium,
                 rb_premium,
                 wr_premium,
-                yahoo_stat_expr,
             )
 
             group = year_groups.setdefault(
@@ -803,7 +793,6 @@ class PlayerEnrichmentsMixin:
                         "te_premium": te_premium,
                         "rb_premium": rb_premium,
                         "wr_premium": wr_premium,
-                        "yahoo_stat_expr": yahoo_stat_expr,
                     },
                     "years": [],
                 },
@@ -943,14 +932,6 @@ class PlayerEnrichmentsMixin:
                     if bonus_parts
                     else "0.0"
                 )
-                if cfg["yahoo_stat_expr"]:
-                    yahoo_available_expr = "COALESCE(TRY_CAST(p.yahoo_stats_available AS BOOLEAN), FALSE)"
-                    base_expr = (
-                        f"CASE WHEN {yahoo_available_expr} " f"THEN {cfg['yahoo_stat_expr']} ELSE {base_expr} END"
-                    )
-                    adjusted_bonus_expr = f"CASE WHEN {yahoo_available_expr} THEN 0.0 ELSE {adjusted_bonus_expr} END"
-                    position_bonus_expr = f"CASE WHEN {yahoo_available_expr} THEN 0.0 ELSE {position_bonus_expr} END"
-
                 if not self.dry_run:
                     conn.execute(f"""
                         CREATE OR REPLACE TEMP TABLE _points_stage AS

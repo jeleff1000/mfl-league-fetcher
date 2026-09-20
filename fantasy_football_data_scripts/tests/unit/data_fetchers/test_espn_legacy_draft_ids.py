@@ -180,6 +180,52 @@ def test_raw_draft_parser_resolves_players_from_team_rosters_when_player_map_lag
     assert league.draft[0].playerName == "Roster Player"
 
 
+def test_draft_fetch_accepts_the_verified_roster_name_map(monkeypatch):
+    from multi_league.data_fetchers.espn import espn_api_client, espn_draft
+
+    team = SimpleNamespace(team_id=1, team_name="One", roster=[])
+    pick = SimpleNamespace(
+        playerName="",
+        playerId=99,
+        round_num=1,
+        round_pick=1,
+        bid_amount=0,
+        keeper_status=False,
+        team=team,
+    )
+    league = SimpleNamespace(teams=[team], draft=[pick])
+
+    class Client:
+        def __init__(self, *_args):
+            pass
+
+        def get_league(self, _year):
+            return league
+
+    ctx = SimpleNamespace(
+        espn_s2=None,
+        swid=None,
+        get_league_id_for_year=lambda _year: 12345,
+        get_manager_name=lambda *_args, **_kwargs: "Manager",
+        get_manager_guid=lambda *_args, **_kwargs: "owner",
+        get_franchise_id=lambda *_args, **_kwargs: "franchise",
+    )
+    monkeypatch.setattr(espn_api_client, "ESPNAPIClient", Client)
+    monkeypatch.setattr(espn_draft, "_resolve_espn_nfl_id", lambda _player_id: "00-0000099")
+
+    frame = espn_draft.fetch_espn_draft(
+        ctx,
+        2026,
+        player_names_by_id={"99": "Roster Player"},
+    )
+
+    assert frame[["espn_player_id", "player", "NFL_player_id"]].to_dict("records") == [{
+        "espn_player_id": 99,
+        "player": "Roster Player",
+        "NFL_player_id": "00-0000099",
+    }]
+
+
 def test_legacy_player_parser_normalizes_list_valued_ids():
     league = SimpleNamespace(
         espn_request=SimpleNamespace(

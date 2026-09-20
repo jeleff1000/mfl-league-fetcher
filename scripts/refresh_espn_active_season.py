@@ -238,6 +238,29 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
     return manifest, False
 
 
+def _hydrate_espn_draft_player_names(league: Any, rosters: pd.DataFrame) -> dict[str, str]:
+    """Fill stale draft names from the already-fetched active roster payload."""
+    if rosters is None or rosters.empty or not {"espn_player_id", "player"}.issubset(rosters.columns):
+        return {}
+    names: dict[str, str] = {}
+    for player_id, group in rosters.dropna(subset=["espn_player_id", "player"]).groupby("espn_player_id"):
+        candidates = {
+            str(value).strip()
+            for value in group["player"].tolist()
+            if str(value).strip() and str(value).strip().lower() != "unknown"
+        }
+        if len(candidates) == 1:
+            names[str(player_id)] = next(iter(candidates))
+    for pick in getattr(league, "draft", []) or []:
+        current = str(getattr(pick, "playerName", None) or "").strip()
+        if current and current.lower() != "unknown":
+            continue
+        resolved = names.get(str(getattr(pick, "playerId", "")))
+        if resolved:
+            pick.playerName = resolved
+    return names
+
+
 def _merge_active_payloads(
     *,
     ctx: Any,
@@ -303,6 +326,7 @@ def _merge_active_payloads(
         player_id_column="espn_player_id",
         rosters=rosters,
     )
+    draft_player_names = _hydrate_espn_draft_player_names(league, rosters)
     roster_rows = 0
     pending_nfl_teams: set[str] = set()
     for week in refresh_weeks:
@@ -384,7 +408,9 @@ def _merge_active_payloads(
         local_db,
         provider_manifest=draft_manifest,
         key_columns=("pick", "espn_player_id", "player"),
-        fetch_full=lambda: fetch_espn_draft(ctx, active_year),
+        fetch_full=lambda: fetch_espn_draft(
+            ctx, active_year, player_names_by_id=draft_player_names,
+        ),
         year=active_year,
         platform="espn",
         league_id=league_id,

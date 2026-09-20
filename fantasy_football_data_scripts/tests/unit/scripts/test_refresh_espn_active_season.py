@@ -40,6 +40,25 @@ def test_unfinalized_espn_schedule_log_exposes_the_safe_period_witness(capsys):
     assert "teams=['1', '2']" in output
 
 
+def test_espn_draft_names_are_hydrated_from_the_fetched_roster():
+    import refresh_espn_active_season as worker
+
+    league = SimpleNamespace(draft=[
+        SimpleNamespace(playerId=1001, playerName=""),
+        SimpleNamespace(playerId=1002, playerName="Already Named"),
+    ])
+    rosters = pd.DataFrame({
+        "espn_player_id": [1001, 1001, 1002],
+        "player": ["Roster Player", "Roster Player", "Already Named"],
+    })
+    hydrate = getattr(worker, "_hydrate_espn_draft_player_names", lambda *_args: {})
+
+    names = hydrate(league, rosters)
+
+    assert names == {"1001": "Roster Player", "1002": "Already Named"}
+    assert [pick.playerName for pick in league.draft] == ["Roster Player", "Already Named"]
+
+
 def test_build_context_reuses_supplied_frontend_settings(tmp_path, monkeypatch):
     """The active worker must not re-read context after it has already hydrated it."""
     from multi_league.data_fetchers.espn import espn_api_client, espn_context

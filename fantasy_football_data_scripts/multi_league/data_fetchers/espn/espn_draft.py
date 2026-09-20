@@ -94,7 +94,12 @@ def _build_position_map(league) -> dict:
     return pos_map
 
 
-def fetch_espn_draft(ctx: "ESPNContext", year: int) -> pd.DataFrame | None:
+def fetch_espn_draft(
+    ctx: "ESPNContext",
+    year: int,
+    *,
+    player_names_by_id: dict[str, str] | None = None,
+) -> pd.DataFrame | None:
     """
     Fetch draft data for a single year.
 
@@ -124,8 +129,12 @@ def fetch_espn_draft(ctx: "ESPNContext", year: int) -> pd.DataFrame | None:
 
     picks = []
     for i, pick in enumerate(league.draft, 1):
-        player_name = getattr(pick, "playerName", None) or "Unknown"
         player_id = getattr(pick, "playerId", None)
+        player_name = (
+            getattr(pick, "playerName", None)
+            or (player_names_by_id or {}).get(str(player_id))
+            or "Unknown"
+        )
         round_num = getattr(pick, "round_num", None)
         round_pick = getattr(pick, "round_pick", None)
         bid_amount = getattr(pick, "bid_amount", 0) or 0

@@ -234,6 +234,47 @@ def _log_missing_columns(available_cols: set, is_first_call: bool = True):
         log("  [INFO] win/loss columns not found - will be added after matchup_to_player transformation runs")
 
 
+def _scoped_nfl_lookup_ctes(db_name: str) -> str:
+    """Build NFL lookups from only the players used by one league.
+
+    The centralized NFL table is large.  Weekly publication used to rank and
+    deduplicate the whole table four times even though a league references a
+    small fraction of its keys.
+    """
+    return f"""
+        needed_player_weeks AS MATERIALIZED (
+            SELECT DISTINCT player_week
+            FROM {table_ref('player_fantasy')}
+            WHERE db_name = '{db_name}' AND player_week IS NOT NULL
+        ),
+        needed_player_ids AS MATERIALIZED (
+            SELECT DISTINCT CAST(NFL_player_id AS VARCHAR) AS NFL_player_id
+            FROM {table_ref('player_fantasy')}
+            WHERE db_name = '{db_name}' AND NFL_player_id IS NOT NULL
+        ),
+        super_table_dedup AS (
+            SELECT DISTINCT s.player_week, s.player
+            FROM ___ops.nfl_historical.nfl_player_stats_all s
+            INNER JOIN needed_player_weeks n ON n.player_week = s.player_week
+            WHERE s.player_week IS NOT NULL
+        ),
+        nfl_team_lookup AS (
+            SELECT s.NFL_player_id, s.nfl_team,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY s.NFL_player_id ORDER BY s.year DESC, s.week DESC
+                   ) AS rn
+            FROM ___ops.nfl_historical.nfl_player_stats_all s
+            INNER JOIN needed_player_ids n
+                ON n.NFL_player_id = CAST(s.NFL_player_id AS VARCHAR)
+            WHERE s.nfl_team IS NOT NULL AND s.NFL_player_id IS NOT NULL
+        ),
+        nfl_team_dedup AS (
+            SELECT CAST(NFL_player_id AS VARCHAR) AS NFL_player_id, nfl_team
+            FROM nfl_team_lookup WHERE rn = 1
+        )
+    """
+
+
 def _aggregate_fantasy(conn, db_name: str, granularity: str, include_playoffs: bool, year: int = None) -> int:
     """
     Shared aggregation engine for season/career tables, regular/all-games variants.
@@ -314,21 +355,7 @@ def _aggregate_fantasy(conn, db_name: str, granularity: str, include_playoffs: b
         f"""
         INSERT INTO {staging_ref}
         ({aggregate_insert_columns(table_name, insert_cols)})
-        WITH super_table_dedup AS (
-            SELECT DISTINCT player_week, player
-            FROM ___ops.nfl_historical.nfl_player_stats_all
-            WHERE player_week IS NOT NULL
-        ),
-        nfl_team_lookup AS (
-            SELECT NFL_player_id, nfl_team,
-                   ROW_NUMBER() OVER (PARTITION BY NFL_player_id ORDER BY year DESC, week DESC) AS rn
-            FROM ___ops.nfl_historical.nfl_player_stats_all
-            WHERE nfl_team IS NOT NULL AND NFL_player_id IS NOT NULL
-        ),
-        nfl_team_dedup AS (
-            SELECT CAST(NFL_player_id AS VARCHAR) AS NFL_player_id, nfl_team
-            FROM nfl_team_lookup WHERE rn = 1
-        ),
+        WITH {_scoped_nfl_lookup_ctes(db_name)},
         agg AS (
         SELECT
             '{db_name}' AS db_name,

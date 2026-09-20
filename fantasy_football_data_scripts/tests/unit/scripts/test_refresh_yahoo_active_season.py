@@ -325,6 +325,17 @@ def test_unpersisted_yahoo_context_rediscovers_native_chain_from_active_key():
     }
 
 
+def test_native_chain_backfill_happens_after_user_configuration_preservation_gate():
+    """The intentional league_ids_json change must not trip the pre-write guard."""
+    source = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")
+    main = source[source.index("def main(") :]
+
+    preservation = main.index('receipt["preservation"] = assert_refresh_preservation(')
+    persistence = main.index('receipt["renewal_chain_backfilled"] = _persist_yahoo_renewal_chain(')
+
+    assert preservation < persistence
+
+
 def test_source_frames_select_the_current_multiplatform_leg_before_provider_fetch():
     """A Yahoo worker must stop before fetch when the 2026 leg belongs to Sleeper."""
     import pandas as pd

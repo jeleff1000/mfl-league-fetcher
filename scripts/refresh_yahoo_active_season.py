@@ -2123,16 +2123,6 @@ def main(argv: list[str] | None = None) -> int:
                 weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
             timer.mark("transformed_scope_validation")
-            # Persist only the provider-native chain discovered for a legacy
-            # context that never saved one. Every later refresh is fast-path.
-            receipt["renewal_chain_backfilled"] = False
-            if not has_persisted_chain:
-                receipt["renewal_chain_backfilled"] = _persist_yahoo_renewal_chain(
-                    local_db,
-                    source_context=source_frames["league_context"],
-                    db_name=args.db,
-                    history=history,
-                )
             local_db.connect()
             from multi_league.core.league_update_publish_claim import renew_claim_for_publication
 
@@ -2154,6 +2144,18 @@ def main(argv: list[str] | None = None) -> int:
                 active_year=active_year,
                 finalized_ops_player_weeks=finalized_ops_player_weeks(finalized_ops, year=active_year),
             )
+            # Persist only the provider-native chain discovered for a legacy
+            # context that never saved one. Do this after the preservation
+            # gate has proved every user-owned field survived unchanged; the
+            # helper restores that exact row and changes league_ids_json only.
+            receipt["renewal_chain_backfilled"] = False
+            if not has_persisted_chain:
+                receipt["renewal_chain_backfilled"] = _persist_yahoo_renewal_chain(
+                    local_db,
+                    source_context=source_frames["league_context"],
+                    db_name=args.db,
+                    history=history,
+                )
             stage_timer.mark("preservation_validation")
             publish_tables = active_refresh_publish_tables(
                 local_db.connect(), publication_schema_version=FLEET_HOMEPAGE_SCHEMA_VERSION,

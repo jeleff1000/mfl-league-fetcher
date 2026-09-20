@@ -283,9 +283,9 @@ def _discard_espn_placeholder_draft(
     return int(len(active))
 
 
-def _explicit_empty_partitions(*, placeholder_draft_rows_removed: int) -> set[str]:
+def _explicit_empty_partitions(fetch_rows: dict[str, Any]) -> set[str]:
     """Carry a verified placeholder cleanup through the atomic fleet publish."""
-    return {"draft"} if placeholder_draft_rows_removed > 0 else set()
+    return {"draft"} if int(fetch_rows.get("placeholder_draft_rows_removed") or 0) > 0 else set()
 
 
 def _hydrate_espn_draft_player_names(league: Any, rosters: pd.DataFrame) -> dict[str, str]:
@@ -856,9 +856,7 @@ def main(argv: list[str] | None = None) -> int:
                     output_dir=work_dir / "bundle",
                     rebuild_career_rollups=True,
                     rebuild_homepage_rollups=True,
-                    empty_active_partitions=_explicit_empty_partitions(
-                        placeholder_draft_rows_removed=placeholder_draft_rows_removed,
-                    ),
+                    empty_active_partitions=_explicit_empty_partitions(receipt["fetch_rows"]),
                 )
             finally:
                 stage.close()

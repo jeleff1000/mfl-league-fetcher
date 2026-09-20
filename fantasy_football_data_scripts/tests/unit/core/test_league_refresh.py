@@ -933,6 +933,51 @@ def test_local_refresh_hydration_preserves_disjoint_platform_chain_years(tmp_pat
         local.close()
 
 
+def test_prune_unfinalized_provider_matchups_removes_only_requested_active_segment(tmp_path):
+    """A live ESPN week must not survive hydration as a completed matchup."""
+    from multi_league.core.league_refresh import prune_unfinalized_provider_matchups
+    from multi_league.core.local_db import LocalLeagueDB
+
+    local = LocalLeagueDB(tmp_path, "mixed_league")
+    try:
+        local.save_table(
+            "matchup",
+            pd.DataFrame([
+                {"db_name": "mixed_league", "year": 2025, "week": 18, "team_key": "old", "platform": "espn", "league_id": "111"},
+                {"db_name": "mixed_league", "year": 2026, "week": 1, "team_key": "one", "platform": "espn", "league_id": "222"},
+                {"db_name": "mixed_league", "year": 2026, "week": 2, "team_key": "two", "platform": "espn", "league_id": "222"},
+            ]),
+            platform="espn",
+        )
+        local.save_table(
+            "matchup",
+            pd.DataFrame([
+                {"db_name": "mixed_league", "year": 2026, "week": 2, "team_key": "other", "platform": "sleeper", "league_id": "333"},
+            ]),
+            platform="sleeper",
+        )
+
+        removed = prune_unfinalized_provider_matchups(
+            local,
+            year=2026,
+            requested_weeks=[1, 2],
+            finalized_weeks=[1],
+            platform="espn",
+            league_id="222",
+        )
+
+        assert removed == 1
+        assert local.connect().execute(
+            "SELECT year, week, team_key, platform, league_id FROM public.matchup ORDER BY year, team_key"
+        ).fetchall() == [
+            (2025, 18, "old", "espn", "111"),
+            (2026, 1, "one", "espn", "222"),
+            (2026, 2, "other", "sleeper", "333"),
+        ]
+    finally:
+        local.close()
+
+
 def test_weekly_publish_selects_source_and_rebuilt_homepage_tables():
     """The publish bundle includes provider data and rebuilt homepage output."""
     import duckdb

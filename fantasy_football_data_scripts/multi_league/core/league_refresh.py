@@ -1242,6 +1242,86 @@ def merge_provider_refresh_table(
     )
 
 
+def prune_unfinalized_provider_matchups(
+    local_db: Any,
+    *,
+    year: int,
+    requested_weeks: Iterable[int],
+    finalized_weeks: Iterable[int],
+    platform: str,
+    league_id: str,
+) -> int:
+    """Remove hydrated matchup rows that the provider no longer proves final.
+
+    Refresh workers hydrate the complete league history before overlaying the
+    active provider payload. A previously persisted live-week matchup must not
+    survive that hydration after the current provider response classifies the
+    week as unfinished. The delete is limited to one provider segment and only
+    to requested weeks absent from the provider's finalized-week witness.
+    """
+    requested = {int(week) for week in requested_weeks}
+    finalized = {int(week) for week in finalized_weeks}
+    unexpected = sorted(finalized - requested)
+    if unexpected:
+        raise RefreshScopeError(
+            f"finalized matchup weeks fall outside requested scope: {unexpected}"
+        )
+    unfinalized = sorted(requested - finalized)
+    if not unfinalized or not local_db.table_exists("matchup"):
+        return 0
+
+    scope = pd.DataFrame(
+        {
+            "db_name": [str(local_db.league_name)] * len(unfinalized),
+            "year": [int(year)] * len(unfinalized),
+            "week": unfinalized,
+            "platform": [str(platform).strip().lower()] * len(unfinalized),
+            "league_id": [str(league_id)] * len(unfinalized),
+        }
+    )
+    conn = local_db.connect()
+    required = {"db_name", "year", "week", "platform", "league_id"}
+    columns = {
+        str(row[0])
+        for row in conn.execute("DESCRIBE public.matchup").fetchall()
+    }
+    missing = sorted(required - columns)
+    if missing:
+        raise RefreshScopeError(f"matchup table is missing refresh scope columns: {missing}")
+
+    conn.register("_unfinalized_matchup_scope", scope)
+    try:
+        removed = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM public.matchup AS target
+                JOIN _unfinalized_matchup_scope AS source
+                  ON target.db_name = source.db_name
+                 AND target.year = source.year
+                 AND target.week = source.week
+                 AND LOWER(TRIM(target.platform)) = source.platform
+                 AND CAST(target.league_id AS VARCHAR) = source.league_id
+                """
+            ).fetchone()[0]
+        )
+        if removed:
+            conn.execute(
+                """
+                DELETE FROM public.matchup AS target
+                USING _unfinalized_matchup_scope AS source
+                WHERE target.db_name = source.db_name
+                  AND target.year = source.year
+                  AND target.week = source.week
+                  AND LOWER(TRIM(target.platform)) = source.platform
+                  AND CAST(target.league_id AS VARCHAR) = source.league_id
+                """
+            )
+        return removed
+    finally:
+        conn.unregister("_unfinalized_matchup_scope")
+
+
 def active_refresh_publish_tables(
     source: duckdb.DuckDBPyConnection,
     *,

@@ -542,6 +542,7 @@ def _merge_active_payloads(
         assert_provider_roster_merge,
         filter_rosters_to_finalized_games,
         merge_provider_refresh_table,
+        prune_unfinalized_provider_matchups,
         refresh_authoritative_draft_partition,
         pending_provider_nfl_teams,
         start_background_refresh_call,
@@ -647,6 +648,14 @@ def _merge_active_payloads(
         refresh_weeks=refresh_weeks,
         finalized_matchup_weeks=final_matchup_weeks,
     )
+    stale_matchup_rows_removed = prune_unfinalized_provider_matchups(
+        local_db,
+        year=active_year,
+        requested_weeks=refresh_weeks,
+        finalized_weeks=final_matchup_weeks,
+        platform="espn",
+        league_id=league_id,
+    )
     matchup_rows = 0
     if final_matchup_weeks:
         matchups = fetch_espn_matchups(
@@ -718,6 +727,7 @@ def _merge_active_payloads(
         "provider_roster_team_weeks": provider_roster_team_weeks,
         "roster_rows": int(roster_rows),
         "final_matchup_rows": int(matchup_rows),
+        "stale_matchup_rows_removed": int(stale_matchup_rows_removed),
         "final_matchup_weeks": len(final_matchup_weeks),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,

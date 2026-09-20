@@ -82,6 +82,25 @@ def test_start_execution_combines_entitlement_and_running_claim():
     assert "workflow_run_id = COALESCE(workflow_run_id, 42)" in writer.sql
 
 
+def test_league_update_status_hot_path_is_dml_only():
+    writer = Writer()
+
+    assert record_league_update_status(
+        writer,
+        database_name="the_league",
+        platform="yahoo",
+        status="running",
+        dispatch_token="opaque",
+        workflow_run_id=42,
+    )
+
+    upper_sql = writer.sql.upper()
+    assert "CREATE SCHEMA" not in upper_sql
+    assert "CREATE TABLE" not in upper_sql
+    assert "ALTER TABLE" not in upper_sql
+    assert "DROP TABLE" not in upper_sql
+
+
 def test_start_execution_keeps_direct_execute_entitlement_without_status_write():
     class Reader:
         def query_scalar(self, sql, *, database):
@@ -337,6 +356,31 @@ def test_running_claim_has_a_short_crash_recovery_lease():
 class LocalWriter:
     def __init__(self):
         self.connection = duckdb.connect(":memory:")
+        self.connection.execute("""
+            CREATE SCHEMA accounts;
+            CREATE TABLE accounts.league_update_manifests (
+              database_name VARCHAR PRIMARY KEY,
+              platform VARCHAR, active_season INTEGER, through_week INTEGER,
+              observed_manifest_json VARCHAR, observed_manifest_digest VARCHAR,
+              published_manifest_json VARCHAR, published_manifest_digest VARCHAR,
+              published_at TIMESTAMP,
+              probe_status VARCHAR NOT NULL DEFAULT 'unknown', probe_error_code VARCHAR,
+              last_attempt_at TIMESTAMP, last_success_at TIMESTAMP,
+              updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+            CREATE TABLE accounts.league_update_dispatches (
+              database_name VARCHAR PRIMARY KEY, platform VARCHAR NOT NULL, status VARCHAR NOT NULL,
+              workflow_file VARCHAR, workflow_run_id BIGINT, dispatch_token VARCHAR,
+              source_year INTEGER, source_week INTEGER, source_fingerprint VARCHAR,
+              publish_generation VARCHAR, healthy BOOLEAN DEFAULT FALSE,
+              dispatched_at TIMESTAMP, started_at TIMESTAMP, completed_at TIMESTAMP,
+              lease_expires_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW(), error VARCHAR,
+              attempt_id VARCHAR, claim_version BIGINT DEFAULT 0, heartbeat_at TIMESTAMP,
+              observed_manifest_digest VARCHAR, base_generation VARCHAR, bundle_id VARCHAR,
+              cache_state VARCHAR, committed_at TIMESTAMP, cache_verified_at TIMESTAMP,
+              publication_receipt_json VARCHAR
+            )
+        """)
 
     def execute(self, sql, *, database):
         assert database == "___ops"

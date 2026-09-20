@@ -230,7 +230,12 @@ def configure_duckdb(conn, data_dir: Path | None = None, *, threads: int | None 
 
 
 def ensure_ops_credential_schema(conn) -> list[str]:
-    """Provision credential metadata only when a schema object is missing."""
+    """Provision application metadata once, before the ops reader is opened.
+
+    Normal request and worker paths are intentionally DML-only. Keeping all
+    idempotent schema repair here prevents concurrent request-time DDL from
+    invalidating the shared DuckDB catalog or WAL.
+    """
     operations: list[str] = []
 
     for schema in ("main", "accounts"):
@@ -243,15 +248,49 @@ def ensure_ops_credential_schema(conn) -> list[str]:
             operations.append(f"create_schema:{schema}")
 
     table_specs = {
-        ("main", "league_credentials"): {
-            "league_id": "TEXT",
+        ("main", "league_credentials"): ({
+            "league_id": "TEXT NOT NULL",
             "league_name": "TEXT",
             "database_name": "TEXT",
             "encrypted_refresh_token": "TEXT",
             "updated_at": "TIMESTAMP DEFAULT current_timestamp",
-        },
-        ("accounts", "league_inventory"): {
-            "database_name": "VARCHAR",
+        }, ('PRIMARY KEY ("league_id")',)),
+        ("main", "yahoo_web_credentials"): ({
+            "league_id": "TEXT NOT NULL",
+            "league_name": "TEXT",
+            "database_name": "TEXT",
+            "encrypted_cookie_jar": "TEXT NOT NULL",
+            "cookie_format": "TEXT NOT NULL DEFAULT 'json'",
+            "captured_at": "TIMESTAMP DEFAULT current_timestamp",
+            "expires_at": "TIMESTAMP",
+            "status": "TEXT NOT NULL DEFAULT 'active'",
+            "updated_at": "TIMESTAMP DEFAULT current_timestamp",
+        }, ('PRIMARY KEY ("league_id")', 'UNIQUE ("database_name")')),
+        ("main", "espn_leagues"): ({
+            "espn_league_id": "TEXT NOT NULL",
+            "league_name": "TEXT",
+            "database_name": "TEXT",
+            "encrypted_espn_s2": "TEXT",
+            "encrypted_swid": "TEXT",
+            "created_at": "TIMESTAMP DEFAULT current_timestamp",
+            "updated_at": "TIMESTAMP DEFAULT current_timestamp",
+        }, ('PRIMARY KEY ("espn_league_id")',)),
+        ("main", "sleeper_leagues"): ({
+            "sleeper_league_id": "TEXT NOT NULL",
+            "league_name": "TEXT",
+            "database_name": "TEXT",
+            "created_at": "TIMESTAMP DEFAULT current_timestamp",
+            "updated_at": "TIMESTAMP DEFAULT current_timestamp",
+        }, ('PRIMARY KEY ("sleeper_league_id")',)),
+        ("main", "research_extraction_cache"): ({
+            "cache_key": "TEXT NOT NULL",
+            "value_json": "TEXT NOT NULL",
+            "created_at": "TIMESTAMP DEFAULT current_timestamp",
+            "hit_count": "INTEGER DEFAULT 0",
+            "last_hit_at": "TIMESTAMP",
+        }, ('PRIMARY KEY ("cache_key")',)),
+        ("accounts", "league_inventory"): ({
+            "database_name": "VARCHAR NOT NULL",
             "platform": "VARCHAR",
             "league_name": "VARCHAR",
             "league_id": "VARCHAR",
@@ -265,11 +304,115 @@ def ensure_ops_credential_schema(conn) -> list[str]:
             "last_year": "INTEGER",
             "scoring_variant": "VARCHAR",
             "has_credentials": "BOOLEAN DEFAULT FALSE",
+            "import_status": "VARCHAR",
+            "email": "VARCHAR",
+            "payment_date": "TIMESTAMP",
+            "expires_at": "TIMESTAMP",
+            "stripe_session_id": "VARCHAR",
+            "stripe_payment_id": "VARCHAR",
+            "amount_paid": "BIGINT",
             "created_at": "TIMESTAMP DEFAULT current_timestamp",
             "updated_at": "TIMESTAMP DEFAULT current_timestamp",
-        },
+        }, ('PRIMARY KEY ("database_name")',)),
+        ("accounts", "pending_paid_imports"): ({
+            "stripe_session_id": "VARCHAR NOT NULL",
+            "database_name": "VARCHAR NOT NULL",
+            "platform": "VARCHAR NOT NULL",
+            "league_name": "VARCHAR",
+            "import_payload_json": "VARCHAR NOT NULL",
+            "created_at": "TIMESTAMP DEFAULT NOW()",
+        }, ('PRIMARY KEY ("stripe_session_id")',)),
+        ("accounts", "stripe_processed_sessions"): ({
+            "stripe_session_id": "VARCHAR NOT NULL",
+            "processed_at": "TIMESTAMP DEFAULT NOW()",
+        }, ('PRIMARY KEY ("stripe_session_id")',)),
+        ("accounts", "paid_import_dispatches"): ({
+            "stripe_session_id": "VARCHAR NOT NULL",
+            "database_name": "VARCHAR NOT NULL",
+            "platform": "VARCHAR NOT NULL",
+            "status": "VARCHAR NOT NULL",
+            "user_id": "VARCHAR",
+            "workflow_file": "VARCHAR",
+            "workflow_run_id": "BIGINT",
+            "dispatched_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP DEFAULT NOW()",
+            "error": "VARCHAR",
+        }, ('PRIMARY KEY ("stripe_session_id")',)),
+        ("accounts", "league_update_manifests"): ({
+            "database_name": "VARCHAR NOT NULL",
+            "platform": "VARCHAR",
+            "active_season": "INTEGER",
+            "through_week": "INTEGER",
+            "observed_manifest_json": "VARCHAR",
+            "observed_manifest_digest": "VARCHAR",
+            "published_manifest_json": "VARCHAR",
+            "published_manifest_digest": "VARCHAR",
+            "published_at": "TIMESTAMP",
+            "probe_status": "VARCHAR NOT NULL DEFAULT 'unknown'",
+            "probe_error_code": "VARCHAR",
+            "last_attempt_at": "TIMESTAMP",
+            "last_success_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP NOT NULL DEFAULT NOW()",
+        }, ('PRIMARY KEY ("database_name")',)),
+        ("accounts", "league_update_dispatches"): ({
+            "database_name": "VARCHAR NOT NULL",
+            "platform": "VARCHAR NOT NULL",
+            "status": "VARCHAR NOT NULL",
+            "workflow_file": "VARCHAR",
+            "workflow_run_id": "BIGINT",
+            "dispatch_token": "VARCHAR",
+            "source_year": "INTEGER",
+            "source_week": "INTEGER",
+            "source_fingerprint": "VARCHAR",
+            "publish_generation": "VARCHAR",
+            "healthy": "BOOLEAN DEFAULT FALSE",
+            "dispatched_at": "TIMESTAMP",
+            "started_at": "TIMESTAMP",
+            "completed_at": "TIMESTAMP",
+            "lease_expires_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP DEFAULT NOW()",
+            "error": "VARCHAR",
+            "attempt_id": "VARCHAR",
+            "claim_version": "BIGINT DEFAULT 0",
+            "heartbeat_at": "TIMESTAMP",
+            "observed_manifest_digest": "VARCHAR",
+            "base_generation": "VARCHAR",
+            "bundle_id": "VARCHAR",
+            "cache_state": "VARCHAR",
+            "committed_at": "TIMESTAMP",
+            "cache_verified_at": "TIMESTAMP",
+            "publication_receipt_json": "VARCHAR",
+        }, ('PRIMARY KEY ("database_name")',)),
+        ("accounts", "league_update_rate_buckets"): ({
+            "bucket_key": "VARCHAR NOT NULL",
+            "request_count": "BIGINT NOT NULL",
+            "window_started_at": "TIMESTAMP NOT NULL",
+            "reset_at": "TIMESTAMP NOT NULL",
+            "updated_at": "TIMESTAMP NOT NULL DEFAULT NOW()",
+        }, ('PRIMARY KEY ("bucket_key")',)),
+        ("accounts", "league_update_probe_leases"): ({
+            "database_name": "VARCHAR NOT NULL",
+            "lease_token": "VARCHAR NOT NULL",
+            "lease_expires_at": "TIMESTAMP NOT NULL",
+            "updated_at": "TIMESTAMP NOT NULL DEFAULT NOW()",
+        }, ('PRIMARY KEY ("database_name")',)),
+        ("accounts", "offseason_draft_update_dispatches"): ({
+            "database_name": "VARCHAR NOT NULL",
+            "draft_year": "INTEGER NOT NULL",
+            "platform": "VARCHAR NOT NULL",
+            "status": "VARCHAR NOT NULL",
+            "workflow_file": "VARCHAR",
+            "workflow_run_id": "BIGINT",
+            "dispatch_token": "VARCHAR",
+            "dispatched_at": "TIMESTAMP",
+            "started_at": "TIMESTAMP",
+            "completed_at": "TIMESTAMP",
+            "lease_expires_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP DEFAULT NOW()",
+            "error": "VARCHAR",
+        }, ('PRIMARY KEY ("database_name", "draft_year")',)),
     }
-    for (schema, table), columns in table_specs.items():
+    for (schema, table), (columns, constraints) in table_specs.items():
         present = {
             row[0]
             for row in conn.execute(
@@ -279,13 +422,19 @@ def ensure_ops_credential_schema(conn) -> list[str]:
             ).fetchall()
         }
         if not present:
-            definitions = ", ".join(f'"{name}" {definition}' for name, definition in columns.items())
+            definitions = ", ".join(
+                [f'"{name}" {definition}' for name, definition in columns.items()]
+                + list(constraints)
+            )
             conn.execute(f'CREATE TABLE "{schema}"."{table}" ({definitions})')
             operations.append(f"create_table:{schema}.{table}")
             continue
         for name, definition in columns.items():
             if name not in present:
-                conn.execute(f'ALTER TABLE "{schema}"."{table}" ADD COLUMN "{name}" {definition}')
+                migration_definition = definition.replace(" NOT NULL", "")
+                conn.execute(
+                    f'ALTER TABLE "{schema}"."{table}" ADD COLUMN "{name}" {migration_definition}'
+                )
                 operations.append(f"add_column:{schema}.{table}.{name}")
     return operations
 
@@ -320,7 +469,7 @@ def init_pool():
     try:
         schema_operations = ensure_ops_credential_schema(ops_schema_conn)
         if schema_operations:
-            logger.info("Provisioned ___ops credential schema: %s", ", ".join(schema_operations))
+            logger.info("Provisioned ___ops application schema: %s", ", ".join(schema_operations))
     finally:
         ops_schema_conn.close()
 

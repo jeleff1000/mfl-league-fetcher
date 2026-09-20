@@ -373,26 +373,6 @@ class FlyTarget:
         safe_status = _sql_literal(import_status)
 
         sql = f"""
-        CREATE SCHEMA IF NOT EXISTS accounts;
-        CREATE TABLE IF NOT EXISTS accounts.league_inventory (
-            database_name VARCHAR,
-            platform VARCHAR,
-            last_import_mode VARCHAR,
-            last_import_at TIMESTAMP,
-            in_centralized BOOLEAN DEFAULT FALSE,
-            has_credentials BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT current_timestamp,
-            updated_at TIMESTAMP DEFAULT current_timestamp,
-            import_status VARCHAR
-        );
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS platform VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS last_import_mode VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS last_import_at TIMESTAMP;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS in_centralized BOOLEAN DEFAULT FALSE;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT current_timestamp;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT current_timestamp;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS import_status VARCHAR;
-
         UPDATE accounts.league_inventory
         SET in_centralized = TRUE,
             last_import_at = current_timestamp,

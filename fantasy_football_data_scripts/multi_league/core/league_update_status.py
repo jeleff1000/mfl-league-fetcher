@@ -302,38 +302,6 @@ def record_league_update_status(
         else ""
     )
     sql = f"""
-    CREATE SCHEMA IF NOT EXISTS accounts;
-    CREATE TABLE IF NOT EXISTS accounts.league_update_manifests (
-      database_name VARCHAR PRIMARY KEY,
-      platform VARCHAR, active_season INTEGER, through_week INTEGER,
-      observed_manifest_json VARCHAR, observed_manifest_digest VARCHAR,
-      published_manifest_json VARCHAR, published_manifest_digest VARCHAR,
-      published_at TIMESTAMP,
-      probe_status VARCHAR NOT NULL DEFAULT 'unknown', probe_error_code VARCHAR,
-      last_attempt_at TIMESTAMP, last_success_at TIMESTAMP,
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-    ALTER TABLE accounts.league_update_manifests ADD COLUMN IF NOT EXISTS published_manifest_json VARCHAR;
-    ALTER TABLE accounts.league_update_manifests ADD COLUMN IF NOT EXISTS published_manifest_digest VARCHAR;
-    ALTER TABLE accounts.league_update_manifests ADD COLUMN IF NOT EXISTS published_at TIMESTAMP;
-    CREATE TABLE IF NOT EXISTS accounts.league_update_dispatches (
-      database_name VARCHAR PRIMARY KEY, platform VARCHAR NOT NULL, status VARCHAR NOT NULL,
-      workflow_file VARCHAR, workflow_run_id BIGINT, dispatch_token VARCHAR,
-      source_year INTEGER, source_week INTEGER, source_fingerprint VARCHAR,
-      publish_generation VARCHAR, healthy BOOLEAN DEFAULT FALSE,
-      dispatched_at TIMESTAMP, started_at TIMESTAMP, completed_at TIMESTAMP,
-      lease_expires_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW(), error VARCHAR
-    );
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS attempt_id VARCHAR;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS claim_version BIGINT DEFAULT 0;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS observed_manifest_digest VARCHAR;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS base_generation VARCHAR;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS bundle_id VARCHAR;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS cache_state VARCHAR;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS committed_at TIMESTAMP;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS cache_verified_at TIMESTAMP;
-    ALTER TABLE accounts.league_update_dispatches ADD COLUMN IF NOT EXISTS publication_receipt_json VARCHAR;
     INSERT INTO accounts.league_update_dispatches
       (database_name, platform, status, workflow_run_id, dispatch_token,
        source_year, source_week, source_fingerprint, publish_generation, healthy,

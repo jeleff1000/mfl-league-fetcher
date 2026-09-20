@@ -54,26 +54,6 @@ def record_offseason_update_status(
     error_value = _sql_literal((error or "")[:2000] or None)
 
     sql = f"""
-    CREATE SCHEMA IF NOT EXISTS accounts;
-    CREATE TABLE IF NOT EXISTS accounts.offseason_draft_update_dispatches (
-        database_name VARCHAR NOT NULL,
-        draft_year INTEGER NOT NULL,
-        platform VARCHAR NOT NULL,
-        status VARCHAR NOT NULL,
-        workflow_file VARCHAR,
-        workflow_run_id BIGINT,
-        dispatch_token VARCHAR,
-        dispatched_at TIMESTAMP,
-        started_at TIMESTAMP,
-        completed_at TIMESTAMP,
-        lease_expires_at TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT NOW(),
-        error VARCHAR,
-        PRIMARY KEY (database_name, draft_year)
-    );
-    ALTER TABLE accounts.offseason_draft_update_dispatches ADD COLUMN IF NOT EXISTS started_at TIMESTAMP;
-    ALTER TABLE accounts.offseason_draft_update_dispatches ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
-    ALTER TABLE accounts.offseason_draft_update_dispatches ADD COLUMN IF NOT EXISTS dispatch_token VARCHAR;
     INSERT INTO accounts.offseason_draft_update_dispatches
         (database_name, draft_year, platform, status, workflow_run_id, dispatch_token,
          started_at, completed_at, lease_expires_at, updated_at, error)

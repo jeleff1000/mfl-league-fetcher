@@ -413,26 +413,6 @@ def _store_yahoo_cookie_credentials_fly(
         captured_expr = safe["captured_at"] if captured_at else "current_timestamp"
         expires_expr = safe["expires_at"] if expires_at else "NULL"
         sql = f"""
-        CREATE SCHEMA IF NOT EXISTS main;
-        CREATE TABLE IF NOT EXISTS main.yahoo_web_credentials (
-            league_id TEXT PRIMARY KEY,
-            league_name TEXT,
-            database_name TEXT UNIQUE,
-            encrypted_cookie_jar TEXT NOT NULL,
-            cookie_format TEXT NOT NULL DEFAULT 'json',
-            captured_at TIMESTAMP DEFAULT current_timestamp,
-            expires_at TIMESTAMP,
-            status TEXT NOT NULL DEFAULT 'active',
-            updated_at TIMESTAMP DEFAULT current_timestamp
-        );
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS league_name TEXT;
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS database_name TEXT;
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS encrypted_cookie_jar TEXT;
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS cookie_format TEXT DEFAULT 'json';
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS captured_at TIMESTAMP;
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
-        ALTER TABLE main.yahoo_web_credentials ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;
         DELETE FROM main.yahoo_web_credentials
         WHERE league_id = {safe['league_id']}
            OR database_name = {safe['database_name']};
@@ -444,30 +424,6 @@ def _store_yahoo_cookie_credentials_fly(
              {safe['encrypted']}, {safe['cookie_format']}, {captured_expr},
              {expires_expr}, {safe['status']}, current_timestamp);
 
-        CREATE SCHEMA IF NOT EXISTS accounts;
-        CREATE TABLE IF NOT EXISTS accounts.league_inventory (
-            database_name       VARCHAR PRIMARY KEY,
-            platform            VARCHAR,
-            league_name         VARCHAR,
-            league_id           VARCHAR,
-            tier                VARCHAR DEFAULT 'free',
-            entitled_mode       VARCHAR DEFAULT 'quick',
-            last_import_mode    VARCHAR,
-            last_import_at      TIMESTAMP,
-            in_centralized      BOOLEAN DEFAULT FALSE,
-            num_teams           INTEGER,
-            first_year          INTEGER,
-            last_year           INTEGER,
-            scoring_variant     VARCHAR,
-            has_credentials     BOOLEAN DEFAULT FALSE,
-            created_at          TIMESTAMP DEFAULT current_timestamp,
-            updated_at          TIMESTAMP DEFAULT current_timestamp
-        );
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS platform VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS league_name VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS league_id VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS has_credentials BOOLEAN DEFAULT FALSE;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT current_timestamp;
         UPDATE accounts.league_inventory
         SET platform = 'yahoo', league_name = {safe['league_name']}, league_id = {safe['league_id']},
             has_credentials = TRUE, updated_at = current_timestamp

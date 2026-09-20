@@ -68,7 +68,7 @@ def test_production_fly_config_does_not_leave_wal_checkpointing_disabled():
     assert "DUCKDB_CHECKPOINT_WAL_MB = '0'" not in fly_toml
 
 
-def test_ops_credential_schema_is_provisioned_once_and_then_read_only(tmp_path):
+def test_ops_application_schema_is_provisioned_once_and_then_read_only(tmp_path):
     import db as db_mod
 
     conn = db_mod.connect_database(tmp_path / "___ops.duckdb", data_dir=tmp_path)
@@ -87,6 +87,13 @@ def test_ops_credential_schema_is_provisioned_once_and_then_read_only(tmp_path):
             for row in conn.execute(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_schema = 'accounts' AND table_name = 'league_inventory'"
+            ).fetchall()
+        }
+        application_tables = {
+            (row[0], row[1])
+            for row in conn.execute(
+                "SELECT table_schema, table_name FROM information_schema.tables "
+                "WHERE table_schema IN ('main', 'accounts')"
             ).fetchall()
         }
     finally:
@@ -113,6 +120,22 @@ def test_ops_credential_schema_is_provisioned_once_and_then_read_only(tmp_path):
         "created_at",
         "updated_at",
     } <= inventory_columns
+    assert {
+        ("main", "league_credentials"),
+        ("main", "yahoo_web_credentials"),
+        ("main", "espn_leagues"),
+        ("main", "sleeper_leagues"),
+        ("main", "research_extraction_cache"),
+        ("accounts", "league_inventory"),
+        ("accounts", "pending_paid_imports"),
+        ("accounts", "stripe_processed_sessions"),
+        ("accounts", "paid_import_dispatches"),
+        ("accounts", "league_update_manifests"),
+        ("accounts", "league_update_dispatches"),
+        ("accounts", "league_update_rate_buckets"),
+        ("accounts", "league_update_probe_leases"),
+        ("accounts", "offseason_draft_update_dispatches"),
+    } <= application_tables
 
 
 def test_init_pool_rechecks_ops_schema_after_existing_reader_is_closed(tmp_path, monkeypatch):

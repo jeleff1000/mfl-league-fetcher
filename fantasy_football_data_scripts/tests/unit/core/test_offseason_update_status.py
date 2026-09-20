@@ -26,6 +26,28 @@ class Writer:
         return []
 
 
+def _provision_dispatch_table(connection) -> None:
+    connection.execute("""
+        CREATE SCHEMA accounts;
+        CREATE TABLE accounts.offseason_draft_update_dispatches (
+            database_name VARCHAR NOT NULL,
+            draft_year INTEGER NOT NULL,
+            platform VARCHAR NOT NULL,
+            status VARCHAR NOT NULL,
+            workflow_file VARCHAR,
+            workflow_run_id BIGINT,
+            dispatch_token VARCHAR,
+            dispatched_at TIMESTAMP,
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            lease_expires_at TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT NOW(),
+            error VARCHAR,
+            PRIMARY KEY (database_name, draft_year)
+        )
+    """)
+
+
 def test_classifies_real_updates_no_changes_and_provider_failures():
     assert classify_offseason_update_result(Result(status="changed", updated=True)) == "succeeded"
     assert classify_offseason_update_result(Result(status="up_to_date")) == "no_change"
@@ -76,6 +98,7 @@ def test_running_status_sets_started_at_without_completing_the_job():
 
 def test_status_upsert_executes_in_duckdb_and_preserves_started_at():
     connection = duckdb.connect()
+    _provision_dispatch_table(connection)
 
     class DuckDBWriter:
         def execute(self, sql: str, *, database: str):
@@ -111,6 +134,7 @@ def test_status_upsert_executes_in_duckdb_and_preserves_started_at():
 
 def test_stale_worker_cannot_overwrite_a_newer_claim():
     connection = duckdb.connect()
+    _provision_dispatch_table(connection)
 
     class DuckDBWriter:
         def execute(self, sql: str, *, database: str):

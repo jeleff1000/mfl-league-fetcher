@@ -311,31 +311,69 @@ def validate_fleet_parquet_tables(
                     f"Parquet schema mismatch for {table}: actual {actual_cols!r}, manifest {declared_cols!r}"
                 )
 
-            actual_count = int(conn.execute(f"SELECT COUNT(*) FROM {parquet_ref}").fetchone()[0] or 0)
+            keys = entry.get("_identity_keys") or []
+            missing_identity = [key for key in keys if key not in actual_cols]
+            if missing_identity:
+                raise FleetValidationError(f"{table} is missing identity columns: {', '.join(missing_identity)}")
+
+            years = entry["scope"].get("years", [active_year])
+            active_scoped = (
+                entry["cadence_class"] == CADENCE_ACTIVE_SEASON
+                and entry["merge_mode"] != "initialize_missing"
+            )
+            null_exprs = [
+                f"SUM(CASE WHEN {_qident(key)} IS NULL THEN 1 ELSE 0 END)::BIGINT "
+                f"AS {_qident(f'null_{index}')}"
+                for index, key in enumerate(keys)
+            ]
+            out_of_scope_expr = (
+                "SUM(CASE WHEN year IS NULL OR year NOT IN "
+                f"({','.join(str(int(year)) for year in years)}) THEN 1 ELSE 0 END)::BIGINT"
+                if active_scoped else "0::BIGINT"
+            )
+            stats_sql = ", ".join([
+                "COUNT(*)::BIGINT AS row_count",
+                "SUM(CASE WHEN db_name IS NULL OR TRIM(CAST(db_name AS VARCHAR)) = '' "
+                "THEN 1 ELSE 0 END)::BIGINT AS blank_db",
+                f"{out_of_scope_expr} AS out_of_scope",
+                *null_exprs,
+            ])
+            year_rows_sql = (
+                "SELECT DISTINCT year FROM rows"
+                if "year" in actual_cols else "SELECT NULL::INTEGER AS year WHERE FALSE"
+            )
+            result = conn.execute(f"""
+                WITH rows AS MATERIALIZED (SELECT * FROM {parquet_ref}),
+                dbs AS MATERIALIZED (
+                    SELECT DISTINCT CAST(db_name AS VARCHAR) AS db FROM rows
+                ),
+                years AS MATERIALIZED (
+                    {year_rows_sql}
+                ),
+                stats AS (SELECT {stats_sql} FROM rows)
+                SELECT stats.*,
+                       (SELECT COUNT(*)::BIGINT FROM dbs) AS db_count,
+                       (SELECT COALESCE(sha256(string_agg(db, chr(31) ORDER BY db)), sha256('empty'))
+                          FROM dbs) AS db_hash,
+                       (SELECT list(db ORDER BY db) FROM dbs) AS db_values,
+                       (SELECT list(year ORDER BY year) FROM years) AS year_values
+                FROM stats
+            """)
+            summary = result.fetchone()
+            content = dict(zip((item[0] for item in result.description), summary))
+
+            actual_count = int(content["row_count"] or 0)
             if actual_count != entry["row_count"]:
                 raise FleetValidationError(
                     f"Parquet row_count mismatch for {table}: actual {actual_count}, manifest {entry['row_count']}"
                 )
 
-            blank_db = int(
-                conn.execute(
-                    f"SELECT COUNT(*) FROM {parquet_ref} "
-                    "WHERE db_name IS NULL OR TRIM(CAST(db_name AS VARCHAR)) = ''"
-                ).fetchone()[0]
-                or 0
-            )
+            blank_db = int(content["blank_db"] or 0)
             if blank_db:
                 raise FleetValidationError(f"{table} contains {blank_db} rows with blank db_name")
 
-            db_row = conn.execute(
-                f"""
-                SELECT
-                    COUNT(*),
-                    COALESCE(sha256(string_agg(db, chr(31) ORDER BY db)), sha256('empty'))
-                FROM (SELECT DISTINCT CAST(db_name AS VARCHAR) AS db FROM {parquet_ref})
-                """
-            ).fetchone()
-            actual_db_count, actual_db_hash = int(db_row[0] or 0), str(db_row[1])
+            actual_db_count = int(content["db_count"] or 0)
+            actual_db_hash = str(content["db_hash"])
             if actual_db_count != entry["db_name_count"]:
                 raise FleetValidationError(
                     f"db_name_count mismatch for {table}: actual {actual_db_count}, "
@@ -345,19 +383,12 @@ def validate_fleet_parquet_tables(
                 raise FleetValidationError(f"db_names_hash mismatch for {table}")
 
             if manifest.get("mode") == "quick":
-                actual_dbs = {row[0] for row in conn.execute(f"SELECT DISTINCT db_name FROM {parquet_ref}").fetchall()}
+                actual_dbs = {str(value) for value in (content["db_values"] or [])}
                 if actual_dbs != set(manifest["db_names"]):
                     raise FleetValidationError(f"{table} does not match the quick league scope")
 
-            if entry["cadence_class"] == CADENCE_ACTIVE_SEASON and entry["merge_mode"] != "initialize_missing":
-                years = entry["scope"].get("years", [active_year])
-                out_of_scope = int(
-                    conn.execute(
-                        f"SELECT COUNT(*) FROM {parquet_ref} WHERE year IS NULL OR year NOT IN ({','.join('?' for _ in years)})",
-                        years,
-                    ).fetchone()[0]
-                    or 0
-                )
+            if active_scoped:
+                out_of_scope = int(content["out_of_scope"] or 0)
                 if out_of_scope:
                     raise FleetValidationError(
                         f"{table} contains {out_of_scope} rows outside active year {active_year}; "
@@ -365,20 +396,16 @@ def validate_fleet_parquet_tables(
                     )
 
                 if manifest.get("mode") == "quick":
-                    actual_years = {row[0] for row in conn.execute(f"SELECT DISTINCT year FROM {parquet_ref}").fetchall()}
+                    actual_years = set(content["year_values"] or [])
                     if actual_years != set(years):
                         raise FleetValidationError(f"{table} declared years must exactly match its rows")
 
-            keys = entry.get("_identity_keys") or []
-            missing_identity = [key for key in keys if key not in actual_cols]
-            if missing_identity:
-                raise FleetValidationError(f"{table} is missing identity columns: {', '.join(missing_identity)}")
             if keys:
-                null_checks = ", ".join(
-                    f"SUM(CASE WHEN {_qident(key)} IS NULL THEN 1 ELSE 0 END)::BIGINT" for key in keys
-                )
-                null_row = conn.execute(f"SELECT {null_checks} FROM {parquet_ref}").fetchone()
-                bad_nulls = {key: int(null_row[idx] or 0) for idx, key in enumerate(keys) if int(null_row[idx] or 0)}
+                bad_nulls = {
+                    key: int(content[f"null_{index}"] or 0)
+                    for index, key in enumerate(keys)
+                    if int(content[f"null_{index}"] or 0)
+                }
                 if bad_nulls:
                     raise FleetValidationError(f"{table} contains null identity keys: {bad_nulls}")
                 key_expr = ", ".join(_qident(key) for key in keys)

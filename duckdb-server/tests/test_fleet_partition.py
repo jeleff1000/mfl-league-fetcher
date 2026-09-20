@@ -7,6 +7,8 @@ exercised together. Verification reads go through /query so tests never
 open a second handle on the server's database file.
 """
 
+import inspect
+
 import json
 import tarfile
 
@@ -22,6 +24,14 @@ PRIOR_YEAR = 2025
 
 LEAGUES = ["league_alpha", "league_beta", "league_gamma"]
 BATCH_LEAGUES = ["league_alpha", "league_beta"]  # league_gamma simulates a fetch failure
+
+
+def test_fleet_content_validation_has_bounded_parquet_scans():
+    source = inspect.getsource(fleet_merge.validate_fleet_parquet_tables)
+
+    assert "WITH rows AS MATERIALIZED" in source
+    # One schema read, one consolidated content scan, one duplicate-key scan.
+    assert source.count("FROM {parquet_ref}") == 3
 
 
 @pytest.fixture

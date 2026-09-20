@@ -905,6 +905,9 @@ def main(argv: list[str] | None = None) -> int:
                     output_dir=work_dir / "bundle",
                     rebuild_career_rollups=True,
                     rebuild_homepage_rollups=False,
+                    repair_missing_season_rollups=(
+                        "missing_derived_aggregate" in persisted_plan.reasons
+                    ),
                 )
             finally:
                 stage.close()

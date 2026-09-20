@@ -232,6 +232,7 @@ def build_fleet_partition_bundle(
     producer_version: str | None = None,
     rebuild_career_rollups: bool = False,
     rebuild_homepage_rollups: bool = False,
+    repair_missing_season_rollups: bool = False,
     quick_years: list[int] | None = None,
     empty_active_partitions: set[str] | None = None,
 ) -> FleetBundle:
@@ -253,6 +254,9 @@ def build_fleet_partition_bundle(
     from the merged full chain before committing. A v1 server rejects v2.
     ``rebuild_homepage_rollups`` requires v3 and career rebuilding; all five
     normal homepage outputs are recomputed inside that same transaction.
+    ``repair_missing_season_rollups`` keeps the v2 worker-owned homepage path
+    but asks the same atomic merge to restore only missing historical season
+    aggregate partitions before rebuilding careers.
     ``quick_years`` opts one league into a bounded one/two-season import:
     fact scopes use each table's actual years and configuration initializes
     only where absent. Without it, the weekly single-year contract is unchanged.
@@ -305,6 +309,12 @@ def build_fleet_partition_bundle(
         from multi_league.transformations.aggregation.aggregation_utils import HOMEPAGE_ROLLUP_TABLES
 
         requested = [table for table in requested if table not in HOMEPAGE_ROLLUP_TABLES]
+    if repair_missing_season_rollups and (
+        not rebuild_career_rollups or rebuild_homepage_rollups or quick_years is not None
+    ):
+        raise ValueError(
+            "Missing season repair requires the weekly v2 career publication contract"
+        )
 
     run_id = str(
         import_run_id
@@ -471,6 +481,7 @@ def build_fleet_partition_bundle(
         "league_generations": {
             name: int(league_generations.get(name, 0)) for name in sorted(union_db_names)
         },
+        "repair_missing_season_rollups": bool(repair_missing_season_rollups),
         "tables": [
             {
                 "table": t["table"],

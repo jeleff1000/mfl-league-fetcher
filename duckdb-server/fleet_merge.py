@@ -126,6 +126,15 @@ def validate_fleet_manifest_shape(
     if not isinstance(active_year, int):
         raise FleetValidationError("Fleet manifest missing integer active_year")
     quick_years = manifest.get("quick_years")
+    repair_missing_season_rollups = manifest.get("repair_missing_season_rollups", False)
+    if not isinstance(repair_missing_season_rollups, bool):
+        raise FleetValidationError("repair_missing_season_rollups must be boolean")
+    if repair_missing_season_rollups and (
+        manifest.get("schema_version") != FLEET_CAREER_SCHEMA_VERSION or quick
+    ):
+        raise FleetValidationError(
+            "Missing season repair requires the weekly v2 career publication contract"
+        )
     if quick:
         if (manifest.get("schema_version") != FLEET_HOMEPAGE_SCHEMA_VERSION
                 or not isinstance(quick_years, list) or not 1 <= len(quick_years) <= 2
@@ -805,7 +814,12 @@ def apply_fleet_merge(
             # history connection. Any error rolls the entire publication back.
             aggregation_conn = _AggregationConnection(conn, run)
             for db_name in sorted(merged_db_names):
-                if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
+                prepared_nfl_lookups = False
+                repair_requested = bool(manifest.get("repair_missing_season_rollups"))
+                if (
+                    manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION
+                    or repair_requested
+                ):
                     season_start = time.perf_counter()
                     # Validated source partitions have exactly this season.
                     # Unchanged historical seasons remain materialized; careers
@@ -818,15 +832,24 @@ def apply_fleet_merge(
                         )
                         gap_scan_seconds = time.perf_counter() - gap_scan_start
                         repair_years = set().union(*missing_by_table.values()) if missing_by_table else set()
-                        rollup_years = changed_years | repair_years
-                        rollup_start = time.perf_counter()
-                        season_rollups[db_name] = aggregate_complete_chain_season_rollups(
-                            aggregation_conn,
-                            db_name,
-                            season_years=changed_years,
-                            repair_years_by_table=missing_by_table,
-                            prepare_shared_nfl_lookups=True,
+                        changed_rollup_years = (
+                            changed_years
+                            if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION
+                            else set()
                         )
+                        rollup_years = changed_rollup_years | repair_years
+                        rollup_start = time.perf_counter()
+                        if rollup_years:
+                            season_rollups[db_name] = aggregate_complete_chain_season_rollups(
+                                aggregation_conn,
+                                db_name,
+                                season_years=changed_rollup_years,
+                                repair_years_by_table=missing_by_table,
+                                prepare_shared_nfl_lookups=True,
+                            )
+                            prepared_nfl_lookups = True
+                        else:
+                            season_rollups[db_name] = {}
                         rollup_seconds = time.perf_counter() - rollup_start
                         validation_start = time.perf_counter()
                         assert_retained_season_rollup_coverage(
@@ -843,9 +866,6 @@ def apply_fleet_merge(
                     season_rollup_years[db_name] = sorted(rollup_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
-                prepared_nfl_lookups = (
-                    manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION
-                )
                 try:
                     career_rollups[db_name] = aggregate_career_rollups(
                         aggregation_conn,

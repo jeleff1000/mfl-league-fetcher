@@ -967,6 +967,9 @@ def main(argv: list[str] | None = None) -> int:
                     output_dir=work_dir / "bundle",
                     rebuild_career_rollups=True,
                     rebuild_homepage_rollups=False,
+                    repair_missing_season_rollups=(
+                        "missing_derived_aggregate" in persisted_plan.reasons
+                    ),
                     empty_active_partitions=_explicit_empty_partitions(receipt["fetch_rows"]),
                 )
             finally:

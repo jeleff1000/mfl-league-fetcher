@@ -286,6 +286,25 @@ def test_build_bundle_omits_empty_and_absent_tables(tmp_path):
     assert omitted["transactions"] == "table_not_present_locally"
 
 
+def test_v2_bundle_declares_narrow_missing_season_repair(tmp_path):
+    conn = _staged_conn()
+    try:
+        bundle = build_fleet_partition_bundle(
+            conn,
+            active_year=ACTIVE_YEAR,
+            league_generations={"league_a": 0, "league_b": 0},
+            tables=["matchup"],
+            output_dir=tmp_path,
+            rebuild_career_rollups=True,
+            repair_missing_season_rollups=True,
+        )
+    finally:
+        conn.close()
+
+    assert bundle.manifest["schema_version"] == "fleet-partition-v2"
+    assert bundle.manifest["repair_missing_season_rollups"] is True
+
+
 def test_build_bundle_can_explicitly_empty_one_active_partition(tmp_path):
     conn = _staged_conn()
     conn.execute(

@@ -111,7 +111,7 @@ def data_dir(tmp_path, request):
     return tmp_path
 
 
-def _bundle(tmp_path, *, homepage=False, generation=0):
+def _bundle(tmp_path, *, homepage=False, generation=0, repair_missing=False):
     with duckdb.connect(':memory:') as conn:
         conn.execute('CREATE SCHEMA public')
         conn.execute("""
@@ -124,6 +124,7 @@ def _bundle(tmp_path, *, homepage=False, generation=0):
             tables=['matchup_season'], output_dir=tmp_path / 'bundle',
             import_run_id='9001', publish_sequence=1, rebuild_career_rollups=True,
             rebuild_homepage_rollups=homepage,
+            repair_missing_season_rollups=repair_missing,
         )
 
 
@@ -387,6 +388,32 @@ def test_http_weekly_merge_commits_full_careers_and_replays_without_reexecution(
     assert replay.json()['idempotent_replay'] is True
     assert _query(client, "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name='test_league'") == [{'generation': 1}]
     assert _query(client, "SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025") == historical
+
+
+@pytest.mark.parametrize('data_dir', ['recovery_source'], indirect=True)
+def test_v2_weekly_merge_repairs_only_missing_season_partitions(client, tmp_path):  # noqa: F811
+    source_before = _query(
+        client,
+        "SELECT * FROM public.player_fantasy WHERE db_name='test_league' AND year=2025",
+    )
+    response = _publish(
+        client,
+        _bundle(tmp_path, generation=7, repair_missing=True),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()['season_rollup_years']['test_league'] == [2025]
+    assert response.json()['season_rollups']['test_league']['player_fantasy_season'] == 1
+    assert response.json()['season_rollups']['test_league']['player_fantasy_season_all'] == 1
+    assert response.json()['homepage_rollups'] == {}
+    assert _query(
+        client,
+        "SELECT * FROM public.player_fantasy WHERE db_name='test_league' AND year=2025",
+    ) == source_before
+    assert _query(
+        client,
+        "SELECT NFL_player_id,year FROM public.player_fantasy_season "
+        "WHERE db_name='test_league' AND year=2025",
+    ) == [{'NFL_player_id': 'p1', 'year': 2025}]
 
 
 def test_homepage_merge_refreshes_game_ranks_only_once(client, tmp_path, monkeypatch):  # noqa: F811

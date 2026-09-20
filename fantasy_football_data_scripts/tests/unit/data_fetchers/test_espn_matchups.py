@@ -151,6 +151,47 @@ def test_fetch_espn_matchups_modern_reuses_prefetched_provider_payloads(monkeypa
     assert frame.loc[frame["team_key"] == "9", "team_points"].iloc[0] == 99.0
 
 
+def test_fetch_espn_matchups_modern_prefers_final_raw_totals_over_zero_box_totals(monkeypatch):
+    """Active ESPN can lag BoxScore totals after its raw period is complete."""
+    from multi_league.data_fetchers.espn import espn_matchups
+
+    home_team = SimpleNamespace(team_id=3, team_name="Home")
+    away_team = SimpleNamespace(team_id=9, team_name="Away")
+    box_score = SimpleNamespace(
+        home_team=home_team,
+        away_team=away_team,
+        home_score=0,
+        away_score=0,
+        is_playoff=False,
+        matchup_type="NONE",
+    )
+    monkeypatch.setattr(
+        "multi_league.data_fetchers.espn.espn_league_settings.load_espn_settings",
+        lambda _ctx, _year: {"end_week": 1, "playoff_matchup_period_length": 1},
+    )
+
+    frame = espn_matchups.fetch_espn_matchups_modern(
+        _FakeCtx(),
+        2024,
+        weeks=[1],
+        client=SimpleNamespace(get_raw_team_playoff_seed_map=lambda _year: {}),
+        league=SimpleNamespace(_uses_league_history=False),
+        box_scores_by_week={1: [box_score]},
+        raw_schedules_by_week={
+            1: [{
+                "matchupPeriodId": 1,
+                "winner": "HOME",
+                "home": {"teamId": 3, "totalPoints": 112.5},
+                "away": {"teamId": 9, "totalPoints": 99.25},
+            }],
+        },
+    )
+
+    assert frame is not None
+    assert frame.loc[frame["team_key"] == "3", "team_points"].iloc[0] == 112.5
+    assert frame.loc[frame["team_key"] == "9", "team_points"].iloc[0] == 99.25
+
+
 def test_fetch_espn_matchups_legacy_uses_raw_winner_and_playoff_bonus_for_away_tie(monkeypatch):
     """Pre-2019 ESPN scoreboards can flatten a playoff bonus game as a tie.
 

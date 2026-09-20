@@ -126,6 +126,23 @@ def _raw_score(raw_meta: dict, side: str, fallback) -> float:
     return fallback or 0
 
 
+def _effective_box_scores(box, raw_schedule_lookup: dict) -> tuple[float, float]:
+    """Prefer ESPN's raw finalized totals when its BoxScore totals lag at zero."""
+    home = getattr(box, "home_team", None)
+    away = getattr(box, "away_team", None)
+    raw_meta = raw_schedule_lookup.get(
+        (
+            getattr(home, "team_id", None) if home else None,
+            getattr(away, "team_id", None) if away else None,
+        ),
+        {},
+    )
+    return (
+        _raw_score(raw_meta, "home", getattr(box, "home_score", 0)),
+        _raw_score(raw_meta, "away", getattr(box, "away_score", 0)),
+    )
+
+
 def _index_raw_schedule(
     schedule: list[dict] | None, scoring_period: int | None = None
 ) -> dict[tuple[int | None, int | None], dict[str, float | str | None]]:
@@ -181,18 +198,20 @@ def _matchup_period_is_final(schedule: list[dict]) -> bool:
     return espn_schedule_is_final(schedule)
 
 
-def _box_score_snapshot_signature(box_scores: list) -> tuple:
+def _box_score_snapshot_signature(box_scores: list, raw_schedule_lookup: dict | None = None) -> tuple:
     """Return a stable signature for detecting a repeated ESPN snapshot."""
+    raw_schedule_lookup = raw_schedule_lookup or {}
     rows = []
     for box in box_scores:
         home = getattr(box, "home_team", None)
         away = getattr(box, "away_team", None)
+        home_score, away_score = _effective_box_scores(box, raw_schedule_lookup)
         rows.append(
             (
                 getattr(home, "team_id", None) if home else None,
                 getattr(away, "team_id", None) if away else None,
-                round(getattr(box, "home_score", 0) or 0, 2),
-                round(getattr(box, "away_score", 0) or 0, 2),
+                round(home_score, 2),
+                round(away_score, 2),
                 getattr(box, "matchup_type", None),
             )
         )
@@ -369,35 +388,6 @@ def fetch_espn_matchups_modern(
                 break
             continue
 
-        has_scores = any(
-            (getattr(bs, "home_score", 0) or 0) > 0 or (getattr(bs, "away_score", 0) or 0) > 0 for bs in box_scores
-        )
-        if not has_scores:
-            # Treat any all-zero-score week the same way regardless of week
-            # number. The previous `week > 1` exemption let a week-1 preseason
-            # snapshot (where ESPN returns matchup pairs with home_score=0 +
-            # away_score=0 because games haven't been played yet) emit a full
-            # 10-row phantom matchup table that then persists indefinitely if
-            # the league is abandoned. Concrete case: national_ca_az_tx_ffb_league
-            # imported in 2024 + 2025 preseason; both years end up with exactly
-            # 10 phantom week-1 rows even though nobody played, which then
-            # poisons sim_proj_wins/proj_pts populate checks and draft
-            # consistency checks. With this rule, no rows are written until a
-            # week with real scoring exists, and the consecutive_empty break
-            # exits cleanly.
-            consecutive_empty += 1
-            if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
-                break
-            continue
-
-        consecutive_empty = 0
-        snapshot_signature = _box_score_snapshot_signature(box_scores)
-        if previous_snapshot_signature is not None and snapshot_signature == previous_snapshot_signature:
-            log(
-                f"  [MATCHUPS] {year}: ESPN repeated the prior box-score "
-                f"snapshot for requested week {week}; skipping it"
-            )
-            continue
         raw_schedule = (
             raw_schedules_by_week[int(week)]
             if raw_schedules_by_week is not None and int(week) in raw_schedules_by_week
@@ -415,6 +405,28 @@ def fetch_espn_matchups_modern(
             log(f"  [MATCHUPS] {year} week {week}: fantasy outcomes not final; holding matchup rows")
             continue
         raw_schedule_lookup = _index_raw_schedule(raw_schedule, week)
+        has_scores = any(
+            home_score > 0 or away_score > 0
+            for home_score, away_score in (
+                _effective_box_scores(box, raw_schedule_lookup) for box in box_scores
+            )
+        )
+        if not has_scores:
+            # A raw schedule with no score witness is still a preseason/live
+            # snapshot. Do not materialize phantom 0-0 matchups.
+            consecutive_empty += 1
+            if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
+                break
+            continue
+
+        consecutive_empty = 0
+        snapshot_signature = _box_score_snapshot_signature(box_scores, raw_schedule_lookup)
+        if previous_snapshot_signature is not None and snapshot_signature == previous_snapshot_signature:
+            log(
+                f"  [MATCHUPS] {year}: ESPN repeated the prior box-score "
+                f"snapshot for requested week {week}; skipping it"
+            )
+            continue
         previous_snapshot_signature = snapshot_signature
 
         # 2-week matchup delta: if this is a continuation week in a 2-week
@@ -430,8 +442,7 @@ def fetch_espn_matchups_modern(
                 at = getattr(bs, "away_team", None)
                 ht_id = getattr(ht, "team_id", None) if ht else None
                 at_id = getattr(at, "team_id", None) if at else None
-                hs = round(getattr(bs, "home_score", 0) or 0, 2)
-                as_ = round(getattr(bs, "away_score", 0) or 0, 2)
+                hs, as_ = (round(score, 2) for score in _effective_box_scores(bs, raw_schedule_lookup))
                 if ht_id is not None and at_id is not None:
                     current_pairs[(ht_id, at_id)] = (hs, as_)
 
@@ -459,8 +470,7 @@ def fetch_espn_matchups_modern(
                 at = getattr(bs, "away_team", None)
                 ht_id = getattr(ht, "team_id", None) if ht else None
                 at_id = getattr(at, "team_id", None) if at else None
-                hs = round(getattr(bs, "home_score", 0) or 0, 2)
-                as_ = round(getattr(bs, "away_score", 0) or 0, 2)
+                hs, as_ = (round(score, 2) for score in _effective_box_scores(bs, raw_schedule_lookup))
                 if ht_id is not None and at_id is not None:
                     prev_week_cumulative[(ht_id, at_id)] = (hs, as_)
             if is_continuation:
@@ -476,8 +486,7 @@ def fetch_espn_matchups_modern(
         for matchup_idx, bs in enumerate(box_scores):
             home_team = getattr(bs, "home_team", None)
             away_team = getattr(bs, "away_team", None)
-            home_score = getattr(bs, "home_score", 0) or 0
-            away_score = getattr(bs, "away_score", 0) or 0
+            home_score, away_score = _effective_box_scores(bs, raw_schedule_lookup)
             is_playoff_api = getattr(bs, "is_playoff", False)
             matchup_type = getattr(bs, "matchup_type", None)
             raw_meta = raw_schedule_lookup.get(

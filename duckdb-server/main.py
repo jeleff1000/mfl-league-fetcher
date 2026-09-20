@@ -1429,29 +1429,11 @@ def _ops_read_uses_pool(sql: str) -> bool:
 @contextmanager
 def _ops_read_connection(sql: str):
     """Own the connection until native execution/serialization actually finishes."""
-    if not _ops_read_uses_pool(sql):
-        with db._ops_lock:
-            conn = db.get_ops_connection() or db.reopen_ops_connection()
-            if conn is None:
-                raise RuntimeError("___ops connection is unavailable")
-            yield conn
-        return
-    conn = db.acquire_connection(timeout=min(2.0, PUBLIC_QUERY_TIMEOUT))
-    attached = False
-    try:
-        _acquire_ops_attachment(conn)
-        attached = True
-        conn.execute('USE "___ops"')
+    with db._ops_lock:
+        conn = db.get_ops_connection() or db.reopen_ops_connection()
+        if conn is None:
+            raise RuntimeError("___ops connection is unavailable")
         yield conn
-    finally:
-        try:
-            conn.execute('USE "___leagues"')
-        finally:
-            try:
-                if attached:
-                    _release_ops_attachment(conn)
-            finally:
-                db.release_connection(conn)
 
 
 def _execute_ops_query(sql: str) -> list[dict]:
@@ -1551,10 +1533,20 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
     ops_path = data_dir / "___ops.duckdb"
     conn = None
     result = None
+    completed = False
 
     # Autocommit DDL/DML and connection close can checkpoint implicitly.
     # Interrupt queries, but never terminate the server inside those writes.
     checkpoint_sql = _sql_requests_checkpoint(sql)
+    changes_catalog = operation is None and _sql_changes_catalog(sql)
+    needs_nfl_attachment = operation is None and _ops_write_needs_nfl_attachment(sql)
+    reuse_hot_ops_connection = (
+        operation is None
+        and not changes_catalog
+        and not needs_nfl_attachment
+        and not checkpoint_sql
+    )
+    borrowed_hot_connection = False
     def remaining():
         if deadline is None:
             return ADMIN_QUERY_TIMEOUT
@@ -1579,32 +1571,39 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
         remaining()
         _begin_ops_write_state()
         try:
-            with _ops_write_phase("reader_close"):
-                _db.close_ops_connection()
-            last_connect_error: Exception | None = None
-            for attempt in range(8):
-                remaining()
-                try:
-                    with _ops_write_phase("conn_open"):
-                        conn = _db.connect_database(ops_path, data_dir=data_dir)
-                    break
-                except _duckdb.BinderException as exc:
-                    last_connect_error = exc
-                    if "unique file handle conflict" not in str(exc).lower() or attempt == 7:
-                        raise
-                    # Let a read-only handle finish detaching, but never close
-                    # unrelated public connections to force an OPS write.
-                    time.sleep(min(0.25 * (attempt + 1), remaining()))
+            if reuse_hot_ops_connection:
+                conn = _db.get_ops_connection() or _db.reopen_ops_connection()
+                if conn is None:
+                    raise RuntimeError("Unable to reuse the ___ops writer connection")
+                borrowed_hot_connection = True
+            else:
+                with _ops_write_phase("reader_close"):
                     _db.close_ops_connection()
-            if conn is None:
-                raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
+                last_connect_error: Exception | None = None
+                for attempt in range(8):
+                    remaining()
+                    try:
+                        with _ops_write_phase("conn_open"):
+                            conn = _db.connect_database(ops_path, data_dir=data_dir)
+                        break
+                    except _duckdb.BinderException as exc:
+                        last_connect_error = exc
+                        if "unique file handle conflict" not in str(exc).lower() or attempt == 7:
+                            raise
+                        # Let a read-only attachment finish detaching, but never
+                        # close unrelated public connections to force an OPS write.
+                        time.sleep(min(0.25 * (attempt + 1), remaining()))
+                        _db.close_ops_connection()
+                if conn is None:
+                    raise RuntimeError(f"Unable to open ___ops writer: {last_connect_error}")
             if operation is not None:
                 # Rename reuses the exclusive OPS lifecycle, not SQL-script
                 # checkpointing or the legacy public-pool-close fallback.
                 with _ops_write_phase("sql"):
                     result = operation(conn)
+                completed = True
                 return result
-            if _ops_write_needs_nfl_attachment(sql):
+            if needs_nfl_attachment:
                 with _ops_write_phase("nfl_attach"):
                     _db._attach_ops_nfl(fleet_merge._AggregationConnection(
                         conn, lambda raw, statement, params=None, **_: _interrupting_execute(
@@ -1626,18 +1625,27 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
                     )
             with _ops_write_phase("checkpoint"):
                 _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
+            completed = True
             return result
         finally:
             cleanup_error: Exception | None = None
             try:
-                if conn is not None:
+                # Keep the serialized OPS handle hot after ordinary DML. On a
+                # failed write, discard it so no aborted transaction or
+                # invalidated connection can leak into the next request.
+                if conn is not None and (not borrowed_hot_connection or not completed):
                     with _ops_write_phase("close"):
-                        conn.close()
+                        if borrowed_hot_connection:
+                            _db.close_ops_connection()
+                        else:
+                            conn.close()
             except Exception as exc:
                 cleanup_error = exc
                 logger.exception("Failed closing ___ops writer")
-            reopen_actions = [("reopen ___ops connection", _db.reopen_ops_connection)]
-            if operation is None and _sql_changes_catalog(sql):
+            reopen_actions = []
+            if not borrowed_hot_connection or not completed:
+                reopen_actions.append(("reopen ___ops connection", _db.reopen_ops_connection))
+            if changes_catalog:
                 reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
             for label, action in reopen_actions:
                 try:
@@ -1731,14 +1739,22 @@ def _merge_ops_tables(incoming_path: Path) -> dict:
                         checkpoint_conn.execute("CHECKPOINT")
                     finally:
                         checkpoint_conn.close()
-                    _db.reopen_ops_connection()
-                    _db.reopen_pool()
+                    # Linux can copy the checkpointed snapshot while the shared
+                    # writable attachment is open. Windows denies that file
+                    # share mode, so its test/runtime reopens immediately after
+                    # the copy instead.
+                    if os.name != "nt":
+                        _db.reopen_ops_connection()
+                        _db.reopen_pool()
 
                 # The expensive copy and table rebuild run with the old snapshot
                 # queryable. Only the final handoff below gates readers again.
                 _state["status"] = "ops_snapshotting"
 
                 shutil.copy2(ops_path, staging_path)
+                if os.name == "nt":
+                    _db.reopen_ops_connection()
+                    _db.reopen_pool()
                 conn = _db.connect_database(staging_path, data_dir=data_dir, threads=WRITE_DUCKDB_THREADS)
 
                 conn.execute(f"ATTACH '{incoming_path.as_posix()}' AS _incoming (READ_ONLY)")
@@ -1825,18 +1841,17 @@ def _query_needs_ops_attachment(sql: str, database: str) -> bool:
 
 
 def _acquire_ops_attachment(conn) -> None:
-    """Keep the process-wide ___ops catalog attached while any query uses it.
+    """Count a query using the process-wide shared ___ops attachment.
 
     DuckDB connections opened on the same database file share attached catalogs.
-    Without a user count, one pooled query can DETACH ___ops while another pooled
-    query is still binding or scanning it.
+    The count lets exclusive snapshot/catalog handoffs wait for every active
+    reader before they briefly detach the shared catalog.
     """
     global _ops_attachment_users
-    ops_path = db.get_data_dir() / "___ops.duckdb"
-    if not ops_path.exists():
+    if not (db.get_data_dir() / "___ops.duckdb").exists():
         raise RuntimeError("___ops database is unavailable")
-    # Match the OPS writer's lock order. A new read cannot ATTACH read-only
-    # between the writer closing its read handle and finishing its RW handle.
+    # Match the OPS writer's lock order. A new read cannot enter between the
+    # writer detaching the shared handle and finishing its exclusive work.
     # Release needs only the attachment lock so existing readers can drain.
     # Keep lock waiting inside the HTTP query's existing five-second margin;
     # a timed-out thread must not resume using a connection returned to the pool.
@@ -1844,7 +1859,11 @@ def _acquire_ops_attachment(conn) -> None:
         raise TimeoutError("OPS attachment is busy with a metadata writer")
     try:
         with _ops_attachment_lock:
-            conn.execute(f'ATTACH IF NOT EXISTS {_sql_literal(ops_path)} AS "___ops" (READ_ONLY)')
+            catalogs = {row[0] for row in conn.execute(
+                "SELECT database_name FROM duckdb_databases()"
+            ).fetchall()}
+            if "___ops" not in catalogs:
+                raise RuntimeError("shared ___ops attachment is unavailable")
             _ops_attachment_users += 1
     finally:
         db._ops_lock.release()
@@ -1858,11 +1877,6 @@ def _release_ops_attachment(conn) -> None:
             _ops_attachment_users = 0
             return
         _ops_attachment_users -= 1
-        if _ops_attachment_users == 0:
-            try:
-                conn.execute('DETACH "___ops"')
-            except Exception:
-                logger.exception("Failed to detach shared ___ops catalog")
 
 
 def _drain_ops_attachments_for_snapshot(timeout_seconds: float = QUERY_OPS_WRITE_WAIT_SECONDS) -> None:

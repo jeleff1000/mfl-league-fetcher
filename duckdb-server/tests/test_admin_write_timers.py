@@ -62,8 +62,13 @@ def test_autocommit_checkpoint_does_not_arm_process_exit(client, data_dir, monke
     monkeypatch.setattr(threading.Timer, "start", start)
     monkeypatch.setattr(main.os, "_exit", exits.append)
     monkeypatch.setattr(main.db, "connect_database", connect)
+    if database == "___ops":
+        main.db.get_ops_connection().execute("SET checkpoint_threshold='1B'")
     response = _write(client, database, insert)
     assert response.status_code == 200, response.text
+    if database == "___ops":
+        wal = data_dir / "___ops.duckdb.wal"
+        wal_sizes.append(wal.stat().st_size if wal.exists() else 0)
     assert wal_sizes == [0], "The insert must actually checkpoint, not just leave a WAL"
     persisted = _write(client, database,
                        "SELECT value FROM public.timer_canary WHERE db_name='timer_canary'")

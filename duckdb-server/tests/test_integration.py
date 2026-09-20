@@ -1138,11 +1138,11 @@ def assert_clean():
     for c in db._pool.queue:
         assert c.execute('SELECT current_database()').fetchone() == ('___leagues',)
         catalogs = {r[0] for r in c.execute('SELECT database_name FROM duckdb_databases()').fetchall()}
-        assert '___ops' not in catalogs and '___ops_nfl' in catalogs
+        assert '___ops' in catalogs and '___ops_nfl' in catalogs
     reader = db.get_ops_connection()
     assert reader is not None
     catalogs = {r[0] for r in reader.execute('SELECT database_name FROM duckdb_databases()').fetchall()}
-    assert '___ops_nfl' not in catalogs, 'dedicated OPS metadata reader must not attach NFL'
+    assert {'___ops', '___ops_nfl'} <= catalogs
 
 endpoint = sys.argv[1]
 tc = TestClient(main.app)
@@ -1152,7 +1152,7 @@ def read(sql, *, pooled, status=200):
     response = tc.post(endpoint, json={'database': '___ops', 'sql': sql},
                        headers={'Authorization': 'Bearer test-read'})
     assert response.status_code == status, response.text
-    assert (len(acquired) - before[0], len(attached) - before[1]) == ((1, 1) if pooled else (0, 0))
+    assert (len(acquired) - before[0], len(attached) - before[1]) == (0, 0)
     assert_clean()
     if status == 200:
         if endpoint == '/query':
@@ -1192,7 +1192,7 @@ finally:
     tc.close()
     db.close_all()
     faulthandler.cancel_dump_traceback_later()
-print(endpoint, 'five split-NFL write/reopen/read cycles passed; eight original pool handles retained')
+print(endpoint, 'five split-NFL hot-write/read cycles passed; eight original pool handles retained')
 '''
     env = dict(os.environ, DATA_DIR=str(tmp_path), DB_POOL_SIZE="8", DUCKDB_THREADS="8",
                DUCKDB_WRITE_THREADS="8", DATABASE_READ_TOKEN="test-read")
@@ -1288,8 +1288,10 @@ def test_ops_write_phase_logs_stalled_owner_without_sql_or_values(client, monkey
     assert 'private-cookie-sentinel' not in caplog.text
     assert 'phase=sql' in caplog.text and 'thread_id=' in caplog.text
     assert 'held' in caplog.text  # Only the blocked owner's code locations, no locals/source text.
-    for phase in ('conn_open', 'sql', 'checkpoint', 'close', 'reopen'):
+    for phase in ('sql', 'checkpoint'):
         assert f'phase={phase}' in caplog.text
+    for phase in ('conn_open', 'close', 'reopen'):
+        assert f'phase={phase}' not in caplog.text
 
 
 def test_ops_writer_drain_timeout_leaves_read_connections_and_state_untouched(client, monkeypatch):
@@ -1729,6 +1731,28 @@ def test_query_rw_ops_dml_skips_metadata_refresh(client, monkeypatch):
 
     assert resp.status_code == 200
     assert refreshed == []
+
+
+def test_query_rw_ops_dml_reuses_hot_ops_connection(client, monkeypatch):
+    import main as main_mod
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("ordinary OPS DML must not close or reopen the hot connection")
+
+    monkeypatch.setattr(main_mod.db, "close_ops_connection", forbidden)
+    monkeypatch.setattr(main_mod.db, "reopen_ops_connection", forbidden)
+
+    resp = client.post(
+        "/query-rw",
+        json={
+            "database": "___ops",
+            "sql": "UPDATE accounts.league_inventory SET updated_at = current_timestamp WHERE 1 = 0",
+            "timeout_seconds": 1,
+        },
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 200
 
 
 def test_query_rw_ops_returns_success_when_commit_precedes_cleanup_timeout(client, monkeypatch):

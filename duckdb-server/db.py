@@ -474,17 +474,22 @@ def init_pool():
         ops_schema_conn.close()
 
     # Pool connections are normal DuckDB connections so reads can keep a
-    # snapshot open while delta merges commit in another connection. ___ops is
-    # attached lazily per query; keeping it attached permanently forces every
-    # tiny ___ops write to rebuild the whole public pool.
+    # snapshot open while delta merges commit in another connection.
     _refill_pool(leagues_path)
 
-    # Dedicated ___ops connection — bypasses the pool entirely
+    # Dedicated OPS control connection; it shares the pool's primary DuckDB
+    # instance but is never checked out to public requests.
     if ops_path.exists():
-        _ops_conn = connect_database(ops_path, read_only=True, data_dir=_data_dir)
-        # Metadata never needs the NFL catalog. NFL reads use the existing
-        # league pool's permanent attachment; repeated cross-instance ATTACH
-        # here can deadlock native DuckDB after a metadata write.
+        # Keep ___ops attached once to the same DuckDB instance as ___leagues.
+        # DuckDB rejects a writable primary handle for a file that is also an
+        # attachment. Sharing one attachment preserves cross-catalog reads and
+        # lets tiny serialized OPS writes reuse a hot handle.
+        _ops_conn = connect_database(leagues_path, read_only=False, data_dir=_data_dir)
+        _ops_conn.execute(
+            f"ATTACH IF NOT EXISTS '{ops_path.as_posix()}' AS \"___ops\""
+        )
+        _attach_ops_nfl(_ops_conn)
+        _ops_conn.execute('USE "___ops"')
 
     _active_count = 0
     _metadata = _compute_metadata()
@@ -565,9 +570,14 @@ def get_ops_connection() -> duckdb.DuckDBPyConnection | None:
 
 
 def close_ops_connection():
-    """Close only the dedicated ___ops connection."""
+    """Detach ___ops from the shared instance and close its control handle."""
     global _ops_conn
     if _ops_conn is not None:
+        try:
+            _ops_conn.execute('USE "___leagues"')
+            _ops_conn.execute('DETACH "___ops"')
+        except Exception:
+            pass
         try:
             _ops_conn.close()
         except Exception:
@@ -576,12 +586,19 @@ def close_ops_connection():
 
 
 def reopen_ops_connection():
-    """Reopen only the dedicated ___ops connection."""
+    """Reattach ___ops and reopen its dedicated control connection."""
     global _ops_conn
-    ops_path = get_data_dir() / "___ops.duckdb"
+    data_dir = get_data_dir()
+    leagues_path = data_dir / "___leagues.duckdb"
+    ops_path = data_dir / "___ops.duckdb"
     close_ops_connection()
-    if ops_path.exists():
-        _ops_conn = connect_database(ops_path, read_only=True, data_dir=get_data_dir())
+    if leagues_path.exists() and ops_path.exists():
+        _ops_conn = connect_database(leagues_path, read_only=False, data_dir=data_dir)
+        _ops_conn.execute(
+            f"ATTACH IF NOT EXISTS '{ops_path.as_posix()}' AS \"___ops\""
+        )
+        _attach_ops_nfl(_ops_conn)
+        _ops_conn.execute('USE "___ops"')
     return _ops_conn
 
 

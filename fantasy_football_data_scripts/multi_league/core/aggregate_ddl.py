@@ -1566,6 +1566,10 @@ def ensure_aggregate_table(conn, database_name: str, table_name: str) -> None:
     to auto-create the table because local files are disposable per-import
     artifacts, not a shared contract.
     """
+    cache = getattr(conn, "_aggregate_schema_validation_cache", None)
+    cache_key = (database_name, table_name)
+    if cache is not None and cache_key in cache:
+        return
     if not _table_exists(conn, database_name, table_name):
         if _is_centralized(database_name):
             raise RuntimeError(
@@ -1575,8 +1579,12 @@ def ensure_aggregate_table(conn, database_name: str, table_name: str) -> None:
                 f"Imports never create tables in {database_name}."
             )
         conn.execute(_create_table_sql(database_name, table_name))
+        if cache is not None:
+            cache.add(cache_key)
         return
     _validate_aggregate_schema(conn, database_name, table_name)
+    if cache is not None:
+        cache.add(cache_key)
 
 
 def recreate_aggregate_table(conn, database_name: str, table_name: str) -> None:

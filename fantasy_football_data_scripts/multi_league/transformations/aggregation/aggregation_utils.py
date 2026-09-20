@@ -787,10 +787,10 @@ def replace_scoped_aggregate_table_from_dataframe(
 
     if "db_name" in prepared.columns:
         prepared = prepared.drop(columns=["db_name"])
-    for column in data_columns:
-        if column not in prepared.columns:
-            prepared[column] = pd.NA
-    prepared = prepared[data_columns]
+    # Add every absent canonical column in one allocation. Repeated assignment
+    # fragments these wide homepage frames and needlessly slows every weekly
+    # publication; reindex preserves the same ordered, nullable result.
+    prepared = prepared.reindex(columns=data_columns)
 
     ensure_aggregate_table(conn, _ACTIVE_TABLE_CATALOG, table_name)
     execute_scoped(

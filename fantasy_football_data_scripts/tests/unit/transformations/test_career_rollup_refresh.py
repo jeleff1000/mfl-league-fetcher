@@ -6,6 +6,7 @@ import pytest
 import importlib.util
 from pathlib import Path
 import tarfile
+import warnings
 
 from multi_league.core.aggregate_ddl import AGGREGATE_TABLE_SPECS, create_aggregate_table_sql
 from multi_league.core.delta_publish import canonical_table_registry
@@ -890,8 +891,11 @@ def test_weekly_publication_rebuilds_homepage_on_same_full_chain(merged_chain, t
         bundle.manifest, allowed_tables=set(registry),
         identity_keys={t: tuple(s['primary_keys']) for t, s in registry.items()},
     )
-    receipt = server.apply_fleet_merge(conn, bundle.manifest, extracted)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", pd.errors.PerformanceWarning)
+        receipt = server.apply_fleet_merge(conn, bundle.manifest, extracted)
     assert receipt['homepage_rollups']['test_league']['homepage_manager_profiles'] == 1
+    assert not [warning for warning in caught if warning.category is pd.errors.PerformanceWarning]
     assert conn.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (140.0,)
     assert conn.execute("SELECT manager,seasons,wins,losses FROM public.homepage_manager_rankings WHERE db_name='test_league'").fetchone() == ('Shared Alias',2,1,1)
 

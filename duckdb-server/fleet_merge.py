@@ -463,6 +463,10 @@ class _AggregationConnection:
     def __init__(self, conn, execute):
         self._conn = conn
         self._execute = execute
+        # The publication owns one serialized transaction. Validate each
+        # canonical aggregate schema once, then reuse that result across the
+        # season, career, and homepage builders in this same request only.
+        self._aggregate_schema_validation_cache: set[tuple[str, str]] = set()
 
     def execute(self, sql, params=None):
         return self._execute(self._conn, sql, params, step="fleet career aggregation")

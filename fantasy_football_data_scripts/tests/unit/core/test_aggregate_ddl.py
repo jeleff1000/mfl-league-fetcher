@@ -37,6 +37,34 @@ def test_ensure_aggregate_table_fails_on_stale_schema():
         ensure_aggregate_table(conn, db_name, "player_fantasy_season")
 
 
+def test_ensure_aggregate_table_reuses_publication_local_schema_validation():
+    """One atomic publication must not repeat identical catalog scans."""
+    from multi_league.core.aggregate_ddl import ensure_aggregate_table
+
+    conn = _public_conn()
+    db_name = _db_name(conn)
+    ensure_aggregate_table(conn, db_name, "transaction_manager_season")
+
+    class PublicationConnection:
+        def __init__(self, inner):
+            self.inner = inner
+            self._aggregate_schema_validation_cache = set()
+            self.catalog_queries = 0
+
+        def execute(self, sql, params=None):
+            if "information_schema." in sql:
+                self.catalog_queries += 1
+            if params is None:
+                return self.inner.execute(sql)
+            return self.inner.execute(sql, params)
+
+    publication = PublicationConnection(conn)
+    ensure_aggregate_table(publication, db_name, "transaction_manager_season")
+    ensure_aggregate_table(publication, db_name, "transaction_manager_season")
+
+    assert publication.catalog_queries == 2
+
+
 def test_replace_snapshot_table_from_dataframe_creates_explicit_table():
     from multi_league.core.aggregate_ddl import replace_snapshot_table_from_dataframe
 

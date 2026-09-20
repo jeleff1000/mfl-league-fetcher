@@ -419,6 +419,28 @@ def test_espn_draft_manifest_accepts_complete_picks_when_drafted_flag_is_stale()
     assert absent is False
 
 
+def test_espn_draft_manifest_ignores_verified_trailing_empty_rounds():
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    payload = _draft_payload(pick_count=12, rounds=4)
+    for pick in payload["draftDetail"]["picks"][-3:]:
+        pick["playerId"] = 0
+    parsed = _parsed_draft(9) + [
+        SimpleNamespace(playerId=0, playerName="Unknown")
+        for _ in range(3)
+    ]
+
+    manifest, absent = _espn_draft_manifest(
+        SimpleNamespace(get_raw_league=lambda *_args: payload),
+        SimpleNamespace(draft=parsed),
+        2026,
+    )
+
+    assert absent is False
+    assert manifest["pick"].tolist() == list(range(1, 10))
+    assert manifest["espn_player_id"].tolist() == list(range(1001, 1010))
+
+
 def test_espn_draft_manifest_rejects_unresolved_player_identity():
     import pytest
     from multi_league.core.league_refresh import RefreshScopeError

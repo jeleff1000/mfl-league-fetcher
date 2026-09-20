@@ -215,9 +215,46 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
         # ESPN slot 21 is injured reserve and has no draft pick. All other
         # positive lineup and bench slots require one draft pick per team.
         rounds = sum(int(count) for slot, count in slots.items() if str(slot) != "21")
-        pick_numbers = [int(pick["overallPickNumber"]) for pick in picks]
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise RefreshScopeError("ESPN draft witness lacks team, slot, or pick identities") from exc
+
+    # Some completed ESPN drafts retain whole unused rounds as playerId=0
+    # slots (for example optional reserve positions).  Admit only a contiguous
+    # suffix of complete rounds; a zero inside a drafted round still fails
+    # closed.  Negative IDs remain real D/ST selections.
+    from multi_league.data_fetchers.espn.espn_draft import is_unfilled_espn_draft_pick
+
+    trailing_empty_slots = 0
+    for pick in reversed(picks):
+        if not is_unfilled_espn_draft_pick(pick.get("playerId")):
+            break
+        trailing_empty_slots += 1
+    if trailing_empty_slots:
+        if teams < 1 or trailing_empty_slots % teams:
+            raise RefreshScopeError("ESPN draft has a partial trailing empty round")
+        real_pick_count = len(picks) - trailing_empty_slots
+        if len(parsed) == len(picks):
+            parsed_suffix = list(parsed)[real_pick_count:]
+            if not all(
+                is_unfilled_espn_draft_pick(
+                    getattr(pick, "playerId", None),
+                    getattr(pick, "playerName", None),
+                )
+                for pick in parsed_suffix
+            ):
+                raise RefreshScopeError("ESPN parsed draft disagrees with trailing empty slots")
+            parsed = list(parsed)[:real_pick_count]
+        elif len(parsed) != real_pick_count:
+            raise RefreshScopeError("ESPN parsed draft disagrees with trailing empty slot count")
+        picks = picks[:real_pick_count]
+        rounds -= trailing_empty_slots // teams
+        if rounds < 1:
+            raise RefreshScopeError("ESPN draft has no completed rounds")
+
+    try:
+        pick_numbers = [int(pick["overallPickNumber"]) for pick in picks]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RefreshScopeError("ESPN draft witness lacks overall pick identities") from exc
     expected = teams * rounds
     if teams < 1 or rounds < 1 or len(pick_numbers) != expected or len(parsed) != expected:
         raise RefreshScopeError("ESPN draft pick count disagrees with configured draft size")

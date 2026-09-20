@@ -38,6 +38,21 @@ def log(msg: str):
     print(msg)
 
 
+def is_unfilled_espn_draft_pick(player_id: object, player_name: object = None) -> bool:
+    """Return whether ESPN emitted an unused draft slot instead of a pick.
+
+    ESPN uses negative player IDs for real D/ST selections, so only the exact
+    numeric ID ``0`` is an empty drafted-season slot.  A populated name keeps
+    the row fail-closed in case ESPN ever assigns zero to a real player.
+    """
+    try:
+        zero_id = int(str(player_id).strip()) == 0
+    except (TypeError, ValueError):
+        return False
+    name = str(player_name or "").strip().lower()
+    return zero_id and name in {"", "unknown"}
+
+
 # ESPN position ID -> position abbreviation
 ESPN_POSITION_MAP = {
     1: "QB",
@@ -130,11 +145,13 @@ def fetch_espn_draft(
     picks = []
     for i, pick in enumerate(league.draft, 1):
         player_id = getattr(pick, "playerId", None)
-        player_name = (
+        resolved_player_name = (
             getattr(pick, "playerName", None)
             or (player_names_by_id or {}).get(str(player_id))
-            or "Unknown"
         )
+        if is_unfilled_espn_draft_pick(player_id, resolved_player_name):
+            continue
+        player_name = resolved_player_name or "Unknown"
         round_num = getattr(pick, "round_num", None)
         round_pick = getattr(pick, "round_pick", None)
         bid_amount = getattr(pick, "bid_amount", 0) or 0

@@ -657,8 +657,9 @@ class YahooRosterFetcher:
         Yahoo's league-level ``teams;out=roster`` resource exposes the current
         roster shell but does not reliably return historical weekly players.
         The native team ``roster;week=N`` resource is the authoritative weekly
-        membership source. Fetch it without the stats subresource because the
-        refresh pipeline calculates points from the shared NFL source.
+        membership source. The weekly stats expansion is required because
+        Yahoo otherwise returns an empty players collection for some football
+        leagues; the explicit type/week qualifiers keep it weekly-scoped.
 
         Args:
             year: Season year
@@ -694,7 +695,7 @@ class YahooRosterFetcher:
                     team_key,
                     team_info["manager_name"],
                     team_info.get("manager_guid"),
-                    include_stats=False,
+                    include_stats=True,
                 )
                 return (team_key, team_info["manager_name"], True, roster_data)
             except Exception as e:

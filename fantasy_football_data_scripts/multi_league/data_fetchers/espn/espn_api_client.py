@@ -351,8 +351,16 @@ class ESPNAPIClient:
                 or not isinstance(data.get("transactions"), list)
                 or any(not isinstance(row, dict) for row in data["transactions"])
             ):
+                payload_type = type(data).__name__
+                keys = sorted(str(key) for key in data) if isinstance(data, dict) else []
+                transactions_type = (
+                    type(data.get("transactions")).__name__
+                    if isinstance(data, dict) and "transactions" in data
+                    else "missing"
+                )
                 raise ESPNAPIError(
-                    f"ESPN raw transactions for {year} week {scoring_period} are malformed"
+                    f"ESPN raw transactions for {year} week {scoring_period} are malformed "
+                    f"(payload_type={payload_type}, keys={keys}, transactions_type={transactions_type})"
                 )
             return data.get("transactions", [])
         except requests.exceptions.HTTPError as e:

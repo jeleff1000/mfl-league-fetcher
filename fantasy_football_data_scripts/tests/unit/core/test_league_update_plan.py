@@ -473,7 +473,7 @@ def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
     assert "EXCEPT" not in aggregate_gap_sql
 
 
-def test_changed_source_plan_defers_historical_aggregate_audit_to_atomic_publish():
+def test_changed_source_plan_carries_historical_aggregate_repair_into_atomic_publish():
     old = manifest(provider=(resource("yahoo", "matchups", "2026:1", "old"),))
     observed = replace(
         old,
@@ -493,7 +493,8 @@ def test_changed_source_plan_defers_historical_aggregate_audit_to_atomic_publish
             if database == "___ops":
                 return [row]
             self.league_sql.append(sql)
-            assert "missing_derived_years" not in sql
+            if "missing_derived_years" in sql:
+                return [{"missing_derived_years": "2025"}]
             return [{"year": 2026, "week": 1}]
 
     reader = CapturingReader(row)
@@ -506,7 +507,8 @@ def test_changed_source_plan_defers_historical_aggregate_audit_to_atomic_publish
 
     assert plan is not None
     assert plan.requires_refresh
-    assert len(reader.league_sql) == 1
+    assert "missing_derived_aggregate" in plan.reasons
+    assert len(reader.league_sql) == 2
 
 
 def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():

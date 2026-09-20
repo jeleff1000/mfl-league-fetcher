@@ -568,6 +568,13 @@ def test_all_platforms_bound_weekly_fly_merge_to_forty_seconds():
         assert "merge_timeout_seconds=40" in text
 
 
+def test_all_platforms_forward_detected_historical_aggregate_repairs():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        assert '"missing_derived_aggregate" in persisted_plan.reasons' in text
+        assert "repair_missing_season_rollups=" in text
+
+
 def test_sleeper_refresh_merges_rosters_through_canonical_ownership_key():
     text = (ROOT / "scripts" / "refresh_sleeper_active_season.py").read_text(encoding="utf-8")
     ownership = (

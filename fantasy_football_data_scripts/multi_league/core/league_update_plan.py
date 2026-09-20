@@ -432,20 +432,19 @@ def load_persisted_refresh_plan(
         published,
         materialized,
     )
-    # A real source delta already enters the atomic publisher, which validates
-    # and repairs retained season rollups before commit. The fleet-wide
-    # integrity audit exists to turn an otherwise-clean no-op into repair work;
-    # running its six history scans on every changed refresh only duplicates
-    # the publisher's safety gate and dominates the hot path.
-    if not plan.requires_refresh:
-        missing_derived_years = _missing_derived_aggregate_years(reader, safe_db=safe_db)
-        if missing_derived_years:
-            plan = build_refresh_plan(
-                observed,
-                published,
-                materialized,
-                required_reasons=("missing_derived_aggregate",),
-            )
+    # The publisher only runs its scoped historical repair when the manifest
+    # explicitly requests it. Carry that signal for changed-source refreshes
+    # too: otherwise an active-week update can rebuild careers from an already
+    # incomplete retained season table. This is one league-filtered fingerprint
+    # query and never downloads or republishes historical source rows.
+    missing_derived_years = _missing_derived_aggregate_years(reader, safe_db=safe_db)
+    if missing_derived_years:
+        plan = build_refresh_plan(
+            observed,
+            published,
+            materialized,
+            required_reasons=("missing_derived_aggregate",),
+        )
     return PersistedRefreshPlan(
         plan=plan,
         observed_manifest=observed,

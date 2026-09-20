@@ -477,12 +477,23 @@ def _num(row: dict, col: str) -> float:
 
 
 def _expected_def(row: dict, def_mults: dict[str, float]) -> float:
+    from multi_league.transformations.common.dst_brackets import BRACKET_BOUNDS
+
     if not def_mults:
         return _num(row, "pts_def_std")
     total = 0.0
     for col, mult in def_mults.items():
         if col == "pts_def_td":
             total += _num(row, "def_tds") * float(mult)
+        elif col in BRACKET_BOUNDS and BRACKET_BOUNDS[col][0] in row:
+            scalar, low, high = BRACKET_BOUNDS[col]
+            value = _num(row, scalar)
+            in_bracket = (
+                low is None and value <= high
+                or high is None and value >= low
+                or low is not None and high is not None and low <= value <= high
+            )
+            total += float(in_bracket) * float(mult)
         else:
             total += _num(row, col) * float(mult)
     return total
@@ -909,6 +920,7 @@ def test_yahoo_rostered_def_recomputes_custom_dst_rules_from_ddl():
     scoring = {
         "sack": 1.0,
         "pts_allow_35p": -4.0,
+        "yds_allow_200_299": 3.0,
         "def_st_td": 6.0,
     }
     flat = _flat_league("yahoo", scoring, league_key="yahoo_custom_dst")
@@ -922,6 +934,8 @@ def test_yahoo_rostered_def_recomputes_custom_dst_rules_from_ddl():
     stats.loc[def_mask, "pts_def_std"] = -2.0
     stats.loc[def_mask, "pts_def_sack"] = 2.0
     stats.loc[def_mask, "pts_allow_35_plus"] = 1.0
+    stats.loc[def_mask, "total_yds_allowed"] = 259.0
+    stats.loc[def_mask, "yds_allow_200_299"] = None
     stats.loc[def_mask, "pts_def_st_td"] = 1.0
 
     player_rows = stats.loc[def_mask, ["player_week", "NFL_player_id", "year", "week", "position"]].copy()
@@ -988,7 +1002,7 @@ def test_yahoo_rostered_def_recomputes_custom_dst_rules_from_ddl():
         conn.close()
 
     assert updated == 1
-    assert scored == pytest.approx(4.0)
+    assert scored == pytest.approx(7.0)
 
 
 def test_yahoo_rostered_idp_recomputes_fumble_sources_from_ddl():

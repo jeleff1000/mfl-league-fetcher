@@ -862,10 +862,24 @@ class PlayerEnrichmentsMixin:
                 # Reconstructing it as def_tds + fum_ret_td is unsafe because
                 # team-DST def_tds can already include fumble-return TDs.
                 def_parts: list[str] = []
+                from multi_league.transformations.common.dst_brackets import (
+                    BRACKET_BOUNDS,
+                    bracket_scored_sql,
+                )
+
                 for col, mult in def_mults_f.items():
                     if mult == 0:
                         continue
-                    def_parts.append(f"COALESCE(s.{col}, 0) * {mult}")
+                    bracket_spec = BRACKET_BOUNDS.get(col)
+                    bracket_expr = (
+                        bracket_scored_sql(col, mult, alias="s")
+                        if bracket_spec and bracket_spec[0] in super_cols_set
+                        else None
+                    )
+                    if bracket_expr:
+                        def_parts.append(bracket_expr)
+                    else:
+                        def_parts.append(f"COALESCE(s.{col}, 0) * {mult}")
                 def_expr = " + ".join(def_parts) if def_parts else "COALESCE(s.pts_def_std, 0)"
 
                 idp_parts: list[str] = []

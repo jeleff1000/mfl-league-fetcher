@@ -207,6 +207,52 @@ def test_build_sql_edge_mult_falls_through_to_runtime():
     assert "pts_pass_td_5" not in sql
 
 
+def test_monsters_week1_qb_uses_completions_and_incompletions():
+    """Pin the live Yahoo DDL case: Josh Allen 2026 W1 scores 37.48, not 52.98."""
+    rules = {
+        "scoring_settings": {
+            "pass_cmp": 0.5,
+            "pass_inc": -0.5,
+            "pass_yd": 0.02,
+            "pass_td": 6.0,
+            "pass_int": -3.0,
+            "rush_yd": 0.1,
+            "rush_td": 6.0,
+            "rec": 1.0,
+            "rec_yd": 0.05,
+            "rec_td": 6.0,
+            "fum": -1.0,
+            "fum_lost": -2.0,
+        }
+    }
+    columns = {
+        "attempts", "completions", "passing_yards", "passing_tds",
+        "passing_interceptions", "rushing_yards", "rushing_tds",
+        "receptions", "receiving_yards", "receiving_tds",
+        "rushing_fumbles", "sack_fumbles", "receiving_fumbles",
+        "rushing_fumbles_lost", "sack_fumbles_lost", "receiving_fumbles_lost",
+    }
+    sql = build_components_fantasy_points_sql(
+        rules, table_alias="s", available_columns=columns,
+    )
+    conn = duckdb.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE stats (attempts DOUBLE, completions DOUBLE, passing_yards DOUBLE, "
+        "passing_tds DOUBLE, passing_interceptions DOUBLE, rushing_yards DOUBLE, "
+        "rushing_tds DOUBLE, receptions DOUBLE, receiving_yards DOUBLE, "
+        "receiving_tds DOUBLE, rushing_fumbles DOUBLE, sack_fumbles DOUBLE, "
+        "receiving_fumbles DOUBLE, rushing_fumbles_lost DOUBLE, sack_fumbles_lost DOUBLE, "
+        "receiving_fumbles_lost DOUBLE)"
+    )
+    conn.execute("INSERT INTO stats VALUES (29, 20, 334, 2, 0, 23, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0)")
+    try:
+        scored = conn.execute(f"SELECT {sql} FROM stats s").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert scored == pytest.approx(37.48)
+
+
 def test_build_sql_sleeper_top_level_dict():
     """Sleeper format also accepts flat dict without scoring_settings wrapper."""
     rules = {"pass_td": 4, "rec": 1.0}

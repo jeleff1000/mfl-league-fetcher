@@ -1229,6 +1229,13 @@ def _ops_cache_supports_active_scoring(
         "season_type",
         "nfl_team",
         "opponent_nfl_team",
+        # Runtime league scoring cannot reconstruct these atoms from a
+        # precomputed default-scoring column.  In particular, Yahoo leagues
+        # may score completions, incompletions, and fumbles independently.
+        "attempts",
+        "rushing_fumbles",
+        "receiving_fumbles",
+        "sack_fumbles",
         *get_ppg_columns_for_scoring(
             float(scoring_info.get("ppr", 0.5)),
             int(td_key.removesuffix("pt")),

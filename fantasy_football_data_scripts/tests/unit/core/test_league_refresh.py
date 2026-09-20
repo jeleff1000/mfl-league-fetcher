@@ -2449,6 +2449,8 @@ def test_weekly_ops_projection_keeps_only_active_scoring_inputs_and_ranks():
         "opponent_nfl_team",
         "position",
         "nfl_position",
+        "attempts",
+        "completions",
         "passing_yards",
         "pts_k_std",
         "bonus_pass_yd_300",
@@ -2481,6 +2483,8 @@ def test_weekly_ops_projection_keeps_only_active_scoring_inputs_and_ranks():
     selected = _active_year_ops_projection_columns(schema_columns, scoring)
 
     assert "passing_yards" in selected
+    assert "attempts" in selected
+    assert "completions" in selected
     assert "pts_k_std" in selected
     assert "bonus_pass_yd_300" in selected
     assert "fpts_4pt_half" in selected
@@ -2658,7 +2662,8 @@ def test_weekly_worker_rebuilds_existing_ops_cache_missing_active_scoring_column
         rebuilt.execute(
             "CREATE TABLE nfl_historical.nfl_player_stats_all "
             "(NFL_player_id VARCHAR, year INTEGER, week INTEGER, season_type VARCHAR, "
-            "nfl_team VARCHAR, opponent_nfl_team VARCHAR, "
+            "nfl_team VARCHAR, opponent_nfl_team VARCHAR, attempts DOUBLE, "
+            "rushing_fumbles DOUBLE, receiving_fumbles DOUBLE, sack_fumbles DOUBLE, "
             + ", ".join(f'\"{column}\" DOUBLE' for column in ppg_columns)
             + ")"
         )
@@ -2680,6 +2685,40 @@ def test_weekly_worker_rebuilds_existing_ops_cache_missing_active_scoring_column
     assert builds[0]["year"] == 2026
     assert refresh_yahoo_active_season._ops_cache_supports_active_scoring(
         cache, year=2026, scoring_info=scoring,
+    )
+
+
+def test_weekly_worker_rejects_cache_missing_pass_attempts(tmp_path):
+    """Completion + incompletion scoring needs both sides of the attempt identity."""
+    import duckdb
+
+    from multi_league.transformations.player.modules.ppg_precompute import (
+        get_ppg_columns_for_scoring,
+    )
+    from scripts.refresh_yahoo_active_season import _ops_cache_supports_active_scoring
+
+    cache = tmp_path / "ops_cache.duckdb"
+    conn = duckdb.connect(str(cache))
+    conn.execute("CREATE SCHEMA nfl_historical")
+    ppg_columns = list(dict.fromkeys(get_ppg_columns_for_scoring(1.0, 6).values()))
+    conn.execute(
+        "CREATE TABLE nfl_historical.nfl_player_stats_all "
+        "(NFL_player_id VARCHAR, year INTEGER, week INTEGER, season_type VARCHAR, "
+        "nfl_team VARCHAR, opponent_nfl_team VARCHAR, completions DOUBLE, "
+        + ", ".join(f'\"{column}\" DOUBLE' for column in ppg_columns)
+        + ")"
+    )
+    conn.execute(
+        "INSERT INTO nfl_historical.nfl_player_stats_all "
+        "(NFL_player_id, year, week, season_type, nfl_team, opponent_nfl_team) "
+        "VALUES ('00-0034857', 2026, 1, 'REG', 'BUF', 'HOU')"
+    )
+    conn.close()
+
+    assert not _ops_cache_supports_active_scoring(
+        cache,
+        year=2026,
+        scoring_info={"ppr": 1.0, "td_key": "6pt", "rank_cols": {}},
     )
 
 

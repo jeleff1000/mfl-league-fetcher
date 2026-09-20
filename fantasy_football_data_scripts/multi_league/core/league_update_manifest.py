@@ -31,6 +31,7 @@ NFL_CANONICAL_IDENTITY_COLUMNS = (
 # the revision builder gives the ops materializer and its coverage test one
 # source of truth.
 NFL_SCORING_INPUT_COLUMNS = (
+    "attempts",
     "carries",
     "completions",
     "completions_40plus",
@@ -49,6 +50,9 @@ NFL_SCORING_INPUT_COLUMNS = (
     "receiving_tds",
     "receiving_2pt_conversions",
     "fumbles_lost",
+    "rushing_fumbles",
+    "receiving_fumbles",
+    "sack_fumbles",
     "rushing_fumbles_lost",
     "receiving_fumbles_lost",
     "sack_fumbles_lost",

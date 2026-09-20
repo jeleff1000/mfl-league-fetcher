@@ -189,6 +189,7 @@ def test_build_nfl_revision_rows_groups_both_team_sides_into_one_game():
 def test_scoring_revision_registry_uses_unique_source_columns():
     """Duplicate scoring fields waste work and can hide accidental aliases."""
     assert len(NFL_SCORING_INPUT_COLUMNS) == len(set(NFL_SCORING_INPUT_COLUMNS))
+    assert "attempts" in NFL_SCORING_INPUT_COLUMNS
     assert "def_pass_defended" in NFL_SCORING_INPUT_COLUMNS
 
 

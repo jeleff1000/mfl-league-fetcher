@@ -16,6 +16,84 @@ class _MatchupRunner(MatchupEnrichmentsMixin, SQLEnrichmentsBase):
     pass
 
 
+def test_compute_league_weekly_stats_replaces_stale_provider_derivations(tmp_path):
+    """Shared enrichment owns weekly aggregates even when a provider supplied values."""
+    db_name = "weekly_stats_refresh_test"
+    conn = duckdb.connect(str(tmp_path / f"{db_name}.duckdb"))
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR,
+            franchise_id VARCHAR,
+            opponent_franchise_id VARCHAR,
+            year INTEGER,
+            week INTEGER,
+            team_points DOUBLE,
+            weekly_mean DOUBLE,
+            weekly_median DOUBLE,
+            league_weekly_mean DOUBLE,
+            league_weekly_median DOUBLE,
+            above_league_median INTEGER,
+            below_league_median INTEGER,
+            teams_beat_this_week INTEGER,
+            opponent_teams_beat_this_week INTEGER
+        )
+        """
+    )
+    scores = [155.53, 147.43, 129.58, 122.0, 120.42, 119.08,
+              113.98, 106.99, 81.13, 75.39, 70.01, 63.4]
+    rows = []
+    for index, score in enumerate(scores):
+        opponent = index + 1 if index % 2 == 0 else index - 1
+        rows.append(
+            (
+                db_name,
+                f"team-{index}",
+                f"team-{opponent}",
+                2026,
+                1,
+                score,
+                10.98,
+                10.98,
+                0,
+                0,
+            )
+        )
+    conn.executemany(
+        """
+        INSERT INTO public.matchup (
+            db_name, franchise_id, opponent_franchise_id, year, week,
+            team_points, league_weekly_mean, league_weekly_median,
+            teams_beat_this_week, opponent_teams_beat_this_week
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.close()
+
+    runner = _MatchupRunner(db_name=db_name, data_dir=str(tmp_path))
+    try:
+        runner.compute_league_weekly_stats()
+        actual = runner._get_connection().execute(
+            """
+            SELECT franchise_id, league_weekly_mean, league_weekly_median,
+                   teams_beat_this_week, opponent_teams_beat_this_week
+            FROM public.matchup
+            ORDER BY team_points DESC
+            """
+        ).fetchall()
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
+
+    assert {row[1] for row in actual} == {108.75}
+    assert {row[2] for row in actual} == {116.53}
+    assert [row[3] for row in actual] == list(range(11, -1, -1))
+    assert actual[0][4] == 10
+    assert actual[1][4] == 11
+
+
 def test_resolve_hidden_managers_reapplies_saved_franchise_merges_by_identity(tmp_path):
     """A full rebuild must preserve user merges without conflating a shared team name."""
     db_name = "saved_franchise_merge_test"

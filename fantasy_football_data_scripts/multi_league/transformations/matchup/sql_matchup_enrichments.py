@@ -6371,7 +6371,6 @@ class MatchupEnrichmentsMixin:
                 below_league_median = CASE WHEN t.team_points < ls.lw_median THEN 1 ELSE 0 END
             FROM league_stats ls
             WHERE t.year = ls.year AND t.week = ls.week
-              AND t.league_weekly_mean IS NULL
               AND t.team_points IS NOT NULL
               AND {self._db_filter("t")}
         """
@@ -6401,7 +6400,6 @@ class MatchupEnrichmentsMixin:
             FROM all_play ap
             WHERE t.year = ap.year AND t.week = ap.week
               AND t.franchise_id = ap._mgr_key
-              AND t.teams_beat_this_week IS NULL
               AND {self._db_filter("t")}
         """
         total += self._execute(sql_allplay, "derived: all-play (teams beat this week)")
@@ -6414,7 +6412,6 @@ class MatchupEnrichmentsMixin:
             WHERE t.year = opp.year AND t.week = opp.week
               AND t.opponent_franchise_id = opp.franchise_id
               AND opp.teams_beat_this_week IS NOT NULL
-              AND t.opponent_teams_beat_this_week IS NULL
               AND {self._db_filter("t")}
               AND {self._db_filter("opp")}
         """

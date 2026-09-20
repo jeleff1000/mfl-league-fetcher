@@ -132,6 +132,7 @@ def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
 
 def test_fetch_all_rosters_for_week_uses_batch_endpoint_slots(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
+    requested_urls = []
     xml = ET.fromstring(
         """
         <fantasy_content>
@@ -158,7 +159,11 @@ def test_fetch_all_rosters_for_week_uses_batch_endpoint_slots(monkeypatch, tmp_p
         </fantasy_content>
         """
     )
-    monkeypatch.setattr(fetcher, "_fetch_url_xml", lambda url: xml)
+    def _fetch_url_xml(url):
+        requested_urls.append(url)
+        return xml
+
+    monkeypatch.setattr(fetcher, "_fetch_url_xml", _fetch_url_xml)
 
     df, failures = fetcher.fetch_all_rosters_for_week(
         2024,
@@ -172,6 +177,9 @@ def test_fetch_all_rosters_for_week_uses_batch_endpoint_slots(monkeypatch, tmp_p
     )
 
     assert failures == []
+    assert requested_urls == [
+        "https://fantasysports.yahooapis.com/fantasy/v2/league/414.l.413370/teams;out=roster;week=6"
+    ]
     assert len(df) == 1
     row = df.iloc[0]
     assert row["manager_name"] == "Adin"

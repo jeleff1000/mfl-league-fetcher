@@ -662,7 +662,14 @@ class YahooRosterFetcher:
         This endpoint does not return player_points, but it does return the
         weekly roster membership and fantasy slot assignments we need.
         """
-        url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{self.league_id}/teams/roster;week={week}/players"
+        # Yahoo exposes subresources for a collection through ``;out=``.
+        # ``/teams/roster`` is not a valid collection path and returns an
+        # empty/error payload even when the same OAuth credential can read
+        # every individual team roster.
+        url = (
+            f"https://fantasysports.yahooapis.com/fantasy/v2/league/{self.league_id}"
+            f"/teams;out=roster;week={week}"
+        )
         root = self._fetch_url_xml(url)
 
         all_rosters: list[dict[str, Any]] = []

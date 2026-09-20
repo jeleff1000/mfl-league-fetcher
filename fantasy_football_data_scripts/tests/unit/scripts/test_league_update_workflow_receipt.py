@@ -80,6 +80,7 @@ def test_commit_receipt_keeps_server_stage_timings(tmp_path):
         "status": "COMMITTED",
         "elapsed_seconds": 12.5,
         "merge_seconds": 13.0,
+        "server_total_seconds": 13.2,
         "lock_wait_seconds": 0.2,
         "season_stage_seconds": {"receipt_canary": {"rollup_build": 2.1}},
         "timings": {"matchup": 0.4},
@@ -92,6 +93,7 @@ def test_commit_receipt_keeps_server_stage_timings(tmp_path):
     assert receipt["publication_timing"] == {
         "elapsed_seconds": 12.5,
         "merge_seconds": 13.0,
+        "server_total_seconds": 13.2,
         "lock_wait_seconds": 0.2,
         "season_stage_seconds": {"receipt_canary": {"rollup_build": 2.1}},
         "timings": {"matchup": 0.4},

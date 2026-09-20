@@ -39,6 +39,7 @@ def record_publication_commit(
     timing_keys = (
         "elapsed_seconds",
         "merge_seconds",
+        "server_total_seconds",
         "lock_wait_seconds",
         "season_stage_seconds",
         "timings",

@@ -199,6 +199,40 @@ def test_fetch_teams_resolves_hidden_yahoo_guid_to_team_identity(monkeypatch, tm
     assert teams["348.l.727365.t.1"]["manager_guid"] == "yh-team-348.l.727365.t.1"
 
 
+def test_fetch_teams_reports_current_login_ownership_without_an_extra_request(monkeypatch, tmp_path):
+    fetcher = _build_fetcher(monkeypatch, tmp_path)
+    requested_urls = []
+    messages = []
+
+    def _fetch_url_xml(url):
+        requested_urls.append(url)
+        return ET.fromstring(
+            """
+            <fantasy_content><league><teams>
+              <team><team_key>470.l.1.t.1</team_key><name>One</name>
+                <is_owned_by_current_login>0</is_owned_by_current_login>
+                <managers><manager><guid>GUID1</guid><nickname>One</nickname></manager></managers>
+              </team>
+              <team><team_key>470.l.1.t.2</team_key><name>Two</name>
+                <is_owned_by_current_login>1</is_owned_by_current_login>
+                <managers><manager><guid>GUID2</guid><nickname>Two</nickname></manager></managers>
+              </team>
+            </teams></league></fantasy_content>
+            """
+        )
+
+    monkeypatch.setattr(fetcher, "_fetch_url_xml", _fetch_url_xml)
+    monkeypatch.setattr("multi_league.data_fetchers.yahoo.yahoo_rosters.log", messages.append)
+
+    teams = fetcher.fetch_teams()
+
+    assert len(teams) == 2
+    assert requested_urls == [
+        "https://fantasysports.yahooapis.com/fantasy/v2/league/414.l.413370/teams"
+    ]
+    assert "Found 2 teams, owned_by_current_login=1/2" in messages
+
+
 def test_local_matchup_max_week_ignores_unplayed_zero_score_week():
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA IF NOT EXISTS public")

@@ -366,6 +366,7 @@ class YahooRosterFetcher:
             root = self._fetch_url_xml(url)
 
             teams = {}
+            owned_team_flags: list[bool] = []
             identity_inputs: list[dict[str, str | None]] = []
             for team_elem in root.findall(".//team"):
                 team_key_elem = team_elem.find("team_key")
@@ -373,6 +374,10 @@ class YahooRosterFetcher:
                     continue
 
                 team_key = team_key_elem.text
+
+                owned_text = (team_elem.findtext("is_owned_by_current_login") or "").strip().lower()
+                if owned_text:
+                    owned_team_flags.append(owned_text in {"1", "true", "yes"})
 
                 # Get raw nickname from manager element
                 manager_elem = team_elem.find(".//manager/nickname")
@@ -420,7 +425,12 @@ class YahooRosterFetcher:
                     if pd.notna(resolved_guid) and str(resolved_guid).strip():
                         teams[team_key]["manager_guid"] = str(resolved_guid).strip()
 
-            log(f"Found {len(teams)} teams")
+            ownership_summary = (
+                f", owned_by_current_login={sum(owned_team_flags)}/{len(owned_team_flags)}"
+                if owned_team_flags
+                else ", owned_by_current_login=unreported"
+            )
+            log(f"Found {len(teams)} teams{ownership_summary}")
 
             return teams
 

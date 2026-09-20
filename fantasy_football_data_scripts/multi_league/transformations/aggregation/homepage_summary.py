@@ -32,8 +32,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
-from collections.abc import Mapping, Sequence
+from typing import Any
+from collections.abc import Callable, Mapping, Sequence
 
 try:
     from multi_league.shared.import_setup import setup_module_path
@@ -375,7 +375,7 @@ def _late_clutch_weeks_cte(db_name: str) -> str:
                 CAST(playoff_start_week AS INTEGER) AS playoff_start_week,
                 GREATEST(
                     1,
-                    CAST(CEIL(LOG2(CAST(playoff_teams AS DOUBLE))) AS INTEGER)
+                    CAST(CEIL(LOG2(GREATEST(1.0, CAST(playoff_teams AS DOUBLE)))) AS INTEGER)
                 ) AS playoff_rounds,
                 CASE
                     WHEN COALESCE(CAST(has_multiweek_championship AS INTEGER), 0) = 1 THEN 1
@@ -384,6 +384,7 @@ def _late_clutch_weeks_cte(db_name: str) -> str:
             FROM {central_table('league_settings')}
             WHERE playoff_start_week IS NOT NULL
               AND playoff_teams IS NOT NULL
+              AND TRY_CAST(playoff_teams AS INTEGER) > 0
               AND {league_db_filter(db_name)}
         ),
         late_clutch_weeks AS (

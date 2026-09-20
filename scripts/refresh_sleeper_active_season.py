@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
@@ -534,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     os.environ["DATABASE_BACKEND"] = "fly"
-    from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION, build_fleet_partition_bundle
+    from multi_league.core.fleet_publish import FLEET_CAREER_SCHEMA_VERSION, build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
         active_nfl_player_ids,
         active_platform_player_ids,
@@ -833,6 +834,14 @@ def main(argv: list[str] | None = None) -> int:
                 weeks=refresh_weeks, expected_scores=expected_matchup_scores,
             )
             timer.mark("transformed_scope_validation")
+            from multi_league.core.homepage_refresh import prepare_homepage_refresh
+
+            homepage_started = time.monotonic()
+            receipt["homepage_refresh"] = prepare_homepage_refresh(
+                reader=reader, local_db=local_db, db_name=args.db, active_year=active_year,
+            )
+            receipt["homepage_seconds"] = round(time.monotonic() - homepage_started, 3)
+            timer.mark("homepage_refresh")
             local_db.connect()
             from multi_league.core.league_update_publish_claim import renew_claim_for_publication
 
@@ -856,7 +865,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             stage_timer.mark("preservation_validation")
             publish_tables = active_refresh_publish_tables(
-                local_db.connect(), publication_schema_version=FLEET_HOMEPAGE_SCHEMA_VERSION,
+                local_db.connect(), publication_schema_version=FLEET_CAREER_SCHEMA_VERSION,
             )
             from multi_league.core.league_update_validation import assert_refresh_derived_output_health
 
@@ -864,7 +873,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="sleeper_player_id",
                 published_tables=publish_tables,
-                publication_schema_version=FLEET_HOMEPAGE_SCHEMA_VERSION,
+                publication_schema_version=FLEET_CAREER_SCHEMA_VERSION,
             )
             from multi_league.core.league_update_ownership import assert_publish_table_ownership
 
@@ -887,7 +896,7 @@ def main(argv: list[str] | None = None) -> int:
                     tables=publish_tables,
                     output_dir=work_dir / "bundle",
                     rebuild_career_rollups=True,
-                    rebuild_homepage_rollups=True,
+                    rebuild_homepage_rollups=False,
                 )
             finally:
                 stage.close()
@@ -905,8 +914,7 @@ def main(argv: list[str] | None = None) -> int:
             record_publication_commit(
                 receipt, result=result, bundle_id=bundle.bundle_id, path=args.json_out,
             )
-            receipt["homepage_rows"] = result.get("homepage_rollups", {}).get(args.db, {})
-            receipt["homepage_seconds"] = result.get("homepage_seconds", {}).get(args.db)
+            receipt["homepage_rows"] = receipt["homepage_refresh"]["rows"]
             receipt["season_rollups"] = result.get("season_rollups", {}).get(args.db, {})
             receipt["season_seconds"] = result.get("season_seconds", {}).get(args.db)
             receipt["career_rollups"] = result.get("career_rollups", {}).get(args.db, {})

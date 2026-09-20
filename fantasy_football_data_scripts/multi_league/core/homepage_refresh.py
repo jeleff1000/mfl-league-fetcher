@@ -42,7 +42,7 @@ _DRAFT_COLUMNS = (
 _TRANSACTION_COLUMNS = (
     "db_name", "transaction_id", "year", "week", "transaction_type", "platform", "manager",
     "franchise_id", "team_name", "player", "position", "yahoo_player_id", "sleeper_player_id",
-    "espn_player_id", "source_manager", "trade_direction", "NFL_player_id", "trade_asset_lamar",
+    "espn_player_id", "source_manager", "source_franchise_id", "trade_direction", "NFL_player_id", "trade_asset_lamar",
     "trade_net_lamar", "player_lamar_ros", "player_lamar_ros_managed", "player_lamar_ros_total",
     "manager_lamar_ros_managed", "total_points_ros_total", "fa_lamar_ros", "drop_regret_score",
     "transaction_quality_score", "transaction_grade",

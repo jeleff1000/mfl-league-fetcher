@@ -6,6 +6,7 @@ import pytest
 from multi_league.transformations.aggregation.homepage_summary import (
     _compute_profiles_concurrently,
     _latest_matchup_year_week,
+    _late_clutch_weeks_cte,
     _compute_best_trade,
     _compute_manager_career_stats,
     _compute_league_records,
@@ -21,7 +22,43 @@ from multi_league.transformations.aggregation.homepage_summary import (
     compute_manager_rankings,
     compute_top_rivalries,
 )
-from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext
+from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext, set_active_catalog
+
+
+def test_late_clutch_window_ignores_zero_playoff_team_seasons():
+    conn = duckdb.connect(":memory:")
+    previous_catalog = None
+    try:
+        conn.execute("CREATE SCHEMA public")
+        db_name = conn.execute("SELECT current_database()").fetchone()[0]
+        previous_catalog = set_active_catalog(db_name)
+        conn.execute(
+            "CREATE TABLE public.league_settings ("
+            "db_name VARCHAR, year INTEGER, playoff_start_week INTEGER, "
+            "playoff_teams INTEGER, has_multiweek_championship INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE public.player_fantasy ("
+            "db_name VARCHAR, year INTEGER, week INTEGER, clutch_equity DOUBLE, "
+            "is_started INTEGER, is_playoffs INTEGER, is_consolation INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO public.league_settings VALUES (?, 2013, 14, 0, 0), (?, 2014, 14, 4, 0)",
+            [db_name, db_name],
+        )
+
+        conn.execute("BEGIN TRANSACTION")
+        rows = conn.execute(
+            _late_clutch_weeks_cte(db_name) + " SELECT year, playoff_rounds FROM settings_weeks ORDER BY year"
+        ).fetchall()
+
+        assert rows == [(2014, 2)]
+        assert conn.execute("SELECT 1").fetchone() == (1,)
+        conn.execute("ROLLBACK")
+    finally:
+        if previous_catalog is not None:
+            set_active_catalog(previous_catalog)
+        conn.close()
 
 
 def test_scoped_profile_context_only_materializes_requested_franchise_players():

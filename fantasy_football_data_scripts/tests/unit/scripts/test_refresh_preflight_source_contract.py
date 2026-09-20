@@ -32,3 +32,20 @@ def test_heavy_source_reads_are_outside_parallel_preflight(entrypoint: str) -> N
         "_load_active_refresh_inputs(", source.index("preflight =")
     )
     assert '"source_plan_stage_seconds": source_plan_stage_seconds' in source
+
+
+@pytest.mark.parametrize(
+    "entrypoint",
+    [
+        "refresh_yahoo_active_season.py",
+        "refresh_sleeper_active_season.py",
+        "refresh_espn_active_season.py",
+    ],
+)
+def test_weekly_refresh_publishes_bounded_local_homepage_frames(entrypoint: str) -> None:
+    source = (ROOT / "scripts" / entrypoint).read_text(encoding="utf-8")
+
+    assert "prepare_homepage_refresh(" in source
+    assert "publication_schema_version=FLEET_CAREER_SCHEMA_VERSION" in source
+    assert "rebuild_homepage_rollups=False" in source
+    assert "FLEET_HOMEPAGE_SCHEMA_VERSION" not in source

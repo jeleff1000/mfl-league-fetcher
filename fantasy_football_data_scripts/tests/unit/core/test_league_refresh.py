@@ -105,6 +105,8 @@ def test_homepage_source_snapshot_uses_one_tagged_fly_read():
     reader = Reader()
     frames = _load_homepage_source_frames(reader, "league_a")
 
+    assert '"source_franchise_id"' in reader.calls[0][0]
+
     assert len(reader.calls) == 1
     assert reader.calls[0][1] == "___leagues"
     assert "UNION ALL" in reader.calls[0][0]

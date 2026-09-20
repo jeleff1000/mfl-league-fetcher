@@ -425,6 +425,17 @@ def fetch_espn_matchups_modern(
         if not has_scores:
             # A raw schedule with no score witness is still a preseason/live
             # snapshot. Do not materialize phantom 0-0 matchups.
+            box_pairs = [
+                (
+                    _normalize_raw_team_id(getattr(getattr(box, "home_team", None), "team_id", None)),
+                    _normalize_raw_team_id(getattr(getattr(box, "away_team", None), "team_id", None)),
+                )
+                for box in box_scores
+            ]
+            log(
+                f"  [MATCHUPS] {year} week {week}: no score-bearing pair join; "
+                f"box_pairs={box_pairs}, raw_pairs={list(raw_schedule_lookup)}"
+            )
             consecutive_empty += 1
             if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
                 break

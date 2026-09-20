@@ -1684,6 +1684,102 @@ def test_query_rw_ops_write_checkpoints_wal(client, data_dir, monkeypatch):
     assert not wal_path.exists() or wal_path.stat().st_size == 0
 
 
+def test_query_rw_ops_honors_request_deadline(client, monkeypatch):
+    import main as main_mod
+
+    captured = {}
+
+    def bounded_write(sql, *, operation=None, deadline=None, on_commit=None):
+        captured["sql"] = sql
+        captured["deadline"] = deadline
+        return []
+
+    monkeypatch.setattr(main_mod, "_execute_ops_query_rw_serialized", bounded_write)
+    started = time.monotonic()
+    resp = client.post(
+        "/query-rw",
+        json={
+            "database": "___ops",
+            "sql": "UPDATE main.league_credentials SET updated_at = current_timestamp",
+            "timeout_seconds": 3,
+        },
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 200
+    assert captured["sql"].startswith("UPDATE main.league_credentials")
+    assert started + 2.5 <= captured["deadline"] <= started + 3.5
+
+
+def test_query_rw_ops_dml_skips_metadata_refresh(client, monkeypatch):
+    import main as main_mod
+
+    refreshed = []
+    monkeypatch.setattr(main_mod.db, "refresh_metadata", lambda: refreshed.append(True))
+
+    resp = client.post(
+        "/query-rw",
+        json={
+            "database": "___ops",
+            "sql": "UPDATE accounts.league_inventory SET updated_at = current_timestamp WHERE 1 = 0",
+            "timeout_seconds": 1,
+        },
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 200
+    assert refreshed == []
+
+
+def test_query_rw_ops_returns_success_when_commit_precedes_cleanup_timeout(client, monkeypatch):
+    import main as main_mod
+
+    def committed_then_slow_cleanup(sql, *, operation=None, deadline=None, on_commit=None):
+        assert on_commit is not None
+        on_commit()
+        time.sleep(1.2)
+        return []
+
+    monkeypatch.setattr(main_mod, "_execute_ops_query_rw_serialized", committed_then_slow_cleanup)
+    resp = client.post(
+        "/query-rw",
+        json={
+            "database": "___ops",
+            "sql": "BEGIN TRANSACTION; UPDATE accounts.league_inventory SET updated_at = current_timestamp WHERE 1 = 0; COMMIT",
+            "timeout_seconds": 0.1,
+        },
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 200
+
+
+def test_write_script_reports_explicit_commit():
+    import main as main_mod
+
+    class Result:
+        description = None
+
+        def interrupt(self):
+            pass
+
+        def execute(self, statement):
+            executed.append(statement)
+            return self
+
+    executed = []
+    committed = []
+    main_mod._execute_script_with_timeout(
+        Result(),
+        "BEGIN TRANSACTION; UPDATE witness SET value = 1; COMMIT;",
+        1,
+        on_commit=lambda: committed.append(True),
+    )
+
+    assert executed[-1] == "COMMIT"
+    assert committed == [True]
+
+
 def test_startup_quarantines_unreplayable_ops_wal_without_touching_leagues_wal(
     data_dir, monkeypatch
 ):
@@ -2928,6 +3024,32 @@ def test_post_merge_checkpoint_is_skipped_in_storage_recovery_mode(tmp_path, mon
         hard_exit_timer=FakeTimer(),
     ) is False
     assert events == ["timer_cancelled"]
+
+
+def test_forced_ops_checkpoint_ignores_disabled_size_threshold(tmp_path, monkeypatch):
+    import main as main_mod
+
+    db_path = tmp_path / "___ops.duckdb"
+    db_path.write_bytes(b"ops")
+    (tmp_path / "___ops.duckdb.wal").write_bytes(b"ops wal")
+    executed = []
+
+    monkeypatch.setattr(main_mod, "DUCKDB_CHECKPOINT_WAL_MB", 0)
+    monkeypatch.setattr(
+        main_mod,
+        "_interrupting_execute",
+        lambda conn, sql, **kwargs: executed.append((conn, sql, kwargs)),
+    )
+
+    conn = object()
+    assert main_mod._checkpoint_connection_if_wal_large(
+        conn,
+        db_path,
+        reason="startup ___ops",
+        force=True,
+        raise_on_error=True,
+    )
+    assert executed[0][1] == "CHECKPOINT"
 
 
 def test_write_script_keeps_semicolons_inside_sql_literals():

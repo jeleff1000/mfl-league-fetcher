@@ -121,11 +121,13 @@ def test_execute_honors_per_call_timeout_and_retry_limit(fly_env):
                 "UPDATE main.league_credentials SET updated_at = current_timestamp",
                 database="___ops",
                 timeout_seconds=3,
+                server_timeout_seconds=1,
                 max_retries=1,
             )
 
     assert mock_post.call_count == 1
     assert mock_post.call_args.kwargs["timeout"] == 3
+    assert mock_post.call_args.kwargs["json"]["timeout_seconds"] == 1
 
 
 def test_execute_exhausts_retries_then_raises(fly_env):

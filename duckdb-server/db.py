@@ -229,6 +229,67 @@ def configure_duckdb(conn, data_dir: Path | None = None, *, threads: int | None 
     _log_duckdb_guardrails(data_dir, threads=threads)
 
 
+def ensure_ops_credential_schema(conn) -> list[str]:
+    """Provision credential metadata only when a schema object is missing."""
+    operations: list[str] = []
+
+    for schema in ("main", "accounts"):
+        exists = conn.execute(
+            "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = ?",
+            [schema],
+        ).fetchone()[0]
+        if not exists:
+            conn.execute(f'CREATE SCHEMA "{schema}"')
+            operations.append(f"create_schema:{schema}")
+
+    table_specs = {
+        ("main", "league_credentials"): {
+            "league_id": "TEXT",
+            "league_name": "TEXT",
+            "database_name": "TEXT",
+            "encrypted_refresh_token": "TEXT",
+            "updated_at": "TIMESTAMP DEFAULT current_timestamp",
+        },
+        ("accounts", "league_inventory"): {
+            "database_name": "VARCHAR",
+            "platform": "VARCHAR",
+            "league_name": "VARCHAR",
+            "league_id": "VARCHAR",
+            "tier": "VARCHAR DEFAULT 'free'",
+            "entitled_mode": "VARCHAR DEFAULT 'quick'",
+            "last_import_mode": "VARCHAR",
+            "last_import_at": "TIMESTAMP",
+            "in_centralized": "BOOLEAN DEFAULT FALSE",
+            "num_teams": "INTEGER",
+            "first_year": "INTEGER",
+            "last_year": "INTEGER",
+            "scoring_variant": "VARCHAR",
+            "has_credentials": "BOOLEAN DEFAULT FALSE",
+            "created_at": "TIMESTAMP DEFAULT current_timestamp",
+            "updated_at": "TIMESTAMP DEFAULT current_timestamp",
+        },
+    }
+    for (schema, table), columns in table_specs.items():
+        present = {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = ? AND table_name = ?",
+                [schema, table],
+            ).fetchall()
+        }
+        if not present:
+            definitions = ", ".join(f'"{name}" {definition}' for name, definition in columns.items())
+            conn.execute(f'CREATE TABLE "{schema}"."{table}" ({definitions})')
+            operations.append(f"create_table:{schema}.{table}")
+            continue
+        for name, definition in columns.items():
+            if name not in present:
+                conn.execute(f'ALTER TABLE "{schema}"."{table}" ADD COLUMN "{name}" {definition}')
+                operations.append(f"add_column:{schema}.{table}.{name}")
+    return operations
+
+
 def init_pool():
     """Open all connections (pool + ___ops). Called at startup and after full swaps."""
     global _data_dir, _metadata, _active_count, _ops_conn, POOL_SIZE
@@ -254,6 +315,14 @@ def init_pool():
         except Exception:
             pass
         _ops_conn = None
+
+    ops_schema_conn = connect_database(ops_path, data_dir=_data_dir)
+    try:
+        schema_operations = ensure_ops_credential_schema(ops_schema_conn)
+        if schema_operations:
+            logger.info("Provisioned ___ops credential schema: %s", ", ".join(schema_operations))
+    finally:
+        ops_schema_conn.close()
 
     # Pool connections are normal DuckDB connections so reads can keep a
     # snapshot open while delta merges commit in another connection. ___ops is

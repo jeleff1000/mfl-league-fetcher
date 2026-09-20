@@ -54,6 +54,7 @@ class FlyWriter:
         database: str = "___leagues",
         *,
         timeout_seconds: int | float | None = None,
+        server_timeout_seconds: int | float | None = None,
         max_retries: int | None = None,
     ) -> list[dict]:
         request_timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
@@ -61,9 +62,15 @@ class FlyWriter:
         last_error: str | None = None
         for attempt in range(attempt_limit):
             try:
+                payload: dict[str, object] = {"sql": sql, "database": database}
+                effective_server_timeout = (
+                    timeout_seconds if server_timeout_seconds is None else server_timeout_seconds
+                )
+                if effective_server_timeout is not None:
+                    payload["timeout_seconds"] = effective_server_timeout
                 resp = requests.post(
                     f"{self.url}/query-rw",
-                    json={"sql": sql, "database": database},
+                    json=payload,
                     headers=self._headers(),
                     timeout=request_timeout,
                 )

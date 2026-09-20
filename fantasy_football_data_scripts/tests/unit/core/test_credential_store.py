@@ -122,7 +122,11 @@ def test_store_league_credentials_fly_fails_fast(monkeypatch):
     )
 
     _sql, _database, kwargs = writer.calls[0]
-    assert kwargs == {"timeout_seconds": 3, "max_retries": 1}
+    assert kwargs == {
+        "timeout_seconds": 3,
+        "server_timeout_seconds": 1,
+        "max_retries": 1,
+    }
 
 
 def test_store_league_credentials_fly_is_one_transaction(monkeypatch):

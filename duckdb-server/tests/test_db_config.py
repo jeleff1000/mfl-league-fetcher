@@ -68,6 +68,66 @@ def test_production_fly_config_does_not_leave_wal_checkpointing_disabled():
     assert "DUCKDB_CHECKPOINT_WAL_MB = '0'" not in fly_toml
 
 
+def test_ops_credential_schema_is_provisioned_once_and_then_read_only(tmp_path):
+    import db as db_mod
+
+    conn = db_mod.connect_database(tmp_path / "___ops.duckdb", data_dir=tmp_path)
+    try:
+        first = db_mod.ensure_ops_credential_schema(conn)
+        second = db_mod.ensure_ops_credential_schema(conn)
+        credential_columns = {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'main' AND table_name = 'league_credentials'"
+            ).fetchall()
+        }
+        inventory_columns = {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'accounts' AND table_name = 'league_inventory'"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert first
+    assert second == []
+    assert {
+        "league_id",
+        "league_name",
+        "database_name",
+        "encrypted_refresh_token",
+        "updated_at",
+    } <= credential_columns
+    assert {
+        "database_name",
+        "platform",
+        "league_name",
+        "league_id",
+        "tier",
+        "entitled_mode",
+        "has_credentials",
+        "last_import_at",
+        "created_at",
+        "updated_at",
+    } <= inventory_columns
+
+
+def test_init_pool_rechecks_ops_schema_after_existing_reader_is_closed(tmp_path, monkeypatch):
+    import db as db_mod
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DB_POOL_SIZE", "1")
+    try:
+        db_mod.init_pool()
+        db_mod.init_pool()
+        assert db_mod.get_ops_connection() is not None
+    finally:
+        db_mod.close_all()
+
+
 def test_temp_limit_is_fixed_for_connections_to_same_database(tmp_path, monkeypatch):
     import db as db_mod
 

@@ -43,6 +43,11 @@ jobs:
           # fly.toml must not undo a temporary, verified recovery capacity change.
           machines="$(flyctl machines list --app league-history-duckdb --json)"
           echo "$machines" | jq -e 'length == 1 and .[0].id == "1781e011b69068" and .[0].state == "started"' >/dev/null
+          # A normal image restart must never resolve an unfinished league-file
+          # swap. Require that no league replacement artifacts are present so
+          # this deployment can only perform the scoped ___ops WAL recovery.
+          flyctl ssh console --app league-history-duckdb --machine 1781e011b69068 \
+            -C "/bin/sh -lc 'test ! -e /data/___leagues.duckdb.incoming && test ! -e /data/___leagues.duckdb.prev'"
           safe_to_update=false
           for attempt in 1 2 3 4 5; do
             # /ready intentionally returns 503 during startup.  Use the

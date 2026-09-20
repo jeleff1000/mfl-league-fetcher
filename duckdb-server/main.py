@@ -532,7 +532,7 @@ def _quarantine_wal(db_path: Path, *, reason: str) -> Path | None:
 def _checkpoint_connection_if_wal_large(
     conn, db_path: Path, *, reason: str, force: bool = False, raise_on_error: bool = False
 ) -> bool:
-    if DUCKDB_CHECKPOINT_WAL_MB <= 0:
+    if DUCKDB_CHECKPOINT_WAL_MB <= 0 and not force:
         return False
     before_mb = _wal_size_mb(db_path)
     if before_mb <= 0:
@@ -989,6 +989,7 @@ def is_read_only_sql(sql: str) -> bool:
 class QueryRequest(BaseModel):
     sql: str
     database: str = "___leagues"
+    timeout_seconds: float | None = None
 
 
 @app.post("/query")
@@ -1169,10 +1170,27 @@ async def query_rw_endpoint(req: QueryRequest, request: Request):
         # publishes. The thread-side _ops_lock still serializes the actual
         # DuckDB ___ops writer.
         t0_rw = time.perf_counter()
+        deadline = None
+        request_timeout = ADMIN_QUERY_TIMEOUT + 5
+        committed = None
+        if req.timeout_seconds is not None:
+            if not math.isfinite(req.timeout_seconds) or not 0.1 <= req.timeout_seconds <= ADMIN_QUERY_TIMEOUT:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"timeout_seconds must be between 0.1 and {ADMIN_QUERY_TIMEOUT:g}",
+                )
+            deadline = time.monotonic() + req.timeout_seconds
+            request_timeout = req.timeout_seconds + 0.25
+            committed = threading.Event()
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(_execute_ops_query_rw_serialized, req.sql),
-                timeout=ADMIN_QUERY_TIMEOUT + 5,
+                asyncio.to_thread(
+                    _execute_ops_query_rw_serialized,
+                    req.sql,
+                    deadline=deadline,
+                    on_commit=committed.set if committed is not None else None,
+                ),
+                timeout=request_timeout,
             )
             track_event(
                 "query_rw_executed",
@@ -1180,9 +1198,12 @@ async def query_rw_endpoint(req: QueryRequest, request: Request):
             )
             return result
         except TimeoutError as e:
+            if committed is not None and committed.is_set():
+                logger.warning("___ops write committed before cleanup exceeded request deadline")
+                track_event("query_rw_committed_cleanup_pending", {"database": "___ops"})
+                return []
             logger.error("___ops read-write query timeout (%ss): %s", ADMIN_QUERY_TIMEOUT, req.sql[:500])
             raise HTTPException(status_code=504, detail="Query timed out") from e
-
     async with _merge_lock:
         _state["status"] = "draining"
         elapsed = 0
@@ -1281,7 +1302,13 @@ def _split_sql_statements(sql: str) -> list[str]:
     return statements
 
 
-def _execute_script_with_timeout(conn, sql: str, timeout_seconds: float) -> list[dict]:
+def _execute_script_with_timeout(
+    conn,
+    sql: str,
+    timeout_seconds: float,
+    *,
+    on_commit=None,
+) -> list[dict]:
     """Execute one or more write statements with a hard wall-clock timeout."""
     timer = threading.Timer(timeout_seconds, conn.interrupt)
     timer.start()
@@ -1291,8 +1318,14 @@ def _execute_script_with_timeout(conn, sql: str, timeout_seconds: float) -> list
         # Keep execution predictable without splitting semicolons embedded in
         # status/error strings or quoted identifiers.
         statements = _split_sql_statements(sql)
-        for statement in statements:
+        for index, statement in enumerate(statements):
             result = conn.execute(statement)
+            if (
+                on_commit is not None
+                and index == len(statements) - 1
+                and re.fullmatch(r"COMMIT(?:\s+TRANSACTION)?", statement.strip(), flags=re.IGNORECASE)
+            ):
+                on_commit()
         if result is None or result.description is None:
             return []
         columns = [desc[0] for desc in result.description]
@@ -1452,6 +1485,16 @@ def _sql_requests_checkpoint(sql: str) -> bool:
     return re.search(r"\b(?:FORCE\s+)?CHECKPOINT\b", scrubbed, flags=re.IGNORECASE) is not None
 
 
+def _sql_changes_catalog(sql: str) -> bool:
+    """Return whether an admin script changes schemas, tables, views, or attachments."""
+    scrubbed = _strip_sql_literals_and_comments(sql, strip_double_quoted_identifiers=False)
+    return re.search(
+        r"\b(?:CREATE|ALTER|DROP|RENAME|ATTACH|DETACH|USE)\b",
+        scrubbed,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
 def _ops_write_needs_nfl_attachment(sql: str) -> bool:
     """Source-free metadata DDL/VALUES/UPDATE does not need the NFL catalog.
 
@@ -1500,7 +1543,7 @@ def _ops_write_phase(phase: str):
                     phase, status, time.monotonic() - started, owner)
 
 
-def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = None):
+def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = None, on_commit=None):
     """Execute an admin write against ___ops without draining ___leagues reads."""
     import db as _db
 
@@ -1568,9 +1611,19 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
                             raw, statement, params, step="OPS NFL attachment",
                             timeout_seconds=min(MERGE_STEP_TIMEOUT_SECONDS, remaining()))))
             with _ops_write_phase("sql"):
-                result = _execute_script_with_timeout(
-                    conn, sql, DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
+                script_timeout = min(
+                    DUCKDB_CHECKPOINT_TIMEOUT_SECONDS if checkpoint_sql else ADMIN_QUERY_TIMEOUT,
+                    remaining(),
                 )
+                if on_commit is None:
+                    result = _execute_script_with_timeout(conn, sql, script_timeout)
+                else:
+                    result = _execute_script_with_timeout(
+                        conn,
+                        sql,
+                        script_timeout,
+                        on_commit=on_commit,
+                    )
             with _ops_write_phase("checkpoint"):
                 _checkpoint_connection_if_wal_large(conn, ops_path, reason="___ops write")
             return result
@@ -1584,7 +1637,7 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
                 cleanup_error = exc
                 logger.exception("Failed closing ___ops writer")
             reopen_actions = [("reopen ___ops connection", _db.reopen_ops_connection)]
-            if operation is None:
+            if operation is None and _sql_changes_catalog(sql):
                 reopen_actions.append(("refresh DuckDB metadata", _db.refresh_metadata))
             for label, action in reopen_actions:
                 try:
@@ -1612,15 +1665,28 @@ def _execute_ops_query_rw(sql: str, *, operation=None, deadline: float | None = 
         _db._ops_lock.release()
 
 
-def _execute_ops_query_rw_serialized(sql: str, *, operation=None, deadline: float | None = None):
+def _execute_ops_query_rw_serialized(
+    sql: str,
+    *,
+    operation=None,
+    deadline: float | None = None,
+    on_commit=None,
+):
     """Run an ___ops write without racing an online replacement snapshot."""
     if deadline is None:
         with _ops_rebuild_lock:
-            return _execute_ops_query_rw(sql)
+            if on_commit is None:
+                return _execute_ops_query_rw(sql)
+            return _execute_ops_query_rw(sql, on_commit=on_commit)
     if not _ops_rebuild_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
         raise TimeoutError("OPS publication lock exceeded the rename deadline")
     try:
-        return _execute_ops_query_rw(sql, operation=operation, deadline=deadline)
+        return _execute_ops_query_rw(
+            sql,
+            operation=operation,
+            deadline=deadline,
+            on_commit=on_commit,
+        )
     finally:
         _ops_rebuild_lock.release()
 

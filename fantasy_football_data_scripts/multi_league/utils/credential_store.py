@@ -365,6 +365,7 @@ def _store_league_credentials_fly(
             sql,
             database="___ops",
             timeout_seconds=3,
+            server_timeout_seconds=1,
             max_retries=1,
         )
         print(f"Stored Fly credentials for {league_name} ({league_id}) -> {database_name}")

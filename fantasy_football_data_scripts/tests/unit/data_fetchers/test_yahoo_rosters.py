@@ -160,7 +160,7 @@ def test_fetch_all_rosters_for_week_uses_native_weekly_team_roster(monkeypatch, 
 
     assert failures == []
     assert requested_urls == [
-        "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/roster;week=6"
+        "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/roster;week=6/players"
     ]
     assert len(df) == 1
     row = df.iloc[0]

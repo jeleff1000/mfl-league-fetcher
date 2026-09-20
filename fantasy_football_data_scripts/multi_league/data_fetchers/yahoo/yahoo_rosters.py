@@ -520,11 +520,20 @@ class YahooRosterFetcher:
         url = f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team_key}/roster;week={week}"
         if include_stats:
             url += f"/players/stats;type=week;week={week}"
+        else:
+            url += "/players"
 
         try:
             root = self._fetch_url_xml(url)
+            player_elements = root.findall(".//player")
+            if not player_elements:
+                raise ValueError(
+                    "Yahoo weekly roster payload omitted players "
+                    f"(team={team_key}, week={week}, roster_nodes={len(root.findall('.//roster'))}, "
+                    f"players_nodes={len(root.findall('.//players'))})"
+                )
             roster_data = self._parse_roster_players(
-                root.findall(".//player"),
+                player_elements,
                 year=year,
                 week=week,
                 team_key=team_key,

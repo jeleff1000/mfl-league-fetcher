@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -38,6 +39,38 @@ def test_unfinalized_espn_schedule_log_exposes_the_safe_period_witness(capsys):
     assert "outcomes=['UNDECIDED']" in output
     assert "matchup_periods=[2]" in output
     assert "teams=['1', '2']" in output
+
+
+def test_espn_refresh_rejects_a_missing_prior_week_matchup():
+    from refresh_espn_active_season import assert_espn_closed_matchup_weeks
+    from multi_league.core.league_refresh import RefreshScopeError
+
+    with pytest.raises(
+        RefreshScopeError,
+        match=r"prior requested weeks.*\[1\]",
+    ):
+        assert_espn_closed_matchup_weeks(
+            refresh_weeks=[1, 2],
+            finalized_matchup_weeks=[],
+        )
+
+
+def test_espn_refresh_allows_the_latest_requested_week_to_remain_live():
+    from refresh_espn_active_season import assert_espn_closed_matchup_weeks
+
+    assert_espn_closed_matchup_weeks(
+        refresh_weeks=[1, 2],
+        finalized_matchup_weeks=[1],
+    )
+
+
+def test_espn_incomplete_matchups_write_an_actionable_receipt_before_failing():
+    text = (ROOT / "scripts" / "refresh_espn_active_season.py").read_text(encoding="utf-8")
+
+    catch = text.split("except RefreshScopeError as exc:", 1)[1].split("raise", 1)[0]
+    assert 'receipt["status"] = "INCOMPLETE_SOURCE"' in catch
+    assert 'receipt["error_code"] = "espn_provider_response_incomplete"' in catch
+    assert "_write_receipt(receipt, args.json_out)" in catch
 
 
 def test_espn_draft_names_are_hydrated_from_the_fetched_roster():

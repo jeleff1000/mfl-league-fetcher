@@ -79,6 +79,29 @@ def _finalized_espn_matchup_weeks(
     return finalized
 
 
+def assert_espn_closed_matchup_weeks(
+    *,
+    refresh_weeks: list[int],
+    finalized_matchup_weeks: list[int],
+) -> None:
+    """Require completed fantasy outcomes for every requested prior week.
+
+    The newest requested week may still be live so its completed NFL games can
+    be published without treating the fantasy matchup as final.  Any earlier
+    requested week is already behind that live boundary and must be complete.
+    """
+    from multi_league.core.league_refresh import RefreshScopeError
+
+    requested = sorted({int(week) for week in refresh_weeks})
+    finalized = {int(week) for week in finalized_matchup_weeks}
+    missing = [week for week in requested[:-1] if week not in finalized]
+    if missing:
+        raise RefreshScopeError(
+            "ESPN omitted finalized fantasy matchup outcomes for prior requested weeks "
+            f"{missing}"
+        )
+
+
 def espn_source_manifest_complete(
     *,
     refresh_weeks: list[int],
@@ -468,6 +491,10 @@ def _merge_active_payloads(
         roster_rows += len(safe_rows)
 
     final_matchup_weeks, final_schedule_graphs, transactions = secondary_payload_future.result()
+    assert_espn_closed_matchup_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_matchup_weeks=final_matchup_weeks,
+    )
     matchup_rows = 0
     if final_matchup_weeks:
         matchups = fetch_espn_matchups(
@@ -568,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["DATABASE_BACKEND"] = "fly"
     from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION, build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
+        RefreshScopeError,
         active_nfl_player_ids,
         active_platform_player_ids,
         active_platform_player_names,
@@ -763,15 +791,23 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ) if args.execute else nullcontext(None)
             with ops_context as ops_future:
-                receipt["fetch_rows"] = _merge_active_payloads(
-                    ctx=ctx,
-                    client=client,
-                    league=league,
-                    local_db=local_db,
-                    active_year=active_year,
-                    refresh_weeks=refresh_weeks,
-                    finalized_ops=finalized_ops,
-                )
+                try:
+                    receipt["fetch_rows"] = _merge_active_payloads(
+                        ctx=ctx,
+                        client=client,
+                        league=league,
+                        local_db=local_db,
+                        active_year=active_year,
+                        refresh_weeks=refresh_weeks,
+                        finalized_ops=finalized_ops,
+                    )
+                except RefreshScopeError as exc:
+                    receipt["status"] = "INCOMPLETE_SOURCE"
+                    receipt["error_code"] = "espn_provider_response_incomplete"
+                    receipt["error"] = str(exc)
+                    receipt["phase_seconds"] = timer.finish()
+                    _write_receipt(receipt, args.json_out)
+                    raise
                 receipt["source_manifest_complete"] = espn_source_manifest_complete(
                     refresh_weeks=refresh_weeks,
                     fetch_rows=receipt["fetch_rows"],

@@ -14,7 +14,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import time
@@ -1581,17 +1580,6 @@ def _merge_refresh_payloads(
     }
 
 
-def _aggregate_subprocess_env() -> dict[str, str]:
-    """Give the aggregate child process the same source-package import path."""
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH", "")
-    entries = [str(DATA_SCRIPTS)]
-    if existing:
-        entries.append(existing)
-    env["PYTHONPATH"] = os.pathsep.join(entries)
-    return env
-
-
 def _attach_ops_cache_for_enrichment(local_db: Any) -> None:
     """Attach the patched local OPS cache before any shared SQL enrichment.
 
@@ -1626,6 +1614,9 @@ def _run_refresh_simulations(
     n_sims: int = 10_000,
 ) -> None:
     """Rebuild active-season luck, playoff, and clutch values deterministically."""
+    from multi_league.transformations.matchup.expected_record_v2 import main as expected_record_main
+    from multi_league.transformations.matchup.playoff_odds_import import main as playoff_odds_main
+
     common = [
         "--db",
         db_name,
@@ -1636,11 +1627,8 @@ def _run_refresh_simulations(
         "--n-sims",
         str(int(n_sims)),
     ]
-    subprocess.run(
+    expected_record_main(
         [
-            sys.executable,
-            "-m",
-            "multi_league.transformations.matchup.expected_record_v2",
             *common,
             "--current-year",
             str(int(active_year)),
@@ -1648,22 +1636,9 @@ def _run_refresh_simulations(
             str(int(current_week)),
             "--seed",
             "42",
-        ],
-        cwd=ROOT,
-        env=_aggregate_subprocess_env(),
-        check=True,
+        ]
     )
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "multi_league.transformations.matchup.playoff_odds_import",
-            *common,
-        ],
-        cwd=ROOT,
-        env=_aggregate_subprocess_env(),
-        check=True,
-    )
+    playoff_odds_main(common)
 
 
 def _run_refresh_aggregates(

@@ -3088,7 +3088,7 @@ def process_parquet_files(
 # -------------------------
 # Main
 # -------------------------
-def main():
+def main(argv: list[str] | None = None):
     """Main entry point with argument parsing."""
     global N_SIMS  # Declare at top before any reference to N_SIMS
 
@@ -3123,7 +3123,7 @@ Note:
         help="Path to local DuckDB directory (runs locally instead of MotherDuck)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.context and not args.db:
         parser.error("Either --context or --db is required")

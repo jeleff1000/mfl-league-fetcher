@@ -656,7 +656,7 @@ def calculate_expected_records(
 # =========================================================
 # CLI Interface
 # =========================================================
-def main():
+def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="Calculate expected records using Monte Carlo schedule simulations")
     parser.add_argument("--context", type=str, help="Path to league_context.json")
     parser.add_argument(
@@ -671,7 +671,7 @@ def main():
         "--data-dir", type=str, default=None, help="Path to local DuckDB directory (runs locally instead of MotherDuck)"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.context and not args.db:
         parser.error("Either --context or --db is required")

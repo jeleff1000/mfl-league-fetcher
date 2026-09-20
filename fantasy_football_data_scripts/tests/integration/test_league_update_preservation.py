@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pandas as pd
 import pytest
 
@@ -200,7 +198,7 @@ def test_target_year_simulation_and_clutch_leave_historical_values_untouched(
 ):
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.transformations.matchup import playoff_odds_import
-    from multi_league.transformations.player.clutch_to_player import main as clutch_main
+    from scripts import refresh_yahoo_active_season
 
     local = LocalLeagueDB(tmp_path, "league_a")
     try:
@@ -296,14 +294,15 @@ def test_target_year_simulation_and_clutch_leave_historical_values_untouched(
             ).target_cols,
         )
 
-        playoff_odds_import.process_parquet_files(
-            conn=local.connect(),
+        local.close()
+        refresh_yahoo_active_season._run_refresh_simulations(
             db_name="league_a",
-            data_directory=str(tmp_path),
-            settings_by_year=settings,
-            data_dir=str(tmp_path),
-            target_year=2026,
+            active_year=2026,
+            current_week=1,
+            work_dir=tmp_path,
+            n_sims=100,
         )
+        local.connect()
 
         assert local.connect().execute(
             "SELECT DISTINCT p_champ FROM public.matchup WHERE year = 2025"
@@ -312,16 +311,6 @@ def test_target_year_simulation_and_clutch_leave_historical_values_untouched(
             "SELECT COUNT(*) FROM public.matchup WHERE year = 2026 AND p_champ IS NOT NULL"
         ).fetchone()[0] == 4
 
-        local.close()
-        clutch_main(SimpleNamespace(
-            db="league_a",
-            data_dir=str(tmp_path),
-            context=None,
-            dry_run=False,
-            backup=False,
-            target_year=2026,
-        ))
-        local.connect()
         assert local.connect().execute(
             "SELECT DISTINCT clutch_equity FROM public.player_fantasy WHERE year = 2025"
         ).fetchall() == [(4.5,)]

@@ -2114,15 +2114,20 @@ def test_yahoo_refresh_rebuilds_only_active_season_rollups_and_standings(
     ]
 
 
-def test_weekly_simulations_are_scoped_to_the_active_season(tmp_path, monkeypatch):
+def test_weekly_simulations_run_in_process_and_are_scoped_to_the_active_season(tmp_path, monkeypatch):
     from scripts import refresh_yahoo_active_season
+    from multi_league.transformations.matchup import expected_record_v2, playoff_odds_import
 
-    commands: list[list[str]] = []
+    calls: list[tuple[str, list[str]]] = []
 
-    def capture(command, **_kwargs):
-        commands.append(command)
+    def capture_expected(argv=None):
+        calls.append(("expected", list(argv or [])))
 
-    monkeypatch.setattr(refresh_yahoo_active_season.subprocess, "run", capture)
+    def capture_playoff(argv=None):
+        calls.append(("playoff", list(argv or [])))
+
+    monkeypatch.setattr(expected_record_v2, "main", capture_expected)
+    monkeypatch.setattr(playoff_odds_import, "main", capture_playoff)
 
     refresh_yahoo_active_season._run_refresh_simulations(
         db_name="league_a",
@@ -2132,14 +2137,13 @@ def test_weekly_simulations_are_scoped_to_the_active_season(tmp_path, monkeypatc
         n_sims=10_000,
     )
 
-    assert len(commands) == 2
-    assert commands[0][2].endswith("expected_record_v2")
-    assert commands[1][2].endswith("playoff_odds_import")
-    for command in commands:
-        assert command[command.index("--target-year") + 1] == "2026"
-        assert command[command.index("--n-sims") + 1] == "10000"
-        assert "--data-dir" in command
-    assert commands[0][commands[0].index("--current-week") + 1] == "4"
+    assert [name for name, _ in calls] == ["expected", "playoff"]
+    for _, argv in calls:
+        assert argv[argv.index("--target-year") + 1] == "2026"
+        assert argv[argv.index("--n-sims") + 1] == "10000"
+        assert "--data-dir" in argv
+    expected_argv = calls[0][1]
+    assert expected_argv[expected_argv.index("--current-week") + 1] == "4"
 
 
 def test_yahoo_roster_adapter_forwards_the_incremental_week_selection(tmp_path, monkeypatch):
@@ -2808,19 +2812,6 @@ def test_ops_cache_delta_identifies_only_changed_and_removed_rows():
         ("new", "NWE", "SEA"),
         ("removed", "NWE", "SEA"),
     }
-
-
-def test_refresh_aggregate_subprocess_inherits_the_local_package_path(monkeypatch):
-    """GitHub invokes refresh_aggregates.py as a child Python process."""
-    from scripts import refresh_yahoo_active_season
-
-    monkeypatch.setenv("PYTHONPATH", "existing-path")
-
-    env = refresh_yahoo_active_season._aggregate_subprocess_env()
-
-    entries = env["PYTHONPATH"].split(refresh_yahoo_active_season.os.pathsep)
-    assert entries[0] == str(refresh_yahoo_active_season.DATA_SCRIPTS)
-    assert entries[1] == "existing-path"
 
 
 def test_espn_refresh_writes_a_receipt_for_an_early_dry_run_exit(tmp_path):

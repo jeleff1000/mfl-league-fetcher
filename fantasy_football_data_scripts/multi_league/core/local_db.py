@@ -913,8 +913,8 @@ class LocalLeagueDB:
         The worker entrypoint is intentionally stable. Set
         FLY_PUBLISH_FORMAT=delta to publish a manifested Parquet delta bundle
         through /merge-league-delta. Quick imports always use the existing
-        /merge-fleet-partition v3 lane: bounded seasons of facts with full-chain
-        server rollups, never whole-league replacement or a legacy fallback.
+        single /merge-fleet-partition lane: bounded seasons of facts with
+        full-chain server rollups, never whole-league replacement or a legacy fallback.
         Configuration/identity tables initialize only where absent; saved
         user settings remain authoritative inside the fenced transaction.
         """

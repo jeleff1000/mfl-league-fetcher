@@ -41,6 +41,65 @@ def test_unfinalized_espn_schedule_log_exposes_the_safe_period_witness(capsys):
     assert "teams=['1', '2']" in output
 
 
+def test_closed_espn_period_derives_missing_winners_without_finalizing_current_period():
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    schedules = {
+        1: [
+            {
+                "matchupPeriodId": 1,
+                "winner": "UNDECIDED",
+                "home": {"teamId": 1, "totalPoints": 112.5},
+                "away": {"teamId": 2, "totalPoints": 99.25},
+            }
+        ],
+        2: [
+            {
+                "matchupPeriodId": 2,
+                "winner": "UNDECIDED",
+                "home": {"teamId": 1, "totalPoints": 40.0},
+                "away": {"teamId": 2, "totalPoints": 35.0},
+            }
+        ],
+    }
+    client = SimpleNamespace(get_raw_schedule=lambda _year, week: schedules[week])
+    finalized_schedules = {}
+
+    assert _finalized_espn_matchup_weeks(
+        client,
+        year=2026,
+        weeks=[1, 2],
+        expected_team_ids=("1", "2"),
+        current_matchup_period=2,
+        schedule_out=finalized_schedules,
+    ) == [1]
+    assert finalized_schedules[1][0]["winner"] == "HOME"
+    assert 2 not in finalized_schedules
+
+
+def test_closed_espn_period_still_rejects_an_incomplete_team_graph():
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    client = SimpleNamespace(
+        get_raw_schedule=lambda *_args: [
+            {
+                "matchupPeriodId": 1,
+                "winner": "UNDECIDED",
+                "home": {"teamId": 1, "totalPoints": 112.5},
+                "away": {"teamId": 2, "totalPoints": 99.25},
+            }
+        ]
+    )
+
+    assert _finalized_espn_matchup_weeks(
+        client,
+        year=2026,
+        weeks=[1],
+        expected_team_ids=("1", "2", "3", "4"),
+        current_matchup_period=2,
+    ) == []
+
+
 def test_espn_refresh_rejects_a_missing_prior_week_matchup():
     from refresh_espn_active_season import assert_espn_closed_matchup_weeks
     from multi_league.core.league_refresh import RefreshScopeError

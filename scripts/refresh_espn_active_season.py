@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import tempfile
@@ -35,24 +36,100 @@ def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _closed_espn_schedule(
+    schedule_rows: list[dict[str, Any]],
+    *,
+    requested_week: int,
+    current_matchup_period: int | None,
+    expected_team_ids: tuple[str, ...],
+) -> list[dict[str, Any]] | None:
+    """Return a validated final graph, deriving stale ESPN winner markers.
+
+    Some active ESPN leagues leave a completed period's ``winner`` at
+    ``UNDECIDED`` after advancing ``currentMatchupPeriod``.  The period
+    boundary is authoritative for closure, but the full team graph and finite
+    scores are still required before deriving outcomes.  The current period
+    is never derived, so partial midweek scores remain unpublished.
+    """
+    from multi_league.core.league_refresh import espn_schedule_is_final
+
+    if espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids):
+        return schedule_rows
+    if not current_matchup_period or int(current_matchup_period) <= int(requested_week):
+        return None
+
+    normalized: list[dict[str, Any]] = []
+    for source_row in schedule_rows:
+        if not isinstance(source_row, dict):
+            return None
+        row = dict(source_row)
+        raw_period = row.get("matchupPeriodId")
+        try:
+            matchup_period = int(raw_period)
+        except (TypeError, ValueError):
+            return None
+        if matchup_period != int(requested_week) or matchup_period >= int(current_matchup_period):
+            return None
+
+        home = row.get("home")
+        away = row.get("away")
+        if not isinstance(home, dict) or not isinstance(away, dict):
+            return None
+
+        def score(side: dict[str, Any]) -> float | None:
+            points_by_period = side.get("pointsByScoringPeriod")
+            value = None
+            if isinstance(points_by_period, dict):
+                value = points_by_period.get(str(requested_week))
+                if value is None:
+                    value = points_by_period.get(int(requested_week))
+            if value is None:
+                value = side.get("totalPoints")
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if math.isfinite(number) else None
+
+        home_score = score(home)
+        away_score = score(away)
+        if home_score is None or away_score is None:
+            return None
+        row["winner"] = (
+            "HOME" if home_score > away_score
+            else "AWAY" if away_score > home_score
+            else "TIE"
+        )
+        normalized.append(row)
+
+    if not espn_schedule_is_final(normalized, expected_team_ids=expected_team_ids):
+        return None
+    return normalized
+
+
 def _finalized_espn_matchup_weeks(
     client: Any,
     *,
     year: int,
     weeks: list[int],
     expected_team_ids: tuple[str, ...],
+    current_matchup_period: int | None = None,
     schedule_out: dict[int, list[dict[str, Any]]] | None = None,
 ) -> list[int]:
     """Return weeks for which ESPN has finalized every fantasy matchup."""
-    from multi_league.core.league_refresh import espn_schedule_is_final
-
     finalized: list[int] = []
     for week in weeks:
         schedule_rows = client.get_raw_schedule(year, int(week))
-        if espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids):
+        final_schedule = _closed_espn_schedule(
+            schedule_rows,
+            requested_week=int(week),
+            current_matchup_period=current_matchup_period,
+            expected_team_ids=expected_team_ids,
+        )
+        if final_schedule is not None:
             finalized.append(int(week))
             if schedule_out is not None:
-                schedule_out[int(week)] = schedule_rows
+                schedule_out[int(week)] = final_schedule
         else:
             outcomes = sorted({str(row.get("winner") or "") for row in schedule_rows})
             matchup_periods = sorted(
@@ -427,6 +504,11 @@ def _merge_active_payloads(
             year=active_year,
             weeks=refresh_weeks,
             expected_team_ids=expected_team_ids,
+            current_matchup_period=(
+                int(getattr(league, "currentMatchupPeriod", 0) or 0)
+                or int(getattr(league, "current_week", 0) or 0)
+                or None
+            ),
             schedule_out=schedules,
         )
         transaction_rows = fetch_espn_transactions(

@@ -171,7 +171,12 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
     if detail.get("drafted") is False and not picks and not parsed:
         return pd.DataFrame(columns=["pick"]), True
     if detail.get("drafted") is not True or detail.get("inProgress") is True:
-        raise RefreshScopeError("ESPN active draft is not confirmed complete")
+        raise RefreshScopeError(
+            "ESPN active draft is not confirmed complete "
+            f"(drafted={detail.get('drafted')!r}, "
+            f"in_progress={detail.get('inProgress')!r}, "
+            f"raw_picks={len(picks)}, parsed_picks={len(parsed)})"
+        )
 
     roster = settings.get("rosterSettings") or {}
     slots = roster.get("lineupSlotCounts") if isinstance(roster, dict) else None

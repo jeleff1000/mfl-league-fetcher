@@ -267,3 +267,18 @@ def test_espn_draft_manifest_confirms_absence_only_from_raw_undrafted_status():
     manifest, absent = _espn_draft_manifest(client, SimpleNamespace(draft=[]), 2026)
     assert manifest.empty
     assert absent is True
+
+
+def test_espn_draft_manifest_reports_the_rejected_completion_witness():
+    import pytest
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    client = SimpleNamespace(
+        get_raw_league=lambda *_args: _draft_payload(drafted=False, pick_count=1)
+    )
+    with pytest.raises(
+        RefreshScopeError,
+        match=r"drafted=False, in_progress=False, raw_picks=1, parsed_picks=1",
+    ):
+        _espn_draft_manifest(client, SimpleNamespace(draft=[SimpleNamespace()]), 2026)

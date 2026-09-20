@@ -473,6 +473,42 @@ def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
     assert "EXCEPT" not in aggregate_gap_sql
 
 
+def test_changed_source_plan_defers_historical_aggregate_audit_to_atomic_publish():
+    old = manifest(provider=(resource("yahoo", "matchups", "2026:1", "old"),))
+    observed = replace(
+        old,
+        provider_revisions=(resource("yahoo", "matchups", "2026:1", "new"),),
+    )
+    row = {
+        "observed_manifest_json": canonical_manifest_json(observed),
+        "observed_manifest_digest": manifest_digest(observed),
+        "published_manifest_json": canonical_manifest_json(old),
+        "published_manifest_digest": manifest_digest(old),
+    }
+
+    class CapturingReader(Reader):
+        league_sql: list[str] = []
+
+        def query(self, sql, *, database):
+            if database == "___ops":
+                return [row]
+            self.league_sql.append(sql)
+            assert "missing_derived_years" not in sql
+            return [{"year": 2026, "week": 1}]
+
+    reader = CapturingReader(row)
+    plan = load_persisted_refresh_plan(
+        reader,
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=manifest_digest(observed),
+    )
+
+    assert plan is not None
+    assert plan.requires_refresh
+    assert len(reader.league_sql) == 1
+
+
 def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():
     assert load_persisted_refresh_plan(
         Reader(None),

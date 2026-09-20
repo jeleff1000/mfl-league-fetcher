@@ -649,16 +649,28 @@ def main(argv: list[str] | None = None) -> int:
         receipt["refresh_reasons"] = list(persisted_plan.reasons)
     if not refresh_weeks:
         if args.execute:
-            from scripts.league_update_workflow_receipt import record_missing_manager_rankings_repair
+            from scripts.league_update_workflow_receipt import (
+                record_missing_season_rollups_repair,
+                record_missing_manager_rankings_repair,
+            )
 
-            if record_missing_manager_rankings_repair(
+            repaired = record_missing_season_rollups_repair(
                 receipt,
                 reader=reader,
                 db_name=args.db,
                 active_year=active_year,
                 platform="sleeper",
                 path=args.json_out,
-            ):
+            )
+            repaired = record_missing_manager_rankings_repair(
+                receipt,
+                reader=reader,
+                db_name=args.db,
+                active_year=active_year,
+                platform="sleeper",
+                path=args.json_out,
+            ) or repaired
+            if repaired:
                 receipt["phase_seconds"] = timer.finish()
                 _write_receipt(receipt, args.json_out)
                 return 0

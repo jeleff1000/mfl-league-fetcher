@@ -95,6 +95,49 @@ def record_missing_manager_rankings_repair(
     return True
 
 
+def record_missing_season_rollups_repair(
+    receipt: dict[str, Any],
+    *,
+    reader: Any,
+    db_name: str,
+    active_year: int,
+    platform: str,
+    path: Path | None,
+) -> bool:
+    """Publish the shared no-week historical aggregate repair when required."""
+    from multi_league.core.league_update_publish_claim import renew_claim_for_publication
+    from multi_league.core.no_week_season_rollup_repair import (
+        repair_missing_season_rollups_if_needed,
+    )
+
+    repair = repair_missing_season_rollups_if_needed(
+        reader=reader,
+        db_name=db_name,
+        active_year=active_year,
+        before_publish=lambda: renew_claim_for_publication(
+            reader, database_name=db_name, platform=platform,
+        ),
+    )
+    receipt["season_rollups_repair"] = {
+        key: value for key, value in repair.items() if key != "result"
+    }
+    if not repair["published"]:
+        return False
+    receipt["base_generation"] = repair["base_generation"]
+    record_publication_commit(
+        receipt,
+        result=repair["result"],
+        bundle_id=repair["bundle_id"],
+        path=path,
+    )
+    receipt["season_rollups"] = repair["season_rollups"]
+    receipt["career_rollups"] = repair["career_rollups"]
+    receipt["published_tables"] = sorted(
+        set(receipt.get("published_tables") or ()) | set(repair["published_tables"])
+    )
+    return True
+
+
 def classify_publication(receipt: Mapping[str, Any] | None, *, require_publication: bool) -> bool:
     """Never warm cache or mark UI success without an executed Fly commit."""
     if not receipt:

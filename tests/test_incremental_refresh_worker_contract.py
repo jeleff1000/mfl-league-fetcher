@@ -106,15 +106,20 @@ def test_active_updates_use_bounded_ops_and_runtime_dependencies(platform: str, 
     assert "hashFiles('requirements.txt')" not in text
 
 
-@pytest.mark.parametrize("filename", WORKFLOWS.values())
-def test_active_updates_reserve_time_to_fail_and_exit_before_two_minutes(filename: str):
+@pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())
+def test_active_updates_reserve_time_to_fail_and_exit_after_setup(
+    platform: str, filename: str
+):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
-    assert "- name: Set hard update deadline" in text
-    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 90 ))" in text
+    display_name = {"yahoo": "Yahoo", "espn": "ESPN", "sleeper": "Sleeper"}[platform]
+    assert "- name: Set hard refresh deadline" in text
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in text
     assert 'remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))' in text
     assert 'timeout --signal=KILL "${remaining}s" python scripts/refresh_' in text
     assert 'timeout --signal=KILL 8s python scripts/record_league_update_status.py' in text
-    assert text.index("- name: Set hard update deadline") < text.index("- name: Checkout")
+    assert text.index("- name: Claim paid manual update") < text.index(
+        "- name: Set hard refresh deadline"
+    ) < text.index(f"- name: Refresh {display_name} active season")
 
 
 def test_weekly_runtime_requirements_exclude_non_worker_packages():
@@ -220,7 +225,9 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert '--status "${recovery_status}"' in text
     assert 'recovery_status=$(python scripts/league_update_workflow_receipt.py' in text
     assert text.index("scripts/warm_vercel_cache.py") < text.index("--status succeeded")
-    assert "timeout-minutes: 2" in text
+    # The provider refresh itself has a hard two-minute process deadline. The
+    # job gets one extra minute so setup and failure/status cleanup can finish.
+    assert "timeout-minutes: 3" in text
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())

@@ -689,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
         stage_refresh_partitions,
         sync_player_bio_cache_from_fly,
     )
+    from multi_league.core.league_update_validation import IncompleteSourceError
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.league_update_plan import active_provider_league_id, load_persisted_refresh_plan
     from multi_league.core.league_update_timing import PhaseTimer
@@ -885,7 +886,7 @@ def main(argv: list[str] | None = None) -> int:
                         refresh_weeks=refresh_weeks,
                         finalized_ops=finalized_ops,
                     )
-                except RefreshScopeError as exc:
+                except (RefreshScopeError, IncompleteSourceError) as exc:
                     receipt["status"] = "INCOMPLETE_SOURCE"
                     receipt["error_code"] = "espn_provider_response_incomplete"
                     receipt["error"] = str(exc)

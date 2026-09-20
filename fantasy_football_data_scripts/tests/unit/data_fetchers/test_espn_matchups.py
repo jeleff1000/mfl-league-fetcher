@@ -181,8 +181,16 @@ def test_fetch_espn_matchups_modern_prefers_final_raw_totals_over_zero_box_total
             1: [{
                 "matchupPeriodId": 1,
                 "winner": "HOME",
-                "home": {"teamId": 3, "totalPoints": 112.5},
-                "away": {"teamId": 9, "totalPoints": 99.25},
+                "home": {
+                    "teamId": 3,
+                    "totalPoints": 0,
+                    "pointsByScoringPeriod": {"1": 112.5},
+                },
+                "away": {
+                    "teamId": 9,
+                    "totalPoints": 0,
+                    "pointsByScoringPeriod": {"1": 99.25},
+                },
             }],
         },
     )

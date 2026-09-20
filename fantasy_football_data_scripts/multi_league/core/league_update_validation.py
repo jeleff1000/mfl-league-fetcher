@@ -841,7 +841,15 @@ def validate_espn_final_matchup_frame(
                 raise IncompleteSourceError("ESPN fetched final opponent score is not reciprocal")
         for side, fetched in ((raw.get("home") or {}, home), (away, visitor)):
             try:
-                raw_score = float(side["totalPoints"])
+                points_by_period = side.get("pointsByScoringPeriod")
+                raw_value = None
+                if isinstance(points_by_period, dict):
+                    raw_value = points_by_period.get(str(week))
+                    if raw_value is None:
+                        raw_value = points_by_period.get(int(week))
+                if raw_value is None:
+                    raw_value = side["totalPoints"]
+                raw_score = float(raw_value)
                 fetched_score = float(fetched["team_points"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise IncompleteSourceError("ESPN raw final matchup score witness is missing") from exc

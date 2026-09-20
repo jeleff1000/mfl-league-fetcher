@@ -126,7 +126,7 @@ def test_espn_refresh_allows_the_latest_requested_week_to_remain_live():
 def test_espn_incomplete_matchups_write_an_actionable_receipt_before_failing():
     text = (ROOT / "scripts" / "refresh_espn_active_season.py").read_text(encoding="utf-8")
 
-    catch = text.split("except RefreshScopeError as exc:", 1)[1].split("raise", 1)[0]
+    catch = text.split("except (RefreshScopeError, IncompleteSourceError) as exc:", 1)[1].split("raise", 1)[0]
     assert 'receipt["status"] = "INCOMPLETE_SOURCE"' in catch
     assert 'receipt["error_code"] = "espn_provider_response_incomplete"' in catch
     assert "_write_receipt(receipt, args.json_out)" in catch

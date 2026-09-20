@@ -137,9 +137,16 @@ def _effective_box_scores(box, raw_schedule_lookup: dict) -> tuple[float, float]
         ),
         {},
     )
+
+    def score(side: str, fallback) -> float:
+        period_value = raw_meta.get(f"{side}_period_points")
+        if period_value is not None:
+            return period_value
+        return _raw_score(raw_meta, side, fallback)
+
     return (
-        _raw_score(raw_meta, "home", getattr(box, "home_score", 0)),
-        _raw_score(raw_meta, "away", getattr(box, "away_score", 0)),
+        score("home", getattr(box, "home_score", 0)),
+        score("away", getattr(box, "away_score", 0)),
     )
 
 

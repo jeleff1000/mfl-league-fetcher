@@ -478,6 +478,36 @@ def test_espn_final_matchup_frame_rejects_late_gray_score_mismatch():
         )
 
 
+def test_espn_final_matchup_frame_accepts_period_points_when_total_points_lag():
+    raw = [{
+        "home": {
+            "teamId": 10,
+            "totalPoints": 0,
+            "pointsByScoringPeriod": {"1": 152.66},
+        },
+        "away": {
+            "teamId": 3,
+            "totalPoints": 0,
+            "pointsByScoringPeriod": {"1": 129.66},
+        },
+        "winner": "HOME",
+    }]
+    frame = pd.DataFrame([
+        {"year": 2026, "week": 1, "team_key": "10", "matchup_id": 1,
+         "is_bye_week": False, "team_points": 152.66, "opponent_points": 129.66},
+        {"year": 2026, "week": 1, "team_key": "3", "matchup_id": 1,
+         "is_bye_week": False, "team_points": 129.66, "opponent_points": 152.66},
+    ])
+
+    assert validate_espn_final_matchup_frame(
+        season=2026,
+        week=1,
+        expected_team_ids=("10", "3"),
+        raw_schedule=raw,
+        matchups=frame,
+    ) == 2
+
+
 def test_espn_final_matchup_frame_rejects_missing_raw_score_witness():
     raw, frame = _espn_final_graph_fixture()
     del raw[0]["home"]["totalPoints"]

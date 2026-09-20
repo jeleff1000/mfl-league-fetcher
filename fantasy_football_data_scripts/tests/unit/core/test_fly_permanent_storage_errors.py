@@ -14,6 +14,7 @@ from multi_league.core.targets.fly_target import FlyTarget
     "IO Error: Corrupt database file at block 90714112",
     "IO Error: Computed checksum 5168518579405463287 does not match stored checksum 18392342689821271652",
     "FATAL Error: database has been invalidated because of a previous fatal error",
+    "TransactionContext Error: Current transaction is aborted (please ROLLBACK)",
 ])
 @pytest.mark.parametrize("operation", ["json", "parquet", "write", "upload"])
 def test_permanent_storage_error_stops_after_one_request(monkeypatch, tmp_path, detail, operation):

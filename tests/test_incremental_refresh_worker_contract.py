@@ -436,9 +436,16 @@ def test_all_platform_refreshes_start_claim_inside_parallel_preflight():
 def test_all_platform_updates_publish_against_the_hydrated_source_generation():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
-        assert "source_frames, base_generation = _capture_update_source_frames(" in text
-        capture_call = text.split("source_frames, base_generation = _capture_update_source_frames(", 1)[1].split(")", 1)[0]
+        capture_marker = (
+            "lambda: _capture_update_source_frames("
+            if platform == "espn"
+            else "source_frames, base_generation = _capture_update_source_frames("
+        )
+        assert capture_marker in text
+        capture_call = text.split(capture_marker, 1)[1].split(")", 1)[0]
         assert "active_year=active_year" in capture_call
+        if platform == "espn":
+            assert "source_frames, base_generation = source_snapshot_future.result()" in text
         assert "league_generations={args.db: base_generation}" in text
         assert "generation = _publish_generation(reader, args.db)" not in text
     yahoo = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")
@@ -479,6 +486,26 @@ def test_espn_overlaps_provider_context_with_local_hydration():
     wait = main.index("context_future.result()", hydrate)
     fetch = main.index("_merge_active_payloads(", wait)
     assert start < hydrate < wait < fetch
+
+
+def test_espn_overlaps_source_snapshot_with_refresh_planning():
+    text = (ROOT / "scripts" / "refresh_espn_active_season.py").read_text(encoding="utf-8")
+    main = text.split("def main(", 1)[1]
+    start = main.index("source_snapshot_future = start_background_refresh_call(")
+    plan = main.index("persisted_plan = load_persisted_refresh_plan(", start)
+    wait = main.index("source_snapshot_future.result()", plan)
+    hydrate = main.index("hydrate_local_refresh_sources(", wait)
+    assert start < plan < wait < hydrate
+
+
+def test_espn_overlaps_rosters_with_schedule_and_transaction_reads():
+    text = (ROOT / "scripts" / "refresh_espn_active_season.py").read_text(encoding="utf-8")
+    payload = text.split("def _merge_active_payloads(", 1)[1].split("\ndef ", 1)[0]
+    start = payload.index("secondary_payload_future = start_background_refresh_call(")
+    roster = payload.index("fetch_espn_rosters_modern(", start)
+    wait = payload.index("secondary_payload_future.result()", roster)
+    merge = payload.index('merge_provider_refresh_table(\n            local_db,\n            "transactions"', wait)
+    assert start < roster < wait < merge
 
 
 def test_all_platforms_recheck_ops_cache_after_provider_settings_are_hydrated():

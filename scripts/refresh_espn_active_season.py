@@ -371,7 +371,9 @@ def _merge_active_payloads(
         merge_provider_refresh_table,
         refresh_authoritative_draft_partition,
         pending_provider_nfl_teams,
+        start_background_refresh_call,
     )
+    from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
     from multi_league.data_fetchers.espn.espn_draft import fetch_espn_draft
     from multi_league.data_fetchers.espn.espn_league_settings import fetch_espn_settings
     from multi_league.data_fetchers.espn.espn_matchups import fetch_espn_matchups
@@ -392,6 +394,27 @@ def _merge_active_payloads(
     merge_provider_refresh_table(
         local_db, "league_settings", settings, platform="espn", league_id=league_id
     )
+
+    def fetch_secondary_payloads():
+        secondary_client = ESPNAPIClient(ctx.league_id, ctx.espn_s2, ctx.swid)
+        schedules: dict[int, list[dict[str, Any]]] = {}
+        final_weeks = _finalized_espn_matchup_weeks(
+            secondary_client,
+            year=active_year,
+            weeks=refresh_weeks,
+            expected_team_ids=expected_team_ids,
+            schedule_out=schedules,
+        )
+        transaction_rows = fetch_espn_transactions(
+            ctx,
+            active_year,
+            max_week=max(refresh_weeks),
+            client=secondary_client,
+            league=league,
+        )
+        return final_weeks, schedules, transaction_rows
+
+    secondary_payload_future = start_background_refresh_call(fetch_secondary_payloads)
 
     # This lower-level fetcher has an explicit week scope and does not call
     # LocalLeagueDB.save_table(), which would delete all prior active-season
@@ -444,14 +467,7 @@ def _merge_active_payloads(
         )
         roster_rows += len(safe_rows)
 
-    final_schedule_graphs: dict[int, list[dict[str, Any]]] = {}
-    final_matchup_weeks = _finalized_espn_matchup_weeks(
-        client,
-        year=active_year,
-        weeks=refresh_weeks,
-        expected_team_ids=expected_team_ids,
-        schedule_out=final_schedule_graphs,
-    )
+    final_matchup_weeks, final_schedule_graphs, transactions = secondary_payload_future.result()
     matchup_rows = 0
     if final_matchup_weeks:
         matchups = fetch_espn_matchups(
@@ -484,13 +500,6 @@ def _merge_active_payloads(
         )
         matchup_rows = len(matchups)
 
-    transactions = fetch_espn_transactions(
-        ctx,
-        active_year,
-        max_week=max(refresh_weeks),
-        client=client,
-        league=league,
-    )
     if transactions is not None and not transactions.empty:
         merge_provider_refresh_table(
             local_db,
@@ -622,6 +631,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     })
     canonical_history = preflight["canonical_history"]
+    source_snapshot_future = start_background_refresh_call(
+        lambda: _capture_update_source_frames(
+            reader,
+            db_name=args.db,
+            active_year=active_year,
+            tables=UPDATE_REFRESH_SOURCE_TABLES,
+        )
+    )
     source_plan_stage_seconds: dict[str, float] = {}
     source_stage_started = perf_counter()
     persisted_plan = load_persisted_refresh_plan(
@@ -676,12 +693,7 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"{args.db}_weekly_refresh_") as temp_dir:
         work_dir = Path(temp_dir)
-        source_frames, base_generation = _capture_update_source_frames(
-            reader,
-            db_name=args.db,
-            active_year=active_year,
-            tables=UPDATE_REFRESH_SOURCE_TABLES,
-        )
+        source_frames, base_generation = source_snapshot_future.result()
         timer.mark("source_snapshot")
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:

@@ -790,6 +790,78 @@ def test_same_season_trade_clear_requires_complete_valued_bilateral_assets(homep
             """).fetchone() == (None,None,None,140.0)
 
 
+def test_weekly_homepage_preserves_untouched_valid_trade_when_legacy_mirrors_are_incomplete(
+    homepage_chain,
+):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name,transaction_id,year,week,transaction_type,trade_direction,
+             manager,franchise_id,source_franchise_id,player,NFL_player_id,trade_asset_lamar)
+        VALUES ('test_league','legacy-trade',2025,4,'trade','received',
+                'Shared Alias','f1','f2','Legacy Player','legacy-player',12)
+    """)
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET
+            alltime_trade_winner='Shared Alias', alltime_trade_loser='Other Alias',
+            alltime_trade_winner_players='Legacy Player', alltime_trade_year=2025,
+            alltime_trade_week=4, alltime_trade_net_lamar=12
+        WHERE db_name='test_league'
+    """)
+
+    aggregation_utils.aggregate_homepage_rollups(
+        conn,
+        'test_league',
+        changed_years={2026},
+    )
+
+    assert conn.execute("""
+        SELECT alltime_trade_winner, alltime_trade_loser,
+               alltime_trade_winner_players, alltime_trade_year,
+               alltime_trade_week, alltime_trade_net_lamar,
+               highest_score_points
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == (
+        'Shared Alias', 'Other Alias', 'Legacy Player', 2025, 4, 12.0, 140.0
+    )
+    for table in (
+        'homepage_league_summary',
+        'homepage_manager_rankings',
+        'homepage_current_standings',
+        'homepage_manager_profiles',
+    ):
+        assert conn.execute(
+            f"SELECT COUNT(*) FROM public.{table} WHERE db_name='test_league'"
+        ).fetchone()[0] > 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM public.homepage_top_rivalries WHERE db_name='test_league'"
+    ).fetchone() == (0,)
+
+
+def test_weekly_homepage_rejects_incomplete_trade_mirror_in_changed_year(homepage_chain):
+    conn = homepage_chain
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name,transaction_id,year,week,transaction_type,trade_direction,
+             manager,franchise_id,source_franchise_id,player,NFL_player_id,trade_asset_lamar)
+        VALUES ('test_league','current-trade',2026,1,'trade','received',
+                'Shared Alias','f1','f2','Current Player','current-player',12)
+    """)
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET
+            alltime_trade_winner='Shared Alias', alltime_trade_year=2025,
+            alltime_trade_net_lamar=10
+        WHERE db_name='test_league'
+    """)
+
+    with pytest.raises(RuntimeError, match='trade assets lack complete mirrored valuations'):
+        aggregation_utils.aggregate_homepage_rollups(
+            conn,
+            'test_league',
+            changed_years={2026},
+        )
+
+
 def test_trade_query_failure_is_not_an_empty_highlight(homepage_chain):
     from multi_league.transformations.aggregation.homepage_summary import _compute_best_trade
 

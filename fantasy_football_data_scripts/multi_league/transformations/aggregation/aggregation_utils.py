@@ -403,11 +403,14 @@ def aggregate_homepage_rollups(
     db_name: str,
     *,
     manager_profile_franchise_ids: set[str] | None = None,
+    changed_years: set[int] | None = None,
 ) -> dict[str, int]:
     """Reuse the import homepage builder on Fly's uncommitted full chain.
 
     Publication owns the transaction. No remote reader, worker history copy,
-    synthetic career table, or null-value restoration is involved here.
+    or synthetic career table is involved here. A validated all-time trade
+    highlight may be retained only when malformed legacy mirrors are outside
+    every year changed by this publication.
     """
     from multi_league.core.sql_utils import validate_db_name
     from multi_league.transformations.aggregation.homepage_summary import compute_homepage_frames
@@ -424,8 +427,21 @@ def aggregate_homepage_rollups(
     ):
         if not table_exists_in_catalog(conn, source):
             raise HomepageValidationError(f"Homepage publication source is missing: {source}")
+    previous = pd.DataFrame()
+    if table_exists_in_catalog(conn, "homepage_league_summary"):
+        previous = conn.execute(
+            "SELECT * FROM public.homepage_league_summary WHERE db_name = ?", [db_name],
+        ).fetchdf()
+        if len(previous) > 1:
+            raise HomepageValidationError("Persisted homepage summary has duplicate league identity")
+    homepage_kwargs = {}
+    if changed_years is not None:
+        homepage_kwargs = {
+            "preserved_alltime_trade": previous.iloc[0].to_dict() if len(previous) == 1 else None,
+            "changed_years": changed_years,
+        }
     if manager_profile_franchise_ids is None:
-        frames = compute_homepage_frames(conn, db_name)
+        frames = compute_homepage_frames(conn, db_name, **homepage_kwargs)
     else:
         manager_profile_franchise_ids = {
             str(value) for value in manager_profile_franchise_ids if str(value).strip()
@@ -434,6 +450,7 @@ def aggregate_homepage_rollups(
             conn,
             db_name,
             manager_profile_franchise_ids=manager_profile_franchise_ids,
+            **homepage_kwargs,
         )
         expected_profile_ids = {
             str(row[0])
@@ -496,13 +513,7 @@ def aggregate_homepage_rollups(
             raise HomepageValidationError(f"{table} franchise coverage differs from persisted history")
     # A swallowed query error in a legacy homepage calculation must not erase
     # a previously populated summary. Reject it; do not restore stale values.
-    if table_exists_in_catalog(conn, "homepage_league_summary"):
-        previous = conn.execute(
-            "SELECT * FROM public.homepage_league_summary WHERE db_name = ?", [db_name],
-        ).fetchdf()
-        if len(previous) > 1:
-            raise HomepageValidationError("Persisted homepage summary has duplicate league identity")
-        if not previous.empty:
+    if not previous.empty:
             summary = frames["homepage_league_summary"].iloc[0]
             old_year = previous.iloc[0].get("data_year")
             new_year = summary.get("data_year")

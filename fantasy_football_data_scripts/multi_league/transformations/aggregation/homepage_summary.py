@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 try:
     from multi_league.shared.import_setup import setup_module_path
@@ -69,6 +69,10 @@ from multi_league.transformations.aggregation.aggregation_utils import (
 
 
 log = make_logger("HOMEPAGE-SUMMARY")
+
+
+class IncompleteTradeMirrorError(RuntimeError):
+    """A persisted trade asset is missing its valued opposite-side mirror."""
 
 
 def _table_select_sql(table: str, db_name: str, alias: str = "") -> str:
@@ -665,7 +669,13 @@ def _latest_matchup_year_week(conn, db_name: str) -> tuple[int | None, int | Non
 
 
 def compute_league_summary(
-    conn, db_name: str, platform: str = "yahoo", cache: "ColumnCache | None" = None
+    conn,
+    db_name: str,
+    platform: str = "yahoo",
+    cache: "ColumnCache | None" = None,
+    *,
+    preserved_alltime_trade: Mapping[str, Any] | None = None,
+    changed_years: set[int] | None = None,
 ) -> pd.DataFrame:
     """
     Compute all league-wide aggregates into a single-row DataFrame.
@@ -725,7 +735,39 @@ def compute_league_summary(
         summary.update({f"season_{k}": v for k, v in txn_season.items()})
 
     # ========== BEST TRADE (all-time) ==========
-    trade_alltime = _compute_best_trade(conn, db_name, year=None, platform=platform, cache=cache)
+    try:
+        trade_alltime = _compute_best_trade(conn, db_name, year=None, platform=platform, cache=cache)
+    except IncompleteTradeMirrorError:
+        # A weekly publication must not be blocked by an untouched legacy
+        # season whose trade mirrors predate the current enrichment contract.
+        # Preserve the already-published all-time winner only after proving
+        # every year changed by this publication is independently valid.
+        changed_years = {int(value) for value in (changed_years or set())}
+        old_winner = (preserved_alltime_trade or {}).get("alltime_trade_winner")
+        old_year = (preserved_alltime_trade or {}).get("alltime_trade_year")
+        if not changed_years or pd.isna(old_winner) or pd.isna(old_year):
+            raise
+        if int(old_year) in changed_years:
+            raise
+        for changed_year in sorted(changed_years):
+            _compute_best_trade(
+                conn,
+                db_name,
+                year=changed_year,
+                platform=platform,
+                cache=cache,
+            )
+        from multi_league.core.aggregate_ddl import HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES
+
+        trade_alltime = {
+            field: preserved_alltime_trade.get(f"alltime_trade_{field}")
+            for field in HOMEPAGE_TRADE_HIGHLIGHT_COLUMN_TYPES
+            if field != "db_name"
+        }
+        log(
+            "  Preserved validated all-time trade highlight from untouched "
+            f"{int(old_year)}; refreshed years {sorted(changed_years)} are mirror-complete"
+        )
     summary.update({f"alltime_trade_{k}": v for k, v in trade_alltime.items()})
 
     # ========== BEST TRADE (current season) ==========
@@ -1352,7 +1394,9 @@ def _compute_best_trade(
                   )
             """).fetchone()[0]
             if invalid:
-                raise ValueError(f"{invalid} trade assets lack complete mirrored valuations")
+                raise IncompleteTradeMirrorError(
+                    f"{invalid} trade assets lack complete mirrored valuations"
+                )
         row = conn.execute(f"""
             WITH trade_received AS (
                 SELECT
@@ -1446,6 +1490,8 @@ def _compute_best_trade(
             highlights["net_lamar"] = round(float(row[11]), 2) if row[11] else 0
             highlights["year"] = row[1]
             highlights["week"] = row[2]
+    except IncompleteTradeMirrorError:
+        raise
     except Exception as e:
         raise RuntimeError(f"Failed to compute best trade for {db_name}: {e}") from e
 
@@ -3303,6 +3349,8 @@ def compute_homepage_frames(
     *,
     platform: str | None = None,
     manager_profile_franchise_ids: set[str] | None = None,
+    preserved_alltime_trade: Mapping[str, Any] | None = None,
+    changed_years: set[int] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Compute all five homepage rollups from one complete league connection."""
     configure_table_catalog(conn)
@@ -3314,7 +3362,14 @@ def compute_homepage_frames(
     cache = ColumnCache(conn, get_active_catalog())
     median_years = detect_h2h_median_years_from_db(conn, db_name)
     return {
-        "homepage_league_summary": compute_league_summary(conn, db_name, platform=platform, cache=cache),
+        "homepage_league_summary": compute_league_summary(
+            conn,
+            db_name,
+            platform=platform,
+            cache=cache,
+            preserved_alltime_trade=preserved_alltime_trade,
+            changed_years=changed_years,
+        ),
         "homepage_manager_rankings": compute_manager_rankings(
             conn, db_name, median_years=median_years, cache=cache
         ),

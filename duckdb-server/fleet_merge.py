@@ -817,6 +817,7 @@ def apply_fleet_merge(
                             aggregation_conn,
                             db_name,
                             manager_profile_franchise_ids=active_profile_ids,
+                            changed_years=changed_years,
                         )
                     except HomepageValidationError as exc:
                         raise FleetValidationError(str(exc)) from exc

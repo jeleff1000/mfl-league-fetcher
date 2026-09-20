@@ -495,7 +495,14 @@ class YahooRosterFetcher:
             return None
 
     def fetch_roster_for_week(
-        self, year: int, week: int, team_key: str, manager_name: str, manager_guid: str = None
+        self,
+        year: int,
+        week: int,
+        team_key: str,
+        manager_name: str,
+        manager_guid: str = None,
+        *,
+        include_stats: bool = True,
     ) -> list[dict[str, Any]]:
         """
         Fetch roster for a specific team and week.
@@ -510,8 +517,9 @@ class YahooRosterFetcher:
         Returns:
             List of roster entries (one per player)
         """
-        # Use the EXACT same URL format as the working old script
-        url = f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team_key}/roster;week={week}/players/stats"
+        url = f"https://fantasysports.yahooapis.com/fantasy/v2/team/{team_key}/roster;week={week}"
+        if include_stats:
+            url += f"/players/stats;type=week;week={week}"
 
         try:
             root = self._fetch_url_xml(url)
@@ -522,7 +530,7 @@ class YahooRosterFetcher:
                 team_key=team_key,
                 manager_name=manager_name,
                 manager_guid=manager_guid,
-                include_points=True,
+                include_points=include_stats,
             )
 
         except Exception as e:
@@ -636,9 +644,12 @@ class YahooRosterFetcher:
     def fetch_all_rosters_for_week(self, year: int, week: int, teams: dict[str, dict[str, str]]) -> tuple:
         """
         Fetch all rosters for all teams for a specific week.
-        Prefers the league-level batch roster endpoint to keep Yahoo API call
-        volume low. The individual team endpoint can include player_points and
-        player_stats, but using it for every team/week has caused rate limiting.
+
+        Yahoo's league-level ``teams;out=roster`` resource exposes the current
+        roster shell but does not reliably return historical weekly players.
+        The native team ``roster;week=N`` resource is the authoritative weekly
+        membership source. Fetch it without the stats subresource because the
+        refresh pipeline calculates points from the shared NFL source.
 
         Args:
             year: Season year
@@ -648,60 +659,7 @@ class YahooRosterFetcher:
         Returns:
             Tuple of (DataFrame with all roster data, list of (team_key, team_info) failures)
         """
-        try:
-            return self._fetch_all_rosters_batch(year, week, teams)
-        except Exception as e:
-            if not getattr(self, "_access_denied_logged", False):
-                log(f"[WARN] Batch roster fetch failed for week {week}: {e}. Falling back to team-by-team fetch.")
-            return self._fetch_all_rosters_individually(year, week, teams)
-
-    def _fetch_all_rosters_batch(self, year: int, week: int, teams: dict[str, dict[str, str]]) -> tuple:
-        """
-        Fetch all teams' rosters for a week in one Yahoo API call.
-
-        This endpoint does not return player_points, but it does return the
-        weekly roster membership and fantasy slot assignments we need.
-        """
-        # Yahoo exposes subresources for a collection through ``;out=``.
-        # ``/teams/roster`` is not a valid collection path and returns an
-        # empty/error payload even when the same OAuth credential can read
-        # every individual team roster.
-        url = (
-            f"https://fantasysports.yahooapis.com/fantasy/v2/league/{self.league_id}"
-            f"/teams;out=roster;week={week}"
-        )
-        root = self._fetch_url_xml(url)
-
-        all_rosters: list[dict[str, Any]] = []
-        seen_team_keys: set[str] = set()
-
-        for team_elem in root.findall(".//team"):
-            team_key = (team_elem.findtext("team_key") or "").strip()
-            if not team_key or team_key not in teams:
-                continue
-
-            team_info = teams[team_key]
-            seen_team_keys.add(team_key)
-            team_players = team_elem.findall(".//player")
-            all_rosters.extend(
-                self._parse_roster_players(
-                    team_players,
-                    year=year,
-                    week=week,
-                    team_key=team_key,
-                    manager_name=team_info["manager_name"],
-                    manager_guid=team_info.get("manager_guid"),
-                    include_points=False,
-                )
-            )
-
-        if not all_rosters:
-            raise ValueError(f"Yahoo batch roster payload was empty for year {year} week {week}")
-
-        failed_teams = [
-            (team_key, team_info) for team_key, team_info in teams.items() if team_key not in seen_team_keys
-        ]
-        return pd.DataFrame(all_rosters), failed_teams
+        return self._fetch_all_rosters_individually(year, week, teams)
 
     def _fetch_all_rosters_individually(self, year: int, week: int, teams: dict[str, dict[str, str]]) -> tuple:
         """
@@ -722,7 +680,12 @@ class YahooRosterFetcher:
             """Fetch roster for a single team (runs in parallel)"""
             try:
                 roster_data = self.fetch_roster_for_week(
-                    year, week, team_key, team_info["manager_name"], team_info.get("manager_guid")
+                    year,
+                    week,
+                    team_key,
+                    team_info["manager_name"],
+                    team_info.get("manager_guid"),
+                    include_stats=False,
                 )
                 return (team_key, team_info["manager_name"], True, roster_data)
             except Exception as e:

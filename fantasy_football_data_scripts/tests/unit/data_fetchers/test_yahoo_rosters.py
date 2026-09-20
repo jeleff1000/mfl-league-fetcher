@@ -103,10 +103,11 @@ def test_fetch_roster_for_week_blank_points_stays_null(monkeypatch, tmp_path):
 
 def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        fetcher,
-        "_fetch_url_xml",
-        lambda url: _player_xml(
+    requested_urls = []
+
+    def _fetch_url_xml(url):
+        requested_urls.append(url)
+        return _player_xml(
             "<player_points><total>16.5</total></player_points>",
             """
             <player_stats>
@@ -117,8 +118,9 @@ def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
               </stats>
             </player_stats>
             """,
-        ),
-    )
+        )
+
+    monkeypatch.setattr(fetcher, "_fetch_url_xml", _fetch_url_xml)
 
     rows = fetcher.fetch_roster_for_week(2024, 6, "414.l.413370.t.1", "Adin")
 
@@ -128,40 +130,20 @@ def test_fetch_roster_for_week_preserves_yahoo_stat_ids(monkeypatch, tmp_path):
     assert rows[0]["yahoo_stat_11"] == 5.0
     assert rows[0]["yahoo_stat_12"] == 40.0
     assert rows[0]["yahoo_stat_13"] == 1.0
+    assert requested_urls == [
+        "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/"
+        "roster;week=6/players/stats;type=week;week=6"
+    ]
 
 
-def test_fetch_all_rosters_for_week_uses_batch_endpoint_slots(monkeypatch, tmp_path):
+def test_fetch_all_rosters_for_week_uses_native_weekly_team_roster(monkeypatch, tmp_path):
     fetcher = _build_fetcher(monkeypatch, tmp_path)
+    fetcher.rate_limit = 0
     requested_urls = []
-    xml = ET.fromstring(
-        """
-        <fantasy_content>
-          <league>
-            <teams>
-              <team>
-                <team_key>414.l.413370.t.1</team_key>
-                <roster>
-                  <players>
-                    <player>
-                      <player_key>414.p.1234</player_key>
-                      <player_id>1234</player_id>
-                      <name><full>Chris Olave</full></name>
-                      <editorial_team_abbr>NO</editorial_team_abbr>
-                      <display_position>WR</display_position>
-                      <primary_position>WR</primary_position>
-                      <selected_position><position>BN</position></selected_position>
-                    </player>
-                  </players>
-                </roster>
-              </team>
-            </teams>
-          </league>
-        </fantasy_content>
-        """
-    )
+
     def _fetch_url_xml(url):
         requested_urls.append(url)
-        return xml
+        return _player_xml()
 
     monkeypatch.setattr(fetcher, "_fetch_url_xml", _fetch_url_xml)
 
@@ -178,12 +160,12 @@ def test_fetch_all_rosters_for_week_uses_batch_endpoint_slots(monkeypatch, tmp_p
 
     assert failures == []
     assert requested_urls == [
-        "https://fantasysports.yahooapis.com/fantasy/v2/league/414.l.413370/teams;out=roster;week=6"
+        "https://fantasysports.yahooapis.com/fantasy/v2/team/414.l.413370.t.1/roster;week=6"
     ]
     assert len(df) == 1
     row = df.iloc[0]
     assert row["manager_name"] == "Adin"
-    assert row["fantasy_position"] == "BN"
+    assert row["fantasy_position"] == "WR"
     assert row["player_name"] == "Chris Olave"
     assert pd.isna(row["fantasy_points"])
 

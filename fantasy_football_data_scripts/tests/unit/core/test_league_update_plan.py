@@ -469,6 +469,8 @@ def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
     assert "player_fantasy_season" in aggregate_gap_sql
     assert "player_fantasy_season_all" in aggregate_gap_sql
     assert "standings_by_year" in aggregate_gap_sql
+    assert "BIT_XOR(HASH(key_value))" in aggregate_gap_sql
+    assert "EXCEPT" not in aggregate_gap_sql
 
 
 def test_manual_run_without_a_persisted_probe_can_use_the_legacy_boundary():

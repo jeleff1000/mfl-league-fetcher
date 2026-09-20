@@ -436,6 +436,20 @@ def fetch_espn_matchups_modern(
                 f"  [MATCHUPS] {year} week {week}: no score-bearing pair join; "
                 f"box_pairs={box_pairs}, raw_pairs={list(raw_schedule_lookup)}"
             )
+            if raw_schedule:
+                first_raw = raw_schedule[0]
+                score_fields = {}
+                for side_name in ("home", "away"):
+                    side = first_raw.get(side_name) or {}
+                    score_fields[side_name] = {
+                        key: value
+                        for key, value in side.items()
+                        if "score" in str(key).lower() or "point" in str(key).lower()
+                    }
+                log(
+                    f"  [MATCHUPS] {year} week {week}: raw score fields "
+                    f"{repr(score_fields)[:2000]}"
+                )
             consecutive_empty += 1
             if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
                 break

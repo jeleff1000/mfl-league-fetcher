@@ -1322,6 +1322,12 @@ def yahoo_source_manifest_complete(
     )
 
 
+def yahoo_season_is_predraft(raw_settings: dict[str, Any] | None) -> bool:
+    """Return whether Yahoo has created the renewal but not held its draft."""
+    metadata = (raw_settings or {}).get("metadata") or {}
+    return str(metadata.get("draft_status") or "").strip().lower() == "predraft"
+
+
 def _merge_refresh_payloads(
     *,
     ctx: Any,
@@ -1330,6 +1336,7 @@ def _merge_refresh_payloads(
     year: int,
     refresh_weeks: list[int],
     finalized_ops: pd.DataFrame,
+    raw_settings: dict[str, Any] | None = None,
 ) -> dict[str, int]:
     """Fetch provider state and merge only safe active-season rows locally."""
     from multi_league.core.canonical_settings import flatten_settings
@@ -1358,7 +1365,8 @@ def _merge_refresh_payloads(
     from multi_league.data_fetchers.yahoo.yahoo_transactions import fetch_transactions
 
     league_key = ctx.get_league_id_for_year(year)
-    raw_settings = fetch_league_settings(year, league_key=league_key, oauth=oauth)
+    if raw_settings is None:
+        raw_settings = fetch_league_settings(year, league_key=league_key, oauth=oauth)
     if not raw_settings:
         raise RuntimeError(f"Yahoo returned no settings for {year} ({league_key})")
     settings_row = pd.DataFrame([flatten_settings(raw_settings, "yahoo", year, league_key)])
@@ -1972,7 +1980,7 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
     from scripts.league_update_workflow_receipt import record_publication_commit, write_refresh_receipt
-    from multi_league.core.yahoo_league_settings import discover_league_history
+    from multi_league.core.yahoo_league_settings import discover_league_history, fetch_league_settings
 
     timer = PhaseTimer()
     reader = FlyReader()
@@ -2068,11 +2076,6 @@ def main(argv: list[str] | None = None) -> int:
             tables=UPDATE_REFRESH_SOURCE_TABLES,
         )
         timer.mark("source_snapshot")
-        from multi_league.core.homepage_refresh import _load_homepage_source_frames
-
-        homepage_source_future = start_background_refresh_call(
-            lambda: _load_homepage_source_frames(reader, args.db)
-        ) if args.execute else None
         receipt["base_generation"] = base_generation
         if source_frames["league_context"].empty or source_frames["league_settings"].empty:
             raise RuntimeError(f"Fly has no reusable context/settings for {args.db}")
@@ -2160,6 +2163,26 @@ def main(argv: list[str] | None = None) -> int:
         ctx.save(context_path)
         receipt["league_key"] = history[str(active_year)]
         timer.mark("renewal_resolution")
+        active_raw_settings = fetch_league_settings(
+            active_year,
+            league_key=history[str(active_year)],
+            oauth=oauth,
+        )
+        if not active_raw_settings:
+            raise RuntimeError(
+                f"Yahoo returned no settings for {active_year} ({history[str(active_year)]})"
+            )
+        if yahoo_season_is_predraft(active_raw_settings):
+            receipt["status"] = "NO_FINALIZED_WEEKS"
+            receipt["reason"] = "yahoo_active_season_predraft"
+            receipt["phase_seconds"] = timer.finish()
+            write_refresh_receipt(receipt, args.json_out)
+            return 0
+        from multi_league.core.homepage_refresh import _load_homepage_source_frames
+
+        homepage_source_future = start_background_refresh_call(
+            lambda: _load_homepage_source_frames(reader, args.db)
+        ) if args.execute else None
         local_db = LocalLeagueDB(work_dir, args.db)
         try:
             receipt["hydrated_rows"] = hydrate_local_refresh_sources(
@@ -2196,6 +2219,7 @@ def main(argv: list[str] | None = None) -> int:
                         year=active_year,
                         refresh_weeks=refresh_weeks,
                         finalized_ops=finalized_ops,
+                        raw_settings=active_raw_settings,
                     )
                 except YahooIncompleteSourceError as exc:
                     receipt["status"] = "INCOMPLETE_SOURCE"

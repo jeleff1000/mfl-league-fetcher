@@ -40,6 +40,24 @@ def test_missing_yahoo_oauth_writes_a_reauthentication_receipt_before_failing():
     assert "write_refresh_receipt(receipt, args.json_out)" in catch
 
 
+def test_predraft_yahoo_season_is_a_clean_noop_before_local_hydration():
+    from refresh_yahoo_active_season import yahoo_season_is_predraft
+
+    assert yahoo_season_is_predraft({"metadata": {"draft_status": "predraft"}})
+    assert not yahoo_season_is_predraft({"metadata": {"draft_status": "postdraft"}})
+
+    source = (Path(__file__).resolve().parents[4] / "scripts" / "refresh_yahoo_active_season.py").read_text(
+        encoding="utf-8"
+    )
+    main = source[source.index("def main(") :]
+    predraft_gate = main.index("if yahoo_season_is_predraft(active_raw_settings):")
+    homepage_read = main.index("homepage_source_future = start_background_refresh_call(")
+    hydration = main.index("hydrate_local_refresh_sources(")
+    assert predraft_gate < hydration
+    assert predraft_gate < homepage_read
+    assert "raw_settings=active_raw_settings" in main
+
+
 ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))

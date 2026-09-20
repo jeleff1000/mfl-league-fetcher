@@ -132,8 +132,8 @@ def _effective_box_scores(box, raw_schedule_lookup: dict) -> tuple[float, float]
     away = getattr(box, "away_team", None)
     raw_meta = raw_schedule_lookup.get(
         (
-            getattr(home, "team_id", None) if home else None,
-            getattr(away, "team_id", None) if away else None,
+            _normalize_raw_team_id(getattr(home, "team_id", None)) if home else None,
+            _normalize_raw_team_id(getattr(away, "team_id", None)) if away else None,
         ),
         {},
     )
@@ -502,8 +502,8 @@ def fetch_espn_matchups_modern(
             matchup_type = getattr(bs, "matchup_type", None)
             raw_meta = raw_schedule_lookup.get(
                 (
-                    getattr(home_team, "team_id", None) if home_team else None,
-                    getattr(away_team, "team_id", None) if away_team else None,
+                    _normalize_raw_team_id(getattr(home_team, "team_id", None)) if home_team else None,
+                    _normalize_raw_team_id(getattr(away_team, "team_id", None)) if away_team else None,
                 ),
                 {},
             )
@@ -717,8 +717,8 @@ def fetch_espn_matchups_legacy(
             away_team = getattr(matchup, "away_team", None)
             raw_meta = raw_schedule_lookup.get(
                 (
-                    getattr(home_team, "team_id", None) if home_team else None,
-                    getattr(away_team, "team_id", None) if away_team else None,
+                    _normalize_raw_team_id(getattr(home_team, "team_id", None)) if home_team else None,
+                    _normalize_raw_team_id(getattr(away_team, "team_id", None)) if away_team else None,
                 ),
                 {},
             )

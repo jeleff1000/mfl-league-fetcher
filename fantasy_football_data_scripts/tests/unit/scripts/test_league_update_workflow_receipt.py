@@ -34,6 +34,7 @@ def test_post_commit_cache_failure_is_recoverable_without_republishing():
     assert failure_status({"status": "COMMITTED", "executed": False, "source_fingerprint": "2026:1:changed"}) == "failed"
     assert failure_status({"status": "NO_ACTIVE_RENEWAL"}) == "incomplete_source"
     assert failure_status({"status": "INCOMPLETE_SOURCE"}) == "incomplete_source"
+    assert failure_status({"status": "CREDENTIAL_REQUIRED"}) == "credential_required"
     assert failure_status(None) == "failed"
 
 

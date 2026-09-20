@@ -97,6 +97,10 @@ YAHOO_NFL_GAME_KEY_TO_SEASON = {
 }
 
 
+class YahooCredentialRequiredError(RuntimeError):
+    """No stored OAuth credential owns the requested Yahoo league chain."""
+
+
 def _derive_settings_variant(row: dict) -> str:
     """Derive the precomputed LAMAR variant key from flattened canonical settings."""
     return derive_scoring_variant(
@@ -307,11 +311,29 @@ def _build_context_from_fly(
 
     # Check Yahoo
     yahoo_rows = reader.query(
-        f"SELECT league_id, league_name, encrypted_refresh_token "
+        f"SELECT database_name, league_id, league_name, encrypted_refresh_token "
         f"FROM main.league_credentials WHERE database_name = '{safe_credential_db}'",
         database="___ops",
     )
-    yahoo = tuple(yahoo_rows[0].values()) if yahoo_rows else None
+    if not yahoo_rows and supplied_reader and frontend_settings:
+        chain_ids = sorted({
+            str(league_id).strip()
+            for league_id in (frontend_settings.get("league_ids") or {}).values()
+            if str(league_id).strip()
+        })
+        if chain_ids:
+            identity_list = ", ".join(
+                "'" + league_id.replace("'", "''") + "'"
+                for league_id in chain_ids
+            )
+            yahoo_rows = reader.query(
+                "SELECT database_name, league_id, league_name, encrypted_refresh_token "
+                "FROM main.league_credentials "
+                f"WHERE CAST(league_id AS VARCHAR) IN ({identity_list}) "
+                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                database="___ops",
+            )
+    yahoo = yahoo_rows[0] if yahoo_rows else None
 
     # ---- Yahoo takes priority (this is the Yahoo importer) ----
     if not yahoo:
@@ -319,8 +341,9 @@ def _build_context_from_fly(
         # its shared reader explicitly.  Do not spend two network round trips
         # probing unrelated provider registries on that fast path.
         if supplied_reader:
-            log(f"[FAIL] {database_name} not found in Yahoo credentials")
-            sys.exit(1)
+            raise YahooCredentialRequiredError(
+                f"No stored Yahoo OAuth credential owns the imported chain for {database_name}"
+            )
 
         # Check Sleeper
         sleeper_rows = reader.query(
@@ -345,7 +368,10 @@ def _build_context_from_fly(
         log(f"[FAIL] {database_name} not found in any credential table (yahoo, sleeper, espn)")
         sys.exit(1)
 
-    league_id, league_name, encrypted_refresh_token = yahoo
+    credential_owner_db = str(yahoo.get("database_name") or credential_db)
+    league_id = yahoo["league_id"]
+    league_name = yahoo["league_name"]
+    encrypted_refresh_token = yahoo["encrypted_refresh_token"]
 
     # ---- Decrypt refresh token ----
     encryption_key = get_encryption_key()
@@ -415,6 +441,10 @@ def _build_context_from_fly(
         standings_weights=frontend_settings.get("standings_weights"),
         is_private=frontend_settings.get("is_private") is True,
     )
+    # The weekly worker rotates tokens on the credential owner, not on a
+    # renamed target or presentation clone. This private runtime attribute is
+    # intentionally omitted from the persisted league context.
+    ctx._credential_database_name = credential_owner_db
 
     # Save context so downstream code that references context_path works
     context_path = data_dir / "league_context.json"

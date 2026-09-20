@@ -81,6 +81,8 @@ def failure_status(receipt: Mapping[str, Any] | None, *, cancelled: bool = False
         return "committed_cache_pending"
     if status == "INCOMPLETE_SOURCE" or status in MANUAL_NO_OP_STATUSES:
         return "incomplete_source"
+    if status == "CREDENTIAL_REQUIRED":
+        return "credential_required"
     return "cancelled" if cancelled else "failed"
 
 

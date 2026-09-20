@@ -30,6 +30,16 @@ def test_yahoo_roster_gaps_write_an_incomplete_source_receipt_before_failing():
     assert "write_refresh_receipt(receipt, args.json_out)" in catch
 
 
+def test_missing_yahoo_oauth_writes_a_reauthentication_receipt_before_failing():
+    text = (Path(__file__).resolve().parents[4] / "scripts" / "refresh_yahoo_active_season.py").read_text(
+        encoding="utf-8"
+    )
+    catch = text.split("except YahooCredentialRequiredError as exc:", 1)[1].split("raise", 1)[0]
+    assert 'receipt["status"] = "CREDENTIAL_REQUIRED"' in catch
+    assert 'receipt["error_code"] = "yahoo_oauth_reauthentication_required"' in catch
+    assert "write_refresh_receipt(receipt, args.json_out)" in catch
+
+
 ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))

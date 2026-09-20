@@ -1908,7 +1908,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     os.environ["DATABASE_BACKEND"] = "fly"
-    from initial_import_v3 import _build_context_from_fly
+    from initial_import_v3 import YahooCredentialRequiredError, _build_context_from_fly
     from multi_league.core.fleet_publish import FLEET_HOMEPAGE_SCHEMA_VERSION, build_fleet_partition_bundle
     from multi_league.core.league_refresh import (
         active_refresh_publish_tables,
@@ -2068,20 +2068,33 @@ def main(argv: list[str] | None = None) -> int:
         frontend_settings["league_ids"] = merge_provider_chain_ids(
             frontend_settings.get("league_ids"), active_segment,
         )
-        ctx, context_path = _build_context_from_fly(
-            args.db,
-            data_dir_override=str(work_dir),
-            reader=reader,
-            frontend_settings=frontend_settings,
-            credential_database_name=args.credential_db,
-        )
+        try:
+            ctx, context_path = _build_context_from_fly(
+                args.db,
+                data_dir_override=str(work_dir),
+                reader=reader,
+                frontend_settings=frontend_settings,
+                credential_database_name=args.credential_db,
+            )
+        except YahooCredentialRequiredError as exc:
+            receipt["status"] = "CREDENTIAL_REQUIRED"
+            receipt["error_code"] = "yahoo_oauth_reauthentication_required"
+            receipt["error"] = str(exc)
+            receipt["phase_seconds"] = timer.finish()
+            write_refresh_receipt(receipt, args.json_out)
+            raise
         oauth_payload = json.loads(Path(ctx.oauth_file_path).read_text(encoding="utf-8"))
         original_refresh_token = str(oauth_payload.get("refresh_token") or "")
         oauth = ctx.get_oauth_session()
+        credential_owner_db = str(
+            getattr(ctx, "_credential_database_name", None)
+            or args.credential_db
+            or args.db
+        )
         _persist_rotated_oauth_refresh_token(
             original_refresh_token=original_refresh_token,
             oauth=oauth,
-            credential_database_name=args.credential_db or args.db,
+            credential_database_name=credential_owner_db,
             credential_league_id=str(ctx.league_id),
         )
         history = _active_yahoo_history(

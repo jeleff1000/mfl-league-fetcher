@@ -302,6 +302,58 @@ def test_build_context_from_fly_can_use_shared_yahoo_credential_without_changing
     assert context_path.is_file()
 
 
+def test_build_context_from_fly_discovers_shared_yahoo_credential_from_saved_chain(tmp_path, monkeypatch):
+    """Renamed Yahoo targets authenticate with the credential owning a chain key."""
+    from multi_league.utils import credential_store
+
+    class Reader:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def query(self, sql, *, database):
+            assert database == "___ops"
+            self.queries.append(sql)
+            if "database_name = 'cream_dreamz_fantasy_league'" in sql:
+                return []
+            assert "CAST(league_id AS VARCHAR) IN" in sql
+            assert "'461.l.69717'" in sql
+            return [{
+                "database_name": "fantasy_football_league_fc2c",
+                "league_id": "461.l.69717",
+                "league_name": "Fantasy Football League",
+                "encrypted_refresh_token": "encrypted-token",
+            }]
+
+    class Context:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        def save(self, path):
+            path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(credential_store, "get_encryption_key", lambda: "test-key")
+    monkeypatch.setattr(credential_store, "decrypt_token", lambda _value, _key: "refresh-token")
+    monkeypatch.setattr(initial_import_v3, "LeagueContext", Context)
+    monkeypatch.setenv("YAHOO_CLIENT_ID", "client-id")
+    monkeypatch.setenv("YAHOO_CLIENT_SECRET", "client-secret")
+
+    ctx, _ = initial_import_v3._build_context_from_fly(
+        "cream_dreamz_fantasy_league",
+        data_dir_override=str(tmp_path),
+        reader=Reader(),
+        frontend_settings={
+            "league_name": "Cream Dreamz Fantasy League",
+            "league_ids": {
+                "2025": "461.l.69717",
+                "2026": "470.l.123456",
+            },
+        },
+    )
+
+    assert ctx.database_name == "cream_dreamz_fantasy_league"
+    assert ctx._credential_database_name == "fantasy_football_league_fc2c"
+
+
 def test_partial_history_source_still_requires_settings_and_players():
     assert initial_import_v3._pre_upload_non_empty_tables(
         allow_empty_quick_startup=False,

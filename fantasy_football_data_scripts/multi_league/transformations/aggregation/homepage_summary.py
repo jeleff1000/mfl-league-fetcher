@@ -85,8 +85,32 @@ def _table_select_sql(table: str, db_name: str, alias: str = "") -> str:
 class ScopedLocalProfileContext(LocalProfileContext):
     """Local profile scratch pad that only pulls rows for the active db_name."""
 
+    def __init__(
+        self,
+        remote_conn,
+        db_name: str,
+        platform: str,
+        *,
+        franchise_ids: set[str] | None = None,
+    ):
+        self._franchise_ids = (
+            None if franchise_ids is None else {str(value) for value in franchise_ids}
+        )
+        super().__init__(remote_conn, db_name, platform)
+
+    def _player_franchise_scope(self) -> str:
+        if self._franchise_ids is None:
+            return ""
+        if not self._franchise_ids:
+            return " AND FALSE"
+        quoted = ", ".join(
+            "'" + value.replace("'", "''") + "'" for value in sorted(self._franchise_ids)
+        )
+        return f" AND CAST(franchise_id AS VARCHAR) IN ({quoted})"
+
     def _pull_tables(self, remote_conn, db_name: str, platform: str):  # noqa: D401
         configure_table_catalog(remote_conn)
+        player_franchise_scope = self._player_franchise_scope()
 
         for table in ["matchup", "draft", "transactions"]:
             try:
@@ -102,13 +126,15 @@ class ScopedLocalProfileContext(LocalProfileContext):
                 f"SELECT * FROM {central_table('player_fantasy')} "
                 f"WHERE {league_db_filter(db_name)} "
                 "AND is_started = 1 AND manager_lamar IS NOT NULL"
+                f"{player_franchise_scope}"
             ).fetchdf()
             self.local.execute("CREATE TABLE player_fantasy AS SELECT * FROM pf_df")
         except Exception:
             self._log("[WARN] Filtered player_fantasy pull failed, trying unfiltered league-only pull")
             try:
                 pf_df = remote_conn.execute(
-                    f"SELECT * FROM {central_table('player_fantasy')} WHERE {league_db_filter(db_name)}"
+                    f"SELECT * FROM {central_table('player_fantasy')} "
+                    f"WHERE {league_db_filter(db_name)}{player_franchise_scope}"
                 ).fetchdf()
                 self.local.execute("CREATE TABLE player_fantasy AS SELECT * FROM pf_df")
             except Exception as e:
@@ -1867,7 +1893,12 @@ def compute_all_manager_profiles(
 
     # Phase 1: Pull data locally (~8 remote queries)
     previous_catalog = get_active_catalog()
-    ctx = ScopedLocalProfileContext(conn, db_name, platform)
+    ctx = ScopedLocalProfileContext(
+        conn,
+        db_name,
+        platform,
+        franchise_ids=franchise_ids,
+    )
     ctx.setup_aliases(db_name)
     set_active_catalog(db_name)
 

@@ -185,6 +185,7 @@ def aggregate_complete_chain_season_rollups(
     *,
     season_years: set[int] | None = None,
     repair_years_by_table: dict[str, set[int]] | None = None,
+    prepare_shared_nfl_lookups: bool = False,
 ) -> dict[str, int]:
     """Rebuild season-derived dependencies from the complete persisted chain.
 
@@ -204,6 +205,7 @@ def aggregate_complete_chain_season_rollups(
         aggregate_draft_manager_season,
     )
     from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+        _prepare_scoped_nfl_lookup_tables,
         aggregate_fantasy_season, aggregate_fantasy_season_all,
     )
     from multi_league.transformations.aggregation.aggregate_matchup_context import (
@@ -242,6 +244,12 @@ def aggregate_complete_chain_season_rollups(
     for table in RETAINED_SEASON_ROLLUP_TABLES:
         ensure_aggregate_table(conn, get_active_catalog(), table)
 
+    # The season and immediately-following career builders share these exact
+    # NFL name/team lookups. Materialize them once on the publication
+    # connection instead of scanning the NFL lake four times.
+    if prepare_shared_nfl_lookups:
+        _prepare_scoped_nfl_lookup_tables(conn, db_name)
+
     from multi_league.transformations.aggregation.modules.optimal_lineup import refresh_position_game_ranks
 
     refresh_position_game_ranks(conn, central_table("player_fantasy"), db_name=db_name)
@@ -259,7 +267,12 @@ def aggregate_complete_chain_season_rollups(
             else sorted(set(season_years) | set(repairs.get(table, set())))
         )
         for year in target_years:
-            result[table] += builder(conn, db_name, year=year)
+            builder_kwargs = (
+                {"prepared_nfl_lookups": prepare_shared_nfl_lookups}
+                if table in {"player_fantasy_season", "player_fantasy_season_all"}
+                else {}
+            )
+            result[table] += builder(conn, db_name, year=year, **builder_kwargs)
     from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
 
     standings_years = (
@@ -341,6 +354,7 @@ def aggregate_career_rollups(
     db_name: str,
     *,
     refresh_game_ranks: bool = True,
+    prepared_nfl_lookups: bool = False,
 ) -> dict[str, int]:
     """Run the normal career aggregations on a complete, merged league connection.
 
@@ -376,8 +390,12 @@ def aggregate_career_rollups(
             raise RuntimeError(f"Career publication source is missing: {source}")
     aggregations = {
         "matchup_career": aggregate_matchup_career,
-        "player_fantasy_career": aggregate_fantasy_career,
-        "player_fantasy_career_all": aggregate_fantasy_career_all,
+        "player_fantasy_career": lambda conn, db_name: aggregate_fantasy_career(
+            conn, db_name, prepared_nfl_lookups=prepared_nfl_lookups,
+        ),
+        "player_fantasy_career_all": lambda conn, db_name: aggregate_fantasy_career_all(
+            conn, db_name, prepared_nfl_lookups=prepared_nfl_lookups,
+        ),
         "draft_manager_career": aggregate_draft_manager_career,
         "draft_player_career": aggregate_draft_player_career,
         "transaction_manager_career": aggregate_transaction_manager_career,

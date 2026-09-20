@@ -234,12 +234,72 @@ def _log_missing_columns(available_cols: set, is_first_call: bool = True):
         log("  [INFO] win/loss columns not found - will be added after matchup_to_player transformation runs")
 
 
-def _scoped_nfl_lookup_ctes(db_name: str) -> str:
+_WEEKLY_REFRESH_PLAYER_LOOKUP = "_weekly_refresh_super_table_dedup"
+_WEEKLY_REFRESH_TEAM_LOOKUP = "_weekly_refresh_nfl_team_dedup"
+
+
+def _prepare_scoped_nfl_lookup_tables(conn, db_name: str) -> None:
+    """Materialize one league's NFL lookups once for an atomic refresh.
+
+    Weekly publication runs the regular-season, all-games, and career fantasy
+    builders on the same serialized connection.  Those builders need identical
+    player-name and current-team lookups.  Keeping the two narrow relations in
+    transaction-local TEMP tables avoids rescanning the NFL lake four times.
+    """
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE {_WEEKLY_REFRESH_PLAYER_LOOKUP} AS
+        WITH needed_player_weeks AS MATERIALIZED (
+            SELECT DISTINCT player_week
+            FROM {table_ref('player_fantasy')}
+            WHERE db_name = '{db_name}' AND player_week IS NOT NULL
+        )
+        SELECT DISTINCT s.player_week, s.player
+        FROM ___ops.nfl_historical.nfl_player_stats_all s
+        INNER JOIN needed_player_weeks n ON n.player_week = s.player_week
+        WHERE s.player_week IS NOT NULL
+    """)
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE {_WEEKLY_REFRESH_TEAM_LOOKUP} AS
+        WITH needed_player_ids AS MATERIALIZED (
+            SELECT DISTINCT CAST(NFL_player_id AS VARCHAR) AS NFL_player_id
+            FROM {table_ref('player_fantasy')}
+            WHERE db_name = '{db_name}' AND NFL_player_id IS NOT NULL
+        ), nfl_team_lookup AS (
+            SELECT s.NFL_player_id, s.nfl_team,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY s.NFL_player_id ORDER BY s.year DESC, s.week DESC
+                   ) AS rn
+            FROM ___ops.nfl_historical.nfl_player_stats_all s
+            INNER JOIN needed_player_ids n
+                ON n.NFL_player_id = CAST(s.NFL_player_id AS VARCHAR)
+            WHERE s.nfl_team IS NOT NULL AND s.NFL_player_id IS NOT NULL
+        )
+        SELECT CAST(NFL_player_id AS VARCHAR) AS NFL_player_id, nfl_team
+        FROM nfl_team_lookup WHERE rn = 1
+    """)
+
+
+def _drop_scoped_nfl_lookup_tables(conn) -> None:
+    """Release transaction-local refresh lookups before returning the connection."""
+    conn.execute(f"DROP TABLE IF EXISTS {_WEEKLY_REFRESH_PLAYER_LOOKUP}")
+    conn.execute(f"DROP TABLE IF EXISTS {_WEEKLY_REFRESH_TEAM_LOOKUP}")
+
+
+def _scoped_nfl_lookup_ctes(db_name: str, *, prepared: bool = False) -> str:
     """Build NFL lookups from only the players used by one league.
 
     The centralized NFL table is large.  Weekly publication used to rank and
     deduplicate the whole table four times even though a league references a
     small fraction of its keys.
+    """
+    if prepared:
+        return f"""
+        super_table_dedup AS (
+            SELECT player_week, player FROM {_WEEKLY_REFRESH_PLAYER_LOOKUP}
+        ),
+        nfl_team_dedup AS (
+            SELECT NFL_player_id, nfl_team FROM {_WEEKLY_REFRESH_TEAM_LOOKUP}
+        )
     """
     return f"""
         needed_player_weeks AS MATERIALIZED (
@@ -275,7 +335,15 @@ def _scoped_nfl_lookup_ctes(db_name: str) -> str:
     """
 
 
-def _aggregate_fantasy(conn, db_name: str, granularity: str, include_playoffs: bool, year: int = None) -> int:
+def _aggregate_fantasy(
+    conn,
+    db_name: str,
+    granularity: str,
+    include_playoffs: bool,
+    year: int = None,
+    *,
+    prepared_nfl_lookups: bool = False,
+) -> int:
     """
     Shared aggregation engine for season/career tables, regular/all-games variants.
 
@@ -355,7 +423,7 @@ def _aggregate_fantasy(conn, db_name: str, granularity: str, include_playoffs: b
         f"""
         INSERT INTO {staging_ref}
         ({aggregate_insert_columns(table_name, insert_cols)})
-        WITH {_scoped_nfl_lookup_ctes(db_name)},
+        WITH {_scoped_nfl_lookup_ctes(db_name, prepared=prepared_nfl_lookups)},
         agg AS (
         SELECT
             '{db_name}' AS db_name,
@@ -448,14 +516,22 @@ def _aggregate_fantasy(conn, db_name: str, granularity: str, include_playoffs: b
     return count
 
 
-def aggregate_fantasy_season(conn, db_name: str, year: int = None) -> int:
+def aggregate_fantasy_season(
+    conn, db_name: str, year: int = None, *, prepared_nfl_lookups: bool = False,
+) -> int:
     """Aggregate player_fantasy to season totals (regular season only)."""
-    return _aggregate_fantasy(conn, db_name, "season", include_playoffs=False, year=year)
+    return _aggregate_fantasy(
+        conn, db_name, "season", include_playoffs=False, year=year,
+        prepared_nfl_lookups=prepared_nfl_lookups,
+    )
 
 
-def aggregate_fantasy_career(conn, db_name: str) -> int:
+def aggregate_fantasy_career(conn, db_name: str, *, prepared_nfl_lookups: bool = False) -> int:
     """Aggregate player_fantasy to career totals (regular season only)."""
-    return _aggregate_fantasy(conn, db_name, "career", include_playoffs=False)
+    return _aggregate_fantasy(
+        conn, db_name, "career", include_playoffs=False,
+        prepared_nfl_lookups=prepared_nfl_lookups,
+    )
 
 
 def create_fantasy_season_table_all(conn, db_name: str) -> bool:
@@ -478,14 +554,22 @@ def create_fantasy_career_table_all(conn, db_name: str) -> bool:
     return True
 
 
-def aggregate_fantasy_season_all(conn, db_name: str, year: int = None) -> int:
+def aggregate_fantasy_season_all(
+    conn, db_name: str, year: int = None, *, prepared_nfl_lookups: bool = False,
+) -> int:
     """Aggregate player_fantasy to season totals INCLUDING playoffs."""
-    return _aggregate_fantasy(conn, db_name, "season", include_playoffs=True, year=year)
+    return _aggregate_fantasy(
+        conn, db_name, "season", include_playoffs=True, year=year,
+        prepared_nfl_lookups=prepared_nfl_lookups,
+    )
 
 
-def aggregate_fantasy_career_all(conn, db_name: str) -> int:
+def aggregate_fantasy_career_all(conn, db_name: str, *, prepared_nfl_lookups: bool = False) -> int:
     """Aggregate player_fantasy to career totals INCLUDING playoffs."""
-    return _aggregate_fantasy(conn, db_name, "career", include_playoffs=True)
+    return _aggregate_fantasy(
+        conn, db_name, "career", include_playoffs=True,
+        prepared_nfl_lookups=prepared_nfl_lookups,
+    )
 
 
 def run_aggregation(conn, db_name: str | None = None) -> tuple[int, int, int, int]:

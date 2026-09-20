@@ -15,12 +15,42 @@ from multi_league.transformations.aggregation.homepage_summary import (
     _compute_transaction_highlights,
     _normalize_platform_id_sql,
     _trade_partner_sql,
+    ScopedLocalProfileContext,
     compute_all_manager_profiles,
     compute_current_standings,
     compute_manager_rankings,
     compute_top_rivalries,
 )
 from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext
+
+
+def test_scoped_profile_context_only_materializes_requested_franchise_players():
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INT, week INT, manager VARCHAR, "
+        "franchise_id VARCHAR, team_points DOUBLE)"
+    )
+    conn.execute("CREATE TABLE public.draft (db_name VARCHAR, franchise_id VARCHAR)")
+    conn.execute("CREATE TABLE public.transactions (db_name VARCHAR, franchise_id VARCHAR)")
+    conn.execute(
+        "CREATE TABLE public.player_fantasy (db_name VARCHAR, franchise_id VARCHAR, "
+        "player_week VARCHAR, NFL_player_id VARCHAR, is_started INT, manager_lamar DOUBLE)"
+    )
+    conn.executemany(
+        "INSERT INTO public.player_fantasy VALUES ('league_a', ?, ?, ?, 1, ?)",
+        [("f1", "p1_2026_1", "p1", 1.0), ("f2", "p2_2026_1", "p2", 999.0)],
+    )
+
+    ctx = ScopedLocalProfileContext(conn, "league_a", "espn", franchise_ids={"f1"})
+    try:
+        rows = ctx.local.execute(
+            "SELECT franchise_id, manager_lamar FROM player_fantasy ORDER BY franchise_id"
+        ).fetchall()
+        assert rows == [("f1", 1.0)]
+    finally:
+        ctx.close()
+        conn.close()
 
 
 def test_manager_profile_parallelism_uses_eight_bounded_workers_by_default():

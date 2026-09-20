@@ -11,6 +11,9 @@ import warnings
 from multi_league.core.aggregate_ddl import AGGREGATE_TABLE_SPECS, create_aggregate_table_sql
 from multi_league.core.delta_publish import canonical_table_registry
 from multi_league.transformations.aggregation import aggregation_utils
+from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+    _drop_scoped_nfl_lookup_tables,
+)
 
 
 def _fleet_server():
@@ -101,6 +104,52 @@ def test_scoped_season_rollups_rank_complete_history_not_only_changed_year(merge
     assert conn.execute("SELECT * FROM public.matchup_season WHERE db_name='test_league' AND year=2025").fetchall() == prior_season
 
 
+def test_prepared_nfl_lookups_preserve_all_four_fantasy_rollups(merged_chain):
+    conn = merged_chain
+    aggregation_utils.aggregate_complete_chain_season_rollups(
+        conn, "test_league", season_years={2026},
+    )
+    aggregation_utils.aggregate_career_rollups(conn, "test_league", refresh_game_ranks=False)
+    tables = (
+        "player_fantasy_season",
+        "player_fantasy_season_all",
+        "player_fantasy_career",
+        "player_fantasy_career_all",
+    )
+    expected = {
+        table: conn.execute(
+            f"SELECT * EXCLUDE(last_updated) FROM public.{table} "
+            "WHERE db_name='test_league' ORDER BY ALL"
+        ).fetchall()
+        for table in tables
+    }
+
+    try:
+        aggregation_utils.aggregate_complete_chain_season_rollups(
+            conn,
+            "test_league",
+            season_years={2026},
+            prepare_shared_nfl_lookups=True,
+        )
+        aggregation_utils.aggregate_career_rollups(
+            conn,
+            "test_league",
+            refresh_game_ranks=False,
+            prepared_nfl_lookups=True,
+        )
+    finally:
+        _drop_scoped_nfl_lookup_tables(conn)
+
+    actual = {
+        table: conn.execute(
+            f"SELECT * EXCLUDE(last_updated) FROM public.{table} "
+            "WHERE db_name='test_league' ORDER BY ALL"
+        ).fetchall()
+        for table in tables
+    }
+    assert actual == expected
+
+
 def test_weekly_merge_rolls_back_partitions_when_career_rebuild_fails(merged_chain, tmp_path):
     server = _fleet_server()
     bundle, extracted = _weekly_bundle(tmp_path)
@@ -111,6 +160,10 @@ def test_weekly_merge_rolls_back_partitions_when_career_rebuild_fails(merged_cha
         server.apply_fleet_merge(conn, bundle.manifest, extracted)
     assert conn.execute("SELECT * FROM public.matchup_season ORDER BY year").fetchall() == before
     assert server.current_generations(conn, ['test_league']) == {'test_league': 0}
+    assert conn.execute(
+        "SELECT table_name FROM duckdb_tables() "
+        "WHERE table_name LIKE '_weekly_refresh_%'"
+    ).fetchall() == []
 
 
 def test_weekly_merge_rejects_a_generation_scope_not_matching_actual_rows(merged_chain, tmp_path):

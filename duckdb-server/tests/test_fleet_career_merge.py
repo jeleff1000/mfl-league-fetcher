@@ -396,9 +396,14 @@ def test_homepage_merge_refreshes_game_ranks_only_once(client, tmp_path, monkeyp
     original = aggregation_utils.aggregate_career_rollups
     calls: list[bool] = []
 
-    def recorded(conn, db_name, *, refresh_game_ranks=True):
+    def recorded(conn, db_name, *, refresh_game_ranks=True, prepared_nfl_lookups=False):
         calls.append(refresh_game_ranks)
-        return original(conn, db_name, refresh_game_ranks=refresh_game_ranks)
+        return original(
+            conn,
+            db_name,
+            refresh_game_ranks=refresh_game_ranks,
+            prepared_nfl_lookups=prepared_nfl_lookups,
+        )
 
     monkeypatch.setattr(aggregation_utils, "aggregate_career_rollups", recorded)
 

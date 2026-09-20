@@ -825,6 +825,7 @@ def apply_fleet_merge(
                             db_name,
                             season_years=changed_years,
                             repair_years_by_table=missing_by_table,
+                            prepare_shared_nfl_lookups=True,
                         )
                         rollup_seconds = time.perf_counter() - rollup_start
                         validation_start = time.perf_counter()
@@ -842,13 +843,23 @@ def apply_fleet_merge(
                     season_rollup_years[db_name] = sorted(rollup_years)
                     season_seconds[db_name] = round(time.perf_counter() - season_start, 4)
                 career_start = time.perf_counter()
-                career_rollups[db_name] = aggregate_career_rollups(
-                    aggregation_conn,
-                    db_name,
-                    refresh_game_ranks=(
-                        manifest.get("schema_version") != FLEET_HOMEPAGE_SCHEMA_VERSION
-                    ),
+                prepared_nfl_lookups = (
+                    manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION
                 )
+                try:
+                    career_rollups[db_name] = aggregate_career_rollups(
+                        aggregation_conn,
+                        db_name,
+                        refresh_game_ranks=not prepared_nfl_lookups,
+                        prepared_nfl_lookups=prepared_nfl_lookups,
+                    )
+                finally:
+                    if prepared_nfl_lookups:
+                        from multi_league.transformations.aggregation.aggregate_fantasy_context import (
+                            _drop_scoped_nfl_lookup_tables,
+                        )
+
+                        _drop_scoped_nfl_lookup_tables(aggregation_conn)
                 career_seconds[db_name] = round(time.perf_counter() - career_start, 4)
                 if manifest.get("schema_version") == FLEET_HOMEPAGE_SCHEMA_VERSION:
                     from multi_league.transformations.aggregation.aggregation_utils import (

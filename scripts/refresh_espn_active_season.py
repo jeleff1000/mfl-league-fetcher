@@ -711,14 +711,16 @@ def main(argv: list[str] | None = None) -> int:
         imported_chain = merge_provider_chain_ids(
             frontend_settings.get("league_ids"), active_segment,
         )
-        ctx, context_path, client, league = _build_context(
-            reader=reader,
-            db_name=args.db,
-            active_year=active_year,
-            active_league_id=captured_league_id or active_segment.current_league_id,
-            league_ids=imported_chain,
-            work_dir=work_dir,
-            frontend_settings=frontend_settings,
+        context_future = start_background_refresh_call(
+            lambda: _build_context(
+                reader=reader,
+                db_name=args.db,
+                active_year=active_year,
+                active_league_id=captured_league_id or active_segment.current_league_id,
+                league_ids=imported_chain,
+                work_dir=work_dir,
+                frontend_settings=frontend_settings,
+            )
         )
         local_db = LocalLeagueDB(work_dir, args.db)
         try:
@@ -733,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
             # season.  Compare the finished rebuild to the full Fly snapshot,
             # otherwise correctly restored historical source rows appear new.
             preservation_before = preservation_witnesses
+            ctx, context_path, client, league = context_future.result()
             timer.mark("local_hydration")
             active_scoring = _active_year_scoring_info(
                 local_db,

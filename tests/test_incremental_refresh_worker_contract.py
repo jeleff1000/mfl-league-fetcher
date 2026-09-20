@@ -471,6 +471,16 @@ def test_all_platforms_overlap_active_ops_cache_with_provider_fetch():
         assert start < fetch < wait
 
 
+def test_espn_overlaps_provider_context_with_local_hydration():
+    text = (ROOT / "scripts" / "refresh_espn_active_season.py").read_text(encoding="utf-8")
+    main = text.split("def main(", 1)[1]
+    start = main.index("context_future = start_background_refresh_call(")
+    hydrate = main.index("hydrate_local_refresh_sources(", start)
+    wait = main.index("context_future.result()", hydrate)
+    fetch = main.index("_merge_active_payloads(", wait)
+    assert start < hydrate < wait < fetch
+
+
 def test_all_platforms_recheck_ops_cache_after_provider_settings_are_hydrated():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")

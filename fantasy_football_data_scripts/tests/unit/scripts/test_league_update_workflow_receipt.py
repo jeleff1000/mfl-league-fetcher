@@ -187,6 +187,27 @@ def test_early_receipt_drives_real_cache_only_recovery_without_republishing(tmp_
     # failure handler must still persist the exact committed/cache-pending state.
     saved = subject._read_receipt(path)
     with duckdb.connect(":memory:") as conn:
+        conn.execute("""
+            CREATE SCHEMA accounts;
+            CREATE TABLE accounts.league_update_manifests (
+              database_name VARCHAR PRIMARY KEY, observed_manifest_json VARCHAR,
+              observed_manifest_digest VARCHAR, published_manifest_json VARCHAR,
+              published_manifest_digest VARCHAR, published_at TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE accounts.league_update_dispatches (
+              database_name VARCHAR PRIMARY KEY, platform VARCHAR NOT NULL, status VARCHAR NOT NULL,
+              workflow_file VARCHAR, workflow_run_id BIGINT, dispatch_token VARCHAR,
+              source_year INTEGER, source_week INTEGER, source_fingerprint VARCHAR,
+              publish_generation VARCHAR, healthy BOOLEAN DEFAULT FALSE,
+              dispatched_at TIMESTAMP, started_at TIMESTAMP, completed_at TIMESTAMP,
+              lease_expires_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW(), error VARCHAR,
+              attempt_id VARCHAR, claim_version BIGINT DEFAULT 0, heartbeat_at TIMESTAMP,
+              observed_manifest_digest VARCHAR, base_generation VARCHAR, bundle_id VARCHAR,
+              cache_state VARCHAR, committed_at TIMESTAMP, cache_verified_at TIMESTAMP,
+              publication_receipt_json VARCHAR
+            );
+        """)
         class LocalWriter:
             def execute(self, sql, *, database):
                 assert database == "___ops"

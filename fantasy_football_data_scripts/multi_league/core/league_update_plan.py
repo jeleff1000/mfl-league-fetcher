@@ -60,8 +60,21 @@ def active_provider_league_id(
     provider: str,
 ) -> str | None:
     """Return the active ID only when the captured provider chain proves it."""
+    chain = provider_renewal_chain(value, provider=provider)
     if value is None:
         return None
+    manifest = value.observed_manifest if isinstance(value, PersistedRefreshPlan) else value
+    return chain[str(int(manifest.active_season))]
+
+
+def provider_renewal_chain(
+    value: SourceManifest | PersistedRefreshPlan | None,
+    *,
+    provider: str,
+) -> dict[str, str]:
+    """Return one complete, internally consistent captured provider segment."""
+    if value is None:
+        return {}
     manifest = value.observed_manifest if isinstance(value, PersistedRefreshPlan) else value
     expected = str(provider).strip().lower()
     segments = [segment for segment in manifest.segments if segment.provider.strip().lower() == expected]
@@ -73,14 +86,26 @@ def active_provider_league_id(
     active_year = int(manifest.active_season)
     if active_year not in {int(year) for year in segment.seasons}:
         raise PersistedManifestError("captured provider chain omitted the active season")
-    active_ids = {
-        str(league_id)
-        for year, league_id in segment.renewal_chain
-        if int(year) == active_year and str(league_id).strip()
-    }
-    if active_ids != {str(segment.active_league_id)}:
+    chain: dict[str, str] = {}
+    for year, league_id in segment.renewal_chain:
+        year_key = str(int(year))
+        normalized_id = str(league_id).strip()
+        if not normalized_id:
+            raise PersistedManifestError("captured provider renewal chain contains an empty identity")
+        existing = chain.get(year_key)
+        if existing is not None and existing != normalized_id:
+            raise PersistedManifestError("captured provider renewal chain contains conflicting identities")
+        chain[year_key] = normalized_id
+    if expected in {"yahoo", "sleeper"} and len(set(chain.values())) != len(chain):
+        raise PersistedManifestError(
+            f"captured {expected} renewal chain reused an identity across seasons"
+        )
+    if chain.get(str(active_year)) != str(segment.active_league_id):
         raise PersistedManifestError("captured provider chain has an inconsistent active identity")
-    return str(segment.active_league_id)
+    seasons = {str(int(year)) for year in segment.seasons}
+    if set(chain) != seasons:
+        raise PersistedManifestError("captured provider renewal chain does not cover its declared seasons")
+    return dict(sorted(chain.items(), key=lambda item: int(item[0])))
 
 
 def active_publication_covers_plan(

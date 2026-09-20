@@ -1166,14 +1166,14 @@ def discover_league_history(
 
         # Follow the 'renew' link to previous season
         renew_raw = metadata.get("renew", "")
-        if renew_raw:
+        if renew_raw and (start_year is None or season_year > start_year):
             prev_key = _parse_renew_key(renew_raw)
             if prev_key and prev_key not in visited:
                 keys_to_process.append(prev_key)
 
         # Follow the 'renewed' link to next season
         renewed_raw = metadata.get("renewed", "")
-        if renewed_raw:
+        if renewed_raw and (end_year is None or season_year < end_year):
             next_key = _parse_renew_key(renewed_raw)
             if next_key and next_key not in visited:
                 keys_to_process.append(next_key)

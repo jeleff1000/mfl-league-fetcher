@@ -15,6 +15,7 @@ from multi_league.core.league_update_plan import (
     active_provider_league_id,
     build_refresh_plan,
     load_persisted_refresh_plan,
+    provider_renewal_chain,
 )
 
 
@@ -346,6 +347,14 @@ def test_active_provider_identity_comes_from_the_verified_native_chain():
     assert active_provider_league_id(current, provider="sleeper") == "s26"
 
 
+def test_provider_renewal_chain_returns_the_complete_verified_segment():
+    current = manifest()
+    assert provider_renewal_chain(current, provider="sleeper") == {
+        "2025": "s25",
+        "2026": "s26",
+    }
+
+
 @pytest.mark.parametrize(
     "segment",
     [
@@ -356,6 +365,28 @@ def test_active_provider_identity_comes_from_the_verified_native_chain():
 def test_active_provider_identity_rejects_an_inconsistent_chain(segment):
     with pytest.raises(PersistedManifestError, match="active.*identity|active season"):
         active_provider_league_id(manifest(segments=(segment,)), provider="sleeper")
+
+
+def test_provider_renewal_chain_rejects_a_missing_season_mapping():
+    segment = LeagueSegment(
+        "sleeper",
+        "s26",
+        (2024, 2025, 2026),
+        ((2024, "s24"), (2026, "s26")),
+    )
+    with pytest.raises(PersistedManifestError, match="renewal chain.*seasons"):
+        provider_renewal_chain(manifest(segments=(segment,)), provider="sleeper")
+
+
+def test_provider_renewal_chain_rejects_reused_yahoo_identity_across_seasons():
+    segment = LeagueSegment(
+        "yahoo",
+        "470.l.10",
+        (2025, 2026),
+        ((2025, "470.l.10"), (2026, "470.l.10")),
+    )
+    with pytest.raises(PersistedManifestError, match="reused an identity"):
+        provider_renewal_chain(manifest(segments=(segment,)), provider="yahoo")
 
 
 def test_persisted_plan_replays_active_week_when_nonzero_offense_is_missing_ppg():

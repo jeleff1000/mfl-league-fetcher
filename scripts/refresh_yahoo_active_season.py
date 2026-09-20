@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -214,6 +215,7 @@ def _active_yahoo_history(
     oauth: Any,
     active_year: int,
     source_active_key: str | None = None,
+    captured_history: Mapping[object, object] | None = None,
     has_persisted_chain: bool = True,
     discover: Any,
 ) -> dict[str, str]:
@@ -231,6 +233,38 @@ def _active_yahoo_history(
     if saved_active_key and active_key and saved_active_key != active_key:
         raise RuntimeError("Fly context and settings have conflicting active Yahoo league keys")
 
+    captured = {
+        str(year): str(league_key).strip()
+        for year, league_key in (captured_history or {}).items()
+        if str(year).strip() and str(league_key).strip()
+    }
+    if captured:
+        invalid = {
+            season: league_key
+            for season, league_key in captured.items()
+            if not YAHOO_LEAGUE_KEY_RE.fullmatch(league_key)
+        }
+        if invalid:
+            raise RuntimeError("captured Yahoo chain contained a non-Yahoo league identity")
+        conflicts = {
+            season: (history[season], league_key)
+            for season, league_key in captured.items()
+            if season in history and history[season] != league_key
+        }
+        if conflicts:
+            details = ", ".join(
+                f"{season}: saved={saved_key}, captured={captured_key}"
+                for season, (saved_key, captured_key) in sorted(conflicts.items())
+            )
+            raise RuntimeError(f"captured Yahoo chain conflicted with Fly history: {details}")
+        captured_active = captured.get(str(active_year))
+        if not captured_active:
+            raise RuntimeError("captured Yahoo chain omitted the active season")
+        if active_key and active_key != captured_active:
+            raise RuntimeError("captured Yahoo chain conflicted with the active Yahoo league key")
+        history.update(captured)
+        return dict(sorted(history.items(), key=lambda item: int(item[0])))
+
     if not has_persisted_chain:
         # ``history`` was inferred from league_settings rather than saved by
         # the provider-native chain finder. Legacy rows can contain a context
@@ -246,11 +280,39 @@ def _active_yahoo_history(
             if YAHOO_LEAGUE_KEY_RE.fullmatch(league_key):
                 saved_anchors.append((season_number, league_key))
         anchor = active_key or (max(saved_anchors)[1] if saved_anchors else str(ctx.league_id))
+        saved_years = sorted(season for season, _league_key in saved_anchors)
+        saved_keys = [league_key for _season, league_key in sorted(saved_anchors)]
+        complete_unique_timeline = bool(saved_years) and (
+            len(saved_keys) == len(set(saved_keys))
+            and saved_years == list(range(saved_years[0], saved_years[-1] + 1))
+            and saved_years[-1] <= int(active_year)
+            and len(saved_anchors) == len(history)
+        )
+        discovery_start_year = saved_years[-1] if complete_unique_timeline else None
         discovered = {
             str(year): str(league_key)
-            for year, league_key in discover(anchor, oauth=oauth, end_year=active_year).items()
+            for year, league_key in discover(
+                anchor,
+                oauth=oauth,
+                start_year=discovery_start_year,
+                end_year=active_year,
+            ).items()
             if str(year).strip() and YAHOO_LEAGUE_KEY_RE.fullmatch(str(league_key).strip())
         }
+        if complete_unique_timeline:
+            conflicts = {
+                season: (history[season], league_key)
+                for season, league_key in discovered.items()
+                if season in history and history[season] != league_key
+            }
+            if conflicts:
+                details = ", ".join(
+                    f"{season}: saved={saved_key}, discovered={discovered_key}"
+                    for season, (saved_key, discovered_key) in sorted(conflicts.items())
+                )
+                raise RuntimeError(f"Yahoo renewal discovery conflicted with the saved chain: {details}")
+            history.update(discovered)
+            discovered = history
         if not YAHOO_LEAGUE_KEY_RE.fullmatch(str(discovered.get(str(active_year)) or "")):
             raise RuntimeError("Yahoo renewal chain has no valid active Yahoo league key")
         return dict(sorted(discovered.items(), key=lambda item: int(item[0])))
@@ -1854,7 +1916,11 @@ def main(argv: list[str] | None = None) -> int:
         stage_refresh_partitions,
     )
     from multi_league.core.local_db import LocalLeagueDB
-    from multi_league.core.league_update_plan import active_provider_league_id, load_persisted_refresh_plan
+    from multi_league.core.league_update_plan import (
+        active_provider_league_id,
+        load_persisted_refresh_plan,
+        provider_renewal_chain,
+    )
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
@@ -1908,6 +1974,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.execute and persisted_plan is None:
         raise RuntimeError("executing update requires a captured source manifest")
     captured_league_id = active_provider_league_id(persisted_plan, provider="yahoo")
+    captured_yahoo_history = provider_renewal_chain(persisted_plan, provider="yahoo")
     refresh_weeks = (
         list(persisted_plan.weeks)
         if persisted_plan is not None
@@ -2008,6 +2075,7 @@ def main(argv: list[str] | None = None) -> int:
             oauth=oauth,
             active_year=active_year,
             source_active_key=source_active_key,
+            captured_history=captured_yahoo_history,
             has_persisted_chain=has_persisted_chain,
             discover=discover_league_history,
         )

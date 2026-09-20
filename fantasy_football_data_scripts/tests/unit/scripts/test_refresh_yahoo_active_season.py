@@ -325,6 +325,132 @@ def test_unpersisted_yahoo_context_rediscovers_native_chain_from_active_key():
     }
 
 
+def test_unpersisted_yahoo_context_bounds_discovery_when_imported_timeline_is_complete():
+    """A unique contiguous imported chain needs only its newest renewal edge."""
+    from refresh_yahoo_active_season import _active_yahoo_history
+
+    calls: list[tuple[str, int | None, int | None]] = []
+
+    def discover(anchor: str, **kwargs):
+        calls.append((anchor, kwargs.get("start_year"), kwargs.get("end_year")))
+        return {
+            "2025": "461.l.9",
+            "2026": "470.l.10",
+        }
+
+    history = _active_yahoo_history(
+        SimpleNamespace(
+            league_id="461.l.9",
+            league_ids={
+                "2022": "414.l.6",
+                "2023": "423.l.7",
+                "2024": "449.l.8",
+                "2025": "461.l.9",
+            },
+        ),
+        oauth=object(),
+        active_year=2026,
+        source_active_key="470.l.10",
+        has_persisted_chain=False,
+        discover=discover,
+    )
+
+    assert calls == [("470.l.10", 2025, 2026)]
+    assert history == {
+        "2022": "414.l.6",
+        "2023": "423.l.7",
+        "2024": "449.l.8",
+        "2025": "461.l.9",
+        "2026": "470.l.10",
+    }
+
+
+def test_captured_yahoo_chain_avoids_legacy_network_discovery():
+    """The signed freshness chain is stronger than another Yahoo history walk."""
+    from refresh_yahoo_active_season import _active_yahoo_history
+
+    history = _active_yahoo_history(
+        SimpleNamespace(
+            league_id="461.l.9",
+            league_ids={
+                "2022": "414.l.6",
+                "2023": "423.l.7",
+                "2024": "449.l.8",
+                "2025": "461.l.9",
+            },
+        ),
+        oauth=object(),
+        active_year=2026,
+        source_active_key="470.l.10",
+        captured_history={
+            "2022": "414.l.6",
+            "2023": "423.l.7",
+            "2024": "449.l.8",
+            "2025": "461.l.9",
+            "2026": "470.l.10",
+        },
+        has_persisted_chain=False,
+        discover=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("verified captured chain must avoid Yahoo discovery")
+        ),
+    )
+
+    assert history == {
+        "2022": "414.l.6",
+        "2023": "423.l.7",
+        "2024": "449.l.8",
+        "2025": "461.l.9",
+        "2026": "470.l.10",
+    }
+
+
+def test_captured_yahoo_chain_rejects_overlap_conflicts_before_fetch():
+    import pytest
+
+    from refresh_yahoo_active_season import _active_yahoo_history
+
+    with pytest.raises(RuntimeError, match="captured Yahoo chain conflicted"):
+        _active_yahoo_history(
+            SimpleNamespace(league_id="461.l.9", league_ids={"2025": "461.l.9"}),
+            oauth=object(),
+            active_year=2026,
+            source_active_key="470.l.10",
+            captured_history={"2025": "461.l.999", "2026": "470.l.10"},
+            has_persisted_chain=False,
+            discover=lambda *_args, **_kwargs: {},
+        )
+
+
+def test_yahoo_native_discovery_stops_at_requested_season_bounds(monkeypatch):
+    """A two-season renewal check must not walk the league's entire history."""
+    from multi_league.core import yahoo_league_settings
+
+    metadata = {
+        "470.l.10": {"season": "2026", "renew": "461_9", "renewed": ""},
+        "461.l.9": {"season": "2025", "renew": "449_8", "renewed": "470_10"},
+        "449.l.8": {"season": "2024", "renew": "423_7", "renewed": "461_9"},
+    }
+    fetched: list[str] = []
+
+    def fetch(url: str, _oauth):
+        key = url.split("/league/", 1)[1].split("/settings", 1)[0]
+        fetched.append(key)
+        return key
+
+    monkeypatch.setattr(yahoo_league_settings, "_fetch_url_xml", fetch)
+    monkeypatch.setattr(yahoo_league_settings, "_parse_league_metadata", metadata.__getitem__)
+
+    history = yahoo_league_settings.discover_league_history(
+        "470.l.10",
+        oauth=object(),
+        start_year=2025,
+        end_year=2026,
+    )
+
+    assert history == {"2025": "461.l.9", "2026": "470.l.10"}
+    assert fetched == ["470.l.10", "461.l.9"]
+
+
 def test_native_chain_backfill_happens_after_user_configuration_preservation_gate():
     """The intentional league_ids_json change must not trip the pre-write guard."""
     source = (ROOT / "scripts" / "refresh_yahoo_active_season.py").read_text(encoding="utf-8")

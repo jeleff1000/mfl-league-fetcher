@@ -48,28 +48,37 @@ class FlyWriter:
         if not self.token:
             raise RuntimeError("DATABASE_ADMIN_TOKEN not set")
 
-    def execute(self, sql: str, database: str = "___leagues") -> list[dict]:
+    def execute(
+        self,
+        sql: str,
+        database: str = "___leagues",
+        *,
+        timeout_seconds: int | float | None = None,
+        max_retries: int | None = None,
+    ) -> list[dict]:
+        request_timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        attempt_limit = self.max_retries if max_retries is None else max(1, int(max_retries))
         last_error: str | None = None
-        for attempt in range(self.max_retries):
+        for attempt in range(attempt_limit):
             try:
                 resp = requests.post(
                     f"{self.url}/query-rw",
                     json={"sql": sql, "database": database},
                     headers=self._headers(),
-                    timeout=self.TIMEOUT_SECONDS,
+                    timeout=request_timeout,
                 )
             except self.RETRY_EXCEPTIONS as exc:
                 last_error = f"Network error: {exc}"
-                if attempt < self.max_retries - 1:
+                if attempt < attempt_limit - 1:
                     time.sleep(self._retry_delay(attempt))
                     continue
                 raise RuntimeError(
-                    f"Query failed after {attempt + 1}/{self.max_retries} attempts: {last_error}"
+                    f"Query failed after {attempt + 1}/{attempt_limit} attempts: {last_error}"
                 ) from exc
 
             if (
                 resp.status_code in self.RETRY_STATUS
-                and attempt < self.max_retries - 1
+                and attempt < attempt_limit - 1
                 and not is_permanent_storage_error(resp.text)
             ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
@@ -82,7 +91,7 @@ class FlyWriter:
             return resp.json()
 
         raise RuntimeError(
-            f"Query exhausted retries after {self.max_retries} attempts: {last_error or 'unknown error'}"
+            f"Query exhausted retries after {attempt_limit} attempts: {last_error or 'unknown error'}"
         )
 
     @staticmethod

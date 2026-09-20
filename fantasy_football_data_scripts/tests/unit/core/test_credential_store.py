@@ -33,10 +33,10 @@ class DummyConn:
 
 class DummyFlyWriter:
     def __init__(self):
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, dict]] = []
 
-    def execute(self, sql: str, database: str = "___leagues"):
-        self.calls.append((sql, database))
+    def execute(self, sql: str, database: str = "___leagues", **kwargs):
+        self.calls.append((sql, database, kwargs))
         return []
 
 
@@ -70,13 +70,82 @@ def test_store_league_credentials_writes_yahoo_credentials_to_fly(monkeypatch):
 
     assert ok is True
     assert len(writer.calls) == 1
-    sql, database = writer.calls[0]
+    sql, database, _kwargs = writer.calls[0]
     assert database == "___ops"
     assert "main.league_credentials" in sql
     assert "accounts.league_inventory" in sql
     assert "'470.l.13655'" in sql
     assert "'tutvfl'" in sql
     assert "'enc''token'" in sql
+
+
+def test_store_league_credentials_fly_hot_path_is_dml_only(monkeypatch):
+    writer = DummyFlyWriter()
+
+    from multi_league.core import fly_writer
+
+    monkeypatch.setattr(credential_store, "_is_fly_backend", lambda: True)
+    monkeypatch.setattr(credential_store, "CRYPTO_AVAILABLE", True)
+    monkeypatch.setattr(credential_store, "encrypt_token", lambda token, key: "encrypted")
+    monkeypatch.setattr(fly_writer, "FlyWriter", lambda: writer)
+
+    assert credential_store.store_league_credentials(
+        league_id="470.l.13655",
+        league_name="TUTVFL",
+        refresh_token="refresh-token",
+        database_name="tutvfl",
+        encryption_key="test-key",
+    )
+
+    sql, _database, _kwargs = writer.calls[0]
+    statements = sql.upper()
+    assert "CREATE " not in statements
+    assert "ALTER " not in statements
+
+
+def test_store_league_credentials_fly_fails_fast(monkeypatch):
+    writer = DummyFlyWriter()
+
+    from multi_league.core import fly_writer
+
+    monkeypatch.setattr(credential_store, "_is_fly_backend", lambda: True)
+    monkeypatch.setattr(credential_store, "CRYPTO_AVAILABLE", True)
+    monkeypatch.setattr(credential_store, "encrypt_token", lambda token, key: "encrypted")
+    monkeypatch.setattr(fly_writer, "FlyWriter", lambda: writer)
+
+    assert credential_store.store_league_credentials(
+        league_id="470.l.13655",
+        league_name="TUTVFL",
+        refresh_token="refresh-token",
+        database_name="tutvfl",
+        encryption_key="test-key",
+    )
+
+    _sql, _database, kwargs = writer.calls[0]
+    assert kwargs == {"timeout_seconds": 3, "max_retries": 1}
+
+
+def test_store_league_credentials_fly_is_one_transaction(monkeypatch):
+    writer = DummyFlyWriter()
+
+    from multi_league.core import fly_writer
+
+    monkeypatch.setattr(credential_store, "_is_fly_backend", lambda: True)
+    monkeypatch.setattr(credential_store, "CRYPTO_AVAILABLE", True)
+    monkeypatch.setattr(credential_store, "encrypt_token", lambda token, key: "encrypted")
+    monkeypatch.setattr(fly_writer, "FlyWriter", lambda: writer)
+
+    assert credential_store.store_league_credentials(
+        league_id="470.l.13655",
+        league_name="TUTVFL",
+        refresh_token="refresh-token",
+        database_name="tutvfl",
+        encryption_key="test-key",
+    )
+
+    sql, _database, _kwargs = writer.calls[0]
+    assert sql.strip().upper().startswith("BEGIN TRANSACTION;")
+    assert sql.strip().upper().endswith("COMMIT;")
 
 
 def test_decrypt_token_accepts_unpadded_frontend_tokens():

@@ -507,6 +507,28 @@ def _wal_path(db_path: Path) -> Path:
     return db_path.with_name(f"{db_path.name}.wal")
 
 
+def _quarantine_wal(db_path: Path, *, reason: str) -> Path | None:
+    """Preserve an unreplayable WAL beside its database for later inspection."""
+    wal_path = _wal_path(db_path)
+    if not wal_path.exists():
+        return None
+    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    target = wal_path.with_name(f"{wal_path.name}.quarantine.{timestamp}")
+    counter = 1
+    while target.exists():
+        counter += 1
+        target = wal_path.with_name(f"{wal_path.name}.quarantine.{timestamp}.{counter}")
+    logger.error(
+        "Quarantining DuckDB WAL for %s after %s: %s -> %s",
+        db_path.name,
+        reason,
+        wal_path,
+        target,
+    )
+    wal_path.rename(target)
+    return target
+
+
 def _checkpoint_connection_if_wal_large(
     conn, db_path: Path, *, reason: str, force: bool = False, raise_on_error: bool = False
 ) -> bool:
@@ -603,15 +625,40 @@ def _checkpoint_database_if_wal_exists(db_path: Path, *, data_dir: Path, reason:
             conn.close()
 
 
+def _prepare_ops_wal_for_startup(data_dir: Path) -> None:
+    """Replay the small OPS WAL or preserve it and keep league storage untouched."""
+    ops_path = data_dir / "___ops.duckdb"
+    if not ops_path.exists() or _wal_size_mb(ops_path) <= 0:
+        return
+    try:
+        _checkpoint_database_if_wal_exists(
+            ops_path,
+            data_dir=data_dir,
+            reason="startup ___ops",
+        )
+    except Exception:
+        if _wal_size_mb(ops_path) <= 0:
+            raise
+        logger.exception("DuckDB startup: ___ops WAL replay failed; preserving WAL and continuing")
+        if _quarantine_wal(ops_path, reason="startup ___ops WAL replay failure") is None:
+            raise
+
+
 def _startup_db_sync(data_dir: Path) -> None:
     logger.info("DuckDB startup: recovery begin")
     startup_recovery(data_dir)
     logger.info("DuckDB startup: cleanup begin")
     cleanup_stale_uploads(data_dir)
+    # OPS is a small metadata database and must not strand credential writes if
+    # its WAL cannot be replayed.  Preserve only that WAL.  The much larger
+    # ___leagues WAL remains the canonical recovery log and is never touched
+    # by this startup repair.
+    _prepare_ops_wal_for_startup(data_dir)
     # Opening the pool is the WAL replay gate.  Do not force a CHECKPOINT for
-    # every non-empty WAL here: even a tiny WAL can make DuckDB rewrite the
-    # full 16 GB database and keep /ready unavailable for minutes.  If replay
-    # fails, init_pool raises and startup exits without serving stale data.
+    # the league WAL here: even a tiny WAL can make DuckDB rewrite the full
+    # 16 GB database and keep /ready unavailable for minutes.  If league WAL
+    # replay fails, init_pool raises and startup exits without serving stale
+    # league data.
     logger.info("DuckDB startup: pool init begin")
     db.init_pool()
     # A narrowly repaired database may intentionally retain its post-repair

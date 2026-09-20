@@ -329,14 +329,7 @@ def _store_league_credentials_fly(
         safe_database_name = _sql_literal(database_name)
         safe_encrypted = _sql_literal(encrypted)
         sql = f"""
-        CREATE SCHEMA IF NOT EXISTS main;
-        CREATE TABLE IF NOT EXISTS main.league_credentials (
-            league_id TEXT PRIMARY KEY,
-            league_name TEXT,
-            database_name TEXT,
-            encrypted_refresh_token TEXT,
-            updated_at TIMESTAMP DEFAULT current_timestamp
-        );
+        BEGIN TRANSACTION;
 
         DELETE FROM main.league_credentials
         WHERE league_id = {safe_league_id}
@@ -346,31 +339,6 @@ def _store_league_credentials_fly(
             (league_id, league_name, database_name, encrypted_refresh_token, updated_at)
         VALUES
             ({safe_league_id}, {safe_league_name}, {safe_database_name}, {safe_encrypted}, current_timestamp);
-
-        CREATE SCHEMA IF NOT EXISTS accounts;
-        CREATE TABLE IF NOT EXISTS accounts.league_inventory (
-            database_name       VARCHAR,
-            platform            VARCHAR,
-            league_name         VARCHAR,
-            league_id           VARCHAR,
-            tier                VARCHAR DEFAULT 'free',
-            entitled_mode       VARCHAR DEFAULT 'quick',
-            last_import_mode    VARCHAR,
-            last_import_at      TIMESTAMP,
-            in_centralized      BOOLEAN DEFAULT FALSE,
-            num_teams           INTEGER,
-            first_year          INTEGER,
-            last_year           INTEGER,
-            scoring_variant     VARCHAR,
-            has_credentials     BOOLEAN DEFAULT FALSE,
-            created_at          TIMESTAMP DEFAULT current_timestamp,
-            updated_at          TIMESTAMP DEFAULT current_timestamp
-        );
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS league_name VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS league_id VARCHAR;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS has_credentials BOOLEAN DEFAULT FALSE;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS last_import_at TIMESTAMP;
-        ALTER TABLE accounts.league_inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT current_timestamp;
 
         UPDATE accounts.league_inventory
         SET platform = 'yahoo',
@@ -390,8 +358,15 @@ def _store_league_credentials_fly(
             SELECT 1 FROM accounts.league_inventory
             WHERE database_name = {safe_database_name}
         );
+
+        COMMIT;
         """
-        FlyWriter().execute(sql, database="___ops")
+        FlyWriter().execute(
+            sql,
+            database="___ops",
+            timeout_seconds=3,
+            max_retries=1,
+        )
         print(f"Stored Fly credentials for {league_name} ({league_id}) -> {database_name}")
         return True
     except Exception as e:

@@ -112,6 +112,22 @@ def test_execute_retries_timeout_then_succeeds(fly_env):
     mock_sleep.assert_called_once_with(FlyWriter.RETRY_BASE_DELAY)
 
 
+def test_execute_honors_per_call_timeout_and_retry_limit(fly_env):
+    writer = FlyWriter()
+    timeout = requests.exceptions.ReadTimeout("slow")
+    with patch("multi_league.core.fly_writer.requests.post", side_effect=timeout) as mock_post:
+        with pytest.raises(RuntimeError, match="after 1/1 attempts"):
+            writer.execute(
+                "UPDATE main.league_credentials SET updated_at = current_timestamp",
+                database="___ops",
+                timeout_seconds=3,
+                max_retries=1,
+            )
+
+    assert mock_post.call_count == 1
+    assert mock_post.call_args.kwargs["timeout"] == 3
+
+
 def test_execute_exhausts_retries_then_raises(fly_env):
     writer = FlyWriter()
     resp_503 = Mock(status_code=503, text="draining")

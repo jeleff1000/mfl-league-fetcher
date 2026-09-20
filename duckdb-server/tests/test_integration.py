@@ -1684,32 +1684,42 @@ def test_query_rw_ops_write_checkpoints_wal(client, data_dir, monkeypatch):
     assert not wal_path.exists() or wal_path.stat().st_size == 0
 
 
-def test_startup_preserves_ops_wal_and_fails_when_replay_fails(data_dir, monkeypatch):
+def test_startup_quarantines_unreplayable_ops_wal_without_touching_leagues_wal(
+    data_dir, monkeypatch
+):
     import main as main_mod
 
     (data_dir / "___leagues.duckdb").write_bytes(b"leagues")
     (data_dir / "___ops.duckdb").write_bytes(b"ops")
-    wal_path = data_dir / "___ops.duckdb.wal"
-    wal_path.write_bytes(b"bad wal")
+    leagues_wal = data_dir / "___leagues.duckdb.wal"
+    leagues_wal.write_bytes(b"untouched leagues wal")
+    ops_wal = data_dir / "___ops.duckdb.wal"
+    ops_wal.write_bytes(b"bad ops wal")
+    checkpoint_calls = []
 
     monkeypatch.setattr(main_mod, "startup_recovery", lambda path: None)
     monkeypatch.setattr(main_mod, "cleanup_stale_uploads", lambda path: None)
-    monkeypatch.setattr(
-        main_mod,
-        "_checkpoint_database_if_wal_exists",
-        lambda *args, **kwargs: pytest.fail("startup must not force a checkpoint"),
-    )
+
+    def fail_ops_replay(db_path, **kwargs):
+        checkpoint_calls.append(db_path.name)
+        raise RuntimeError("forced ops WAL replay failure")
+
+    monkeypatch.setattr(main_mod, "_checkpoint_database_if_wal_exists", fail_ops_replay)
     monkeypatch.setattr(
         main_mod.db,
         "init_pool",
-        lambda: (_ for _ in ()).throw(RuntimeError("forced WAL replay failure")),
+        lambda: (_ for _ in ()).throw(RuntimeError("pool reached")),
     )
 
-    with pytest.raises(RuntimeError, match="forced WAL replay failure"):
+    with pytest.raises(RuntimeError, match="pool reached"):
         main_mod._startup_db_sync(data_dir)
 
-    assert wal_path.read_bytes() == b"bad wal"
-    assert not list(data_dir.glob("___ops.duckdb.wal.quarantine.*"))
+    assert checkpoint_calls == ["___ops.duckdb"]
+    assert leagues_wal.read_bytes() == b"untouched leagues wal"
+    assert not ops_wal.exists()
+    quarantined = list(data_dir.glob("___ops.duckdb.wal.quarantine.*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"bad ops wal"
 
 
 def test_startup_preserves_leagues_wal_and_fails_when_replay_fails(data_dir, monkeypatch):

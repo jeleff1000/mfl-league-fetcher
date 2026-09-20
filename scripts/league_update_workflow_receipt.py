@@ -56,6 +56,45 @@ def record_publication_commit(
     write_refresh_receipt(receipt, path)
 
 
+def record_missing_manager_rankings_repair(
+    receipt: dict[str, Any],
+    *,
+    reader: Any,
+    db_name: str,
+    active_year: int,
+    platform: str,
+    path: Path | None,
+) -> bool:
+    """Publish and record the one-table no-op repair shared by all platforms."""
+    from multi_league.core.homepage_ranking_repair import (
+        repair_missing_manager_rankings_if_needed,
+    )
+    from multi_league.core.league_update_publish_claim import renew_claim_for_publication
+
+    repair = repair_missing_manager_rankings_if_needed(
+        reader=reader,
+        db_name=db_name,
+        active_year=active_year,
+        before_publish=lambda: renew_claim_for_publication(
+            reader, database_name=db_name, platform=platform,
+        ),
+    )
+    receipt["manager_rankings_repair"] = {
+        key: value for key, value in repair.items() if key != "result"
+    }
+    if not repair["published"]:
+        return False
+    receipt["base_generation"] = repair["base_generation"]
+    record_publication_commit(
+        receipt,
+        result=repair["result"],
+        bundle_id=repair["bundle_id"],
+        path=path,
+    )
+    receipt["published_tables"] = repair["published_tables"]
+    return True
+
+
 def classify_publication(receipt: Mapping[str, Any] | None, *, require_publication: bool) -> bool:
     """Never warm cache or mark UI success without an executed Fly commit."""
     if not receipt:

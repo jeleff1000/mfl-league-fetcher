@@ -648,6 +648,20 @@ def main(argv: list[str] | None = None) -> int:
         receipt["published_manifest_digest"] = persisted_plan.published_manifest_digest
         receipt["refresh_reasons"] = list(persisted_plan.reasons)
     if not refresh_weeks:
+        if args.execute:
+            from scripts.league_update_workflow_receipt import record_missing_manager_rankings_repair
+
+            if record_missing_manager_rankings_repair(
+                receipt,
+                reader=reader,
+                db_name=args.db,
+                active_year=active_year,
+                platform="sleeper",
+                path=args.json_out,
+            ):
+                receipt["phase_seconds"] = timer.finish()
+                _write_receipt(receipt, args.json_out)
+                return 0
         receipt["status"] = "NO_FINALIZED_WEEKS"
         receipt["phase_seconds"] = timer.finish()
         _write_receipt(receipt, args.json_out)

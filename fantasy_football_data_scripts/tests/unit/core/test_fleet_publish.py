@@ -286,6 +286,80 @@ def test_build_bundle_omits_empty_and_absent_tables(tmp_path):
     assert omitted["transactions"] == "table_not_present_locally"
 
 
+def test_build_bundle_can_explicitly_empty_one_active_partition(tmp_path):
+    conn = _staged_conn()
+    conn.execute(
+        "CREATE TABLE public.draft ("
+        "db_name VARCHAR, year INTEGER, draft_id VARCHAR, round INTEGER, pick INTEGER)"
+    )
+    try:
+        bundle = build_fleet_partition_bundle(
+            conn,
+            active_year=ACTIVE_YEAR,
+            league_generations={"league_a": 7},
+            tables=["draft"],
+            empty_active_partitions={"draft"},
+            output_dir=tmp_path,
+        )
+    finally:
+        conn.close()
+
+    entries = {entry["table"]: entry for entry in bundle.manifest["tables"]}
+    assert entries["draft"]["row_count"] == 0
+    assert entries["draft"]["empty_reason"] == "explicit_empty_active_partition"
+    assert entries["draft"]["scope"] == {"year": ACTIVE_YEAR}
+    assert bundle.manifest["db_names"] == ["league_a"]
+    with tarfile.open(bundle.path, "r:gz") as tar:
+        assert "tables/draft.parquet" in {member.name for member in tar.getmembers()}
+
+
+def test_build_bundle_rejects_unsafe_empty_partition_requests(tmp_path):
+    conn = _staged_conn()
+    conn.execute(
+        "CREATE TABLE public.draft ("
+        "db_name VARCHAR, year INTEGER, draft_id VARCHAR, round INTEGER, pick INTEGER)"
+    )
+    try:
+        with pytest.raises(FleetScopeError, match="exactly one generation-fenced league"):
+            build_fleet_partition_bundle(
+                conn,
+                active_year=ACTIVE_YEAR,
+                league_generations={"league_a": 0, "league_b": 0},
+                tables=["draft"],
+                empty_active_partitions={"draft"},
+                output_dir=tmp_path / "many",
+            )
+        with pytest.raises(FleetScopeError, match="not enabled"):
+            build_fleet_partition_bundle(
+                conn,
+                active_year=ACTIVE_YEAR,
+                league_generations={"league_a": 0},
+                tables=["matchup", "league_context"],
+                empty_active_partitions={"league_context"},
+                output_dir=tmp_path / "rollup",
+            )
+        empty_matchup = duckdb.connect(":memory:")
+        empty_matchup.execute("CREATE SCHEMA public")
+        empty_matchup.execute(
+            "CREATE TABLE public.matchup ("
+            "db_name VARCHAR, year INTEGER, week INTEGER, manager_week VARCHAR)"
+        )
+        try:
+            with pytest.raises(FleetScopeError, match="not enabled"):
+                build_fleet_partition_bundle(
+                    empty_matchup,
+                    active_year=ACTIVE_YEAR,
+                    league_generations={"league_a": 0},
+                    tables=["matchup"],
+                    empty_active_partitions={"matchup"},
+                    output_dir=tmp_path / "core-fact",
+                )
+        finally:
+            empty_matchup.close()
+    finally:
+        conn.close()
+
+
 def test_build_bundle_requires_publishable_table(tmp_path):
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA IF NOT EXISTS public")

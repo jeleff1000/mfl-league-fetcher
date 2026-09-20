@@ -37,6 +37,7 @@ FLEET_DB_SENTINEL = "___fleet"
 CADENCE_ACTIVE_SEASON = "active_season"
 CADENCE_LEAGUE_ROLLUP = "league_rollup"
 ALLOWED_CADENCE_CLASSES = {CADENCE_ACTIVE_SEASON, CADENCE_LEAGUE_ROLLUP}
+EMPTY_ACTIVE_PARTITION_TABLES = {"draft"}
 
 # EVERY canonical table's required weekly cadence. A bundle that labels a
 # year-bearing table league_rollup would widen its delete scope from one
@@ -237,10 +238,24 @@ def validate_fleet_manifest_shape(
         elif scope:
             raise FleetValidationError(f"{table} is {cadence} and must declare an empty scope")
 
-        if not isinstance(entry.get("row_count"), int) or entry["row_count"] <= 0:
-            raise FleetValidationError(f"Invalid row_count for {table} (empty tables must be omitted)")
-        if not isinstance(entry.get("db_name_count"), int) or entry["db_name_count"] <= 0:
-            raise FleetValidationError(f"Invalid db_name_count for {table}")
+        empty_reason = entry.get("empty_reason")
+        is_explicit_empty = empty_reason == "explicit_empty_active_partition"
+        if empty_reason not in {None, "explicit_empty_active_partition"}:
+            raise FleetValidationError(f"Unsupported empty_reason for {table}: {empty_reason!r}")
+        if is_explicit_empty:
+            if (table not in EMPTY_ACTIVE_PARTITION_TABLES
+                    or quick or len(db_names) != 1 or cadence != CADENCE_ACTIVE_SEASON
+                    or scope != {"year": active_year}):
+                raise FleetValidationError(
+                    f"Explicit empty {table} must be one weekly league's exact active-year partition"
+                )
+            if entry.get("row_count") != 0 or entry.get("db_name_count") != 0:
+                raise FleetValidationError(f"Explicit empty {table} must declare zero rows and db_names")
+        else:
+            if not isinstance(entry.get("row_count"), int) or entry["row_count"] <= 0:
+                raise FleetValidationError(f"Invalid row_count for {table} (empty tables must be omitted)")
+            if not isinstance(entry.get("db_name_count"), int) or entry["db_name_count"] <= 0:
+                raise FleetValidationError(f"Invalid db_name_count for {table}")
         if not entry.get("db_names_hash"):
             raise FleetValidationError(f"Missing db_names_hash for {table}")
 
@@ -705,12 +720,21 @@ def apply_fleet_merge(
             # Materialize the parquet-derived db_name set once; the DELETE and
             # verify predicates reuse it instead of re-scanning a potentially
             # 10M-row parquet twice more inside the write transaction.
-            run(
-                conn,
-                f"CREATE OR REPLACE TEMP TABLE _fleet_scope_dbs AS "
-                f"SELECT DISTINCT db_name FROM {parquet_ref}",
-                step=f"fleet scope dbs {table}",
-            )
+            if entry.get("empty_reason") == "explicit_empty_active_partition":
+                run(
+                    conn,
+                    "CREATE OR REPLACE TEMP TABLE _fleet_scope_dbs AS "
+                    "SELECT CAST(? AS VARCHAR) AS db_name",
+                    [manifest["db_names"][0]],
+                    step=f"fleet empty scope db {table}",
+                )
+            else:
+                run(
+                    conn,
+                    f"CREATE OR REPLACE TEMP TABLE _fleet_scope_dbs AS "
+                    f"SELECT DISTINCT db_name FROM {parquet_ref}",
+                    step=f"fleet scope dbs {table}",
+                )
             predicate, params = scope_predicate(entry, "_fleet_scope_dbs")
             merged_db_names.update(row[0] for row in conn.execute("SELECT db_name FROM _fleet_scope_dbs").fetchall())
 

@@ -395,6 +395,13 @@ def test_espn_placeholder_cleanup_removes_only_unresolved_active_draft_rows():
     assert len(local_db.conn.calls) == 1
 
 
+def test_espn_placeholder_cleanup_requests_only_draft_partition_deletion():
+    import refresh_espn_active_season as worker
+
+    assert worker._explicit_empty_partitions(placeholder_draft_rows_removed=128) == {"draft"}
+    assert worker._explicit_empty_partitions(placeholder_draft_rows_removed=0) == set()
+
+
 def test_espn_draft_manifest_accepts_complete_picks_when_drafted_flag_is_stale():
     from refresh_espn_active_season import _espn_draft_manifest
 

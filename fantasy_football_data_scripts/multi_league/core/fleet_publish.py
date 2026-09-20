@@ -51,6 +51,7 @@ FLEET_SCHEMA_VERSION = "fleet-partition-v1"
 FLEET_CAREER_SCHEMA_VERSION = "fleet-partition-v2"
 FLEET_HOMEPAGE_SCHEMA_VERSION = "fleet-partition-v3"
 FLEET_PRODUCER = "league-history-fleet-builder"
+EMPTY_ACTIVE_PARTITION_TABLES = {"draft"}
 
 # Sentinel db_name used for publish-state bookkeeping on the server. It shares
 # the league delta state table, so it must satisfy the server's db-name
@@ -232,6 +233,7 @@ def build_fleet_partition_bundle(
     rebuild_career_rollups: bool = False,
     rebuild_homepage_rollups: bool = False,
     quick_years: list[int] | None = None,
+    empty_active_partitions: set[str] | None = None,
 ) -> FleetBundle:
     """Build a fleet partition bundle from a staged fleet DuckDB.
 
@@ -258,6 +260,8 @@ def build_fleet_partition_bundle(
     registry = canonical_table_registry()
     from multi_league.core.local_db import CONFIG_TABLE_COLUMN_TYPES
 
+    explicit_empty = set(empty_active_partitions or ())
+
     if quick_years is not None:
         if (not 1 <= len(quick_years) <= 2
                 or any(type(year) is not int or not 1900 <= year <= 2200 for year in quick_years)
@@ -269,6 +273,28 @@ def build_fleet_partition_bundle(
     unknown = sorted(set(requested) - set(registry))
     if unknown:
         raise ValueError(f"Unknown canonical tables requested: {', '.join(unknown)}")
+    if explicit_empty - set(requested):
+        raise FleetScopeError("Explicit empty partitions must be included in requested tables")
+    if explicit_empty:
+        if quick_years is not None:
+            raise FleetScopeError("Explicit empty partitions are only supported by weekly refreshes")
+        if len(league_generations) != 1:
+            raise FleetScopeError(
+                "Explicit empty partitions require exactly one generation-fenced league"
+            )
+        unsupported = sorted(explicit_empty - EMPTY_ACTIVE_PARTITION_TABLES)
+        if unsupported:
+            raise FleetScopeError(
+                "Explicit empty partitions are not enabled for: " + ", ".join(unsupported)
+            )
+        unsafe = sorted(
+            table for table in explicit_empty
+            if registry[table]["cadence_class"] != CADENCE_ACTIVE_SEASON
+        )
+        if unsafe:
+            raise FleetScopeError(
+                "Explicit empty partitions must be active-season tables: " + ", ".join(unsafe)
+            )
     if rebuild_career_rollups:
         from multi_league.transformations.aggregation.aggregation_utils import CAREER_ROLLUP_TABLES
 
@@ -334,7 +360,10 @@ def build_fleet_partition_bundle(
             continue
 
         row_count = int(conn.execute(f"SELECT COUNT(*) FROM public.{qident(table)}").fetchone()[0] or 0)
-        if row_count == 0:
+        is_explicit_empty = table in explicit_empty
+        if is_explicit_empty and row_count:
+            raise FleetScopeError(f"Explicit empty partition {table} contains {row_count} rows")
+        if row_count == 0 and not is_explicit_empty:
             omitted_tables.append({"table": table, "reason": "no_rows_in_scope"})
             continue
 
@@ -382,9 +411,12 @@ def build_fleet_partition_bundle(
         parquet_path = tables_dir / f"{table}.parquet"
         compression, file_hash = _export_table(conn, table, upload_cols, parquet_path)
         db_name_count, db_names_hash = _db_names_summary(conn, table)
-        union_db_names.update(
-            str(row[0]) for row in conn.execute(f'SELECT DISTINCT db_name FROM public.{qident(table)}').fetchall()
-        )
+        if is_explicit_empty:
+            union_db_names.update(league_generations)
+        else:
+            union_db_names.update(
+                str(row[0]) for row in conn.execute(f'SELECT DISTINCT db_name FROM public.{qident(table)}').fetchall()
+            )
 
         fingerprints = {
             "row_count": row_count,
@@ -406,6 +438,7 @@ def build_fleet_partition_bundle(
                 "compression": compression,
                 "sha256": file_hash,
                 "row_count": row_count,
+                "empty_reason": "explicit_empty_active_partition" if is_explicit_empty else None,
                 "columns": [{"name": c, "type": spec["columns"][c]} for c in upload_cols],
                 "server_generated_columns": server_generated_columns,
                 "partition_keys": [c for c in spec["partition_keys"] if c in upload_cols],
@@ -442,6 +475,7 @@ def build_fleet_partition_bundle(
             {
                 "table": t["table"],
                 "row_count": t["row_count"],
+                "empty_reason": t["empty_reason"],
                 "columns": t["columns"],
                 "server_generated_columns": t["server_generated_columns"],
                 "primary_keys": t["primary_keys"],

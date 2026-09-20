@@ -55,6 +55,10 @@ def data_dir(tmp_path):
     conn.execute(
         "CREATE TABLE public.matchup_career (db_name VARCHAR, franchise_id VARCHAR, manager VARCHAR, wins INTEGER)"
     )
+    conn.execute(
+        "CREATE TABLE public.draft ("
+        "db_name VARCHAR, year INTEGER, draft_id VARCHAR, round INTEGER, pick INTEGER)"
+    )
     for league in LEAGUES:
         for year in (PRIOR_YEAR, ACTIVE_YEAR):
             for week in (1, 2):
@@ -67,6 +71,10 @@ def data_dir(tmp_path):
             conn.execute(
                 "INSERT INTO public.matchup_career VALUES (?, ?, ?, ?)", [league, f"fid_{manager}", manager, 5]
             )
+        conn.execute(
+            "INSERT INTO public.draft VALUES (?, ?, ?, 1, 1), (?, ?, ?, 1, 1)",
+            [league, PRIOR_YEAR, f"{league}_{PRIOR_YEAR}", league, ACTIVE_YEAR, f"{league}_{ACTIVE_YEAR}"],
+        )
     conn.close()
     return tmp_path
 
@@ -363,6 +371,50 @@ def test_fleet_partition_scoped_merge_commits(data_dir, client, tmp_path):  # no
     assert _fingerprint(client, "matchup", "db_name = 'league_gamma'") == gamma_before
     assert _fingerprint(client, "matchup", f"year = {PRIOR_YEAR}") == prior_before
     assert _fingerprint(client, "matchup_career", "db_name = 'league_gamma'") == gamma_career_before
+
+
+def test_fleet_partition_explicit_empty_deletes_only_one_active_partition(
+    data_dir, client, tmp_path
+):  # noqa: F811
+    from multi_league.core.fleet_publish import build_fleet_partition_bundle
+
+    staged = duckdb.connect(":memory:")
+    staged.execute("CREATE SCHEMA public")
+    staged.execute(
+        "CREATE TABLE public.draft ("
+        "db_name VARCHAR, year INTEGER, draft_id VARCHAR, round INTEGER, pick INTEGER)"
+    )
+    try:
+        bundle = build_fleet_partition_bundle(
+            staged,
+            active_year=ACTIVE_YEAR,
+            league_generations={"league_alpha": 0},
+            tables=["draft"],
+            empty_active_partitions={"draft"},
+            output_dir=tmp_path / "empty-draft",
+            import_run_id="empty-draft",
+        )
+    finally:
+        staged.close()
+
+    response = _post_bundle(client, bundle)
+    assert response.status_code == 200, response.text
+    assert response.json()["tables"] == {"draft": 0}
+    assert _query(
+        client,
+        f"SELECT COUNT(*) AS n FROM public.draft "
+        f"WHERE db_name = 'league_alpha' AND year = {ACTIVE_YEAR}",
+    ) == [{"n": 0}]
+    assert _query(
+        client,
+        f"SELECT COUNT(*) AS n FROM public.draft "
+        f"WHERE db_name = 'league_alpha' AND year = {PRIOR_YEAR}",
+    ) == [{"n": 1}]
+    assert _query(
+        client,
+        f"SELECT COUNT(*) AS n FROM public.draft "
+        f"WHERE db_name = 'league_beta' AND year = {ACTIVE_YEAR}",
+    ) == [{"n": 1}]
 
 
 def test_fleet_partition_idempotent_replay(data_dir, client, tmp_path):  # noqa: F811

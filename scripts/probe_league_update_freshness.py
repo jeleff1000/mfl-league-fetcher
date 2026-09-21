@@ -40,7 +40,7 @@ def probe_freshness(
         detail = exc.read().decode("utf-8", errors="replace")[:500]
         raise RuntimeError(f"Freshness probe failed ({exc.code}): {detail}") from exc
     digest = str(payload.get("observed_manifest_digest") or "").strip()
-    if payload.get("healthy") is not True or payload.get("stale") is True or not digest:
+    if payload.get("healthy") is not True or not digest:
         raise RuntimeError("Freshness probe did not return a healthy source manifest")
     return digest
 

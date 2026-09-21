@@ -37,9 +37,17 @@ def test_probe_uses_the_guarded_production_route_and_returns_its_digest():
     }
 
 
+def test_probe_returns_a_healthy_stale_manifest_for_manual_update():
+    payload = {"healthy": True, "stale": True, "observed_manifest_digest": "stale-digest"}
+
+    assert probe_freshness(
+        "paid_league",
+        opener=lambda *_args, **_kwargs: _Response(payload),
+    ) == "stale-digest"
+
+
 @pytest.mark.parametrize("payload", [
     {"healthy": False, "stale": False, "observed_manifest_digest": "digest"},
-    {"healthy": True, "stale": True, "observed_manifest_digest": "digest"},
     {"healthy": True, "stale": False, "observed_manifest_digest": None},
 ])
 def test_probe_rejects_an_unverified_manifest(payload):

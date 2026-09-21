@@ -219,7 +219,9 @@ def record_league_update_status(
     normalized_claim_version = int(claim_version)
     if normalized_claim_version < 1:
         raise ValueError("claim_version must be positive")
-    is_success = normalized == "succeeded"
+    # A proven no-op leaves the last successful publication fully current.
+    # Treat it as healthy while retaining the prior publication metadata.
+    is_success = normalized in {"succeeded", "no_change"}
     is_terminal = normalized in TERMINAL_STATUSES
     has_publication = normalized in PUBLICATION_STATUSES
     manifest_aware_publication = bool(

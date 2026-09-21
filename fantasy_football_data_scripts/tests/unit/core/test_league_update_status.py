@@ -723,7 +723,7 @@ def test_cache_failure_after_an_ambiguous_commit_status_write_keeps_publication_
     ).fetchone()[0] == "committed_cache_pending"
 
 
-def test_paid_manual_no_change_settles_claim_without_a_fabricated_publication():
+def test_paid_manual_no_change_preserves_the_last_healthy_publication():
     writer = LocalWriter()
     common = {
         "database_name": "the_league", "platform": "yahoo",
@@ -731,11 +731,19 @@ def test_paid_manual_no_change_settles_claim_without_a_fabricated_publication():
         "claim_version": 1, "workflow_run_id": 42,
     }
     assert record_league_update_status(writer, status="running", **common)
+    writer.connection.execute(
+        "UPDATE accounts.league_update_dispatches SET "
+        "publication_receipt_json='old-commit', publish_generation='old-generation', "
+        "source_fingerprint='old-digest' WHERE database_name='the_league'"
+    )
     assert record_league_update_status(writer, status="no_change", **common)
     assert writer.connection.execute(
-        "SELECT status, publication_receipt_json, publish_generation, lease_expires_at "
+        "SELECT status, publication_receipt_json, publish_generation, "
+        "source_fingerprint, healthy, lease_expires_at "
         "FROM accounts.league_update_dispatches WHERE database_name = 'the_league'"
-    ).fetchone() == ("no_change", None, None, None)
+    ).fetchone() == (
+        "no_change", "old-commit", "old-generation", "old-digest", True, None,
+    )
 
 
 @pytest.mark.parametrize(

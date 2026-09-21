@@ -2,7 +2,7 @@ import duckdb
 import pytest
 
 
-def test_paid_manual_run_reclaims_a_terminal_attempt_without_reusing_its_receipt(monkeypatch):
+def test_paid_manual_run_reclaims_a_terminal_attempt_without_erasing_its_publication(monkeypatch):
     from scripts import claim_manual_league_update as manual
 
     monkeypatch.setattr(manual, "assert_league_update_entitled", lambda reader, *, database_name: None)
@@ -31,8 +31,10 @@ def test_paid_manual_run_reclaims_a_terminal_attempt_without_reusing_its_receipt
     assert "status IN ('dispatching', 'dispatched', 'running')" in sql
     assert "status IN ('committed', 'cache_verified')" not in sql
     assert "claim_version = COALESCE(claim_version, 0) + 1" in sql
-    assert "publication_receipt_json = NULL" in sql
-    assert "bundle_id = NULL" in sql
+    assert "publication_receipt_json = NULL" not in sql
+    assert "bundle_id = NULL" not in sql
+    assert "publish_generation = NULL" not in sql
+    assert "healthy = FALSE" not in sql
     assert "workflow_run_id = 42" in sql
     assert "lease_expires_at = NOW() + INTERVAL '20 minutes'" in sql
     assert "AND (dispatch_token IS NULL OR dispatch_token <> 'manual-42-2')" in sql
@@ -202,6 +204,7 @@ def test_real_duckdb_paid_claim_terminal_rerun_and_unpaid_rejection():
       UPDATE accounts.league_update_dispatches
       SET status='succeeded', publication_receipt_json='old-commit',
           bundle_id='old-bundle', source_fingerprint='old-digest',
+          publish_generation='old-generation', healthy=TRUE,
           committed_at=TIMESTAMP '2026-09-16 19:26:01',
           cache_verified_at=TIMESTAMP '2026-09-16 19:26:08'
       WHERE database_name='paid_league'
@@ -217,10 +220,15 @@ def test_real_duckdb_paid_claim_terminal_rerun_and_unpaid_rejection():
                       "claim_version": 2}
     row = connection.execute("""
       SELECT status, publication_receipt_json, bundle_id, source_fingerprint,
-             committed_at, cache_verified_at
+             publish_generation, healthy, committed_at, cache_verified_at
       FROM accounts.league_update_dispatches WHERE database_name='paid_league'
     """).fetchone()
-    assert row == ("dispatching", None, None, None, None, None)
+    assert row == (
+        "dispatching", "old-commit", "old-bundle", "old-digest",
+        "old-generation", True,
+        duckdb.execute("SELECT TIMESTAMP '2026-09-16 19:26:01'").fetchone()[0],
+        duckdb.execute("SELECT TIMESTAMP '2026-09-16 19:26:08'").fetchone()[0],
+    )
     connection.execute("""
       UPDATE accounts.league_update_dispatches
       SET status='running', lease_expires_at=NULL,

@@ -115,23 +115,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "requirements-weekly-update-espn.txt"
 
-      - name: Capture manual source manifest
-        id: manual_probe
-        if: inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''
-        run: python scripts/probe_league_update_freshness.py --db "${INPUT_DB_NAME}"
-
       - name: Install dependencies
         run: uv pip install --system --quiet -r requirements-weekly-update-espn.txt
-
-      - name: Claim paid manual update
-        id: manual_claim
-        if: inputs.execute && !inputs.cache_only && inputs.dispatch_token == ''
-        run: >-
-          python scripts/claim_manual_league_update.py
-          --db "${INPUT_DB_NAME}"
-          --platform espn
-          --run-id "${{ github.run_id }}"
-          --run-attempt "${{ github.run_attempt }}"
 
       - name: Validate cache-only recovery request
         if: inputs.cache_only
@@ -158,16 +143,17 @@ jobs:
         run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" >> "$GITHUB_ENV"
 
       - name: Refresh ESPN active season
+        id: refresh
         if: ${{ !inputs.cache_only }}
         env:
           DB_NAME: ${{ inputs.db_name }}
-          LEAGUE_UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
-          LEAGUE_UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
-          LEAGUE_UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
+          LEAGUE_UPDATE_TOKEN: ${{ inputs.dispatch_token }}
+          LEAGUE_UPDATE_ATTEMPT_ID: ${{ inputs.attempt_id }}
+          LEAGUE_UPDATE_CLAIM_VERSION: ${{ inputs.claim_version }}
           YEAR: ${{ inputs.year }}
           THROUGH_WEEK: ${{ inputs.through_week }}
           EXECUTE: ${{ inputs.execute }}
-          OBSERVED_MANIFEST_DIGEST: ${{ steps.manual_probe.outputs.digest || inputs.observed_manifest_digest }}
+          OBSERVED_MANIFEST_DIGEST: ${{ inputs.observed_manifest_digest }}
         run: |
           set -euo pipefail
           args=(--db "${DB_NAME}" --json-out espn_active_season_refresh.json)
@@ -207,11 +193,11 @@ jobs:
           python scripts/league_update_workflow_receipt.py "${args[@]}"
 
       - name: Settle unchanged paid manual update
-        if: inputs.execute && !inputs.cache_only && steps.manual_claim.outputs.token != '' && steps.publication.outputs.no_op == 'true'
+        if: inputs.execute && !inputs.cache_only && steps.refresh.outputs.token != '' && steps.publication.outputs.no_op == 'true'
         env:
-          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token }}
-          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id }}
-          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version }}
+          UPDATE_TOKEN: ${{ steps.refresh.outputs.token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.refresh.outputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.refresh.outputs.claim_version }}
         run: >-
           python scripts/record_league_update_status.py
           --db "${INPUT_DB_NAME}"
@@ -223,11 +209,11 @@ jobs:
           --require-entitled
 
       - name: Record Fly commit
-        if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
+        if: inputs.execute && (steps.refresh.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
         env:
-          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
-          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
-          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
+          UPDATE_TOKEN: ${{ steps.refresh.outputs.token || inputs.dispatch_token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.refresh.outputs.attempt_id || inputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.refresh.outputs.claim_version || inputs.claim_version }}
         run: >-
           python scripts/record_league_update_status.py
           --db "${INPUT_DB_NAME}"
@@ -259,11 +245,11 @@ jobs:
           --soft-warm-failures
 
       - name: Complete league update
-        if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
+        if: inputs.execute && (steps.refresh.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'
         env:
-          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
-          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
-          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
+          UPDATE_TOKEN: ${{ steps.refresh.outputs.token || inputs.dispatch_token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.refresh.outputs.attempt_id || inputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.refresh.outputs.claim_version || inputs.claim_version }}
         run: >-
           python scripts/record_league_update_status.py
           --db "${INPUT_DB_NAME}"
@@ -276,7 +262,7 @@ jobs:
           --cache-verified
 
       - name: Settle failed partial manual claim
-        if: ${{ failure() && inputs.execute && !inputs.cache_only && inputs.dispatch_token == '' && steps.manual_claim.outcome == 'failure' }}
+        if: ${{ failure() && inputs.execute && !inputs.cache_only && inputs.dispatch_token == '' && steps.refresh.outputs.token == '' && steps.refresh.outcome == 'failure' }}
         continue-on-error: true
         run: >-
           python scripts/claim_manual_league_update.py
@@ -287,11 +273,11 @@ jobs:
           --fail-owned-claim
 
       - name: Fail league update
-        if: ${{ (failure() || cancelled()) && !inputs.cache_only && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') }}
+        if: ${{ (failure() || cancelled()) && !inputs.cache_only && (steps.refresh.outputs.token != '' || inputs.dispatch_token != '') }}
         env:
-          UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}
-          UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}
-          UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}
+          UPDATE_TOKEN: ${{ steps.refresh.outputs.token || inputs.dispatch_token }}
+          UPDATE_ATTEMPT_ID: ${{ steps.refresh.outputs.attempt_id || inputs.attempt_id }}
+          UPDATE_CLAIM_VERSION: ${{ steps.refresh.outputs.claim_version || inputs.claim_version }}
           WORKFLOW_WAS_CANCELLED: ${{ job.status == 'cancelled' && '1' || '0' }}
         run: |
           set -euo pipefail

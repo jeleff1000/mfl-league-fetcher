@@ -2,6 +2,104 @@ import duckdb
 import pytest
 
 
+def test_prepare_manual_execution_reuses_existing_clients_for_probe_and_claim(tmp_path):
+    from scripts import claim_manual_league_update as manual
+
+    calls = []
+    environment = {}
+    output = tmp_path / "github-output.txt"
+
+    result = manual.prepare_update_execution(
+        object(),
+        object(),
+        db_name="paid_league",
+        platform="espn",
+        execute=True,
+        observed_manifest_digest="",
+        dispatch_token="",
+        attempt_id="",
+        claim_version=1,
+        run_id=42,
+        run_attempt=3,
+        output_path=output,
+        environment=environment,
+        probe=lambda db_name: calls.append(("probe", db_name)) or "digest-123",
+        claim=lambda reader, writer, **kwargs: calls.append(
+            ("claim", reader, writer, kwargs)
+        ) or {
+            "dispatch_token": "manual-42-3",
+            "attempt_id": "manual-42-3",
+            "claim_version": 7,
+        },
+    )
+
+    assert calls[0] == ("probe", "paid_league")
+    assert calls[1][0] == "claim"
+    assert calls[1][3] == {
+        "db_name": "paid_league",
+        "platform": "espn",
+        "run_id": 42,
+        "run_attempt": 3,
+    }
+    assert result == {
+        "observed_manifest_digest": "digest-123",
+        "dispatch_token": "manual-42-3",
+        "attempt_id": "manual-42-3",
+        "claim_version": 7,
+    }
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        "observed_manifest_digest=digest-123",
+        "token=manual-42-3",
+        "attempt_id=manual-42-3",
+        "claim_version=7",
+    ]
+    assert environment == {
+        "LEAGUE_UPDATE_TOKEN": "manual-42-3",
+        "LEAGUE_UPDATE_ATTEMPT_ID": "manual-42-3",
+        "LEAGUE_UPDATE_CLAIM_VERSION": "7",
+    }
+
+
+def test_prepare_ui_execution_preserves_supplied_manifest_and_claim(tmp_path):
+    from scripts import claim_manual_league_update as manual
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("UI execution must not probe or replace its claim")
+
+    result = manual.prepare_update_execution(
+        object(), object(), db_name="paid_league", platform="sleeper",
+        execute=True, observed_manifest_digest="ui-digest",
+        dispatch_token="ui-token", attempt_id="ui-attempt", claim_version=9,
+        run_id=42, run_attempt=1, output_path=tmp_path / "output.txt", environment={},
+        probe=unexpected, claim=unexpected,
+    )
+
+    assert result == {
+        "observed_manifest_digest": "ui-digest",
+        "dispatch_token": "ui-token",
+        "attempt_id": "ui-attempt",
+        "claim_version": 9,
+    }
+
+
+def test_prepare_scheduled_demo_probes_without_claiming(tmp_path):
+    from scripts import claim_manual_league_update as manual
+
+    result = manual.prepare_update_execution(
+        object(), object(), db_name="demo_league", platform="yahoo",
+        execute=True, scheduled_demo=True, observed_manifest_digest="",
+        dispatch_token="", attempt_id="", claim_version=1,
+        run_id=42, run_attempt=1, output_path=tmp_path / "output.txt", environment={},
+        probe=lambda db_name: "demo-digest",
+        claim=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("scheduled demo must not create a paid claim")
+        ),
+    )
+
+    assert result["observed_manifest_digest"] == "demo-digest"
+    assert result["dispatch_token"] == ""
+
+
 def test_paid_manual_run_reclaims_a_terminal_attempt_without_erasing_its_publication(monkeypatch):
     from scripts import claim_manual_league_update as manual
 

@@ -152,7 +152,7 @@ def test_active_updates_reserve_time_to_fail_and_exit_after_setup(
     assert 'remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))' in text
     assert 'timeout --signal=KILL "${remaining}s" python scripts/refresh_' in text
     assert 'timeout --signal=KILL 8s python scripts/record_league_update_status.py' in text
-    assert text.index("- name: Claim paid manual update") < text.index(
+    assert text.index("- name: Install dependencies") < text.index(
         "- name: Set hard refresh deadline"
     ) < text.index(f"- name: Refresh {display_name} active season")
 
@@ -276,24 +276,10 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
 def test_worker_captures_source_manifest_when_ui_did_not(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
-    assert "id: manual_probe" in text
-    assert "scripts/probe_league_update_freshness.py" in text
-    expected_capture = (
-        "env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_OBSERVED_MANIFEST_DIGEST == ''"
-        if filename.startswith("yahoo_")
-        else "inputs.execute && !inputs.cache_only && inputs.observed_manifest_digest == ''"
-    )
-    assert expected_capture in text
-    assert "inputs.dispatch_token == '' && inputs.observed_manifest_digest == ''" not in text
-    expected_digest = (
-        "steps.manual_probe.outputs.digest || env.INPUT_OBSERVED_MANIFEST_DIGEST"
-        if filename.startswith("yahoo_")
-        else "steps.manual_probe.outputs.digest || inputs.observed_manifest_digest"
-    )
-    assert expected_digest in text
-    assert text.index("- name: Capture manual source manifest") < text.index(
-        "- name: Claim paid manual update"
-    )
+    assert "- name: Capture manual source manifest" not in text
+    assert "id: manual_probe" not in text
+    assert "OBSERVED_MANIFEST_DIGEST:" in text
+    assert "steps.manual_probe.outputs.digest" not in text
 
 
 @pytest.mark.parametrize("platform", ("yahoo", "espn", "sleeper"))
@@ -306,23 +292,22 @@ def test_execute_never_falls_back_to_an_uncaptured_week_boundary(platform: str):
 @pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())
 def test_paid_manual_execute_uses_the_same_attempt_and_terminal_lifecycle(platform: str, filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
-    assert "id: manual_claim" in text
-    assert "scripts/claim_manual_league_update.py" in text
+    assert "id: refresh" in text
+    assert "- name: Claim paid manual update" not in text
     assert f"--platform {platform}" in text
-    assert text.index("Install dependencies") < text.index("- name: Claim paid manual update")
     assert "Install Fly claim dependency" not in text
     assert "uses: astral-sh/setup-uv@v5" in text
     assert "enable-cache: true" in text
     assert f'cache-dependency-glob: "requirements-weekly-update-{platform}.txt"' in text
     assert f"uv pip install --system --quiet -r requirements-weekly-update-{platform}.txt" in text
     assert "--no-cache-dir" not in text
-    assert "steps.manual_claim.outputs.token || inputs.dispatch_token" in text
-    assert "steps.manual_claim.outputs.attempt_id || inputs.attempt_id" in text
-    assert "steps.manual_claim.outputs.claim_version || inputs.claim_version" in text
+    assert "steps.refresh.outputs.token || inputs.dispatch_token" in text
+    assert "steps.refresh.outputs.attempt_id || inputs.attempt_id" in text
+    assert "steps.refresh.outputs.claim_version || inputs.claim_version" in text
     expected_token_guard = (
-        "steps.manual_claim.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != ''"
+        "steps.refresh.outputs.token != '' || env.INPUT_DISPATCH_TOKEN != ''"
         if platform == "yahoo"
-        else "steps.manual_claim.outputs.token != '' || inputs.dispatch_token != ''"
+        else "steps.refresh.outputs.token != '' || inputs.dispatch_token != ''"
     )
     assert expected_token_guard in text
     assert "--require-entitled" in text
@@ -345,9 +330,9 @@ def test_exact_claim_is_rechecked_immediately_before_existing_fleet_publish(plat
         else "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}"
     )
     assert expected_claim in workflow
-    assert "LEAGUE_UPDATE_TOKEN: ${{ steps.manual_claim.outputs.token || inputs.dispatch_token }}" in workflow
-    assert "LEAGUE_UPDATE_ATTEMPT_ID: ${{ steps.manual_claim.outputs.attempt_id || inputs.attempt_id }}" in workflow
-    assert "LEAGUE_UPDATE_CLAIM_VERSION: ${{ steps.manual_claim.outputs.claim_version || inputs.claim_version }}" in workflow
+    assert "LEAGUE_UPDATE_TOKEN: ${{ inputs.dispatch_token }}" in workflow
+    assert "LEAGUE_UPDATE_ATTEMPT_ID: ${{ inputs.attempt_id }}" in workflow
+    assert "LEAGUE_UPDATE_CLAIM_VERSION: ${{ inputs.claim_version }}" in workflow
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
@@ -370,7 +355,7 @@ def test_manual_no_change_closes_claim_without_cache_or_commit(filename: str):
     assert "- name: Settle unchanged paid manual update" in text
     assert "steps.publication.outputs.no_op == 'true'" in text
     assert "--status no_change" in text
-    assert "steps.manual_claim.outputs.token != ''" in text
+    assert "steps.refresh.outputs.token != ''" in text
     assert text.index("- name: Settle unchanged paid manual update") < text.index("- name: Upload refresh receipt")
 
 
@@ -378,7 +363,7 @@ def test_manual_no_change_closes_claim_without_cache_or_commit(filename: str):
 def test_partial_manual_claim_failure_has_an_owned_cleanup_step(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     assert "- name: Settle failed partial manual claim" in text
-    assert "steps.manual_claim.outcome == 'failure'" in text
+    assert "steps.refresh.outcome == 'failure'" in text
     assert "--fail-owned-claim" in text
     assert text.index("- name: Settle failed partial manual claim") < text.index("- name: Fail league update")
 

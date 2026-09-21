@@ -577,6 +577,22 @@ def main(argv: list[str] | None = None) -> int:
     reader = FlyReader()
     from multi_league.core.fly_writer import FlyWriter
     from multi_league.core.league_update_status import start_league_update_execution
+    from scripts.claim_manual_league_update import prepare_update_execution
+    writer = FlyWriter()
+    execution = prepare_update_execution(
+        reader,
+        writer,
+        db_name=args.db,
+        platform="sleeper",
+        execute=args.execute,
+        observed_manifest_digest=args.observed_manifest_digest,
+        dispatch_token=os.environ.get("LEAGUE_UPDATE_TOKEN"),
+        attempt_id=os.environ.get("LEAGUE_UPDATE_ATTEMPT_ID"),
+        claim_version=int(os.environ.get("LEAGUE_UPDATE_CLAIM_VERSION") or 1),
+        run_id=int(os.environ.get("GITHUB_RUN_ID") or 0),
+        run_attempt=int(os.environ.get("GITHUB_RUN_ATTEMPT") or 0),
+        output_path=Path(os.environ["GITHUB_OUTPUT"]) if os.environ.get("GITHUB_OUTPUT") else None,
+    )
     active_year = args.year or int(
         reader.query_scalar("SELECT MAX(year) FROM nfl_historical.nfl_player_stats_all", database=OPS_DATABASE)
     )
@@ -588,12 +604,12 @@ def main(argv: list[str] | None = None) -> int:
     preflight = run_independent_refresh_preflight({
         "entitlement": lambda: start_league_update_execution(
             reader,
-            FlyWriter(),
+            writer,
             database_name=args.db,
             platform="sleeper",
-            dispatch_token=os.environ.get("LEAGUE_UPDATE_TOKEN"),
-            attempt_id=os.environ.get("LEAGUE_UPDATE_ATTEMPT_ID"),
-            claim_version=int(os.environ.get("LEAGUE_UPDATE_CLAIM_VERSION") or 1),
+            dispatch_token=execution["dispatch_token"],
+            attempt_id=execution["attempt_id"],
+            claim_version=execution["claim_version"],
             workflow_run_id=os.environ.get("GITHUB_RUN_ID"),
         ) if args.execute else None,
         "canonical_history": lambda: assert_canonical_history_complete(
@@ -607,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
         reader,
         database_name=args.db,
         active_season=active_year,
-        expected_observed_digest=args.observed_manifest_digest,
+        expected_observed_digest=execution["observed_manifest_digest"],
     )
     source_plan_stage_seconds["persisted_plan"] = round(perf_counter() - source_stage_started, 3)
     source_stage_started = perf_counter()

@@ -31,15 +31,15 @@ def _workflow_timeout(platform, phase):
 
 
 @pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
-def test_two_minute_deadline_starts_after_setup_and_claim(platform):
+def test_two_minute_deadline_starts_after_setup(platform):
     path = ROOT / ".github/workflows" / f"{platform}_incremental_refresh_worker.yml"
     workflow = path.read_text(encoding="utf-8")
     deadline = workflow.index("- name: Set hard refresh deadline")
-    claim = workflow.index("- name: Claim paid manual update")
+    install = workflow.index("- name: Install dependencies")
     display_name = {"yahoo": "Yahoo", "espn": "ESPN", "sleeper": "Sleeper"}[platform]
     refresh = workflow.index(f"- name: Refresh {display_name} active season")
 
-    assert claim < deadline < refresh
+    assert install < deadline < refresh
     assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in workflow
     assert "timeout-minutes: 3" in workflow
 

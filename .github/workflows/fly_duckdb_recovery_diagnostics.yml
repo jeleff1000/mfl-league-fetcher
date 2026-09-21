@@ -53,6 +53,11 @@ on:
         required: false
         default: false
         type: boolean
+      probe_primary_offset:
+        description: Optional aligned byte offset for one read-only primary block checksum probe
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -104,7 +109,7 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Checkout bounded block diagnostic
-        if: inputs.inspect_block_only
+        if: inputs.inspect_block_only || inputs.probe_primary_offset != ''
         uses: actions/checkout@v5
 
       - name: Install flyctl
@@ -127,8 +132,22 @@ jobs:
           RESTART_PRIMARY: ${{ inputs.restart_primary }}
           CAPTURE_STARTUP_FAILURE: ${{ inputs.capture_startup_failure }}
           QUARANTINE_LEAGUES_WAL: ${{ inputs.quarantine_leagues_wal }}
+          PROBE_PRIMARY_OFFSET: ${{ inputs.probe_primary_offset }}
         run: |
           set -euo pipefail
+          if [ -n "$PROBE_PRIMARY_OFFSET" ]; then
+            [ "$INSPECT_BLOCK_ONLY" != "true" ]
+            [ "$PRESERVE_CURRENT_VOLUME" != "true" ]
+            [ "$CLEANUP_RECOVERY_RESOURCES" != "true" ]
+            [ "$RESTART_PRIMARY" != "true" ]
+            [ "$CAPTURE_STARTUP_FAILURE" != "true" ]
+            [ "$QUARANTINE_LEAGUES_WAL" != "true" ]
+            [ -z "$VALIDATE_SNAPSHOT_ID" ]
+            [ -z "$INSPECT_EXISTING_VOLUME_ID" ]
+            [[ "$PROBE_PRIMARY_OFFSET" =~ ^[0-9]+$ ]]
+            [ "$PROBE_PRIMARY_OFFSET" -ge 12288 ]
+            [ $(( (PROBE_PRIMARY_OFFSET - 12288) % 262144 )) -eq 0 ]
+          fi
           if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
             [ "$PRESERVE_CURRENT_VOLUME" != "true" ]
             [ "$CLEANUP_RECOVERY_RESOURCES" != "true" ]
@@ -143,6 +162,14 @@ jobs:
           flyctl volumes list --app "$FLY_APP" --json | tee volumes.json
           echo "Recent Fly application logs"
           flyctl logs --app "$FLY_APP" --no-tail | tail -n 400 || true
+
+          if [ -n "$PROBE_PRIMARY_OFFSET" ]; then
+            encoded_probe="$(base64 -w0 scripts/fly_duckdb_block_probe.py)"
+            timeout 20 flyctl ssh console --app "$FLY_APP" --machine 1781e011b69068 \
+              -C "python -c \"import base64; exec(base64.b64decode('$encoded_probe'))\" /data/___leagues.duckdb --offset \"$PROBE_PRIMARY_OFFSET\"" \
+              | tee primary-block-probe.jsonl
+            exit 0
+          fi
 
           if [ "$QUARANTINE_LEAGUES_WAL" = "true" ]; then
             [ "$RESTART_PRIMARY" != "true" ]

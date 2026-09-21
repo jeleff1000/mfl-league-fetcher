@@ -69,6 +69,51 @@ def test_resolve_hashes_when_inventory_owner_has_different_identity(monkeypatch)
     assert resolved != "where_did_paul_go"
 
 
+def test_resolve_reuses_canonical_db_for_verified_yahoo_renewal(monkeypatch):
+    mod = load_script("resolve_db_name")
+
+    monkeypatch.setenv("DATABASE_SERVER_URL", "https://db.example")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "token")
+    owner = {
+        "database_name": "local_164_football",
+        "platform": "yahoo",
+        "league_id": "461.l.442959",
+        "league_name": "Local 164 Football",
+    }
+    monkeypatch.setattr(mod, "lookup_inventory_owner", lambda db: owner if db == "local_164_football" else None)
+    monkeypatch.setattr(
+        mod,
+        "lookup_verified_renewal_ids",
+        lambda db, platform: {"449.l.1153038", "461.l.442959", "470.l.335738"},
+    )
+
+    assert mod.resolve(
+        "470.l.335738", "Local 164 Football", "yahoo", "local_164_football"
+    ) == "local_164_football"
+
+
+def test_verified_renewal_ids_use_exact_saved_chain_identities(monkeypatch):
+    mod = load_script("resolve_db_name")
+    manifest = {
+        "segments": [{
+            "provider": "yahoo",
+            "active_league_id": "470.l.335738",
+            "renewal_chain": [[2024, "449.l.1153038"], [2025, "461.l.442959"]],
+        }]
+    }
+
+    def query(sql, database="___ops"):
+        if database == "___ops":
+            return [{"observed_manifest_json": json.dumps(manifest)}]
+        assert database == "___leagues"
+        return [{"league_id": "461.l.442959", "league_ids_json": json.dumps({"2023": "423.l.1"})}]
+
+    monkeypatch.setattr(mod, "fly_query", query)
+    assert mod.lookup_verified_renewal_ids("local_164_football", "yahoo") == {
+        "423.l.1", "449.l.1153038", "461.l.442959", "470.l.335738"
+    }
+
+
 def test_resolve_prefers_explicit_free_slug_over_temporary_mapping(monkeypatch):
     """An explicit unclaimed target must not inherit a temporary credential slug."""
     mod = load_script("resolve_db_name")

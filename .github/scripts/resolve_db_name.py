@@ -177,6 +177,57 @@ def lookup_inventory_owner(db_name: str) -> dict | None:
     return None
 
 
+def lookup_verified_renewal_ids(db_name: str, platform: str) -> set[str]:
+    """Return exact league IDs already proven to belong to this canonical DB."""
+    safe_db = _safe_db_name(db_name)
+    ids: set[str] = set()
+    try:
+        rows = fly_query(
+            "SELECT observed_manifest_json FROM accounts.league_update_manifests "
+            f"WHERE database_name = '{safe_db}' LIMIT 1",
+        )
+        if rows and rows[0].get("observed_manifest_json"):
+            manifest = json.loads(rows[0]["observed_manifest_json"])
+            for segment in manifest.get("segments") or []:
+                if str(segment.get("provider") or "").lower() != platform:
+                    continue
+                active_id = str(segment.get("active_league_id") or "").strip()
+                if active_id:
+                    ids.add(active_id)
+                for pair in segment.get("renewal_chain") or []:
+                    if isinstance(pair, (list, tuple)) and len(pair) == 2 and pair[1]:
+                        ids.add(str(pair[1]).strip())
+    except Exception as e:
+        print(f"[resolve] Verified update-chain lookup failed for {db_name}: {e}", file=sys.stderr)
+    try:
+        rows = fly_query(
+            "SELECT league_id, league_ids_json FROM public.league_context "
+            f"WHERE db_name = '{safe_db}' LIMIT 1",
+            database="___leagues",
+        )
+        if rows:
+            current_id = str(rows[0].get("league_id") or "").strip()
+            if current_id:
+                ids.add(current_id)
+            encoded = rows[0].get("league_ids_json")
+            if encoded:
+                values = json.loads(encoded)
+                if isinstance(values, dict):
+                    ids.update(str(value).strip() for value in values.values() if value)
+    except Exception as e:
+        print(f"[resolve] Saved league-chain lookup failed for {db_name}: {e}", file=sys.stderr)
+    return ids
+
+
+def same_or_verified_inventory_owner(owner: dict | None, league_id: str, platform: str) -> bool:
+    if same_inventory_owner(owner, league_id, platform):
+        return True
+    if not owner or str(owner.get("platform") or "").lower() != platform:
+        return False
+    db_name = str(owner.get("database_name") or "").strip()
+    return bool(db_name and str(league_id) in lookup_verified_renewal_ids(db_name, platform))
+
+
 def lookup_inventory_identity(base_name: str, league_id: str, platform: str) -> dict | None:
     """Return an existing base or hashed db for this exact platform league identity."""
     try:
@@ -301,7 +352,7 @@ def resolve(league_id: str, league_name: str, platform: str, pre_computed_db: st
 
         base_owner = lookup_inventory_owner(base_name)
         if base_owner:
-            if same_inventory_owner(base_owner, league_id, platform):
+            if same_or_verified_inventory_owner(base_owner, league_id, platform):
                 print(f"[resolve] league_inventory owns base name for this league: {base_name}", file=sys.stderr)
                 return base_name
             if provisional_inventory_owner(base_owner, platform):
@@ -326,7 +377,7 @@ def resolve(league_id: str, league_name: str, platform: str, pre_computed_db: st
             pre_owner = lookup_inventory_owner(pre_computed_db)
             if (
                 pre_owner
-                and not same_inventory_owner(pre_owner, league_id, platform)
+                and not same_or_verified_inventory_owner(pre_owner, league_id, platform)
                 and not provisional_inventory_owner(pre_owner, platform)
             ):
                 hashed_name = choose_hashed_name(base_name, league_id, platform)
@@ -371,7 +422,7 @@ def resolve(league_id: str, league_name: str, platform: str, pre_computed_db: st
             mapped_owner = lookup_inventory_owner(mapped)
             if (
                 not mapped_owner
-                or same_inventory_owner(mapped_owner, league_id, platform)
+                or same_or_verified_inventory_owner(mapped_owner, league_id, platform)
                 or provisional_inventory_owner(mapped_owner, platform)
             ):
                 print(f"[resolve] Found in {platform} mapping table: {mapped}", file=sys.stderr)

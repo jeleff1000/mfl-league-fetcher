@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import duckdb
 import pandas as pd
+import pytest
 
 
 def test_yahoo_active_worker_checks_provider_pair_graph_before_staging():
@@ -188,8 +189,6 @@ def test_identity_repair_preserves_hydrated_draft_metadata_and_fills_yahoo_ids()
 
 def test_identity_repair_refuses_to_leave_a_named_draft_pick_without_yahoo_id():
     """A partial Yahoo payload must not silently preserve the original defect."""
-    import pytest
-
     from refresh_yahoo_active_season import _patched_yahoo_draft_identities
 
     hydrated = pd.DataFrame(
@@ -718,3 +717,35 @@ def test_finalized_provider_schedule_rows_are_not_restored_over_canonical_schedu
     )
 
     assert remaining["week"].tolist() == [2]
+
+
+def test_scheduled_demo_mode_is_limited_to_demo_with_kmffl_credentials():
+    from refresh_yahoo_active_season import authorize_scheduled_demo
+
+    assert authorize_scheduled_demo(
+        requested=True,
+        database_name="demo_league",
+        credential_database_name="kmffl",
+    )
+
+    for database_name, credential_database_name in (
+        ("kmffl", "kmffl"),
+        ("demo_league", "demo_league"),
+        ("another_grandfathered_league", "kmffl"),
+    ):
+        with pytest.raises(PermissionError, match="scheduled demo"):
+            authorize_scheduled_demo(
+                requested=True,
+                database_name=database_name,
+                credential_database_name=credential_database_name,
+            )
+
+
+def test_normal_yahoo_refresh_is_not_a_scheduled_demo_bypass():
+    from refresh_yahoo_active_season import authorize_scheduled_demo
+
+    assert not authorize_scheduled_demo(
+        requested=False,
+        database_name="demo_league",
+        credential_database_name="kmffl",
+    )

@@ -23,7 +23,7 @@ def test_each_worker_builds_the_bounded_ops_cache_for_its_active_scoring_variant
         assert "scoring_info=active_scoring" in source
 
 
-def test_each_worker_uses_shared_catchup_weeks_and_authoritative_active_draft():
+def test_each_worker_uses_shared_planned_catchup_weeks_and_authoritative_active_draft():
     draft_contract = {
         "yahoo": "needs_active_season_draft_fetch(",
         "espn": "refresh_authoritative_draft_partition(",
@@ -31,7 +31,7 @@ def test_each_worker_uses_shared_catchup_weeks_and_authoritative_active_draft():
     }
     for provider in ("yahoo", "espn", "sleeper"):
         source = Path(f"scripts/refresh_{provider}_active_season.py").read_text(encoding="utf-8")
-        assert "completed_weeks_to_refresh(" in source
+        assert "refresh_weeks_for_run(" in source
         assert draft_contract[provider] in source
 
 
@@ -340,7 +340,7 @@ def test_exact_claim_is_rechecked_immediately_before_existing_fleet_publish(plat
     )
     workflow = (ROOT / ".github/workflows" / WORKFLOWS[platform]).read_text(encoding="utf-8")
     expected_claim = (
-        "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ (github.event_name == 'schedule' || inputs.execute) && '1' || '0' }}"
+        "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ github.event_name != 'schedule' && inputs.execute && '1' || '0' }}"
         if platform == "yahoo"
         else "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}"
     )

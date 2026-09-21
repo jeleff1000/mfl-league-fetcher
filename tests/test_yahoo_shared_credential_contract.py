@@ -28,3 +28,9 @@ def test_daily_demo_refresh_reuses_kmffl_oauth_but_publishes_demo_league():
     assert "INPUT_CREDENTIAL_DB_NAME: ${{ github.event_name == 'schedule' && 'kmffl' || inputs.credential_db_name || inputs.db_name }}" in workflow
     assert "INPUT_EXECUTE: ${{ github.event_name == 'schedule' && 'true' || inputs.execute }}" in workflow
     assert 'args=(--db "${DB_NAME}" --credential-db "${CREDENTIAL_DB_NAME}"' in workflow
+    assert "SYSTEM_DEMO_UPDATE: ${{ github.event_name == 'schedule' && 'true' || 'false' }}" in workflow
+    assert "github.event_name != 'schedule'" in workflow.split("- name: Claim paid manual update", 1)[1].split("- name:", 1)[0]
+    assert 'if [ "${SYSTEM_DEMO_UPDATE}" = "true" ]; then' in workflow
+    assert "args+=(--scheduled-demo)" in workflow
+    assert "LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ github.event_name != 'schedule' && inputs.execute && '1' || '0' }}" in workflow
+    assert "scheduled_demo:" not in workflow

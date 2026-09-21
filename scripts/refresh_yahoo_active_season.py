@@ -100,6 +100,20 @@ class YahooIncompleteSourceError(RuntimeError):
     """Yahoo exposed league metadata but omitted required active-season facts."""
 
 
+def authorize_scheduled_demo(
+    *,
+    requested: bool,
+    database_name: str,
+    credential_database_name: str | None,
+) -> bool:
+    """Authorize the one workflow-owned demo refresh outside the paid UI lane."""
+    if not requested:
+        return False
+    if database_name != "demo_league" or credential_database_name != "kmffl":
+        raise PermissionError("scheduled demo refresh is limited to demo_league with kmffl credentials")
+    return True
+
+
 from multi_league.core.ops_cache import (
     _finalized_ops,
     _sql_literal,
@@ -1935,8 +1949,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--through-week", type=int, default=None, help="Optional final-week ceiling")
     parser.add_argument("--observed-manifest-digest")
     parser.add_argument("--execute", action="store_true", help="Commit the scoped Fleet bundle to Fly")
+    parser.add_argument(
+        "--scheduled-demo",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--json-out", type=Path, help="Optional non-secret run receipt path")
     args = parser.parse_args(argv)
+
+    scheduled_demo = authorize_scheduled_demo(
+        requested=args.scheduled_demo,
+        database_name=args.db,
+        credential_database_name=args.credential_db or args.db,
+    )
 
     os.environ["DATABASE_BACKEND"] = "fly"
     from initial_import_v3 import YahooCredentialRequiredError, _build_context_from_fly
@@ -1988,7 +2013,7 @@ def main(argv: list[str] | None = None) -> int:
             attempt_id=os.environ.get("LEAGUE_UPDATE_ATTEMPT_ID"),
             claim_version=int(os.environ.get("LEAGUE_UPDATE_CLAIM_VERSION") or 1),
             workflow_run_id=os.environ.get("GITHUB_RUN_ID"),
-        ) if args.execute else None,
+        ) if args.execute and not scheduled_demo else None,
         "canonical_history": lambda: assert_canonical_history_complete(
             reader, database_name=args.db, active_season=active_year
         ),

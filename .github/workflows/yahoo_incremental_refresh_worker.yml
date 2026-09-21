@@ -68,7 +68,8 @@ jobs:
     env:
       PYTHONUNBUFFERED: 1
       DATABASE_BACKEND: fly
-      LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ (github.event_name == 'schedule' || inputs.execute) && '1' || '0' }}
+      LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ github.event_name != 'schedule' && inputs.execute && '1' || '0' }}
+      SYSTEM_DEMO_UPDATE: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
       INPUT_DB_NAME: ${{ github.event_name == 'schedule' && 'demo_league' || inputs.db_name }}
       INPUT_CREDENTIAL_DB_NAME: ${{ github.event_name == 'schedule' && 'kmffl' || inputs.credential_db_name || inputs.db_name }}
       INPUT_EXECUTE: ${{ github.event_name == 'schedule' && 'true' || inputs.execute }}
@@ -130,7 +131,7 @@ jobs:
 
       - name: Claim paid manual update
         id: manual_claim
-        if: env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_DISPATCH_TOKEN == ''
+        if: github.event_name != 'schedule' && env.INPUT_EXECUTE == 'true' && env.INPUT_CACHE_ONLY != 'true' && env.INPUT_DISPATCH_TOKEN == ''
         run: >-
           python scripts/claim_manual_league_update.py
           --db "${INPUT_DB_NAME}"
@@ -186,6 +187,9 @@ jobs:
           fi
           if [ "${EXECUTE}" = "true" ]; then
             args+=(--execute)
+          fi
+          if [ "${SYSTEM_DEMO_UPDATE}" = "true" ]; then
+            args+=(--scheduled-demo)
           fi
           if [ -n "${OBSERVED_MANIFEST_DIGEST}" ]; then
             args+=(--observed-manifest-digest "${OBSERVED_MANIFEST_DIGEST}")

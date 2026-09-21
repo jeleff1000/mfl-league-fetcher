@@ -52,6 +52,20 @@ def test_weekly_shared_enrichment_attaches_the_patched_ops_cache_once(tmp_path, 
     )
 
 
+def test_weekly_pipeline_emits_each_shared_enrichment_progress_line():
+    source = (
+        Path(__file__).resolve().parents[4] / "scripts" / "refresh_yahoo_active_season.py"
+    ).read_text(encoding="utf-8")
+    local_pipeline = source.split("def _run_local_pipeline(", 1)[1].split(
+        "def _unresolved_provider_schedule_rows", 1
+    )[0]
+
+    assert "logging.basicConfig(level=logging.INFO" in local_pipeline
+    assert local_pipeline.index("logging.basicConfig(level=logging.INFO") < local_pipeline.index(
+        "results = enricher.run_all()"
+    )
+
+
 def test_shared_sql_enricher_accepts_an_existing_ops_attachment(tmp_path, monkeypatch, caplog):
     from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
 

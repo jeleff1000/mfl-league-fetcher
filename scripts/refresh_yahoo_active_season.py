@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -1715,6 +1716,11 @@ def _run_local_pipeline(
         run_transformation_pipeline,
     )
     from multi_league.transformations.sql_enrichments import SQLEnrichments
+
+    # Weekly workers run this graph in-process, so configure INFO once here;
+    # otherwise a bounded timeout reports only the pass headings and hides the
+    # exact enrichment that consumed the budget.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     # Keep the provider graph for an incomplete current week.  The shared
     # matchup transform intentionally rebuilds ``schedule`` from *final*

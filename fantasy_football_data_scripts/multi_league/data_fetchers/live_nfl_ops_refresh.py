@@ -24,6 +24,16 @@ class RefreshGateError(RuntimeError):
     """The source does not prove that a live NFL refresh is safe to publish."""
 
 
+# Finite identities that have appeared in nflverse's weekly stats before its
+# roster release gained the same player. Each receipt requires both the exact
+# Sleeper ID and an independent provider anchor; it is never a name match.
+# DJ Herman: nflverse stats_player_week_2026 player_id=00-0041436; Sleeper
+# player_id=14026 publishes Rotowire 20084.
+_VERIFIED_SLEEPER_IDENTITIES = {
+    "14026": {"gsis_id": "00-0041436", "rotowire_id": "20084"},
+}
+
+
 def load_nflverse_identity_roster(year: int) -> pd.DataFrame:
     """Read the small current-season identity directory with a bounded timeout."""
     response = requests.get(
@@ -446,6 +456,19 @@ def build_sleeper_bio_mapping_rows(
             if len(matches) > 1:
                 raise RefreshGateError(f"ambiguous player bio crosswalk: {anchor}")
             candidates.update(matches)
+        verified = _VERIFIED_SLEEPER_IDENTITIES.get(provider_id)
+        if not candidates and verified is not None:
+            expected_anchor = {
+                key: value for key, value in verified.items() if key != "gsis_id"
+            }
+            if not expected_anchor or any(
+                supplied.get(key) != value for key, value in expected_anchor.items()
+            ):
+                raise RefreshGateError(
+                    "verified player bio crosswalk anchor mismatch "
+                    f"for provider_id={provider_id}; supplied={supplied}"
+                )
+            candidates.add(verified["gsis_id"])
         if len(candidates) != 1:
             raise RefreshGateError(
                 "player bio crosswalk has missing or disagreeing stable anchors "
@@ -464,10 +487,10 @@ def build_sleeper_bio_mapping_rows(
         if indexes.get("sleeper_id", {}).get(provider_id, set()) - {gsis}:
             raise RefreshGateError("Sleeper ID already belongs to another NFL identity")
         resolved[gsis] = provider_id
-    selected = roster[roster["gsis_id"].isin(resolved)].drop_duplicates("gsis_id").copy()
-    selected["sleeper_id"] = selected["gsis_id"].map(resolved)
-    facts = pd.DataFrame(columns=["NFL_player_id", "player", "position", "nfl_team"])
-    return build_player_bio_rows(facts, selected, columns)
+    return pd.DataFrame([
+        {"NFL_player_id": gsis, "sleeper_player_id": int(provider_id)}
+        for gsis, provider_id in resolved.items()
+    ], columns=[name for name, _ in columns])
 
 
 def build_player_bio_rows(

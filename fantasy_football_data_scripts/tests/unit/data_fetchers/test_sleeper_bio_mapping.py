@@ -48,6 +48,21 @@ def test_finite_crosswalk_identifies_the_unresolved_provider_id():
         refresh.build_sleeper_bio_mapping_rows(roster, sleeper)
 
 
+def test_finite_crosswalk_resolves_verified_active_player_missing_from_roster_release():
+    roster, _ = witnesses()
+    sleeper = pd.DataFrame([{
+        "player_id": "14026",
+        "full_name": "DJ Herman",
+        "gsis_id": None,
+        "espn_id": None,
+        "rotowire_id": "20084",
+    }])
+
+    assert refresh.build_sleeper_bio_mapping_rows(roster, sleeper).to_dict("records") == [
+        {"NFL_player_id": "00-0041436", "sleeper_player_id": 14026}
+    ]
+
+
 @pytest.mark.parametrize("case", [
     "name_only", "unknown_anchor", "ambiguous_espn", "ambiguous_rotowire",
     "disagreeing_anchors", "existing_sleeper_conflict", "reverse_sleeper_conflict",

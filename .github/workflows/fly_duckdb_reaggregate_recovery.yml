@@ -16,7 +16,7 @@ on:
         required: true
         default: locate
         type: choice
-        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_resume, engine_logs, service_health, production_recover, production_inspect]
+        options: [inspect, locate, remove, donor_headers, retained_headers, engine_probe, engine_inventory, engine_identity, engine_recover, engine_resume, engine_logs, service_health, production_recover, production_finalize_matchup, production_inspect]
       diagnostic_machine_id:
         description: Isolated pilot machine for read-only exit diagnostics
         required: false
@@ -46,7 +46,7 @@ concurrency:
 
 jobs:
   production-recovery:
-    if: inputs.action == 'production_recover' || inputs.action == 'production_inspect'
+    if: inputs.action == 'production_recover' || inputs.action == 'production_finalize_matchup' || inputs.action == 'production_inspect'
     runs-on: ubuntu-latest
     timeout-minutes: 6
     env:
@@ -72,10 +72,11 @@ jobs:
         env:
           WITNESS: ${{ inputs.witness_db_name }}
           PRODUCTION_MODE: ${{ inputs.action == 'production_inspect' && 'inspect' || 'handoff' }}
+          PRODUCTION_TASK: ${{ inputs.action == 'production_finalize_matchup' && 'matchup-season' || 'legacy-five' }}
         run: |
           set -euo pipefail
           timeout --signal=KILL 300s python -u scripts/diagnostics/duckdb_production_recovery.py \
-            --mode "$PRODUCTION_MODE" --receipt-id "${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
+            --mode "$PRODUCTION_MODE" --task "$PRODUCTION_TASK" --receipt-id "${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
             --db-name "$WITNESS" 2>&1 | tee production-recovery.jsonl
       - name: Upload small redacted receipt only
         if: always()
@@ -128,7 +129,7 @@ jobs:
           path: engine-pilot.jsonl
           if-no-files-found: warn
   pilot:
-    if: inputs.action != 'engine_probe' && inputs.action != 'production_recover' && inputs.action != 'production_inspect'
+    if: inputs.action != 'engine_probe' && inputs.action != 'production_recover' && inputs.action != 'production_finalize_matchup' && inputs.action != 'production_inspect'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:

@@ -25,10 +25,30 @@ import duckdb_recovery_adapter as a
 
 MACHINE = '1781e011b69068'
 VOLUME = 'vol_rkg7mmd17llez224'
-IMAGE = 'registry.fly.io/league-history-duckdb:deployment-01M2S3CCAQK5KYEB807DK6C33Z'
+IMAGE = ('registry.fly.io/league-history-duckdb:server-beb3b6eaf6b85223baa167bdc690d1ea397edbb5'
+         '@sha256:ad4918dac4fee679736df5338ec833c44dc8edbf199cf494fd766875569cbaa8')
 PATH = Path('/data/___leagues.duckdb')
 CONFIG = {'threads': '4', 'memory_limit': '6GB', 'temp_directory': '',
           'max_vacuum_tasks': '0', 'checkpoint_threshold': '2GB'}
+MATCHUP_QUARANTINE = '__replaced_matchup_season_1790022766492049920'
+MATCHUP_BLOCK = {
+    'block_id': 20257, 'offset': 5310263296, 'block_size': 262144,
+    'file_changed_during_read': False, 'checksum_valid': False,
+    'block_sha256': '6cb85e3bf5d8f356a9e7e974069e2731df5e3f1c2109a23d429c25bee2610f58',
+    'stored_checksum': 10234901489772186134,
+    'computed_checksum': 10295390272078678525,
+}
+
+
+def validate_matchup_target(name):
+    if name != MATCHUP_QUARANTINE:
+        raise ValueError('matchup recovery target is not the exact retained table')
+    return name
+
+
+def validate_matchup_block(block):
+    if any(block.get(key) != value for key, value in MATCHUP_BLOCK.items()):
+        raise ValueError('database does not match the exact matchup-season damaged block')
 
 
 def event(name, **fields):
@@ -140,7 +160,115 @@ def production_binding():
     return a.validate_file_binding(PATH, PATH.parent)
 
 
+def matchup_object_state(conn):
+    names = {row[0] for row in conn.execute(
+        "SELECT table_name FROM duckdb_tables() WHERE database_name=current_database() "
+        "AND schema_name='public' AND table_name IN ('matchup_season', ?)",
+        [MATCHUP_QUARANTINE]).fetchall()}
+    marker = conn.execute(
+        "SELECT active FROM merge_admin.storage_recovery_state "
+        "WHERE recovery_key='matchup_season_corruption_wal_only'"
+    ).fetchall()
+    if len(marker) != 1 or type(marker[0][0]) is not bool:
+        raise ValueError('matchup storage recovery marker is missing or ambiguous')
+    return {'canonical': 'matchup_season' in names,
+            'quarantine': MATCHUP_QUARANTINE in names,
+            'marker_active': marker[0][0]}
+
+
+def matchup_relation_witness(conn, db_name):
+    columns = conn.execute(
+        "SELECT column_name,data_type FROM duckdb_columns() "
+        "WHERE database_name=current_database() AND schema_name='public' "
+        "AND table_name='matchup_season' ORDER BY column_index"
+    ).fetchall()
+    names = [row[0] for row in columns]
+    if not columns or 'db_name' not in names or 'year' not in names:
+        raise ValueError('matchup_season witness schema is incomplete')
+    quoted = lambda name: '"' + name.replace('"', '""') + '"'
+    select = ','.join(quoted(name) for name in names)
+    order = ','.join(quoted(name) + ' ASC NULLS LAST' for name in
+                     sorted(names, key=lambda name: (name != 'year', name)))
+    reverse = order.replace(' ASC NULLS LAST', ' DESC NULLS LAST')
+    rows = []
+    for ordering in (order, reverse):
+        rows.extend(conn.execute(
+            f'SELECT {select} FROM public.matchup_season WHERE db_name=? '
+            f'ORDER BY {ordering} LIMIT 8', [db_name]).fetchall())
+    if not rows:
+        raise ValueError('matchup_season witness league has no rows')
+    payload = json.dumps({'schema': columns, 'rows': rows}, default=str,
+                         separators=(',', ':')).encode()
+    return {'rows': len(rows), 'sha256': hashlib.sha256(payload).hexdigest()}
+
+
+def capture_matchup_witness(conn, db_name):
+    return {'existing': a.capture_witness(conn, db_name),
+            'matchup_season': matchup_relation_witness(conn, db_name)}
+
+
+def matchup_block_safe(conn, probe):
+    registered = bool(conn.execute(
+        'SELECT block_id FROM pragma_metadata_info() WHERE block_id=?',
+        [MATCHUP_BLOCK['block_id']]).fetchall())
+    valid = probe(PATH, MATCHUP_BLOCK['offset'])['checksum_valid'] if registered else True
+    return {'registered': registered, 'block_safe': bool(valid)}
+
+
+def verify_matchup_stock(args, folder):
+    import duckdb
+    from fly_duckdb_block_probe import probe
+    before = a.read_receipt(folder / 'before.json')
+    with duckdb.connect(str(PATH), config=CONFIG) as conn:
+        conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+        state = matchup_object_state(conn)
+        if state != {'canonical': True, 'quarantine': False, 'marker_active': False}:
+            raise ValueError('matchup recovery catalog or marker is not clean')
+        if capture_matchup_witness(conn, args.db_name) != before:
+            raise ValueError('matchup recovery changed its preservation witness')
+        block = matchup_block_safe(conn, probe)
+        if not block['block_safe']:
+            raise ValueError('damaged matchup metadata block remains active')
+        probe_name = '__lh_matchup_recovery_write_probe'
+        columns = conn.execute(
+            "SELECT column_name,data_type FROM duckdb_columns() "
+            "WHERE database_name=current_database() AND schema_name='public' AND table_name=?",
+            [probe_name]).fetchall()
+        expected = [(folder.name,)]
+        if columns:
+            if (columns != [('receipt_id', 'VARCHAR')]
+                    or conn.execute(f'SELECT receipt_id FROM public.{probe_name}').fetchall() != expected):
+                raise ValueError('stock matchup probe ownership mismatch')
+        else:
+            conn.execute(f'CREATE TABLE public.{probe_name} (receipt_id VARCHAR)')
+            conn.execute(f'INSERT INTO public.{probe_name} VALUES (?)', [folder.name])
+        conn.execute('CHECKPOINT')
+    with duckdb.connect(str(PATH), config=CONFIG) as conn:
+        conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+        if conn.execute(
+                'SELECT receipt_id FROM public.__lh_matchup_recovery_write_probe').fetchall() != expected:
+            raise ValueError('stock matchup write did not survive reopen')
+        conn.execute('DROP TABLE public.__lh_matchup_recovery_write_probe')
+        conn.execute('CHECKPOINT')
+        state = matchup_object_state(conn)
+        if state != {'canonical': True, 'quarantine': False, 'marker_active': False}:
+            raise ValueError('matchup recovery regressed after stock write')
+        if capture_matchup_witness(conn, args.db_name) != before:
+            raise ValueError('stock write changed matchup preservation witness')
+        block = matchup_block_safe(conn, probe)
+        if not block['block_safe']:
+            raise ValueError('stock checkpoint reused damaged matchup metadata')
+    a.write_receipt(folder / 'stock.json', {
+        'task': 'matchup-season', 'verified': True, 'marker_active': False,
+        **block,
+    })
+    event('stock_reopen_write_verified', task='matchup-season', **block)
+
+
 def stock(args, folder):
+    if args.task == 'matchup-season':
+        production_binding()
+        return verify_matchup_stock(args, folder)
     import duckdb
     from fly_duckdb_block_probe import probe
     production_binding()
@@ -154,7 +282,118 @@ def stock(args, folder):
     event('stock_reopen_write_verified', old_block_registered=registered)
 
 
+def repair_matchup(args, folder):
+    sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
+    from fly_table_storage_pilot import engine_identity
+    from fly_duckdb_block_probe import probe
+    import duckdb
+
+    binding = production_binding()
+    a.validate_engine(engine_identity())
+    validate_matchup_target(MATCHUP_QUARANTINE)
+    block = probe(PATH, MATCHUP_BLOCK['offset'])
+    validate_matchup_block(block)
+    library = Path('/tmp/lh_five_drop.so')
+    if (os.environ.get('LD_PRELOAD') != str(library) or library.is_symlink()
+            or library.stat().st_size > 1024*1024
+            or hashlib.sha256(library.read_bytes()).hexdigest() != args.helper_sha256):
+        raise ValueError('production helper artifact mismatch')
+    hook = ctypes.CDLL(None)
+    hook.lh_spike_count.restype = ctypes.c_int
+    hook.lh_spike_allocations.restype = ctypes.c_int
+    hook.lh_spike_reserved_masks.restype = ctypes.c_int
+    hook.lh_spike_disarm()
+    a.phase('preserve')
+    wal_path = Path(str(PATH) + '.wal')
+    retained = folder / 'original.wal'
+    wal = (verify_retained_wal(wal_path, retained) if retained.exists()
+           else {**a.preserve_wal(wal_path, retained, max_bytes=1024**3),
+                 'retained_path': str(retained)})
+    a.write_receipt(folder / 'input.json', {
+        'task': args.task, 'binding': binding, 'block': block, 'wal': wal,
+        'helper_sha256': args.helper_sha256, 'db_name': args.db_name,
+        'target': MATCHUP_QUARANTINE,
+    })
+    if production_binding() != binding:
+        raise ValueError('production file changed during WAL preservation')
+    event('wal_preserved', task=args.task, **wal)
+    a.phase('replay')
+    hook.lh_spike_replay()
+    hook.lh_spike_avoid_block(ctypes.c_int64(MATCHUP_BLOCK['block_id']))
+    hook.lh_spike_checkpoint(1)
+    started = time.monotonic()
+    conn = duckdb.connect(str(PATH), config=CONFIG)
+    conn.execute('PRAGMA disable_checkpoint_on_shutdown')
+    if hook.lh_spike_reserved_masks() < 1:
+        raise ValueError('exact matchup metadata block was not reserved')
+    state = matchup_object_state(conn)
+    if state != {'canonical': True, 'quarantine': True, 'marker_active': True}:
+        raise ValueError('matchup recovery requires exact canonical/quarantine/marker state')
+    event('wal_replayed', task=args.task, seconds=round(time.monotonic()-started, 3))
+    a.phase('preserve')
+    before = capture_matchup_witness(conn, args.db_name)
+    a.write_receipt(folder / 'before.json', before)
+    a.phase('remove')
+    prior = hook.lh_spike_count()
+    conn.execute('BEGIN TRANSACTION')
+    try:
+        hook.lh_spike_arm()
+        conn.execute(f'DROP TABLE public."{MATCHUP_QUARANTINE}"')
+        transitioned = conn.execute(
+            "UPDATE merge_admin.storage_recovery_state SET active=FALSE, "
+            "updated_at=current_timestamp, detail='checkpoint finalized; stock reopen required' "
+            "WHERE recovery_key='matchup_season_corruption_wal_only' AND active RETURNING active"
+        ).fetchall()
+        if transitioned != [(False,)]:
+            raise ValueError('matchup recovery marker did not transition exactly once')
+        conn.execute('COMMIT')
+    except BaseException:
+        try:
+            conn.execute('ROLLBACK')
+        except Exception:
+            pass
+        raise
+    finally:
+        hook.lh_spike_disarm()
+    removed = hook.lh_spike_count() - prior
+    if removed != 1:
+        raise ValueError('unexpected matchup quarantine removal count')
+    event('commit_returned', task=args.task, removed=removed)
+    a.phase('verify')
+    stopped = threading.Event()
+    observer = threading.Thread(target=a.report_checkpoint_progress, args=(hook, stopped), daemon=True)
+    observer.start()
+    try:
+        for index in (1, 2):
+            event('checkpoint_start', task=args.task, index=index)
+            conn.execute('CHECKPOINT')
+            event('checkpoint_end', task=args.task, index=index)
+    finally:
+        stopped.set()
+        observer.join(timeout=.1)
+    conn.close()
+    hook.lh_spike_checkpoint(0)
+    env = dict(os.environ)
+    env.pop('LD_PRELOAD', None)
+    env['LH_RECOVERY_SUPERVISOR_PID'] = str(os.getpid())
+    subprocess.run([
+        sys.executable, '-u', __file__, '--mode', 'stock', '--task', args.task,
+        '--receipt-id', args.receipt_id, '--db-name', args.db_name,
+    ], env=env, check=True, timeout=max(.1, args.deadline-time.time()))
+    stock_proof = a.read_receipt(folder / 'stock.json')
+    a.write_receipt(folder / 'completed.json', {
+        'task': args.task, 'stock_verified': True, 'removed': removed,
+        'marker_active': stock_proof['marker_active'],
+        'block_safe': stock_proof['block_safe'],
+        'metadata_blocks': hook.lh_spike_allocations(),
+    })
+    event('production_recovery_verified', task=args.task, receipt=folder.name,
+          metadata_blocks=hook.lh_spike_allocations())
+
+
 def repair(args, folder):
+    if args.task == 'matchup-season':
+        return repair_matchup(args, folder)
     sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     from fly_table_storage_pilot import engine_identity
     from fly_duckdb_block_probe import probe
@@ -248,22 +487,35 @@ def remote(args):
     a.STAGE_LIMITS.update(inspect=5, preserve=45, replay=65, remove=5, verify=50)
     with (folder / 'trace.jsonl').open('xb') as trace:
         result = a.run_stage('inspect', [sys.executable, '-u', __file__, '--mode', 'repair',
-                    '--receipt-id', args.receipt_id, '--db-name', args.db_name,
+                    '--task', args.task, '--receipt-id', args.receipt_id, '--db-name', args.db_name,
                     '--helper-sha256', args.helper_sha256, '--deadline', str(args.deadline)],
                     env=env, deadline=args.deadline, trace=trace,
                     transitions=('preserve', 'replay', 'preserve', 'remove', 'verify'))
-    finish_remote(result, folder)
+    finish_remote(result, folder, task=args.task)
 
 
-def finish_remote(result, folder):
+def finish_remote(result, folder, *, task='legacy-five'):
     if result['exit_code'] != 0:
         raise ValueError('repair outcome ' + result['outcome'] + '; retained production evidence in ' + str(folder))
     completed = a.read_receipt(folder / 'completed.json')
     stock_proof = a.read_receipt(folder / 'stock.json')
-    if (completed.get('stock_verified') is not True or completed.get('removed') != 5
-            or stock_proof.get('verified') is not True):
+    if task == 'matchup-season':
+        valid = (completed.get('task') == task
+                 and completed.get('stock_verified') is True
+                 and completed.get('removed') == 1
+                 and completed.get('marker_active') is False
+                 and completed.get('block_safe') is True
+                 and stock_proof.get('task') == task
+                 and stock_proof.get('verified') is True
+                 and stock_proof.get('marker_active') is False
+                 and stock_proof.get('block_safe') is True)
+    else:
+        valid = (completed.get('stock_verified') is True
+                 and completed.get('removed') == 5
+                 and stock_proof.get('verified') is True)
+    if not valid:
         raise ValueError('durable stock verification receipt missing')
-    event('production_recovery_verified', receipt=folder.name)
+    event('production_recovery_verified', task=task, receipt=folder.name)
 
 
 class Fly:
@@ -370,7 +622,7 @@ def run_handoff(fly, original, config, args, helper_sha, *, observed=None):
         event('maintenance_started', repair_limit_s=150)
         deadline = time.time()+150
         command = ['/usr/local/bin/python', '-u', '/tmp/duckdb_production_recovery.py', '--mode', 'remote',
-                   '--receipt-id', args.receipt_id, '--db-name', args.db_name,
+                   '--task', args.task, '--receipt-id', args.receipt_id, '--db-name', args.db_name,
                    '--helper-sha256', helper_sha, '--deadline', str(deadline)]
         # Flyexec response is buffered; remote supervisor writes progress every
         # 2seconds to the retained trace and enforces all process-group limits.
@@ -402,6 +654,7 @@ def run_handoff(fly, original, config, args, helper_sha, *, observed=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--mode', choices=['handoff', 'remote', 'repair', 'stock', 'inspect'], required=True)
+    parser.add_argument('--task', choices=['legacy-five', 'matchup-season'], default='legacy-five')
     parser.add_argument('--receipt-id', required=True)
     parser.add_argument('--db-name', default='nyu_ffl')
     parser.add_argument('--helper-sha256')

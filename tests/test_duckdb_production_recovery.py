@@ -17,12 +17,60 @@ def recovery():
 
 def machine():
     return {'id': '1781e011b69068', 'state': 'started', 'instance_id': 'v1',
-            'config': {'image': 'registry.fly.io/league-history-duckdb:deployment-01M2S3CCAQK5KYEB807DK6C33Z',
+            'config': {'image': recovery().IMAGE,
                        'init': {'swap_size_mb': 4096}, 'env': {'KEEP': 'yes'},
                        'guest': {'cpus': 8, 'memory_mb': 16384},
                        'mounts': [{'volume': 'vol_rkg7mmd17llez224', 'path': '/data'}],
                        'services': [{'autostart': True, 'internal_port': 8080}],
                        'restart': {'policy': 'on-failure', 'max_retries': 10}}}
+
+
+def test_matchup_finalize_is_bound_to_exact_object_and_block_receipt():
+    r = recovery()
+    assert r.validate_matchup_target(r.MATCHUP_QUARANTINE) == r.MATCHUP_QUARANTINE
+    for bad in ('matchup_season', '__replaced_matchup_season_',
+                r.MATCHUP_QUARANTINE + '_extra', '__replaced_matchup_season_1'):
+        with pytest.raises(ValueError):
+            r.validate_matchup_target(bad)
+    receipt = dict(r.MATCHUP_BLOCK)
+    r.validate_matchup_block(receipt)
+    for field in ('block_id', 'offset', 'block_sha256', 'stored_checksum',
+                  'computed_checksum', 'checksum_valid'):
+        changed = dict(receipt)
+        changed[field] = not changed[field] if field == 'checksum_valid' else 'wrong'
+        with pytest.raises(ValueError):
+            r.validate_matchup_block(changed)
+
+
+def test_matchup_completion_requires_one_removal_inactive_marker_and_stock_proof(tmp_path, capsys):
+    r = recovery()
+    import duckdb_recovery_adapter as a
+    result = {'exit_code': 0, 'outcome': 'PASS'}
+    a.write_receipt(tmp_path / 'completed.json', {
+        'task': 'matchup-season', 'stock_verified': True, 'removed': 1,
+        'marker_active': False, 'block_safe': True,
+    })
+    a.write_receipt(tmp_path / 'stock.json', {
+        'task': 'matchup-season', 'verified': True, 'marker_active': False,
+        'block_safe': True,
+    })
+    r.finish_remote(result, tmp_path, task='matchup-season')
+    r.require_verified({'stdout': capsys.readouterr().out, 'exit_signal': 0})
+    damaged = a.read_receipt(tmp_path / 'completed.json')
+    damaged['marker_active'] = True
+    (tmp_path / 'completed.json').unlink()
+    a.write_receipt(tmp_path / 'completed.json', damaged)
+    with pytest.raises(ValueError):
+        r.finish_remote(result, tmp_path, task='matchup-season')
+
+
+def test_public_workflow_and_native_helper_keep_matchup_finalization_exact():
+    workflow = (ROOT / '.github/workflows/fly_duckdb_reaggregate_recovery.yml').read_text()
+    helper = (ROOT / 'scripts/diagnostics/duckdb_drop_recovery_spike.cpp').read_text()
+    assert 'production_finalize_matchup' in workflow
+    assert '--task "$PRODUCTION_TASK"' in workflow
+    assert recovery().MATCHUP_QUARANTINE in helper
+    assert 'if (!allowed_table_drop && atomic_load(&armed) == 1) { _exit(99); }' in helper
 
 
 def test_maintenance_disables_serving_without_mutating_saved_config():
@@ -162,7 +210,7 @@ def test_handoff_restores_exact_config_only_after_proof_and_uncordons_after_heal
             return self.call('/exec', {'command': command})
 
     api = API()
-    args = SimpleNamespace(receipt_id='1_1', db_name='nyu_ffl')
+    args = SimpleNamespace(receipt_id='1_1', db_name='nyu_ffl', task='legacy-five')
     if verified:
         r.run_handoff(api, original, config, args, 'a'*64)
         expected = copy.deepcopy(original['config'])

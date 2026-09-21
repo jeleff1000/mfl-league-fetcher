@@ -180,7 +180,11 @@ def _delta_resources(delta: ManifestDelta) -> tuple[ResourceRevision, ...]:
     )
     return tuple(
         sorted(
-            (*present, *removed),
+            (
+                row
+                for row in (*present, *removed)
+                if row.resource != "freshness_contract"
+            ),
             key=lambda row: (row.provider, row.resource, row.scope, row.status),
         )
     )

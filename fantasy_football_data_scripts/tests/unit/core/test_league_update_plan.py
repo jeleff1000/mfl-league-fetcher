@@ -94,6 +94,25 @@ def test_identical_complete_manifest_is_a_no_op():
     assert plan.changed_resources == ()
 
 
+def test_freshness_contract_revision_is_not_a_data_partition():
+    published = manifest(
+        provider=(resource("espn", "settings", "2026", "same"),),
+    )
+    observed = replace(
+        published,
+        provider_revisions=(
+            resource("espn", "freshness_contract", "semantic-v2", "semantic-v2"),
+            *published.provider_revisions,
+        ),
+    )
+
+    plan = build_refresh_plan(observed, published, materialized_keys={(2026, 1)})
+
+    assert plan.requires_refresh is False
+    assert plan.changed_resources == ()
+    assert plan.weeks_by_season == ()
+
+
 def test_missing_derived_aggregate_forces_latest_materialized_week_refresh():
     nfl = (resource("nfl", "game", "2026:1:A@B", "n1"),)
     current = manifest(nfl=nfl)

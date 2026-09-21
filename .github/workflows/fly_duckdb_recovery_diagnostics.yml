@@ -38,6 +38,11 @@ on:
         required: false
         default: false
         type: boolean
+      capture_startup_failure:
+        description: Start the stopped primary once and stream its startup failure; no file changes
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -69,12 +74,14 @@ jobs:
           INSPECT_BLOCK_ONLY: ${{ inputs.inspect_block_only }}
           CLEANUP_RECOVERY_RESOURCES: ${{ inputs.cleanup_recovery_resources }}
           RESTART_PRIMARY: ${{ inputs.restart_primary }}
+          CAPTURE_STARTUP_FAILURE: ${{ inputs.capture_startup_failure }}
         run: |
           set -euo pipefail
           if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
             [ "$PRESERVE_CURRENT_VOLUME" != "true" ]
             [ "$CLEANUP_RECOVERY_RESOURCES" != "true" ]
             [ "$RESTART_PRIMARY" != "true" ]
+            [ "$CAPTURE_STARTUP_FAILURE" != "true" ]
             [ -z "$VALIDATE_SNAPSHOT_ID" ]
             [ -n "$INSPECT_EXISTING_VOLUME_ID" ]
           fi
@@ -83,6 +90,48 @@ jobs:
           flyctl volumes list --app "$FLY_APP" --json | tee volumes.json
           echo "Recent Fly application logs"
           flyctl logs --app "$FLY_APP" --no-tail | tail -n 400 || true
+
+          if [ "$CAPTURE_STARTUP_FAILURE" = "true" ]; then
+            [ "$RESTART_PRIMARY" != "true" ]
+            [ "$PRESERVE_CURRENT_VOLUME" != "true" ]
+            [ "$CLEANUP_RECOVERY_RESOURCES" != "true" ]
+            [ -z "$VALIDATE_SNAPSHOT_ID" ]
+            [ -z "$INSPECT_EXISTING_VOLUME_ID" ]
+            machine_count="$(jq 'length' machines.json)"
+            [ "$machine_count" = "1" ]
+            machine_id="$(jq -r '.[0].id' machines.json)"
+            machine_state="$(jq -r '.[0].state' machines.json)"
+            [ "$machine_id" = "1781e011b69068" ]
+            [ "$machine_state" = "stopped" ]
+            timeout --signal=KILL 100s flyctl logs --app "$FLY_APP" --json > startup-failure.jsonl 2>&1 &
+            log_pid=$!
+            cleanup_log_capture() {
+              kill "$log_pid" 2>/dev/null || true
+              wait "$log_pid" 2>/dev/null || true
+            }
+            trap cleanup_log_capture EXIT
+            flyctl machine start "$machine_id" --app "$FLY_APP"
+            final_state=""
+            for _ in $(seq 1 90); do
+              final_state="$(flyctl machines list --app "$FLY_APP" --json | jq -r '.[0].state')"
+              [ "$final_state" = "stopped" ] && break
+              if curl --silent --fail --connect-timeout 1 --max-time 2 \
+                  https://league-history-duckdb.fly.dev/ready > startup-ready.json; then
+                if jq -e '.accepting_queries == true' startup-ready.json >/dev/null; then
+                  final_state="ready"
+                  break
+                fi
+              fi
+              sleep 1
+            done
+            cleanup_log_capture
+            trap - EXIT
+            echo "Captured startup final_state=$final_state"
+            grep -Ev 'GET /ready|GET /internal/server-state|POST /query' startup-failure.jsonl \
+              | tail -n 240 || true
+            [ "$final_state" = "stopped" ] || [ "$final_state" = "ready" ]
+            exit 0
+          fi
 
           if [ "$RESTART_PRIMARY" = "true" ]; then
             machine_count="$(jq 'length' machines.json)"
@@ -569,5 +618,7 @@ jobs:
             identity-probe-machine.log
             identity-snapshot-probe.jsonl
             primary-block-probe.jsonl
+            startup-failure.jsonl
+            startup-ready.json
           if-no-files-found: warn
           retention-days: 7

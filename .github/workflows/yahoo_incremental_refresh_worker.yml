@@ -326,7 +326,7 @@ jobs:
 
       - name: Upload refresh receipt
         id: diagnostic_artifact
-        if: always()
+        if: ${{ always() && env.INPUT_CACHE_ONLY != 'true' }}
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:

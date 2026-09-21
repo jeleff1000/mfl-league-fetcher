@@ -405,6 +405,20 @@ def test_cache_only_recovery_keeps_a_verified_publication_successful():
     assert '"--soft-warm-failures"' in recovery
 
 
+@pytest.mark.parametrize(("platform", "filename"), WORKFLOWS.items())
+def test_cache_only_recovery_does_not_report_a_missing_refresh_artifact(
+    platform: str, filename: str
+):
+    text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
+    upload = text.split("- name: Upload refresh receipt", 1)[1].split("- name: Summary", 1)[0]
+    expected = (
+        "if: ${{ always() && env.INPUT_CACHE_ONLY != 'true' }}"
+        if platform == "yahoo"
+        else "if: ${{ always() && !inputs.cache_only }}"
+    )
+    assert expected in upload
+
+
 def test_sleeper_validates_the_actual_active_draft_not_an_empty_placeholder():
     text = (ROOT / "scripts" / "refresh_sleeper_active_season.py").read_text(encoding="utf-8")
     fetch = text.split("def _merge_active_payloads(", 1)[1].split("\ndef main(", 1)[0]

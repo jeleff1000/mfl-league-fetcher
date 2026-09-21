@@ -67,6 +67,25 @@ def test_cookie_import_rebinds_generation_between_quick_and_full_publications():
     )
 
 
+def test_yahoo_full_import_rebinds_generation_after_quick_publication():
+    document = yaml.safe_load(
+        (ROOT / ".github/workflows/yahoo_full_import_worker.yml").read_text(encoding="utf-8")
+    )
+    job = next(iter(document["jobs"].values()))
+    steps = job["steps"]
+    names = [step.get("name") for step in steps]
+
+    quick_index = names.index("Run quick import (current year, uploads)")
+    capture_index = names.index("Capture full import publication generation")
+    full_index = names.index("Run full import (historical, local only)")
+    assert quick_index < capture_index < full_index
+
+    capture = steps[capture_index]
+    assert capture["id"] == "full_snapshot"
+    assert capture["env"]["IMPORT_LOCK_KEY"]
+    assert "python scripts/capture_import_generation.py" in capture["run"]
+
+
 def test_manual_fleaflicker_import_is_generation_fenced_before_provider_fetch():
     document = yaml.safe_load(
         (ROOT / ".github/workflows/fleaflicker_full_import_worker.yml").read_text(encoding="utf-8")

@@ -385,6 +385,15 @@ jobs:
 
           echo "Quick import completed — site is now usable"
 
+      # The quick leg publishes the active season and advances the league's
+      # generation. Bind the historical leg to that committed state rather
+      # than the generation captured before the quick publication.
+      - name: Capture full import publication generation
+        id: full_snapshot
+        env:
+          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
+        run: python scripts/capture_import_generation.py --db-name "$IMPORT_LOCK_KEY"
+
       # ==================== REFRESH OAUTH TOKEN (BEFORE FULL IMPORT) ====================
       # Yahoo OAuth tokens expire in ~60 min. Quick import may have used 5-15 min.
       # Refresh again before the full import to ensure a fresh token for the long run.

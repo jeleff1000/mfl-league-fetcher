@@ -447,7 +447,11 @@ def build_sleeper_bio_mapping_rows(
                 raise RefreshGateError(f"ambiguous player bio crosswalk: {anchor}")
             candidates.update(matches)
         if len(candidates) != 1:
-            raise RefreshGateError("player bio crosswalk has missing or disagreeing stable anchors")
+            raise RefreshGateError(
+                "player bio crosswalk has missing or disagreeing stable anchors "
+                f"for provider_id={provider_id}; supplied={supplied}; "
+                f"candidate_gsis={sorted(candidates)}"
+            )
         (gsis,) = candidates
         if gsis in resolved:
             raise RefreshGateError("multiple Sleeper players claim one NFL identity")

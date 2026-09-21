@@ -40,6 +40,14 @@ def test_finite_crosswalk_accepts_unique_espn_without_matching_names():
     }
 
 
+def test_finite_crosswalk_identifies_the_unresolved_provider_id():
+    roster, sleeper = witnesses()
+    sleeper.loc[0, "rotowire_id"] = 123
+
+    with pytest.raises(refresh.RefreshGateError, match=r"provider_id=13324"):
+        refresh.build_sleeper_bio_mapping_rows(roster, sleeper)
+
+
 @pytest.mark.parametrize("case", [
     "name_only", "unknown_anchor", "ambiguous_espn", "ambiguous_rotowire",
     "disagreeing_anchors", "existing_sleeper_conflict", "reverse_sleeper_conflict",

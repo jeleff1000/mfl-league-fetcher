@@ -3133,8 +3133,9 @@ def test_commit_merge_disarms_inflight_watchdog_without_waiting_on_logging(monke
     watchdog = main_mod._start_merge_hard_exit_timer("fixture", seconds=0)
     assert entered.wait(1)
 
-    def commit(conn, sql, *, step):
+    def commit(conn, sql, *, step, timeout_seconds):
         assert sql == "COMMIT"
+        assert timeout_seconds == main_mod.MERGE_STEP_TIMEOUT_SECONDS
         release.set()
         watchdog.join(1)
         assert not watchdog.is_alive()
@@ -3166,7 +3167,8 @@ def test_commit_merge_retains_duckdb_interrupt_deadline(monkeypatch):
         def interrupt(self):
             interrupted.set()
 
-    def short_deadline(conn, sql, *, step):
+    def short_deadline(conn, sql, *, step, timeout_seconds):
+        assert timeout_seconds == main_mod.MERGE_STEP_TIMEOUT_SECONDS
         return execute(conn, sql, step=step, timeout_seconds=0.01)
 
     monkeypatch.setattr(main_mod, "_interrupting_execute", short_deadline)

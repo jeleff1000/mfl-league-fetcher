@@ -156,6 +156,25 @@ jobs:
             machine_id="$(jq -r '.[0].id' machines.json)"
             machine_state="$(jq -r '.[0].state' machines.json)"
             [ "$machine_id" = "1781e011b69068" ]
+            ensure_machine_started() {
+              local attempt state
+              for attempt in $(seq 1 8); do
+                state="$(flyctl machines list --app "$FLY_APP" --json | jq -r '.[0].state')"
+                if [ "$state" = "started" ]; then
+                  machine_state="$state"
+                  return 0
+                fi
+                if [ "$state" != "starting" ]; then
+                  echo "Starting primary machine (attempt $attempt/8, state=$state)"
+                  if ! flyctl machine start "$machine_id" --app "$FLY_APP"; then
+                    echo "Fly start attempt $attempt failed; retrying after bounded backoff"
+                  fi
+                fi
+                sleep $((attempt * 3))
+              done
+              machine_state="$(flyctl machines list --app "$FLY_APP" --json | jq -r '.[0].state')"
+              [ "$machine_state" = "started" ]
+            }
             if [ "$machine_state" = "started" ]; then
               flyctl machine stop "$machine_id" --app "$FLY_APP"
               for _ in $(seq 1 30); do
@@ -165,20 +184,15 @@ jobs:
               done
             fi
             [ "$machine_state" = "stopped" ]
-            flyctl machine start "$machine_id" --app "$FLY_APP"
-            for _ in $(seq 1 20); do
-              machine_state="$(flyctl machines list --app "$FLY_APP" --json | jq -r '.[0].state')"
-              [ "$machine_state" = "started" ] && break
-              sleep 1
-            done
-            [ "$machine_state" = "started" ]
+            ensure_machine_started
             flyctl ssh console --app "$FLY_APP" --machine "$machine_id" \
               -C "/bin/sh -lc 'set -eu; wal=/data/___leagues.duckdb.wal; test -f \"\$wal\"; size=\$(stat -c %s \"\$wal\"); test \"\$size\" -gt 0; ts=\$(date -u +%Y%m%dT%H%M%SZ); target=/data/___leagues.duckdb.wal.quarantine.\$ts; test ! -e \"\$target\"; mv \"\$wal\" \"\$target\"; sync; test -f \"\$target\"; test ! -e \"\$wal\"; printf \"preserved_wal=%s bytes=%s\\n\" \"\$target\" \"\$size\"; ls -lah /data/___leagues.duckdb \"\$target\"'" \
               | tee wal-quarantine-receipt.txt
             # The running process still owns the renamed WAL inode. Restart it
             # immediately so the next process opens the checkpointed database
             # without replaying the quarantined WAL.
-            flyctl machine restart "$machine_id" --app "$FLY_APP"
+            flyctl machine stop "$machine_id" --app "$FLY_APP"
+            ensure_machine_started
             ready=false
             machine_state="started"
             for _ in $(seq 1 60); do

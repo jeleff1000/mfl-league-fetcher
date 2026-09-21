@@ -48,12 +48,58 @@ on:
         required: false
         default: false
         type: boolean
+      repair_matchup_season:
+        description: Rebuild and atomically swap only public.matchup_season
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
+  repair-matchup-season:
+    if: inputs.repair_matchup_season
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Repair only matchup_season with a 45 second client deadline
+        env:
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "${{ inputs.preserve_current_volume }}" != "true"
+          test -z "${{ inputs.validate_snapshot_id }}"
+          test -z "${{ inputs.inspect_existing_volume_id }}"
+          test "${{ inputs.inspect_block_only }}" != "true"
+          test "${{ inputs.cleanup_recovery_resources }}" != "true"
+          test "${{ inputs.restart_primary }}" != "true"
+          test "${{ inputs.capture_startup_failure }}" != "true"
+          test "${{ inputs.quarantine_leagues_wal }}" != "true"
+          started="$(date +%s)"
+          curl --fail-with-body --silent --show-error --max-time 45 \
+            -H "Authorization: Bearer ${DATABASE_ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"confirm":"rebuild-matchup-season-from-matchup"}' \
+            "${DATABASE_SERVER_URL%/}/repair-matchup-season" > repair.json
+          elapsed="$(( $(date +%s) - started ))"
+          jq -e '
+            .status == "COMMITTED" and
+            .table == "matchup_season" and
+            .rows > 0 and
+            .distinct_keys == .rows and
+            .checkpointed == false and
+            .homepage_tables_verified > 0
+          ' repair.json >/dev/null
+          jq '{status, table, rows, leagues, league_years, distinct_keys, homepage_tables_verified, quarantine_cleanup, elapsed_seconds, checkpointed}' repair.json
+          test "$elapsed" -le 45
+          curl --fail --silent --show-error --max-time 5 \
+            "${DATABASE_SERVER_URL%/}/ready" \
+            | jq -e '.accepting_queries == true and .active_queries == 0' >/dev/null
+
   inspect:
+    if: inputs.repair_matchup_season == false
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:

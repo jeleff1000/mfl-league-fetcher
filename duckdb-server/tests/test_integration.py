@@ -2047,6 +2047,47 @@ def test_homepage_fleet_merge_serializes_with_ops_metadata_write(monkeypatch):
     assert status_entered.is_set()
 
 
+def test_homepage_fleet_merge_waits_for_active_ops_read(monkeypatch):
+    """A fleet merge cannot race the dedicated OPS reader handle."""
+    import main as main_mod
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+
+    read_entered = Event()
+    release_read = Event()
+    merge_entered = Event()
+    fake_ops_connection = object()
+
+    monkeypatch.setattr(main_mod.db, "get_ops_connection", lambda: fake_ops_connection)
+
+    def held_read():
+        with main_mod._ops_read_connection("SELECT 1"):
+            read_entered.set()
+            assert release_read.wait(2)
+
+    def observed_merge(*args, **kwargs):
+        merge_entered.set()
+        return {"status": "COMMITTED"}
+
+    monkeypatch.setattr(main_mod, "_merge_fleet_bundle", observed_merge)
+    manifest = {"schema_version": main_mod.fleet_merge.FLEET_CAREER_SCHEMA_VERSION}
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        read = pool.submit(held_read)
+        assert read_entered.wait(1)
+        merge = pool.submit(
+            main_mod._merge_fleet_bundle_serialized,
+            object(), manifest, object(),
+        )
+        with pytest.raises(FutureTimeout):
+            merge.result(timeout=0.05)
+        assert not merge_entered.is_set()
+        release_read.set()
+        read.result(timeout=1)
+        assert merge.result(timeout=1) == {"status": "COMMITTED"}
+
+    assert merge_entered.is_set()
+
+
 def test_replace_db_requires_admin(client):
     resp = client.post(
         "/replace-db",

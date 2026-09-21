@@ -1429,11 +1429,17 @@ def _ops_read_uses_pool(sql: str) -> bool:
 @contextmanager
 def _ops_read_connection(sql: str):
     """Own the connection until native execution/serialization actually finishes."""
-    with db._ops_lock:
-        conn = db.get_ops_connection() or db.reopen_ops_connection()
-        if conn is None:
-            raise RuntimeError("___ops connection is unavailable")
-        yield conn
+    # Match every OPS writer and OPS-backed fleet merge's lock order. Without
+    # this outer gate, a metadata read can take ``_ops_lock`` after a fleet
+    # merge has taken ``_ops_rebuild_lock`` but before it registers the shared
+    # read-only attachment. The merge then times out after two seconds even
+    # though both operations are individually healthy.
+    with _ops_rebuild_lock:
+        with db._ops_lock:
+            conn = db.get_ops_connection() or db.reopen_ops_connection()
+            if conn is None:
+                raise RuntimeError("___ops connection is unavailable")
+            yield conn
 
 
 def _execute_ops_query(sql: str) -> list[dict]:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -76,9 +75,6 @@ ALLOWED_PRIOR_STATUSES = {
     "no_change": {"running", "no_change"},
     "validation_failed": {"running", "validation_failed"},
 }
-DEFAULT_GRANDFATHERED_LEAGUES = {"kmffl", "tfl_of_extraordinary_gentleman"}
-
-
 def build_cache_recovery_receipt(
     row: Mapping[str, Any], *, current_generation: int
 ) -> dict[str, Any]:
@@ -124,17 +120,9 @@ def _literal(value: object | None) -> str:
 
 
 def assert_league_update_entitled(reader: Any, *, database_name: str) -> None:
-    configured = {
-        value.strip().lower()
-        for value in os.environ.get("LEAGUE_UPDATE_GRANDFATHERED_DBS", "").split(",")
-        if value.strip()
-    }
-    if database_name.lower() in DEFAULT_GRANDFATHERED_LEAGUES | configured:
-        return
     eligible = reader.query_scalar(
         "SELECT CASE WHEN LOWER(COALESCE(entitled_mode, '')) = 'full' "
-        "AND ((LOWER(COALESCE(tier, '')) = 'paid' AND expires_at > NOW()) "
-        "OR LOWER(COALESCE(tier, '')) = 'grandfathered') "
+        "AND LOWER(COALESCE(tier, '')) = 'paid' AND expires_at > NOW() "
         "THEN 1 ELSE 0 END FROM ("
         "SELECT tier, entitled_mode, expires_at FROM accounts.league_inventory "
         f"WHERE database_name = {_literal(database_name)} "
@@ -165,7 +153,7 @@ def start_league_update_execution(
     to overlap the other independent Fly reads.
 
     Direct/local execute calls may not have a dispatch token.  They still pass
-    the paid/grandfathered entitlement gate but do not create lifecycle state.
+    the paid entitlement gate but do not create lifecycle state.
     """
     assert_league_update_entitled(reader, database_name=database_name)
     normalized_token = str(dispatch_token or "").strip()

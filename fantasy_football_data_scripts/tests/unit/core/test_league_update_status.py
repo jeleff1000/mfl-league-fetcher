@@ -119,7 +119,7 @@ def test_start_execution_keeps_direct_execute_entitlement_without_status_write()
     assert writer.sql == ""
 
 
-def test_entitlement_uses_paid_fly_rows_and_only_explicit_grandfathers():
+def test_entitlement_uses_only_active_paid_fly_rows():
     class Reader:
         def __init__(self, value):
             self.value = value
@@ -128,7 +128,7 @@ def test_entitlement_uses_paid_fly_rows_and_only_explicit_grandfathers():
         def query_scalar(self, sql, *, database):
             self.calls += 1
             assert "tier, '')) = 'paid'" in sql
-            assert "tier, '')) = 'grandfathered'" in sql
+            assert "tier, '')) = 'grandfathered'" not in sql
             assert "ORDER BY updated_at DESC NULLS LAST LIMIT 1" in sql
             assert database == "___ops"
             return self.value
@@ -137,8 +137,9 @@ def test_entitlement_uses_paid_fly_rows_and_only_explicit_grandfathers():
     with pytest.raises(PermissionError):
         assert_league_update_entitled(broad_legacy, database_name="nyu_ffl")
     explicit = Reader(0)
-    assert_league_update_entitled(explicit, database_name="tfl_of_extraordinary_gentleman")
-    assert explicit.calls == 0
+    with pytest.raises(PermissionError):
+        assert_league_update_entitled(explicit, database_name="tfl_of_extraordinary_gentleman")
+    assert explicit.calls == 1
 
 
 def test_success_requires_committed_receipt_and_cache_verification():

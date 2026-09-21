@@ -263,6 +263,7 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert "--warm-attempts 1" in text
     assert "--hot-verify-attempts 1" in text
     assert "--max-p95-ms 0" in text
+    assert "--soft-warm-failures" in text
     assert "--status succeeded" in text
     assert '--status "${recovery_status}"' in text
     assert 'recovery_status=$(python scripts/league_update_workflow_receipt.py' in text
@@ -396,6 +397,12 @@ def test_blank_token_manual_cache_retry_uses_verified_pending_claim(filename: st
     assert "scripts/recover_league_update_cache.py" in recovery
     validation = text.split("- name: Validate cache-only recovery request", 1)[1].split("- name: Recover", 1)[0]
     assert 'test -n "${UI_DISPATCH_TOKEN}"' not in validation
+
+
+def test_cache_only_recovery_keeps_a_verified_publication_successful():
+    source = (ROOT / "scripts" / "recover_league_update_cache.py").read_text(encoding="utf-8")
+    recovery = source.split("subprocess.run(", 1)[1].split("check=True", 1)[0]
+    assert '"--soft-warm-failures"' in recovery
 
 
 def test_sleeper_validates_the_actual_active_draft_not_an_empty_placeholder():

@@ -256,6 +256,7 @@ jobs:
           --warm-attempts 1
           --hot-verify-attempts 1
           --max-p95-ms 0
+          --soft-warm-failures
 
       - name: Complete league update
         if: inputs.execute && (steps.manual_claim.outputs.token != '' || inputs.dispatch_token != '') && steps.publication.outputs.committed == 'true'

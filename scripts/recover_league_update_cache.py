@@ -196,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             "--jitter-seconds", "0", "--strict", "--verify-hot",
             "--required-only", "--timeout", "5", "--warm-attempts", "1",
             "--hot-verify-attempts", "1",
+            "--soft-warm-failures",
         ],
         check=True,
     )

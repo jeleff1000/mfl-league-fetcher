@@ -146,6 +146,142 @@ def normalize_yahoo_roster_provider_identity(rosters: pd.DataFrame) -> pd.DataFr
     return normalized
 
 
+def _identity_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _canonical_manager_name(value: object, overrides: Mapping[object, object] | None) -> str:
+    """Resolve one manager name through the user-owned exact alias map."""
+    name = _identity_text(value)
+    if not name:
+        return ""
+    lookup = {
+        str(source).strip().casefold(): str(target).strip()
+        for source, target in (overrides or {}).items()
+        if str(source).strip() and str(target).strip()
+    }
+    seen: set[str] = set()
+    while name.casefold() in lookup and name.casefold() not in seen:
+        seen.add(name.casefold())
+        name = lookup[name.casefold()]
+    return name
+
+
+def derive_yahoo_active_franchise_merges(
+    active_matchup: pd.DataFrame,
+    historical_identity: pd.DataFrame,
+    *,
+    manager_name_overrides: Mapping[object, object] | None = None,
+    existing_merges: list[dict[str, Any]] | None = None,
+    active_year: int | None = None,
+) -> list[dict[str, Any]]:
+    """Reuse an established franchise when Yahoo redacts its active GUID.
+
+    Yahoo occasionally returns a nickname/image-derived ``yh-*`` identity for
+    a returning manager even though earlier renewal legs exposed a real GUID.
+    The full importer resolves this from the complete history plus the user's
+    exact alias map.  A weekly update intentionally does not hydrate historical
+    facts, so this function consumes the already-loaded skinny homepage matchup
+    witness instead.  It maps only an active synthetic owner with exactly one
+    historical franchise for the canonical configured manager name. Ambiguous
+    names and real provider GUIDs are left untouched.
+    """
+    merges = [dict(merge) for merge in (existing_merges or [])]
+    required_active = {"manager", "franchise_id"}
+    required_history = {"manager", "franchise_id"}
+    if (
+        active_matchup is None
+        or active_matchup.empty
+        or historical_identity is None
+        or historical_identity.empty
+        or not required_active.issubset(active_matchup.columns)
+        or not required_history.issubset(historical_identity.columns)
+    ):
+        return merges
+
+    active = active_matchup.copy()
+    history = historical_identity.copy()
+    if active_year is None and "year" in active.columns:
+        years = pd.to_numeric(active["year"], errors="coerce").dropna()
+        active_year = int(years.max()) if not years.empty else None
+    if active_year is not None:
+        if "year" in history.columns:
+            history = history.loc[pd.to_numeric(history["year"], errors="coerce").lt(active_year)].copy()
+        elif "last_year" in history.columns:
+            history = history.loc[
+                pd.to_numeric(history["last_year"], errors="coerce").lt(active_year)
+            ].copy()
+    if history.empty:
+        return merges
+
+    active["_canonical_manager"] = active["manager"].map(
+        lambda value: _canonical_manager_name(value, manager_name_overrides)
+    )
+    history["_canonical_manager"] = history["manager"].map(
+        lambda value: _canonical_manager_name(value, manager_name_overrides)
+    )
+    history["_historical_fid"] = history["franchise_id"].astype(str).str.strip()
+    history = history.loc[
+        (history["_canonical_manager"] != "")
+        & ~history["_historical_fid"].str.lower().isin({"", "none", "nan", "<na>"})
+    ].copy()
+
+    historical_by_manager = {
+        manager.casefold(): sorted(set(group["_historical_fid"]))
+        for manager, group in history.groupby("_canonical_manager", sort=False)
+    }
+    existing_members = {
+        str(member).strip()
+        for merge in merges
+        if isinstance(merge, dict)
+        for member in (merge.get("owner_ids") or merge.get("franchise_ids") or [])
+        if str(member).strip()
+    }
+
+    candidates: dict[str, dict[str, set[str]]] = {}
+    for _, row in active.iterrows():
+        manager = _identity_text(row.get("_canonical_manager"))
+        raw_guid = _identity_text(row.get("manager_guid"))
+        raw_fid = _identity_text(row.get("franchise_id"))
+        synthetic = raw_guid if raw_guid.lower().startswith("yh-") else raw_fid
+        if not manager or not synthetic.lower().startswith("yh-") or synthetic in existing_members:
+            continue
+        bucket = candidates.setdefault(manager.casefold(), {"names": set(), "synthetic": set()})
+        bucket["names"].add(manager)
+        bucket["synthetic"].add(synthetic)
+
+    generated: list[dict[str, Any]] = []
+    for manager_key, candidate in candidates.items():
+        historical_fids = historical_by_manager.get(manager_key, [])
+        synthetic_ids = sorted(candidate["synthetic"])
+        # Two active synthetic owners sharing one display name are distinct
+        # unless explicit configuration says otherwise. Never guess here.
+        if len(historical_fids) != 1 or len(synthetic_ids) != 1:
+            continue
+        historical_fid = historical_fids[0]
+        synthetic_id = synthetic_ids[0]
+        if historical_fid == synthetic_id:
+            continue
+        display_name = sorted(candidate["names"])[0]
+        generated.append(
+            {
+                "display_name": display_name,
+                "owner_ids": [historical_fid, synthetic_id],
+            }
+        )
+        existing_members.update({historical_fid, synthetic_id})
+
+    merges.extend(sorted(generated, key=lambda merge: str(merge["display_name"]).casefold()))
+    return merges
+
+
 def _patched_yahoo_draft_identities(hydrated: pd.DataFrame, identities: pd.DataFrame) -> pd.DataFrame:
     """Overlay bulk Yahoo draft identities without replacing retained draft facts.
 
@@ -2232,6 +2368,7 @@ def main(argv: list[str] | None = None) -> int:
         homepage_source_future = start_background_refresh_call(
             lambda: _load_homepage_source_frames(reader, args.db)
         ) if args.execute else None
+        homepage_source_frames: dict[str, pd.DataFrame] | None = None
         local_db = LocalLeagueDB(work_dir, args.db)
         try:
             receipt["hydrated_rows"] = hydrate_local_refresh_sources(
@@ -2297,6 +2434,26 @@ def main(argv: list[str] | None = None) -> int:
                         args.json_out.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
                     return 0
                 ops_future.result()
+                homepage_source_frames = homepage_source_future.result()
+                prior_franchise_merges = list(getattr(ctx, "franchise_merges", None) or [])
+                ctx.franchise_merges = derive_yahoo_active_franchise_merges(
+                    local_db.read_table("matchup", year=active_year),
+                    homepage_source_frames.get("matchup", pd.DataFrame()),
+                    manager_name_overrides=getattr(ctx, "manager_name_overrides", None),
+                    existing_merges=prior_franchise_merges,
+                    active_year=active_year,
+                )
+                receipt["active_franchise_identity_merges"] = (
+                    len(ctx.franchise_merges) - len(prior_franchise_merges)
+                )
+                if receipt["active_franchise_identity_merges"]:
+                    ctx.save(context_path)
+                    print(
+                        "[Yahoo] Reused "
+                        f"{receipt['active_franchise_identity_merges']} established franchise identity(s) "
+                        "for active synthetic Yahoo owners",
+                        flush=True,
+                    )
                 _ensure_active_year_ops_cache(
                     reader,
                     year=active_year,
@@ -2385,7 +2542,7 @@ def main(argv: list[str] | None = None) -> int:
             homepage_started = time.monotonic()
             receipt["homepage_refresh"] = prepare_homepage_refresh(
                 reader=reader, local_db=local_db, db_name=args.db, active_year=active_year,
-                source_frames=homepage_source_future.result(),
+                source_frames=homepage_source_frames,
             )
             receipt["homepage_seconds"] = round(time.monotonic() - homepage_started, 3)
             timer.mark("homepage_refresh")

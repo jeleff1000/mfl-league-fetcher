@@ -3,6 +3,8 @@ import pandas as pd
 from scripts.refresh_yahoo_active_season import (
     derive_yahoo_active_franchise_merges,
     normalize_yahoo_roster_provider_identity,
+    yahoo_active_identity_repair_count,
+    yahoo_identity_repair_week,
 )
 
 
@@ -84,6 +86,22 @@ def test_active_identity_reconciliation_fails_closed_for_ambiguous_manager_name(
     assert derive_yahoo_active_franchise_merges(active, historical) == []
 
 
+def test_active_identity_reconciliation_requires_saved_alias_intent() -> None:
+    active = pd.DataFrame(
+        {
+            "manager": ["David"],
+            "manager_guid": ["yh-nick-david"],
+            "franchise_id": ["yh-nick-david"],
+            "year": [2026],
+        }
+    )
+    historical = pd.DataFrame(
+        {"manager": ["David"], "franchise_id": ["GUID-DAVID"], "last_year": [2025]}
+    )
+
+    assert derive_yahoo_active_franchise_merges(active, historical) == []
+
+
 def test_active_identity_reconciliation_does_not_rewrite_real_yahoo_guid() -> None:
     active = pd.DataFrame(
         {
@@ -113,7 +131,11 @@ def test_active_identity_reconciliation_accepts_missing_guid_and_uses_synthetic_
         {"manager": ["Abel Velasco"], "franchise_id": ["GUID-ABEL"], "last_year": [2025]}
     )
 
-    assert derive_yahoo_active_franchise_merges(active, historical) == [
+    assert derive_yahoo_active_franchise_merges(
+        active,
+        historical,
+        manager_name_overrides={"Abel Velasco": "Abel Velasco"},
+    ) == [
         {"display_name": "Abel Velasco", "owner_ids": ["GUID-ABEL", "yh-nick-abelv"]}
     ]
 
@@ -138,3 +160,39 @@ def test_active_identity_reconciliation_preserves_explicit_merge_and_avoids_dupl
         manager_name_overrides={"Abelv": "Abel Velasco"},
         existing_merges=existing,
     ) == existing
+
+
+def test_identity_repair_check_is_one_bounded_active_history_query() -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.sql = ""
+            self.database = ""
+
+        def query_scalar(self, sql: str, *, database: str):
+            self.sql = sql
+            self.database = database
+            return 12
+
+    reader = Reader()
+
+    assert yahoo_active_identity_repair_count(
+        reader, database_name="pimps_and_ochos", active_year=2026
+    ) == 12
+    assert reader.database == "___leagues"
+    assert "public.homepage_manager_rankings" in reader.sql
+    assert "last_year = 2026" in reader.sql
+    assert "first_year < 2026" in reader.sql
+    assert "LIKE 'yh-%'" in reader.sql
+
+
+def test_identity_repair_replays_only_latest_finalized_week_within_ceiling() -> None:
+    assert yahoo_identity_repair_week(
+        repair_count=12,
+        finalized_weeks=[1, 2, 3],
+        through_week=2,
+    ) == 2
+    assert yahoo_identity_repair_week(
+        repair_count=0,
+        finalized_weeks=[1, 2, 3],
+        through_week=2,
+    ) is None

@@ -244,6 +244,11 @@ def derive_yahoo_active_franchise_merges(
         for member in (merge.get("owner_ids") or merge.get("franchise_ids") or [])
         if str(member).strip()
     }
+    configured_manager_names = {
+        _identity_text(target).casefold()
+        for target in (manager_name_overrides or {}).values()
+        if _identity_text(target)
+    }
 
     candidates: dict[str, dict[str, set[str]]] = {}
     for _, row in active.iterrows():
@@ -251,7 +256,12 @@ def derive_yahoo_active_franchise_merges(
         raw_guid = _identity_text(row.get("manager_guid"))
         raw_fid = _identity_text(row.get("franchise_id"))
         synthetic = raw_guid if raw_guid.lower().startswith("yh-") else raw_fid
-        if not manager or not synthetic.lower().startswith("yh-") or synthetic in existing_members:
+        if (
+            not manager
+            or manager.casefold() not in configured_manager_names
+            or not synthetic.lower().startswith("yh-")
+            or synthetic in existing_members
+        ):
             continue
         bucket = candidates.setdefault(manager.casefold(), {"names": set(), "synthetic": set()})
         bucket["names"].add(manager)
@@ -280,6 +290,75 @@ def derive_yahoo_active_franchise_merges(
 
     merges.extend(sorted(generated, key=lambda merge: str(merge["display_name"]).casefold()))
     return merges
+
+
+def yahoo_active_identity_repair_count(
+    reader: Any,
+    *,
+    database_name: str,
+    active_year: int,
+) -> int:
+    """Count provable active synthetic/established franchise splits.
+
+    This check runs only after the ordinary source plan finds no changed weeks.
+    It scans the already-materialized homepage manager ranking rows and requires
+    one active synthetic identity plus one historical franchise for the exact
+    canonical manager name. The full worker still validates the saved alias map
+    before deriving a merge.
+    """
+    db = _sql_literal(database_name)
+    count = reader.query_scalar(
+        f"""
+        WITH active AS (
+            SELECT
+                LOWER(TRIM(manager)) AS manager_key,
+                MIN(TRIM(franchise_id)) AS synthetic_id
+            FROM public.homepage_manager_rankings
+            WHERE db_name = {db}
+              AND last_year = {int(active_year)}
+              AND NULLIF(TRIM(COALESCE(manager, '')), '') IS NOT NULL
+              AND LOWER(TRIM(COALESCE(franchise_id, ''))) LIKE 'yh-%'
+            GROUP BY LOWER(TRIM(manager))
+            HAVING COUNT(DISTINCT TRIM(franchise_id)) = 1
+        ),
+        historical AS (
+            SELECT
+                LOWER(TRIM(manager)) AS manager_key,
+                MIN(TRIM(franchise_id)) AS historical_id
+            FROM public.homepage_manager_rankings
+            WHERE db_name = {db}
+              AND first_year < {int(active_year)}
+              AND NULLIF(TRIM(COALESCE(manager, '')), '') IS NOT NULL
+              AND NULLIF(TRIM(COALESCE(franchise_id, '')), '') IS NOT NULL
+              AND LOWER(TRIM(franchise_id)) NOT LIKE 'yh-%'
+            GROUP BY LOWER(TRIM(manager))
+            HAVING COUNT(DISTINCT TRIM(franchise_id)) = 1
+        )
+        SELECT COUNT(*)
+        FROM active a
+        JOIN historical h USING (manager_key)
+        WHERE a.synthetic_id <> h.historical_id
+        """,
+        database=LEAGUES_DATABASE,
+    )
+    return int(count or 0)
+
+
+def yahoo_identity_repair_week(
+    *,
+    repair_count: int,
+    finalized_weeks: list[int],
+    through_week: int | None,
+) -> int | None:
+    """Choose one bounded finalized week to replay for an identity-only repair."""
+    if repair_count < 1:
+        return None
+    eligible = [
+        int(week)
+        for week in finalized_weeks
+        if through_week is None or int(week) <= int(through_week)
+    ]
+    return max(eligible) if eligible else None
 
 
 def _patched_yahoo_draft_identities(hydrated: pd.DataFrame, identities: pd.DataFrame) -> pd.DataFrame:
@@ -2203,6 +2282,26 @@ def main(argv: list[str] | None = None) -> int:
         last_materialized_week=last_materialized_week,
         through_week=args.through_week,
     )
+    identity_repair_count = 0
+    identity_repair_week = None
+    if args.execute and not refresh_weeks:
+        identity_repair_count = yahoo_active_identity_repair_count(
+            reader,
+            database_name=args.db,
+            active_year=active_year,
+        )
+        identity_repair_week = yahoo_identity_repair_week(
+            repair_count=identity_repair_count,
+            finalized_weeks=finalized_weeks,
+            through_week=args.through_week,
+        )
+        if identity_repair_week is not None:
+            refresh_weeks = [identity_repair_week]
+            print(
+                f"[Yahoo] Repairing {identity_repair_count} established franchise identity split(s) "
+                f"through finalized week {identity_repair_week}",
+                flush=True,
+            )
     receipt: dict[str, Any] = {
         "db_name": args.db,
         "year": active_year,
@@ -2218,6 +2317,9 @@ def main(argv: list[str] | None = None) -> int:
         receipt["source_manifest_json"] = persisted_plan.observed_manifest_json
         receipt["published_manifest_digest"] = persisted_plan.published_manifest_digest
         receipt["refresh_reasons"] = list(persisted_plan.reasons)
+        if identity_repair_week is not None:
+            receipt["refresh_reasons"].append("active_franchise_identity_repair")
+            receipt["active_franchise_identity_splits"] = identity_repair_count
     if not refresh_weeks:
         if args.execute:
             from scripts.league_update_workflow_receipt import (

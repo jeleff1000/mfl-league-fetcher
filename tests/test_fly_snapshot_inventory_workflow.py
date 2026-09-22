@@ -19,6 +19,9 @@ def test_primary_snapshot_maintenance_is_explicit_and_fail_closed() -> None:
         'flyctl volumes update "$FLY_PRIMARY_VOLUME_ID" '
         "--app league-history-duckdb --snapshot-retention 60 --json"
     ) in workflow
+    assert workflow.index("- name: Set primary snapshot retention to 60 days") < workflow.index(
+        "- name: Create primary volume snapshot"
+    )
 
 
 def test_primary_snapshot_maintenance_uses_only_the_secret_volume_id() -> None:

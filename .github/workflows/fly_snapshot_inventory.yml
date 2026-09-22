@@ -64,16 +64,6 @@ jobs:
           test -z "$ATTACHED"
           flyctl volumes destroy "$VOLUME_ID" --app league-history-duckdb --yes
 
-      - name: Create primary volume snapshot
-        if: inputs.create_primary_snapshot
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
-        run: |
-          set -euo pipefail
-          test -n "$FLY_PRIMARY_VOLUME_ID"
-          flyctl volumes snapshots create "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --json
-
       - name: Set primary snapshot retention to 60 days
         if: inputs.set_primary_retention_60
         env:
@@ -83,6 +73,16 @@ jobs:
           set -euo pipefail
           test -n "$FLY_PRIMARY_VOLUME_ID"
           flyctl volumes update "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --snapshot-retention 60 --json
+
+      - name: Create primary volume snapshot
+        if: inputs.create_primary_snapshot
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$FLY_PRIMARY_VOLUME_ID"
+          flyctl volumes snapshots create "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --json
 
       - name: List primary volume snapshots
         env:

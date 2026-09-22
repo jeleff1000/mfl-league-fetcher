@@ -1328,6 +1328,43 @@ def resolve_active_schedule_franchise_ids(
     by_manager = unique_map("manager")
     result = schedule.copy()
 
+    active_registry_map: dict[str, str] = {}
+    if local_db.table_exists("franchise_identity_registry"):
+        registry = local_db.read_table("franchise_identity_registry")
+        required_registry_columns = {
+            "base_franchise_id", "resolved_franchise_id", "active_years",
+        }
+        if registry is not None and not registry.empty and required_registry_columns.issubset(registry.columns):
+            registry = registry.loc[:, sorted(required_registry_columns)].copy()
+            registry = registry.loc[
+                registry["active_years"].map(
+                    lambda value: int(active_year)
+                    in {int(token) for token in re.findall(r"\d{4}", str(value))}
+                )
+            ]
+            registry["base_franchise_id"] = (
+                registry["base_franchise_id"].astype("string").str.strip()
+            )
+            registry["resolved_franchise_id"] = (
+                registry["resolved_franchise_id"].astype("string").str.strip()
+            )
+            registry = registry.dropna(subset=["base_franchise_id", "resolved_franchise_id"])
+            counts = registry.groupby("base_franchise_id")["resolved_franchise_id"].nunique()
+            unique_bases = set(counts.loc[counts.eq(1)].index.astype(str))
+            active_registry_map = (
+                registry.loc[registry["base_franchise_id"].astype(str).isin(unique_bases)]
+                .drop_duplicates("base_franchise_id")
+                .set_index("base_franchise_id")["resolved_franchise_id"]
+                .astype(str)
+                .to_dict()
+            )
+
+    def apply_active_registry(series: pd.Series) -> pd.Series:
+        if not active_registry_map:
+            return series
+        values = series.astype("string").str.strip()
+        return values.map(active_registry_map).fillna(values).astype("string")
+
     def resolve_side(
         *,
         team_column: str,
@@ -1356,6 +1393,7 @@ def resolve_active_schedule_franchise_ids(
         team_name_column="team_name",
         manager_column="manager",
     )
+    result["franchise_id"] = apply_active_registry(result["franchise_id"])
     opponent_ids = resolve_side(
         team_column="opponent_team_key",
         guid_column="opponent_guid",
@@ -1392,7 +1430,7 @@ def resolve_active_schedule_franchise_ids(
     if "opponent" in result.columns and by_manager:
         opponent_names = result["opponent"].astype("string").str.strip()
         opponent_ids = opponent_ids.fillna(opponent_names.map(by_manager).astype("string"))
-    result["opponent_franchise_id"] = opponent_ids
+    result["opponent_franchise_id"] = apply_active_registry(opponent_ids)
     missing_team = int(result["franchise_id"].isna().sum())
     missing_opponent = int(result["opponent_franchise_id"].isna().sum())
     if missing_team or missing_opponent:

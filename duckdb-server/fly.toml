@@ -1,5 +1,7 @@
 app = 'league-history-duckdb'
 primary_region = 'iad'
+kill_signal = 'SIGTERM'
+kill_timeout = 300
 # 4 GB swap cushion so a memory spike (e.g. during a large ___leagues replace)
 # swaps instead of triggering the OOM killer, which previously wedged the pool.
 swap_size_mb = 4096
@@ -35,6 +37,7 @@ swap_size_mb = 4096
   DUCKDB_WAL_HARD_MB = '512'
   DUCKDB_WAL_MAX_AGE_SECONDS = '300'
   DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = '600'
+  SHUTDOWN_DRAIN_SECONDS = '240'
   # Admin-only full database replacements. The current verified ___ops_nfl
   # artifact is larger than the former 5 GiB ceiling; incremental league
   # bundles remain governed by MAX_DELTA_UPLOAD_BYTES.

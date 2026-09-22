@@ -174,6 +174,7 @@ DELTA_BUSY_RETRY_AFTER_SECONDS = _env_float("DELTA_BUSY_RETRY_AFTER_SECONDS", 20
 ASYNC_DB_STARTUP = _env_bool("ASYNC_DB_STARTUP", False)
 DUCKDB_CHECKPOINT_WAL_MB = _env_float("DUCKDB_CHECKPOINT_WAL_MB", 512.0, min_value=0.0)
 DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = _env_float("DUCKDB_CHECKPOINT_TIMEOUT_SECONDS", 600.0, min_value=30.0)
+SHUTDOWN_DRAIN_SECONDS = _env_float("SHUTDOWN_DRAIN_SECONDS", 240.0, min_value=1.0, max_value=290.0)
 DUCKDB_WAL_SOFT_MB = _env_float("DUCKDB_WAL_SOFT_MB", 128.0, min_value=1.0)
 DUCKDB_WAL_HARD_MB = _env_float("DUCKDB_WAL_HARD_MB", 512.0, min_value=1.0)
 DUCKDB_WAL_MAX_AGE_SECONDS = _env_float("DUCKDB_WAL_MAX_AGE_SECONDS", 300.0, min_value=1.0)
@@ -473,8 +474,11 @@ async def _watchdog():
             consecutive_failures += 1
             logger.error("Watchdog: DB health check failed (%d consecutive)", consecutive_failures)
             if consecutive_failures >= 3:
-                logger.critical("Watchdog: DB path broken for 90s+, exiting for restart")
-                os._exit(1)
+                error = RuntimeError("Watchdog: DB path broken for 90s")
+                _storage_health.mark_unhealthy("watchdog", error)
+                _state["status"] = "storage_unhealthy"
+                logger.critical("Watchdog: DB path broken for 90s; storage is write-closed")
+                return
 
 
 def _get_duckdb_memory_info() -> dict:
@@ -522,8 +526,10 @@ async def _reopen_pool_after_write(context: str) -> None:
             return
         except Exception as exc:
             if not _is_duckdb_file_handle_conflict(exc) or attempt >= POOL_REOPEN_MAX_ATTEMPTS:
-                logger.critical("Failed to reopen DuckDB pool after %s; exiting: %s", context, exc, exc_info=True)
-                os._exit(1)
+                _storage_health.mark_unhealthy(f"pool reopen after {context}", exc)
+                _state["status"] = "recovery_failed"
+                logger.critical("Failed to reopen DuckDB pool after %s: %s", context, exc, exc_info=True)
+                raise RuntimeError(f"Failed to reopen DuckDB pool after {context}") from exc
 
             logger.warning(
                 "DuckDB pool reopen hit a file-handle conflict after %s (attempt %d/%d); retrying: %s",
@@ -806,10 +812,9 @@ async def _startup_db_background(data_dir: Path) -> None:
     try:
         await asyncio.to_thread(_startup_db_sync, data_dir)
     except Exception:
-        logger.exception("DuckDB startup failed; exiting so Fly can restart")
+        logger.exception("DuckDB startup failed; service remains unavailable")
         _state["status"] = "startup_failed"
-        await asyncio.sleep(1)
-        os._exit(1)
+        return
     _set_serving_or_ops_writing()
     logger.info(
         "DuckDB pool initialization complete in %.2fs; state=%s",
@@ -839,39 +844,91 @@ async def _wait_for_startup_before_write() -> bool:
     return _state["status"] != "starting"
 
 
+def begin_shutdown() -> str:
+    """Close admission before any checkpoint or connection teardown begins."""
+    previous_status = _state["status"]
+    _state["status"] = "shutting_down"
+    return previous_status
+
+
+async def wait_for_database_idle(deadline: float) -> bool:
+    """Wait for every tracked reader/writer/publication and merge lock to drain."""
+    while time.monotonic() < deadline:
+        merge_busy = _merge_lock is not None and _merge_lock.locked()
+        if _database_activity_idle() and not merge_busy:
+            return True
+        await asyncio.sleep(0.01)
+    merge_busy = _merge_lock is not None and _merge_lock.locked()
+    return _database_activity_idle() and not merge_busy
+
+
+async def shutdown_database(*, deadline: float) -> bool:
+    """Drain, checkpoint in-process, then close; never terminate mid-DuckDB call."""
+    previous_status = begin_shutdown()
+    if not await wait_for_database_idle(deadline):
+        error = TimeoutError("DuckDB activity did not drain before shutdown deadline")
+        _storage_health.mark_unhealthy("shutdown drain", error)
+        _state["status"] = "shutdown_blocked"
+        logger.critical("Shutdown blocked: %s", error)
+        return False
+    if (
+        previous_status in {"serving", "ops_writing", "ops_snapshotting"}
+        and _storage_health.snapshot()["healthy"]
+        and not db.is_storage_recovery_mode()
+    ):
+        await _checkpoint_if_due("shutdown", force=True)
+    db.close_all()
+    _state["status"] = "stopped"
+    return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _query_semaphore, _merge_lock, _delta_publish_semaphore, _delta_publish_inflight
+    global _ops_read_count, _ops_write_count, _storage_health
     _state["status"] = "starting"
     data_dir = Path(os.environ.get("DATA_DIR", "/data"))
     storage_owner = StorageOwner(data_dir)
-    storage_owner.acquire()
-    _query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
-    _merge_lock = asyncio.Lock()
-    _delta_publish_semaphore = asyncio.Semaphore(MAX_INFLIGHT_DELTA_PUBLISHES)
-    with _delta_publish_active_lock:
-        _delta_publish_inflight = 0
-        _delta_publish_active.clear()
+    owner_acquired = False
     startup_task: asyncio.Task | None = None
-    if ASYNC_DB_STARTUP:
-        startup_task = asyncio.create_task(_startup_db_background(data_dir))
-    else:
-        _startup_db_sync(data_dir)
-        _set_serving_or_ops_writing()
-    watchdog_task = asyncio.create_task(_watchdog())
+    watchdog_task: asyncio.Task | None = None
+    shutdown_clean = False
     try:
+        storage_owner.acquire()
+        owner_acquired = True
+        _storage_health = StorageHealth()
+        _ops_read_count = 0
+        _ops_write_count = 0
+        _query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
+        _merge_lock = asyncio.Lock()
+        _delta_publish_semaphore = asyncio.Semaphore(MAX_INFLIGHT_DELTA_PUBLISHES)
+        with _delta_publish_active_lock:
+            _delta_publish_inflight = 0
+            _delta_publish_active.clear()
+        if ASYNC_DB_STARTUP:
+            startup_task = asyncio.create_task(_startup_db_background(data_dir))
+        else:
+            _startup_db_sync(data_dir)
+            _set_serving_or_ops_writing()
+        watchdog_task = asyncio.create_task(_watchdog())
         yield
     finally:
-        watchdog_task.cancel()
+        if watchdog_task is not None:
+            watchdog_task.cancel()
         if startup_task is not None:
             startup_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await watchdog_task
+        if watchdog_task is not None:
+            with suppress(asyncio.CancelledError):
+                await watchdog_task
         if startup_task is not None:
             with suppress(asyncio.CancelledError):
                 await startup_task
-        db.close_all()
-        storage_owner.release()
+        if owner_acquired:
+            shutdown_clean = await shutdown_database(
+                deadline=time.monotonic() + SHUTDOWN_DRAIN_SECONDS
+            )
+            if shutdown_clean:
+                storage_owner.release()
         if posthog_client is not None:
             try:
                 posthog_client.flush()
@@ -1532,21 +1589,22 @@ def _interrupting_execute(
         timer.cancel()
 
 
-class _MergeHardExitTimer(threading.Timer):
-    """Serialize cancellation with process exit, never with diagnostic logging."""
+class _MergeDeadlineTimer(threading.Timer):
+    """Serialize cancellation with cooperative expiry and connection interrupt."""
 
-    def __init__(self, interval, function):
+    def __init__(self, interval, function, expire_action):
         self._exit_lock = threading.Lock()
+        self._expire_action = expire_action
         super().__init__(interval, function)
 
     def cancel(self):
         with self._exit_lock:
             super().cancel()
 
-    def exit_if_armed(self):
+    def expire_if_armed(self):
         with self._exit_lock:
             if not self.finished.is_set():
-                os._exit(1)
+                self._expire_action()
 
 
 def _commit_merge(
@@ -1565,19 +1623,33 @@ def _commit_merge(
     return _interrupting_execute(conn, "COMMIT", step=step, timeout_seconds=timeout_seconds)
 
 
-def _start_merge_hard_exit_timer(db_name: str, seconds: float | None = None) -> threading.Timer:
-    """Restart the process if native DuckDB gets stuck inside a merge call."""
+def _start_merge_hard_exit_timer(
+    db_name: str,
+    seconds: float | None = None,
+    interrupt=None,
+) -> threading.Timer:
+    """Write-close storage and interrupt the connection when a merge deadline expires."""
     budget = MERGE_HARD_EXIT_SECONDS if seconds is None else seconds
 
-    def hard_exit() -> None:
+    def expire_action() -> None:
+        error = TimeoutError(f"League merge for {db_name} exceeded {budget:.1f}s")
+        _storage_health.mark_unhealthy(f"merge deadline {db_name}", error)
+        _state["status"] = "storage_unhealthy"
+        if interrupt is not None:
+            try:
+                interrupt()
+            except Exception as exc:
+                logger.error("Failed to interrupt expired merge for %s: %s", db_name, exc)
+
+    def deadline_expired() -> None:
         logger.critical(
-            "League merge for %s exceeded %.1fs; exiting so Fly restarts the writer",
+            "League merge for %s exceeded %.1fs; interrupting and write-closing storage",
             db_name,
             budget,
         )
-        timer.exit_if_armed()
+        timer.expire_if_armed()
 
-    timer = _MergeHardExitTimer(budget, hard_exit)
+    timer = _MergeDeadlineTimer(budget, deadline_expired, expire_action)
     timer.daemon = True
     timer.start()
     return timer
@@ -1895,11 +1967,19 @@ def _merge_ops_tables(incoming_path: Path) -> dict:
     staging_path = data_dir / f"___ops.merge.{time.time_ns()}.duckdb"
     conn = None
 
-    def hard_exit() -> None:
-        logger.critical("/merge-ops exceeded %.1fs; exiting so Fly restarts the writer", OPS_MERGE_HARD_EXIT)
-        os._exit(1)
+    def deadline_expired() -> None:
+        error = TimeoutError(f"/merge-ops exceeded {OPS_MERGE_HARD_EXIT:.1f}s")
+        _storage_health.mark_unhealthy("OPS merge deadline", error)
+        _state["status"] = "storage_unhealthy"
+        logger.critical(
+            "/merge-ops exceeded %.1fs; interrupting and write-closing storage",
+            OPS_MERGE_HARD_EXIT,
+        )
+        if conn is not None:
+            with suppress(Exception):
+                conn.interrupt()
 
-    hard_timer = threading.Timer(OPS_MERGE_HARD_EXIT, hard_exit)
+    hard_timer = threading.Timer(OPS_MERGE_HARD_EXIT, deadline_expired)
     hard_timer.daemon = True
     hard_timer.start()
     result: dict | None = None
@@ -3742,7 +3822,7 @@ def _merge_delta_bundle(leagues_path: Path, manifest: dict, extract_dir: Path) -
         try:
             _interrupting_execute(conn, "BEGIN TRANSACTION", step=f"begin delta {db_name}")
             in_transaction = True
-            hard_exit_timer = _start_merge_hard_exit_timer(db_name)
+            hard_exit_timer = _start_merge_hard_exit_timer(db_name, None, conn.interrupt)
             if "base_generation" in manifest:
                 fleet_merge.ensure_generation_tables(conn)
                 current_generation = fleet_merge.current_generations(conn, [db_name])[db_name]
@@ -3951,7 +4031,11 @@ def _merge_fleet_bundle(
                 ops_attached = True
             _interrupting_execute(conn, "BEGIN TRANSACTION", step="begin fleet partition")
             in_transaction = True
-            hard_exit_timer = _start_merge_hard_exit_timer(sentinel, FLEET_MERGE_HARD_EXIT_SECONDS)
+            hard_exit_timer = _start_merge_hard_exit_timer(
+                sentinel,
+                FLEET_MERGE_HARD_EXIT_SECONDS,
+                conn.interrupt,
+            )
             _delta_upsert_state(conn, manifest, "STAGED")
             try:
                 result = fleet_merge.apply_fleet_merge(
@@ -4882,8 +4966,18 @@ async def compact_db(request: Request, x_db_name: str = Header(...)):
             conn.execute(f"SET threads={COMPACT_THREADS}")
             conn.execute(f"SET memory_limit='{COMPACT_MEMORY_LIMIT}'")
             conn.execute(f"ATTACH '{incoming.as_posix()}' AS compact")
-            conn.execute(f"COPY FROM DATABASE {x_db_name} TO compact")
-            conn.execute("CHECKPOINT compact")
+            _interrupting_execute(
+                conn,
+                f"COPY FROM DATABASE {x_db_name} TO compact",
+                step=f"compact {x_db_name}",
+                timeout_seconds=COMPACT_TIMEOUT_SECONDS,
+            )
+            _interrupting_execute(
+                conn,
+                "CHECKPOINT compact",
+                step=f"checkpoint compact {x_db_name}",
+                timeout_seconds=COMPACT_TIMEOUT_SECONDS,
+            )
             conn.execute("DETACH compact")
         finally:
             conn.close()
@@ -4908,17 +5002,14 @@ async def compact_db(request: Request, x_db_name: str = Header(...)):
         db.close_all()
 
         try:
-            sizes = await asyncio.wait_for(
-                asyncio.to_thread(_build_compact),
-                timeout=COMPACT_TIMEOUT_SECONDS,
-            )
+            sizes = await asyncio.to_thread(_build_compact)
             result = atomic_swap(data_dir, x_db_name)
-        except TimeoutError:
-            # The COPY thread cannot be cancelled and still holds the file/handle.
-            # Exit cleanly so Fly restarts; startup recovery deletes the stale
-            # .incoming and the untouched live file is reopened (no swap occurred).
-            logger.critical("DB compact exceeded %.0fs; exiting for restart", COMPACT_TIMEOUT_SECONDS)
-            os._exit(1)
+        except TimeoutError as exc:
+            incoming.unlink(missing_ok=True)
+            incoming_wal.unlink(missing_ok=True)
+            await _reopen_pool_after_write("interrupted DB compact")
+            _set_serving_or_ops_writing()
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
         except Exception as e:
             incoming.unlink(missing_ok=True)
             incoming_wal.unlink(missing_ok=True)
@@ -5255,12 +5346,13 @@ def _merge_league_tables(leagues_path: Path, league_path: Path, db_name: str, sk
     doesn't exist yet, creates it from the incoming schema with a db_name
     column prepended. Uses TRY_CAST to handle type mismatches across platforms.
     """
-    hard_exit_timer = _start_merge_hard_exit_timer(db_name)
+    hard_exit_timer = None
     conn = None
     attached = False
 
     try:
         conn = db.connect_database(leagues_path, data_dir=db.get_data_dir(), threads=WRITE_DUCKDB_THREADS)
+        hard_exit_timer = _start_merge_hard_exit_timer(db_name, None, conn.interrupt)
         conn.execute(f"ATTACH '{league_path}' AS _incoming (READ_ONLY)")
         attached = True
 
@@ -5519,7 +5611,8 @@ def _merge_league_tables(leagues_path: Path, league_path: Path, db_name: str, sk
         finish_merge_state("complete")
 
     finally:
-        hard_exit_timer.cancel()
+        if hard_exit_timer is not None:
+            hard_exit_timer.cancel()
         if conn is not None:
             if attached:
                 try:

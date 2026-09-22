@@ -3291,42 +3291,45 @@ def test_write_script_keeps_semicolons_inside_sql_literals():
     assert rows == [{"value": "Data published; cache finalization requires retry"}]
 
 
-def test_uncancelled_merge_watchdog_still_exits_on_deadline(monkeypatch):
+def test_uncancelled_merge_deadline_interrupts_and_write_closes(monkeypatch):
     import threading
     import main as main_mod
+    from storage_guard import StorageHealth
 
-    exited = threading.Event()
-    codes = []
+    interrupted = threading.Event()
+    health = StorageHealth()
+    previous_status = main_mod._state["status"]
+    monkeypatch.setattr(main_mod, "_storage_health", health)
 
-    def record_exit(code):
-        codes.append(code)
-        exited.set()
-
-    monkeypatch.setattr(main_mod.os, "_exit", record_exit)
-    watchdog = main_mod._start_merge_hard_exit_timer("fixture", seconds=0)
+    watchdog = main_mod._start_merge_hard_exit_timer(
+        "fixture", seconds=0, interrupt=interrupted.set
+    )
     try:
-        assert exited.wait(1)
-        assert codes == [1]
+        assert interrupted.wait(1)
+        assert health.snapshot()["healthy"] is False
+        assert main_mod._state["status"] == "storage_unhealthy"
     finally:
         watchdog.cancel()
         watchdog.join(1)
+        main_mod._state["status"] = previous_status
 
 
 def test_commit_merge_disarms_inflight_watchdog_without_waiting_on_logging(monkeypatch):
     import threading
     import main as main_mod
+    from storage_guard import StorageHealth
 
     entered = threading.Event()
     release = threading.Event()
     logging_released_by_commit = []
-    killed = []
+    previous_status = main_mod._state["status"]
+    monkeypatch.setattr(main_mod, "_storage_health", StorageHealth())
 
     def blocked_log(*args, **kwargs):
         entered.set()
         logging_released_by_commit.append(release.wait(1))
 
     monkeypatch.setattr(main_mod.logger, "critical", blocked_log)
-    monkeypatch.setattr(main_mod.os, "_exit", killed.append)
     watchdog = main_mod._start_merge_hard_exit_timer("fixture", seconds=0)
     assert entered.wait(1)
 
@@ -3342,10 +3345,10 @@ def test_commit_merge_disarms_inflight_watchdog_without_waiting_on_logging(monke
     try:
         assert main_mod._commit_merge(object(), step="commit fixture", hard_exit_timer=watchdog) == "committed"
         assert logging_released_by_commit == [True], "Disarming must not wait on a stuck logger"
-        assert killed == [], "A cancelled watchdog must not exit after logging resumes"
     finally:
         release.set()
         watchdog.join(1)
+        main_mod._state["status"] = previous_status
 
 
 def test_commit_merge_retains_duckdb_interrupt_deadline(monkeypatch):

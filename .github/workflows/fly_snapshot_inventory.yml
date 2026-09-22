@@ -3,6 +3,16 @@ name: Fly Snapshot Inventory
 on:
   workflow_dispatch:
     inputs:
+      create_primary_snapshot:
+        description: Create one on-demand snapshot of the attached primary volume
+        required: false
+        default: false
+        type: boolean
+      set_primary_retention_60:
+        description: Set the attached primary volume snapshot retention to 60 days
+        required: false
+        default: false
+        type: boolean
       destroy_recovery_volume_id:
         description: Exact unattached kmffl_snapshot_recovery volume to destroy
         required: false
@@ -53,6 +63,26 @@ jobs:
           [[ "$NAME" == wkupd_rebuild_* ]]
           test -z "$ATTACHED"
           flyctl volumes destroy "$VOLUME_ID" --app league-history-duckdb --yes
+
+      - name: Create primary volume snapshot
+        if: inputs.create_primary_snapshot
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$FLY_PRIMARY_VOLUME_ID"
+          flyctl volumes snapshots create "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --json
+
+      - name: Set primary snapshot retention to 60 days
+        if: inputs.set_primary_retention_60
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$FLY_PRIMARY_VOLUME_ID"
+          flyctl volumes update "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --snapshot-retention 60 --json
 
       - name: List primary volume snapshots
         env:

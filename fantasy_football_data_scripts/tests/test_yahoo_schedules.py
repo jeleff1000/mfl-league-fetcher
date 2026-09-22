@@ -8,7 +8,35 @@ from multi_league.data_fetchers.yahoo.yahoo_schedules import (
     build_and_save_for_year,
     coerce_dtypes,
     fetch_schedule_for_year,
+    parse_week_schedule,
 )
+
+
+def test_yahoo_schedule_rows_carry_both_provider_team_identities():
+    response = MagicMock()
+    response.text = """
+    <fantasy_content><league><scoreboard><matchups><matchup>
+      <week>3</week><is_playoffs>0</is_playoffs><is_consolation>0</is_consolation>
+      <teams>
+        <team><team_key>470.l.1.t.1</team_key><name>Alpha</name><team_points><total>101</total></team_points>
+          <managers><manager><guid>owner-a</guid><nickname>A</nickname></manager></managers></team>
+        <team><team_key>470.l.1.t.2</team_key><name>Beta</name><team_points><total>99</total></team_points>
+          <managers><manager><guid>owner-b</guid><nickname>B</nickname></manager></managers></team>
+      </teams>
+    </matchup></matchups></scoreboard></league></fantasy_content>
+    """
+    response.raise_for_status.return_value = None
+    fake_oauth = SimpleNamespace(session=SimpleNamespace(get=lambda _url: response))
+
+    with patch("multi_league.data_fetchers.yahoo.yahoo_schedules.oauth", fake_oauth):
+        rows = parse_week_schedule("470.l.1", 2026, 3)
+
+    assert rows[0]["team_key"] == "470.l.1.t.1"
+    assert rows[0]["opponent_team_key"] == "470.l.1.t.2"
+    assert rows[0]["manager_guid"] == "owner-a"
+    assert rows[0]["opponent_guid"] == "owner-b"
+    assert rows[1]["team_key"] == "470.l.1.t.2"
+    assert rows[1]["opponent_team_key"] == "470.l.1.t.1"
 
 
 class TestFetchScheduleForYear:

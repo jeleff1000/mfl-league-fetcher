@@ -370,6 +370,7 @@ def _merge_active_payloads(
         merge_provider_refresh_table,
         pending_provider_nfl_teams,
         refresh_authoritative_draft_partition,
+        resolve_active_schedule_franchise_ids,
     )
     from multi_league.data_fetchers.sleeper.sleeper_draft import SleeperDraftFetcher
     from multi_league.data_fetchers.sleeper.sleeper_league_settings import fetch_sleeper_settings
@@ -400,6 +401,9 @@ def _merge_active_payloads(
         active_year, weeks=full_schedule_weeks
     )
     if not schedule.empty:
+        schedule = resolve_active_schedule_franchise_ids(
+            local_db, schedule, active_year=active_year,
+        )
         merge_provider_refresh_table(
             local_db, "schedule", schedule, platform="sleeper", league_id=league_id
         )

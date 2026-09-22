@@ -92,6 +92,9 @@ REQ_COLUMNS = [
     "is_consolation",
     "manager",
     "manager_guid",
+    "team_key",
+    "opponent_team_key",
+    "opponent_guid",
     "team_name",
     "cumulative_week",
     "manager_week",
@@ -152,6 +155,7 @@ def league_weeks(league) -> list[int]:
 def extract_team(team_node: ET.Element, manager_overrides: dict = None) -> dict:
     # Get team name first so it can be used as fallback for hidden managers
     team_name_raw = team_node.findtext("name") or ""
+    team_key = team_node.findtext("team_key") or ""
 
     # Get manager guid (persistent identifier across years)
     manager_guid = team_node.findtext(".//managers/manager/guid") or ""
@@ -166,7 +170,13 @@ def extract_team(team_node: ET.Element, manager_overrides: dict = None) -> dict:
     manager = norm_manager(nickname, manager_overrides, team_name_fallback=team_name_raw)
     team_name = team_name_raw or manager
     points = safe_float(team_node.findtext("team_points/total"), 0.0)
-    return {"manager": manager, "manager_guid": manager_guid, "team_name": team_name, "team_points": points}
+    return {
+        "manager": manager,
+        "manager_guid": manager_guid,
+        "team_key": team_key,
+        "team_name": team_name,
+        "team_points": points,
+    }
 
 
 def parse_week_schedule(league_key: str, season_year: int, week: int, manager_overrides: dict = None) -> list[dict]:
@@ -238,6 +248,9 @@ def parse_week_schedule(league_key: str, season_year: int, week: int, manager_ov
                 "is_consolation": is_consolation,
                 "manager": t1["manager"],
                 "manager_guid": t1["manager_guid"],
+                "team_key": t1["team_key"],
+                "opponent_team_key": t2["team_key"],
+                "opponent_guid": t2["manager_guid"],
                 "team_name": t1["team_name"],
                 "cumulative_week": cumulative_week,
                 "manager_week": manager1_week,
@@ -259,6 +272,9 @@ def parse_week_schedule(league_key: str, season_year: int, week: int, manager_ov
                 "is_consolation": is_consolation,
                 "manager": t2["manager"],
                 "manager_guid": t2["manager_guid"],
+                "team_key": t2["team_key"],
+                "opponent_team_key": t1["team_key"],
+                "opponent_guid": t1["manager_guid"],
                 "team_name": t2["team_name"],
                 "cumulative_week": cumulative_week,
                 "manager_week": manager2_week,
@@ -279,6 +295,9 @@ def parse_week_schedule(league_key: str, season_year: int, week: int, manager_ov
 
 def coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
+    for column in ("team_key", "opponent_team_key", "opponent_guid"):
+        if column not in d.columns:
+            d[column] = ""
     # Integer columns
     ints = [
         "is_playoffs",
@@ -360,6 +379,8 @@ def _derive_schedule_df_from_matchup_df(df: pd.DataFrame, year: int, manager_ove
         "manager_guid",
         "franchise_id",
         "team_key",
+        "opponent_team_key",
+        "opponent_guid",
         "team_name",
         "opponent",
         "team_points",
@@ -409,7 +430,10 @@ def _derive_schedule_df_from_matchup_df(df: pd.DataFrame, year: int, manager_ove
     for col in REQ_COLUMNS:
         if col not in sched.columns:
             sched[col] = (
-                "" if col in ("manager", "manager_guid", "team_name", "opponent", "manager_week", "manager_year") else 0
+                "" if col in (
+                    "manager", "manager_guid", "team_key", "opponent_team_key", "opponent_guid",
+                    "team_name", "opponent", "manager_week", "manager_year",
+                ) else 0
             )
 
     # Coerce dtypes to match API-fetched schedule

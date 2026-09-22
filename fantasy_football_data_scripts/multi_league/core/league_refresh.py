@@ -1242,6 +1242,98 @@ def merge_provider_refresh_table(
     )
 
 
+def resolve_active_schedule_franchise_ids(
+    local_db: Any,
+    schedule: pd.DataFrame,
+    *,
+    active_year: int,
+) -> pd.DataFrame:
+    """Bind a provider's future schedule to the league's canonical franchises.
+
+    Future schedule rows have no completed matchup from which SQL enrichment
+    can recover identity.  Reuse the exact current-season provider team keys
+    already attached to hydrated canonical matchup/roster rows.  Stable owner
+    GUIDs are accepted only when they identify one franchise, which keeps
+    multiple-team owners unambiguous and preserves cross-platform merges.
+    """
+    if schedule is None or schedule.empty:
+        return schedule
+
+    witnesses: list[pd.DataFrame] = []
+    for table_name in ("matchup", "player_fantasy"):
+        if not local_db.table_exists(table_name):
+            continue
+        frame = local_db.read_table(table_name, year=int(active_year))
+        if frame is None or frame.empty or "franchise_id" not in frame.columns:
+            continue
+        if "year" in frame.columns:
+            years = pd.to_numeric(frame["year"], errors="coerce")
+            frame = frame.loc[years.eq(int(active_year))].copy()
+        columns = [
+            column for column in ("team_key", "manager_guid", "franchise_id")
+            if column in frame.columns
+        ]
+        if "franchise_id" in columns:
+            witnesses.append(frame.loc[:, columns].copy())
+    if not witnesses:
+        raise RefreshScopeError("canonical active-season schedule identity is unavailable")
+
+    identity_rows = pd.concat(witnesses, ignore_index=True, sort=False)
+
+    def unique_map(column: str) -> dict[str, str]:
+        if column not in identity_rows.columns:
+            return {}
+        scoped = identity_rows.loc[:, [column, "franchise_id"]].copy()
+        scoped[column] = scoped[column].astype("string").str.strip()
+        scoped["franchise_id"] = scoped["franchise_id"].astype("string").str.strip()
+        scoped = scoped.loc[
+            scoped[column].notna()
+            & scoped["franchise_id"].notna()
+            & ~scoped[column].isin({"", "None", "nan", "<NA>"})
+            & ~scoped["franchise_id"].isin({"", "None", "nan", "<NA>"})
+        ]
+        if scoped.empty:
+            return {}
+        counts = scoped.groupby(column, dropna=False)["franchise_id"].nunique()
+        ambiguous = set(counts.loc[counts.gt(1)].index.astype(str))
+        scoped = scoped.loc[~scoped[column].astype(str).isin(ambiguous)]
+        return (
+            scoped.drop_duplicates(column)
+            .set_index(column)["franchise_id"]
+            .astype(str)
+            .to_dict()
+        )
+
+    by_team_key = unique_map("team_key")
+    by_guid = unique_map("manager_guid")
+    result = schedule.copy()
+
+    def resolve_side(*, team_column: str, guid_column: str) -> pd.Series:
+        resolved = pd.Series(pd.NA, index=result.index, dtype="string")
+        if team_column in result.columns and by_team_key:
+            keys = result[team_column].astype("string").str.strip()
+            resolved = keys.map(by_team_key).astype("string")
+        if guid_column in result.columns and by_guid:
+            guids = result[guid_column].astype("string").str.strip()
+            resolved = resolved.fillna(guids.map(by_guid).astype("string"))
+        return resolved
+
+    result["franchise_id"] = resolve_side(
+        team_column="team_key", guid_column="manager_guid",
+    )
+    result["opponent_franchise_id"] = resolve_side(
+        team_column="opponent_team_key", guid_column="opponent_guid",
+    )
+    missing_team = int(result["franchise_id"].isna().sum())
+    missing_opponent = int(result["opponent_franchise_id"].isna().sum())
+    if missing_team or missing_opponent:
+        raise RefreshScopeError(
+            "unresolved canonical schedule identities "
+            f"(teams={missing_team}, opponents={missing_opponent})"
+        )
+    return result
+
+
 def prune_unfinalized_provider_matchups(
     local_db: Any,
     *,

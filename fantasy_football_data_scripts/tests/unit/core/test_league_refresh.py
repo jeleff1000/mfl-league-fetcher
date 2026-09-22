@@ -8,6 +8,97 @@ import pandas as pd
 import pytest
 
 
+def test_future_schedule_uses_existing_canonical_team_identity():
+    from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
+
+    class LocalDB:
+        league_name = "league_a"
+
+        @staticmethod
+        def table_exists(table_name):
+            return table_name in {"matchup", "player_fantasy"}
+
+        @staticmethod
+        def read_table(table_name, year=None):
+            if table_name == "matchup":
+                return pd.DataFrame(
+                    {
+                        "db_name": ["league_a", "league_a"],
+                        "year": [2026, 2026],
+                        "week": [1, 1],
+                        "team_key": ["1", "2"],
+                        "manager_guid": ["new-owner-a", "new-owner-b"],
+                        "franchise_id": ["legacy-franchise-a", "legacy-franchise-b"],
+                    }
+                )
+            return pd.DataFrame()
+
+    future = pd.DataFrame(
+        {
+            "year": [2026, 2026],
+            "week": [3, 3],
+            "team_key": ["1", "2"],
+            "opponent_team_key": ["2", "1"],
+            "manager_guid": ["new-owner-a", "new-owner-b"],
+            "opponent_guid": ["new-owner-b", "new-owner-a"],
+            "manager": ["A", "B"],
+            "opponent": ["B", "A"],
+        }
+    )
+
+    actual = resolve_active_schedule_franchise_ids(
+        LocalDB(), future, active_year=2026,
+    )
+
+    assert actual["franchise_id"].tolist() == [
+        "legacy-franchise-a", "legacy-franchise-b",
+    ]
+    assert actual["opponent_franchise_id"].tolist() == [
+        "legacy-franchise-b", "legacy-franchise-a",
+    ]
+
+
+def test_future_schedule_rejects_unresolved_provider_team_identity():
+    from multi_league.core.league_refresh import (
+        RefreshScopeError,
+        resolve_active_schedule_franchise_ids,
+    )
+
+    class LocalDB:
+        league_name = "league_a"
+
+        @staticmethod
+        def table_exists(table_name):
+            return table_name == "matchup"
+
+        @staticmethod
+        def read_table(table_name, year=None):
+            return pd.DataFrame(
+                {
+                    "year": [2026],
+                    "team_key": ["1"],
+                    "manager_guid": ["owner-a"],
+                    "franchise_id": ["franchise-a"],
+                }
+            )
+
+    incomplete = pd.DataFrame(
+        {
+            "year": [2026],
+            "week": [3],
+            "team_key": ["missing"],
+            "opponent_team_key": ["1"],
+            "manager_guid": ["missing-owner"],
+            "opponent_guid": ["owner-a"],
+        }
+    )
+
+    with pytest.raises(RefreshScopeError, match="unresolved canonical schedule identities"):
+        resolve_active_schedule_franchise_ids(
+            LocalDB(), incomplete, active_year=2026,
+        )
+
+
 def test_background_refresh_call_overlaps_main_work_and_returns_value():
     from multi_league.core.league_refresh import background_refresh_call
 

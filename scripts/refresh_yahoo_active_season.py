@@ -1585,6 +1585,7 @@ def _merge_refresh_payloads(
         pending_provider_nfl_teams,
         provider_draft_manifest_matches,
         replace_active_season_draft,
+        resolve_active_schedule_franchise_ids,
     )
     from multi_league.core.yahoo_league_settings import fetch_league_settings
     from multi_league.data_fetchers.yahoo.yahoo_draft import fetch_draft_data
@@ -1683,6 +1684,9 @@ def _merge_refresh_payloads(
     schedule = fetch_schedule_for_year(ctx, year, local_db=local_db)
     if schedule is None or schedule.empty:
         raise YahooIncompleteSourceError(f"Yahoo returned no full schedule for {year}")
+    schedule = resolve_active_schedule_franchise_ids(
+        local_db, schedule, active_year=year,
+    )
     merge_provider_refresh_table(
         local_db,
         "schedule",

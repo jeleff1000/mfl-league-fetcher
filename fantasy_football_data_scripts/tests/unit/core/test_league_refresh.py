@@ -99,6 +99,49 @@ def test_future_schedule_rejects_unresolved_provider_team_identity():
         )
 
 
+def test_future_schedule_uses_unique_active_manager_when_yahoo_redacts_keys():
+    from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
+
+    class LocalDB:
+        league_name = "league_a"
+
+        @staticmethod
+        def table_exists(table_name):
+            return table_name == "matchup"
+
+        @staticmethod
+        def read_table(table_name, year=None):
+            return pd.DataFrame(
+                {
+                    "year": [2026, 2026],
+                    "team_key": ["2026.t.1", "2026.t.2"],
+                    "manager_guid": ["owner-a", "owner-b"],
+                    "manager": ["Gage", "Alexis"],
+                    "franchise_id": ["gage-current", "alexis-current"],
+                }
+            )
+
+    redacted = pd.DataFrame(
+        {
+            "year": [2026, 2026],
+            "week": [3, 3],
+            "team_key": ["", ""],
+            "opponent_team_key": ["", ""],
+            "manager_guid": ["--hidden--", "--hidden--"],
+            "opponent_guid": ["--hidden--", "--hidden--"],
+            "manager": ["Gage", "Alexis"],
+            "opponent": ["Alexis", "Gage"],
+        }
+    )
+
+    actual = resolve_active_schedule_franchise_ids(
+        LocalDB(), redacted, active_year=2026,
+    )
+
+    assert actual["franchise_id"].tolist() == ["gage-current", "alexis-current"]
+    assert actual["opponent_franchise_id"].tolist() == ["alexis-current", "gage-current"]
+
+
 def test_background_refresh_call_overlaps_main_work_and_returns_value():
     from multi_league.core.league_refresh import background_refresh_call
 

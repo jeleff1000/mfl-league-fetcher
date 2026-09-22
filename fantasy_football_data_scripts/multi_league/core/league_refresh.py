@@ -1270,7 +1270,7 @@ def resolve_active_schedule_franchise_ids(
             years = pd.to_numeric(frame["year"], errors="coerce")
             frame = frame.loc[years.eq(int(active_year))].copy()
         columns = [
-            column for column in ("team_key", "manager_guid", "franchise_id")
+            column for column in ("team_key", "manager_guid", "manager", "franchise_id")
             if column in frame.columns
         ]
         if "franchise_id" in columns:
@@ -1306,9 +1306,14 @@ def resolve_active_schedule_franchise_ids(
 
     by_team_key = unique_map("team_key")
     by_guid = unique_map("manager_guid")
+    # Yahoo redacts both GUID and team key on some future schedule rows.  A
+    # display name is safe only when the played active-season rows prove that
+    # it identifies exactly one franchise; duplicate-name managers remain
+    # deliberately unresolved rather than being guessed.
+    by_manager = unique_map("manager")
     result = schedule.copy()
 
-    def resolve_side(*, team_column: str, guid_column: str) -> pd.Series:
+    def resolve_side(*, team_column: str, guid_column: str, manager_column: str) -> pd.Series:
         resolved = pd.Series(pd.NA, index=result.index, dtype="string")
         if team_column in result.columns and by_team_key:
             keys = result[team_column].astype("string").str.strip()
@@ -1316,13 +1321,16 @@ def resolve_active_schedule_franchise_ids(
         if guid_column in result.columns and by_guid:
             guids = result[guid_column].astype("string").str.strip()
             resolved = resolved.fillna(guids.map(by_guid).astype("string"))
+        if manager_column in result.columns and by_manager:
+            managers = result[manager_column].astype("string").str.strip()
+            resolved = resolved.fillna(managers.map(by_manager).astype("string"))
         return resolved
 
     result["franchise_id"] = resolve_side(
-        team_column="team_key", guid_column="manager_guid",
+        team_column="team_key", guid_column="manager_guid", manager_column="manager",
     )
     result["opponent_franchise_id"] = resolve_side(
-        team_column="opponent_team_key", guid_column="opponent_guid",
+        team_column="opponent_team_key", guid_column="opponent_guid", manager_column="opponent",
     )
     missing_team = int(result["franchise_id"].isna().sum())
     missing_opponent = int(result["opponent_franchise_id"].isna().sum())

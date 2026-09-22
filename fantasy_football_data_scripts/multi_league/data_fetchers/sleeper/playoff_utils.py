@@ -150,7 +150,12 @@ def playoff_weeks_for_round(
     return (week_start, week_start)
 
 
-def resolve_playoff_structure(settings: dict[str, Any], default_start_week: int = 15) -> dict[str, Any]:
+def resolve_playoff_structure(
+    settings: dict[str, Any],
+    default_start_week: int = 15,
+    *,
+    season_complete: bool = True,
+) -> dict[str, Any]:
     """Resolve a consistent Sleeper playoff structure from raw league settings."""
     playoff_start_raw = settings.get("playoff_week_start", 0)
     playoff_teams = settings.get("playoff_teams", 6)
@@ -168,7 +173,7 @@ def resolve_playoff_structure(settings: dict[str, Any], default_start_week: int 
 
     try:
         if playoff_teams_int <= 1:
-            if last_scored_leg and int(last_scored_leg) > 0:
+            if season_complete and last_scored_leg and int(last_scored_leg) > 0:
                 playoff_week_end = int(last_scored_leg)
                 playoff_week_start = playoff_week_end + 1
                 source = "disabled"
@@ -184,7 +189,7 @@ def resolve_playoff_structure(settings: dict[str, Any], default_start_week: int 
             playoff_week_start = int(playoff_start_raw)
             playoff_week_end = playoff_week_start + weeks_in_playoffs - 1
             source = "api"
-        elif last_scored_leg and int(last_scored_leg) > 0:
+        elif season_complete and last_scored_leg and int(last_scored_leg) > 0:
             playoff_week_start = int(last_scored_leg) - weeks_in_playoffs + 1
             playoff_week_end = int(last_scored_leg)
             source = "inferred"

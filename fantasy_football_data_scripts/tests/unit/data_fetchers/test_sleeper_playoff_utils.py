@@ -168,6 +168,30 @@ def test_resolve_playoff_structure_infers_multiweek_championship_start_week():
     assert structure["playoff_start_source"] == "inferred"
 
 
+def test_in_season_last_scored_leg_is_not_treated_as_season_end():
+    league = _multiweek_championship_league()
+    league["status"] = "in_season"
+    league["season"] = "2026"
+    league["settings"] = {
+        **league["settings"],
+        "playoff_teams": 4,
+        "playoff_round_type": 0,
+        "last_scored_leg": 2,
+    }
+
+    structure = resolve_playoff_structure(
+        league["settings"], season_complete=False,
+    )
+    settings = fetch_sleeper_settings(
+        _FakeSleeperClient(league), "active_league", year=2026,
+    )
+
+    assert structure["playoff_week_start"] == 15
+    assert structure["playoff_start_source"] == "default"
+    assert settings["playoff_start_week"] == 15
+    assert settings["regular_season_weeks"] == 14
+
+
 def _no_playoff_league() -> dict:
     return {
         "name": "No Bracket League",

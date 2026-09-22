@@ -78,7 +78,11 @@ def fetch_sleeper_settings(client: SleeperAPIClient, league_id: str, year: int |
     # Extract playoff settings for easier access
     playoff_teams = settings.get("playoff_teams", 6)
     start_week = settings.get("start_week", 1)
-    playoff_structure = resolve_playoff_structure(settings)
+    league_is_complete = str(league.get("status") or "").strip().lower() == "complete"
+    playoff_structure = resolve_playoff_structure(
+        settings,
+        season_complete=league_is_complete,
+    )
     playoff_week_start = playoff_structure["playoff_week_start"]
     playoff_round_type = playoff_structure["playoff_round_type"]
     playoff_rounds = playoff_structure["playoff_rounds"]
@@ -145,7 +149,7 @@ def fetch_sleeper_settings(client: SleeperAPIClient, league_id: str, year: int |
         logger.warning(f"[sleeper_settings] /losers_bracket call failed for {league_id}: {exc}")
         losers_bracket = None
 
-    season_complete = nfl_state.get("season_type") == "off" or (
+    season_complete = league_is_complete or nfl_state.get("season_type") == "off" or (
         settings.get("last_scored_leg") and settings.get("last_scored_leg") >= 17
     )
 

@@ -260,7 +260,10 @@ class SleeperPlatformClient(BasePlatformClient):
         if not league:
             return {"playoff_week_start": 15, "playoff_teams": 6}
 
-        playoff_structure = resolve_playoff_structure(league.get("settings", {}))
+        playoff_structure = resolve_playoff_structure(
+            league.get("settings", {}),
+            season_complete=str(league.get("status") or "").strip().lower() == "complete",
+        )
 
         return {
             "playoff_week_start": playoff_structure["playoff_week_start"],

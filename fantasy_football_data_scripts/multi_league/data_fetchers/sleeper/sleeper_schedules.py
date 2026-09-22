@@ -149,7 +149,10 @@ class SleeperScheduleFetcher:
             return {"playoff_week_start": 15, "playoff_teams": 6}
 
         settings = league.get("settings", {})
-        playoff_structure = resolve_playoff_structure(settings)
+        playoff_structure = resolve_playoff_structure(
+            settings,
+            season_complete=str(league.get("status") or "").strip().lower() == "complete",
+        )
 
         result = {
             "playoff_week_start": playoff_structure["playoff_week_start"],

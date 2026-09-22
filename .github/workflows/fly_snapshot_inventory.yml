@@ -13,6 +13,16 @@ on:
         required: false
         default: false
         type: boolean
+      create_cross_region_backup:
+        description: Fork the exact attached primary volume to one independent ord backup volume
+        required: false
+        default: false
+        type: boolean
+      cross_region_backup_name:
+        description: Exact backup name, formatted duckdb_backup_YYYYMMDD
+        required: false
+        default: ""
+        type: string
       destroy_recovery_volume_id:
         description: Exact unattached kmffl_snapshot_recovery volume to destroy
         required: false
@@ -104,6 +114,29 @@ jobs:
           set -euo pipefail
           test -n "$FLY_PRIMARY_VOLUME_ID"
           flyctl volumes snapshots create "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --json
+
+      - name: Create independent cross-region backup fork
+        if: inputs.create_cross_region_backup
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
+          BACKUP_VOLUME_NAME: ${{ inputs.cross_region_backup_name }}
+        run: |
+          set -euo pipefail
+          test -n "$FLY_PRIMARY_VOLUME_ID"
+          [[ "$BACKUP_VOLUME_NAME" =~ ^duckdb_backup_[0-9]{8}$ ]]
+          flyctl volumes list --app league-history-duckdb --json > volumes-before-backup.json
+          SOURCE_NAME=$(jq -r --arg id "$FLY_PRIMARY_VOLUME_ID" 'map(select(.id == $id))[0].name // empty' volumes-before-backup.json)
+          SOURCE_ATTACHMENT=$(jq -r --arg id "$FLY_PRIMARY_VOLUME_ID" 'map(select(.id == $id))[0].attached_machine_id // empty' volumes-before-backup.json)
+          EXISTING_BACKUP_COUNT=$(jq -r --arg name "$BACKUP_VOLUME_NAME" '[.[] | select(.name == $name)] | length' volumes-before-backup.json)
+          test "$SOURCE_NAME" = "duckdb_data"
+          test "$SOURCE_ATTACHMENT" = "1781e011b69068"
+          test "$EXISTING_BACKUP_COUNT" = "0"
+          flyctl volumes fork "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --region ord --name "$BACKUP_VOLUME_NAME" --require-unique-zone --json \
+            | tee cross-region-backup.json
+          jq -e --arg name "$BACKUP_VOLUME_NAME" \
+            '.name == $name and .region == "ord" and .attached_machine_id == null and (.id | startswith("vol_"))' \
+            cross-region-backup.json >/dev/null
 
       - name: List primary volume snapshots
         env:

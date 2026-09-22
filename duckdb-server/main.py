@@ -22,6 +22,7 @@ import duckdb as _duckdb
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Header
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import JSONResponse
 
 try:
     from posthog import Posthog as _Posthog
@@ -35,7 +36,15 @@ import db
 from auth import get_bearer_token, validate_read_token, validate_admin_token, AuthError
 from swap import atomic_swap, verify_checksum, startup_recovery, SwapError
 import fleet_merge
-from storage_guard import RuntimeContract, StorageOwner
+from storage_guard import (
+    RuntimeContract,
+    StorageHealth,
+    StorageOwner,
+    StorageUnhealthyError,
+    WalPolicy,
+    is_fatal_storage_error,
+    wal_state,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -165,6 +174,9 @@ DELTA_BUSY_RETRY_AFTER_SECONDS = _env_float("DELTA_BUSY_RETRY_AFTER_SECONDS", 20
 ASYNC_DB_STARTUP = _env_bool("ASYNC_DB_STARTUP", False)
 DUCKDB_CHECKPOINT_WAL_MB = _env_float("DUCKDB_CHECKPOINT_WAL_MB", 512.0, min_value=0.0)
 DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = _env_float("DUCKDB_CHECKPOINT_TIMEOUT_SECONDS", 600.0, min_value=30.0)
+DUCKDB_WAL_SOFT_MB = _env_float("DUCKDB_WAL_SOFT_MB", 128.0, min_value=1.0)
+DUCKDB_WAL_HARD_MB = _env_float("DUCKDB_WAL_HARD_MB", 512.0, min_value=1.0)
+DUCKDB_WAL_MAX_AGE_SECONDS = _env_float("DUCKDB_WAL_MAX_AGE_SECONDS", 300.0, min_value=1.0)
 SOFT_DRAIN_TIMEOUT = 10
 HARD_DRAIN_TIMEOUT = 30
 POOL_REOPEN_MAX_ATTEMPTS = int(os.environ.get("POOL_REOPEN_MAX_ATTEMPTS", "8"))
@@ -200,10 +212,26 @@ _derived_recovery_progress: dict[str, Any] = {
     "error": None,
 }
 _ops_write_count = 0
+_ops_read_count = 0
+_ops_read_count_lock = threading.Lock()
 # Serializes ___ops writers without blocking the dedicated read connection while
 # a replacement snapshot is being built.  The old snapshot remains queryable
 # until the final close/rename/reopen handoff.
 _ops_rebuild_lock = threading.Lock()
+_storage_health = StorageHealth()
+_wal_policy = WalPolicy(
+    soft_bytes=int(DUCKDB_WAL_SOFT_MB * 1024 * 1024),
+    max_age_seconds=DUCKDB_WAL_MAX_AGE_SECONDS,
+    hard_bytes=int(DUCKDB_WAL_HARD_MB * 1024 * 1024),
+)
+
+
+def _mark_storage_failure_if_fatal(error: BaseException, stage: str) -> bool:
+    if not is_fatal_storage_error(error):
+        return False
+    _storage_health.mark_unhealthy(stage, error)
+    logger.critical("DuckDB storage write-closed after %s: %s", stage, error, exc_info=True)
+    return True
 
 
 def _start_derived_recovery_progress() -> None:
@@ -258,6 +286,18 @@ def _end_ops_write_state() -> None:
     _ops_write_count = max(0, _ops_write_count - 1)
     if _ops_write_count == 0 and _state["status"] in {"ops_writing", "ops_snapshotting"}:
         _state["status"] = "serving"
+
+
+def _begin_ops_read() -> None:
+    global _ops_read_count
+    with _ops_read_count_lock:
+        _ops_read_count += 1
+
+
+def _end_ops_read() -> None:
+    global _ops_read_count
+    with _ops_read_count_lock:
+        _ops_read_count = max(0, _ops_read_count - 1)
 
 
 def _set_serving_or_ops_writing() -> None:
@@ -419,7 +459,7 @@ def _check_db_health() -> bool:
 
 
 async def _watchdog():
-    """Kill process if DB path broken for 90s+. Triggers Fly's on-failure restart."""
+    """Monitor DB health and run a drained checkpoint when WAL policy requires it."""
     consecutive_failures = 0
     while True:
         await asyncio.sleep(30)
@@ -428,6 +468,7 @@ async def _watchdog():
             continue
         if await asyncio.to_thread(_check_db_health):
             consecutive_failures = 0
+            await _checkpoint_if_due("watchdog")
         else:
             consecutive_failures += 1
             logger.error("Watchdog: DB health check failed (%d consecutive)", consecutive_failures)
@@ -509,37 +550,20 @@ def _wal_path(db_path: Path) -> Path:
     return db_path.with_name(f"{db_path.name}.wal")
 
 
-def _quarantine_wal(db_path: Path, *, reason: str) -> Path | None:
-    """Preserve an unreplayable WAL beside its database for later inspection."""
-    wal_path = _wal_path(db_path)
-    if not wal_path.exists():
-        return None
-    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    target = wal_path.with_name(f"{wal_path.name}.quarantine.{timestamp}")
-    counter = 1
-    while target.exists():
-        counter += 1
-        target = wal_path.with_name(f"{wal_path.name}.quarantine.{timestamp}.{counter}")
-    logger.error(
-        "Quarantining DuckDB WAL for %s after %s: %s -> %s",
-        db_path.name,
-        reason,
-        wal_path,
-        target,
-    )
-    wal_path.rename(target)
-    return target
-
-
 def _checkpoint_connection_if_wal_large(
     conn, db_path: Path, *, reason: str, force: bool = False, raise_on_error: bool = False
 ) -> bool:
     if DUCKDB_CHECKPOINT_WAL_MB <= 0 and not force:
         return False
-    before_mb = _wal_size_mb(db_path)
-    if before_mb <= 0:
+    state = wal_state(_wal_path(db_path))
+    before_mb = state.bytes / (1024 * 1024)
+    if state.bytes <= 0:
         return False
-    if not force and before_mb < DUCKDB_CHECKPOINT_WAL_MB:
+    legacy_soft_bytes = int(DUCKDB_CHECKPOINT_WAL_MB * 1024 * 1024)
+    checkpoint_due = _wal_policy.checkpoint_due(state)
+    if legacy_soft_bytes > 0 and state.bytes >= legacy_soft_bytes:
+        checkpoint_due = True
+    if not force and not checkpoint_due:
         return False
     checkpoint_start = time.perf_counter()
     logger.warning(
@@ -557,6 +581,7 @@ def _checkpoint_connection_if_wal_large(
         )
     except Exception as exc:
         logger.warning("DuckDB checkpoint failed for %s: %s", reason, exc, exc_info=True)
+        _storage_health.mark_unhealthy(f"checkpoint {reason}", exc)
         if raise_on_error:
             raise
         return False
@@ -572,21 +597,92 @@ def _checkpoint_connection_if_wal_large(
 
 
 def _checkpoint_after_merge(conn, db_path: Path, *, reason: str, hard_exit_timer: threading.Timer) -> bool:
-    """Checkpoint after commit without leaving the merge kill timer armed.
-
-    The merge timer protects transaction work.  Checkpointing has its own
-    interrupt timer and may legitimately outlive the merge budget on the
-    shared database.  Killing the process during CHECKPOINT can damage the
-    database file that the WAL is being folded into.
-    """
+    """Disarm the merge timer and defer checkpointing until admission is idle."""
     hard_exit_timer.cancel()
-    if db.is_storage_recovery_mode():
-        logger.warning(
-            "DuckDB storage recovery mode active; deferring checkpoint after %s",
-            reason,
-        )
+    logger.info("Checkpoint deferred until publication release after %s", reason)
+    return False
+
+
+def _database_activity_idle() -> bool:
+    return (
+        db.get_active_count() == 0
+        and _ops_read_count == 0
+        and _ops_write_count == 0
+        and _delta_publish_inflight == 0
+    )
+
+
+def _checkpoint_due_databases(
+    states: dict[str, Any], *, reason: str, force: bool = False
+) -> bool:
+    """Checkpoint due databases after async admission has drained all activity."""
+    checkpointed = False
+    data_dir = db.get_data_dir()
+    for name in ("___ops", "___leagues"):
+        state = states.get(name)
+        if state is None or state.bytes <= 0:
+            continue
+        if not force and not _wal_policy.checkpoint_due(state):
+            continue
+        if name == "___ops":
+            conn = db.get_ops_connection()
+            if conn is None:
+                continue
+            _checkpoint_connection_if_wal_large(
+                conn,
+                data_dir / "___ops.duckdb",
+                reason=f"{reason} ___ops",
+                force=True,
+                raise_on_error=True,
+            )
+            checkpointed = True
+            continue
+        conn = db.acquire_connection(timeout=1.0)
+        try:
+            _checkpoint_connection_if_wal_large(
+                conn,
+                data_dir / "___leagues.duckdb",
+                reason=f"{reason} ___leagues",
+                force=True,
+                raise_on_error=True,
+            )
+            checkpointed = True
+        finally:
+            db.release_connection(conn)
+    return checkpointed
+
+
+async def _checkpoint_if_due(reason: str, *, force: bool = False) -> bool:
+    """Run at most one checkpoint after all query/write/publication activity drains."""
+    if not _storage_health.snapshot()["healthy"] or _merge_lock is None:
         return False
-    return _checkpoint_connection_if_wal_large(conn, db_path, reason=reason)
+    states = _storage_wal_states()
+    if not force and not any(_wal_policy.checkpoint_due(state) for state in states.values()):
+        return False
+    if not _database_activity_idle() or _merge_lock.locked():
+        return False
+    async with _merge_lock:
+        states = _storage_wal_states()
+        if not force and not any(_wal_policy.checkpoint_due(state) for state in states.values()):
+            return False
+        if not _database_activity_idle():
+            return False
+        previous_status = _state["status"]
+        _state["status"] = "checkpointing"
+        try:
+            return await asyncio.to_thread(
+                _checkpoint_due_databases,
+                states,
+                reason=reason,
+                force=force,
+            )
+        except Exception as exc:
+            _storage_health.mark_unhealthy(f"checkpoint {reason}", exc)
+            logger.error("Coordinated checkpoint failed for %s: %s", reason, exc, exc_info=True)
+            return False
+        finally:
+            if _state["status"] == "checkpointing":
+                _state["status"] = previous_status
 
 
 def _checkpoint_database_if_wal_large(db_path: Path, *, data_dir: Path, reason: str) -> bool:
@@ -628,22 +724,15 @@ def _checkpoint_database_if_wal_exists(db_path: Path, *, data_dir: Path, reason:
 
 
 def _prepare_ops_wal_for_startup(data_dir: Path) -> None:
-    """Replay the small OPS WAL or preserve it and keep league storage untouched."""
+    """Replay the OPS WAL or fail startup with the original WAL untouched."""
     ops_path = data_dir / "___ops.duckdb"
     if not ops_path.exists() or _wal_size_mb(ops_path) <= 0:
         return
-    try:
-        _checkpoint_database_if_wal_exists(
-            ops_path,
-            data_dir=data_dir,
-            reason="startup ___ops",
-        )
-    except Exception:
-        if _wal_size_mb(ops_path) <= 0:
-            raise
-        logger.exception("DuckDB startup: ___ops WAL replay failed; preserving WAL and continuing")
-        if _quarantine_wal(ops_path, reason="startup ___ops WAL replay failure") is None:
-            raise
+    _checkpoint_database_if_wal_exists(
+        ops_path,
+        data_dir=data_dir,
+        reason="startup ___ops",
+    )
 
 
 def _startup_db_sync(data_dir: Path) -> None:
@@ -651,10 +740,9 @@ def _startup_db_sync(data_dir: Path) -> None:
     startup_recovery(data_dir)
     logger.info("DuckDB startup: cleanup begin")
     cleanup_stale_uploads(data_dir)
-    # OPS is a small metadata database and must not strand credential writes if
-    # its WAL cannot be replayed.  Preserve only that WAL.  The much larger
-    # ___leagues WAL remains the canonical recovery log and is never touched
-    # by this startup repair.
+    # Opening/checkpointing each database is its WAL replay gate.  A replay
+    # failure stops startup with the original WAL path and bytes untouched;
+    # serving stale data or silently dropping committed writes is forbidden.
     _prepare_ops_wal_for_startup(data_dir)
     # Opening the pool is the WAL replay gate.  Do not force a CHECKPOINT for
     # the league WAL here: even a tiny WAL can make DuckDB rewrite the full
@@ -793,6 +881,41 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
+
+
+def _storage_wal_states() -> dict[str, Any]:
+    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
+    return {
+        name: wal_state(data_dir / f"{name}.duckdb.wal")
+        for name in ("___leagues", "___ops")
+    }
+
+
+def _assert_storage_write_admission() -> None:
+    _storage_health.assert_writable()
+    blocked = [
+        name
+        for name, state in _storage_wal_states().items()
+        if _wal_policy.write_blocked(state)
+    ]
+    if blocked:
+        raise StorageUnhealthyError(
+            "WAL hard limit reached for " + ", ".join(sorted(blocked))
+        )
+
+
+@app.middleware("http")
+async def storage_write_admission(request: Request, call_next):
+    if request.method == "POST" and request.url.path not in {"/query", "/query-parquet"}:
+        try:
+            _assert_storage_write_admission()
+        except StorageUnhealthyError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": str(exc)},
+                headers={"Retry-After": "5", "Cache-Control": "no-store"},
+            )
+    return await call_next(request)
 
 _READ_START_PATTERN = re.compile(r"^\s*(SELECT|WITH|DESCRIBE|SHOW|EXPLAIN)\b", re.IGNORECASE)
 _FORBIDDEN_SQL_TOKEN_PATTERN = re.compile(
@@ -1036,6 +1159,8 @@ async def query_endpoint(req: QueryRequest, request: Request):
     # These work even during draining since they don't touch ___leagues.
     if req.database == "___ops" and not re.search(r"\b___leagues\b", req.sql, re.IGNORECASE):
         pooled = _ops_read_uses_pool(req.sql)
+        if _state["status"] == "checkpointing":
+            return _query_busy_response(reason="checkpointing")
         if pooled and _state["status"] == "ops_writing" \
                 and not await _wait_for_ops_write_to_finish():
             return _query_busy_response(reason=_state["status"])
@@ -1043,6 +1168,8 @@ async def query_endpoint(req: QueryRequest, request: Request):
             return _query_busy_response(reason=_state["status"])
         if pooled:
             await _acquire_query_slot(req.database)
+        else:
+            _begin_ops_read()
         t0 = time.perf_counter()
         try:
             result = await asyncio.wait_for(
@@ -1074,6 +1201,8 @@ async def query_endpoint(req: QueryRequest, request: Request):
         finally:
             if pooled:
                 _query_semaphore.release()
+            else:
+                _end_ops_read()
 
     # ___ops reads use the dedicated connection above and continue on the old snapshot during an
     # online rebuild. League reads remain conservative for ordinary ___ops writes, which still
@@ -1143,10 +1272,14 @@ async def query_parquet_endpoint(req: QueryRequest, request: Request):
     if _state["status"] == "starting":
         return _query_busy_response(reason="starting")
     pooled = _ops_read_uses_pool(req.sql)
+    if _state["status"] == "checkpointing":
+        return _query_busy_response(reason="checkpointing")
     if pooled and _state["status"] not in {"serving", "ops_snapshotting"}:
         return _query_busy_response(reason=_state["status"])
     if pooled:
         await _acquire_query_slot(req.database)
+    else:
+        _begin_ops_read()
     try:
         payload = await asyncio.wait_for(
             asyncio.to_thread(_execute_ops_query_parquet, req.sql),
@@ -1169,6 +1302,8 @@ async def query_parquet_endpoint(req: QueryRequest, request: Request):
     finally:
         if pooled:
             _query_semaphore.release()
+        else:
+            _end_ops_read()
 
 
 @app.post("/query-rw")
@@ -1275,6 +1410,9 @@ def _execute_with_timeout(conn, sql: str, timeout_seconds: float) -> list[dict]:
         return [_json_safe_row(dict(zip(columns, row))) for row in rows]
     except _duckdb.InterruptException as exc:
         raise TimeoutError(f"Query exceeded {timeout_seconds}s wall-clock limit") from exc
+    except Exception as exc:
+        _mark_storage_failure_if_fatal(exc, "query execution")
+        raise
     finally:
         timer.cancel()
 
@@ -1359,6 +1497,9 @@ def _execute_script_with_timeout(
         return [_json_safe_row(dict(zip(columns, row))) for row in rows]
     except _duckdb.InterruptException as exc:
         raise TimeoutError(f"Query exceeded {timeout_seconds}s wall-clock limit") from exc
+    except Exception as exc:
+        _mark_storage_failure_if_fatal(exc, "admin write execution")
+        raise
     finally:
         timer.cancel()
 
@@ -1384,6 +1525,9 @@ def _interrupting_execute(
         return conn.execute(sql, params)
     except _duckdb.InterruptException as exc:
         raise TimeoutError(f"Merge step exceeded {timeout_seconds:.1f}s: {step}") from exc
+    except Exception as exc:
+        _mark_storage_failure_if_fatal(exc, step)
+        raise
     finally:
         timer.cancel()
 
@@ -1489,6 +1633,9 @@ def _execute_ops_query_parquet(sql: str) -> bytes:
             return sink.getvalue().to_pybytes()
         except _duckdb.InterruptException as exc:
             raise TimeoutError(f"Query exceeded {PUBLIC_QUERY_TIMEOUT}s wall-clock limit") from exc
+        except Exception as exc:
+            _mark_storage_failure_if_fatal(exc, "OPS parquet query")
+            raise
         finally:
             timer.cancel()
 

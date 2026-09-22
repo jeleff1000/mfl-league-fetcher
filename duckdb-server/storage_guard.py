@@ -7,6 +7,8 @@ import math
 import os
 from pathlib import Path
 import re
+import threading
+import time
 from typing import BinaryIO
 
 
@@ -16,6 +18,104 @@ class StorageOwnershipError(RuntimeError):
 
 class RuntimeContractError(RuntimeError):
     """Raised when effective DuckDB settings differ from the write contract."""
+
+
+class StorageUnhealthyError(RuntimeError):
+    """Raised when storage has entered a fatal, write-closed state."""
+
+
+_FATAL_STORAGE_PATTERNS = (
+    "database has been invalidated",
+    "corrupt database file",
+    "failed to create checkpoint",
+    "wal replay failed",
+)
+
+
+def is_fatal_storage_error(error: BaseException) -> bool:
+    """Classify DuckDB integrity failures without treating bundle validation as fatal."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        error_type = type(current)
+        if error_type.__name__ == "FatalException" and error_type.__module__ in {
+            "_duckdb",
+            "duckdb",
+        }:
+            return True
+        message = str(current).lower()
+        if any(pattern in message for pattern in _FATAL_STORAGE_PATTERNS):
+            return True
+        if (
+            "computed checksum" in message
+            and "stored checksum" in message
+            and "block" in message
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+@dataclass(frozen=True)
+class WalState:
+    bytes: int
+    age_seconds: float
+
+
+@dataclass(frozen=True)
+class WalPolicy:
+    soft_bytes: int = 128 * 1024 * 1024
+    max_age_seconds: float = 300.0
+    hard_bytes: int = 512 * 1024 * 1024
+
+    def checkpoint_due(self, state: WalState) -> bool:
+        return state.bytes > 0 and (
+            state.bytes >= self.soft_bytes or state.age_seconds >= self.max_age_seconds
+        )
+
+    def write_blocked(self, state: WalState) -> bool:
+        return state.bytes >= self.hard_bytes
+
+
+def wal_state(path: Path | str, *, now: float | None = None) -> WalState:
+    """Return WAL size/age using one filesystem stat and no database access."""
+    try:
+        stat = Path(path).stat()
+    except FileNotFoundError:
+        return WalState(bytes=0, age_seconds=0.0)
+    observed_at = time.time() if now is None else now
+    return WalState(bytes=stat.st_size, age_seconds=max(0.0, observed_at - stat.st_mtime))
+
+
+class StorageHealth:
+    """Process-lifetime fatal storage latch; restart is the only reset."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._failure: dict[str, object] | None = None
+
+    def mark_unhealthy(self, stage: str, error: BaseException) -> None:
+        with self._lock:
+            if self._failure is None:
+                self._failure = {
+                    "stage": stage,
+                    "error": f"{type(error).__name__}: {error}",
+                    "failed_at": time.time(),
+                }
+
+    def assert_writable(self) -> None:
+        snapshot = self.snapshot()
+        if not snapshot["healthy"]:
+            raise StorageUnhealthyError(
+                f"DuckDB storage is write-closed after {snapshot['stage']}: {snapshot['error']}"
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            if self._failure is None:
+                return {"healthy": True, "stage": None, "error": None, "failed_at": None}
+            return {"healthy": False, **self._failure}
 
 
 class StorageOwner:

@@ -1,5 +1,6 @@
 """Integration tests for the full FastAPI app."""
 
+import asyncio
 import hashlib
 import json
 import tarfile
@@ -1804,7 +1805,7 @@ def test_write_script_reports_explicit_commit():
     assert committed == [True]
 
 
-def test_startup_quarantines_unreplayable_ops_wal_without_touching_leagues_wal(
+def test_startup_preserves_unreplayable_ops_wal_and_stops_before_pool(
     data_dir, monkeypatch
 ):
     import main as main_mod
@@ -1825,21 +1826,17 @@ def test_startup_quarantines_unreplayable_ops_wal_without_touching_leagues_wal(
         raise RuntimeError("forced ops WAL replay failure")
 
     monkeypatch.setattr(main_mod, "_checkpoint_database_if_wal_exists", fail_ops_replay)
-    monkeypatch.setattr(
-        main_mod.db,
-        "init_pool",
-        lambda: (_ for _ in ()).throw(RuntimeError("pool reached")),
-    )
+    pool_calls = []
+    monkeypatch.setattr(main_mod.db, "init_pool", lambda: pool_calls.append(True))
 
-    with pytest.raises(RuntimeError, match="pool reached"):
+    with pytest.raises(RuntimeError, match="forced ops WAL replay failure"):
         main_mod._startup_db_sync(data_dir)
 
     assert checkpoint_calls == ["___ops.duckdb"]
     assert leagues_wal.read_bytes() == b"untouched leagues wal"
-    assert not ops_wal.exists()
-    quarantined = list(data_dir.glob("___ops.duckdb.wal.quarantine.*"))
-    assert len(quarantined) == 1
-    assert quarantined[0].read_bytes() == b"bad ops wal"
+    assert ops_wal.read_bytes() == b"bad ops wal"
+    assert not list(data_dir.glob("___ops.duckdb.wal.quarantine.*"))
+    assert not pool_calls
 
 
 def test_startup_preserves_leagues_wal_and_fails_when_replay_fails(data_dir, monkeypatch):
@@ -3042,6 +3039,78 @@ def test_runtime_gate_rejects_effective_setting_drift(client, monkeypatch):
         main_mod._assert_runtime_contract()
 
 
+def test_storage_failure_rejects_writes_but_keeps_reads_available(client, monkeypatch):
+    import main as main_mod
+    from storage_guard import StorageHealth
+
+    failed = StorageHealth()
+    failed.mark_unhealthy("checkpoint", OSError("checksum mismatch"))
+    monkeypatch.setattr(main_mod, "_storage_health", failed)
+
+    write = client.post(
+        "/query-rw",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"database": "___leagues", "sql": "CREATE TABLE must_not_run (i INTEGER)"},
+    )
+    assert write.status_code == 503
+    assert "write-closed" in write.text
+
+    read = client.post(
+        "/query",
+        headers={"Authorization": "Bearer test-read"},
+        json={"database": "___leagues", "sql": "SELECT COUNT(*) AS n FROM public.matchup"},
+    )
+    assert read.status_code == 200
+    assert read.json() == [{"n": 2}]
+
+
+def test_hard_wal_limit_rejects_write_before_route_executes(client, monkeypatch):
+    import main as main_mod
+    from storage_guard import WalPolicy, WalState
+
+    monkeypatch.setattr(main_mod, "_wal_policy", WalPolicy(soft_bytes=1, hard_bytes=2))
+    monkeypatch.setattr(
+        main_mod,
+        "_storage_wal_states",
+        lambda: {"___leagues": WalState(bytes=2, age_seconds=0)},
+        raising=False,
+    )
+
+    response = client.post(
+        "/query-rw",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"database": "___leagues", "sql": "CREATE TABLE must_not_run (i INTEGER)"},
+    )
+    assert response.status_code == 503
+    assert "WAL hard limit" in response.text
+
+
+def test_checkpoint_failure_write_closes_storage_without_changing_wal(tmp_path, monkeypatch):
+    import main as main_mod
+    from storage_guard import StorageHealth
+
+    db_path = tmp_path / "___leagues.duckdb"
+    db_path.write_bytes(b"database")
+    wal_path = tmp_path / "___leagues.duckdb.wal"
+    original_wal = b"committed-wal-evidence"
+    wal_path.write_bytes(original_wal)
+    health = StorageHealth()
+    monkeypatch.setattr(main_mod, "_storage_health", health)
+
+    class BrokenCheckpoint:
+        def execute(self, _sql):
+            raise OSError("checkpoint checksum mismatch")
+
+        def interrupt(self):
+            pass
+
+    assert main_mod._checkpoint_connection_if_wal_large(
+        BrokenCheckpoint(), db_path, reason="test", force=True
+    ) is False
+    assert health.snapshot()["healthy"] is False
+    assert wal_path.read_bytes() == original_wal
+
+
 def test_scoped_recovery_defers_checkpoint_when_wal_checkpointing_is_disabled(monkeypatch):
     import main as main_mod
 
@@ -3056,7 +3125,7 @@ def test_scoped_recovery_defers_checkpoint_when_wal_checkpointing_is_disabled(mo
     )
 
 
-def test_post_merge_checkpoint_disarms_merge_kill_timer_first(tmp_path, monkeypatch):
+def test_post_merge_defers_checkpoint_until_publication_is_fully_released(tmp_path, monkeypatch):
     import main as main_mod
 
     events = []
@@ -3065,20 +3134,90 @@ def test_post_merge_checkpoint_disarms_merge_kill_timer_first(tmp_path, monkeypa
         def cancel(self):
             events.append("timer_cancelled")
 
-    def fake_checkpoint(conn, db_path, *, reason, force=False):
-        assert events == ["timer_cancelled"]
-        events.append("checkpoint")
-        return True
-
-    monkeypatch.setattr(main_mod, "_checkpoint_connection_if_wal_large", fake_checkpoint)
+    monkeypatch.setattr(
+        main_mod,
+        "_checkpoint_connection_if_wal_large",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("checkpoint must not run inside an admitted publication")
+        ),
+    )
 
     assert main_mod._checkpoint_after_merge(
         object(),
         tmp_path / "___leagues.duckdb",
         reason="delta merge test_league",
         hard_exit_timer=FakeTimer(),
-    ) is True
-    assert events == ["timer_cancelled", "checkpoint"]
+    ) is False
+    assert events == ["timer_cancelled"]
+
+
+def test_checkpoint_if_due_defers_while_any_database_activity_is_active(monkeypatch):
+    import main as main_mod
+    from storage_guard import WalState
+
+    checkpoint_calls = []
+    monkeypatch.setattr(
+        main_mod,
+        "_storage_wal_states",
+        lambda: {"___leagues": WalState(bytes=256 * 1024 * 1024, age_seconds=600)},
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "_checkpoint_due_databases",
+        lambda *_args, **_kwargs: checkpoint_calls.append(True),
+        raising=False,
+    )
+
+    async def run_case():
+        main_mod._merge_lock = asyncio.Lock()
+        for active_queries, ops_reads, ops_writes, publishes in (
+            (1, 0, 0, 0),
+            (0, 1, 0, 0),
+            (0, 0, 1, 0),
+            (0, 0, 0, 1),
+        ):
+            monkeypatch.setattr(main_mod.db, "get_active_count", lambda n=active_queries: n)
+            monkeypatch.setattr(main_mod, "_ops_read_count", ops_reads)
+            monkeypatch.setattr(main_mod, "_ops_write_count", ops_writes)
+            monkeypatch.setattr(main_mod, "_delta_publish_inflight", publishes)
+            assert await main_mod._checkpoint_if_due("test") is False
+
+    asyncio.run(run_case())
+    assert checkpoint_calls == []
+
+
+def test_concurrent_checkpoint_requests_execute_only_once(monkeypatch):
+    import main as main_mod
+    from storage_guard import WalState
+
+    due = {"value": True}
+    checkpoint_calls = []
+
+    def states():
+        size = 256 * 1024 * 1024 if due["value"] else 0
+        return {"___leagues": WalState(bytes=size, age_seconds=600 if size else 0)}
+
+    def checkpoint(_states, *, reason, force=False):
+        checkpoint_calls.append(reason)
+        due["value"] = False
+        return True
+
+    monkeypatch.setattr(main_mod, "_storage_wal_states", states)
+    monkeypatch.setattr(main_mod, "_checkpoint_due_databases", checkpoint, raising=False)
+    monkeypatch.setattr(main_mod.db, "get_active_count", lambda: 0)
+    monkeypatch.setattr(main_mod, "_ops_read_count", 0)
+    monkeypatch.setattr(main_mod, "_ops_write_count", 0)
+    monkeypatch.setattr(main_mod, "_delta_publish_inflight", 0)
+
+    async def run_case():
+        main_mod._merge_lock = asyncio.Lock()
+        return await asyncio.gather(
+            main_mod._checkpoint_if_due("first"),
+            main_mod._checkpoint_if_due("second"),
+        )
+
+    assert asyncio.run(run_case()) == [True, False]
+    assert checkpoint_calls == ["first"]
 
 
 def test_post_merge_checkpoint_is_skipped_in_storage_recovery_mode(tmp_path, monkeypatch):

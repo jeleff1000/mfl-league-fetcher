@@ -68,6 +68,21 @@ jobs:
             test "$ALLOW_UNREADY_RECOVERY" = true
             echo "Current image is unresponsive; proceeding with explicit image-only recovery"
           fi
+          # These two predate the committed runtime contract and override
+          # machine config at process launch. Stage only their removal so the
+          # one guarded machine update below performs the sole restart.
+          legacy_runtime_secrets=("DUCKDB_MEMORY_LIMIT" "DUCKDB_THREADS")
+          present_secret_names="$(flyctl secrets list --app league-history-duckdb --json \
+            | jq -r '.[] | (.Name // .name)')"
+          secrets_to_unset=()
+          for secret_name in "${legacy_runtime_secrets[@]}"; do
+            if grep -Fxq "$secret_name" <<<"$present_secret_names"; then
+              secrets_to_unset+=("$secret_name")
+            fi
+          done
+          if [ "${#secrets_to_unset[@]}" -gt 0 ]; then
+            flyctl secrets unset --app league-history-duckdb --stage "${secrets_to_unset[@]}"
+          fi
           update_ok=false
           for update_attempt in 1 2 3; do
             flyctl machines list --app league-history-duckdb --json > current-machines.json

@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: fly-duckdb-server-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -33,14 +37,14 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           timeout 300s flyctl deploy --config duckdb-server/fly.toml --dockerfile duckdb-server/Dockerfile --ignorefile duckdb-server/Dockerfile.dockerignore --build-context-warn-size 20MB --remote-only --build-only --push --image-label "server-${GITHUB_SHA}"
 
-      - name: Update existing primary image without resetting capacity or storage
+      - name: Update existing primary without resetting capacity or storage identity
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           ALLOW_UNREADY_RECOVERY: ${{ inputs.allow_unready_recovery }}
         run: |
           set -euo pipefail
-          # Image-only update preserves the live guest/env/mount configuration;
-          # fly.toml must not undo a temporary, verified recovery capacity change.
+          # Preserve live guest/service/volume identity while overlaying only
+          # the committed runtime, shutdown, and volume-growth contract.
           machines="$(flyctl machines list --app league-history-duckdb --json)"
           echo "$machines" | jq -e 'length == 1 and .[0].id == "1781e011b69068" and .[0].state == "started"' >/dev/null
           # A normal image restart must never resolve an unfinished league-file
@@ -66,7 +70,17 @@ jobs:
           fi
           update_ok=false
           for update_attempt in 1 2 3; do
-            if timeout 90s flyctl machine update 1781e011b69068 --app league-history-duckdb --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" --yes; then
+            flyctl machines list --app league-history-duckdb --json > current-machines.json
+            jq -e 'length == 1 and .[0].id == "1781e011b69068"' current-machines.json >/dev/null
+            jq '.[0]' current-machines.json > current-machine.json
+            python scripts/build_fly_machine_update_config.py \
+              --machine-json current-machine.json \
+              --fly-toml duckdb-server/fly.toml \
+              --output machine-config.json
+            if timeout 330s flyctl machine update 1781e011b69068 \
+                --app league-history-duckdb \
+                --image "registry.fly.io/league-history-duckdb:server-${GITHUB_SHA}" \
+                --machine-config machine-config.json --wait-timeout 300 --yes; then
               update_ok=true
               break
             fi
@@ -84,3 +98,19 @@ jobs:
             sleep 3
           done
           test "$ready" = true
+          echo "$state" | jq -e '
+            .storage_health.healthy == true and
+            .runtime_contract.duckdb_version == "v1.5.5" and
+            .runtime_contract.threads == 2
+          ' >/dev/null
+          updated_machines="$(flyctl machines list --app league-history-duckdb --json)"
+          echo "$updated_machines" | jq -e '
+            length == 1 and
+            .[0].id == "1781e011b69068" and
+            .[0].state == "started" and
+            .[0].config.stop_config.signal == "SIGTERM" and
+            .[0].config.stop_config.timeout == 300000000000 and
+            .[0].config.mounts[0].extend_threshold_percent == 80 and
+            .[0].config.mounts[0].add_size_gb == 10 and
+            .[0].config.mounts[0].size_gb_limit == 200
+          ' >/dev/null

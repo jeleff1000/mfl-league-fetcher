@@ -107,10 +107,22 @@ def test_future_schedule_uses_unique_active_manager_when_yahoo_redacts_keys():
 
         @staticmethod
         def table_exists(table_name):
-            return table_name == "matchup"
+            return table_name in {"matchup", "player_fantasy"}
 
         @staticmethod
         def read_table(table_name, year=None):
+            if table_name == "player_fantasy":
+                # A stale roster-side synthetic ID must not make the played
+                # matchup's canonical identity ambiguous.
+                return pd.DataFrame(
+                    {
+                        "year": [2026],
+                        "team_key": [""],
+                        "manager_guid": ["--hidden--"],
+                        "manager": ["Gage"],
+                        "franchise_id": ["gage-stale-roster-id"],
+                    }
+                )
             return pd.DataFrame(
                 {
                     "year": [2026, 2026],

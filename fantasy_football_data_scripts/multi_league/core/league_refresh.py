@@ -1260,7 +1260,7 @@ def resolve_active_schedule_franchise_ids(
         return schedule
 
     witnesses: list[pd.DataFrame] = []
-    for table_name in ("matchup", "player_fantasy"):
+    for identity_priority, table_name in enumerate(("matchup", "player_fantasy")):
         if not local_db.table_exists(table_name):
             continue
         frame = local_db.read_table(table_name, year=int(active_year))
@@ -1274,7 +1274,9 @@ def resolve_active_schedule_franchise_ids(
             if column in frame.columns
         ]
         if "franchise_id" in columns:
-            witnesses.append(frame.loc[:, columns].copy())
+            witness = frame.loc[:, columns].copy()
+            witness["_identity_priority"] = identity_priority
+            witnesses.append(witness)
     if not witnesses:
         raise RefreshScopeError("canonical active-season schedule identity is unavailable")
 
@@ -1283,7 +1285,7 @@ def resolve_active_schedule_franchise_ids(
     def unique_map(column: str) -> dict[str, str]:
         if column not in identity_rows.columns:
             return {}
-        scoped = identity_rows.loc[:, [column, "franchise_id"]].copy()
+        scoped = identity_rows.loc[:, [column, "franchise_id", "_identity_priority"]].copy()
         scoped[column] = scoped[column].astype("string").str.strip()
         scoped["franchise_id"] = scoped["franchise_id"].astype("string").str.strip()
         scoped = scoped.loc[
@@ -1292,17 +1294,29 @@ def resolve_active_schedule_franchise_ids(
             & ~scoped[column].isin({"", "None", "nan", "<NA>"})
             & ~scoped["franchise_id"].isin({"", "None", "nan", "<NA>"})
         ]
+        if column == "manager_guid":
+            from multi_league.core.manager_identity import hidden_manager_guid_mask
+
+            scoped = scoped.loc[~hidden_manager_guid_mask(scoped[column])]
         if scoped.empty:
             return {}
-        counts = scoped.groupby(column, dropna=False)["franchise_id"].nunique()
-        ambiguous = set(counts.loc[counts.gt(1)].index.astype(str))
-        scoped = scoped.loc[~scoped[column].astype(str).isin(ambiguous)]
-        return (
-            scoped.drop_duplicates(column)
-            .set_index(column)["franchise_id"]
-            .astype(str)
-            .to_dict()
-        )
+        resolved: dict[str, str] = {}
+        # Played matchup identity is the strongest witness. Roster rows fill
+        # only keys absent from matchup and cannot overturn them when a stale
+        # synthetic roster identity disagrees.
+        for priority in sorted(scoped["_identity_priority"].dropna().unique()):
+            candidate = scoped.loc[scoped["_identity_priority"].eq(priority)].copy()
+            counts = candidate.groupby(column, dropna=False)["franchise_id"].nunique()
+            ambiguous = set(counts.loc[counts.gt(1)].index.astype(str))
+            candidate = candidate.loc[~candidate[column].astype(str).isin(ambiguous)]
+            for key, franchise_id in (
+                candidate.drop_duplicates(column)
+                .set_index(column)["franchise_id"]
+                .astype(str)
+                .items()
+            ):
+                resolved.setdefault(str(key), franchise_id)
+        return resolved
 
     by_team_key = unique_map("team_key")
     by_guid = unique_map("manager_guid")

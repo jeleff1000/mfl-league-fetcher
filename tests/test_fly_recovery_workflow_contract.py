@@ -101,6 +101,9 @@ def test_recovery_probe_can_read_but_not_clean_up_retained_backup_volume():
     cleanup = cleanup.split("exit 0", 1)[0]
     assert 'startswith("wkupd_")' in cleanup
     assert "duckdb_backup_" not in cleanup
+    assert 'if [ "$inspect_state" = "hydrating" ]; then' in source
+    assert 'flyctl volumes show "$INSPECT_EXISTING_VOLUME_ID"' in source
+    assert '[ "$inspect_state" = "created" ]' in source
 
 
 def test_table_pilot_workflow_rejects_primary_before_calling_fly(tmp_path):

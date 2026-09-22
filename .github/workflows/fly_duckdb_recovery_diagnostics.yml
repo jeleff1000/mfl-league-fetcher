@@ -337,6 +337,13 @@ jobs:
             else
               [[ "$inspect_name" == wkupd_rebuild_* || "$inspect_name" == duckdb_backup_* ]]
             fi
+            if [ "$inspect_state" = "hydrating" ]; then
+              for _ in $(seq 1 720); do
+                inspect_state="$(flyctl volumes show "$INSPECT_EXISTING_VOLUME_ID" --app "$FLY_APP" --json | jq -r '.state')"
+                [ "$inspect_state" = "created" ] && break
+                sleep 5
+              done
+            fi
             [ "$inspect_state" = "created" ]
             [ "$inspect_attachment" = "null" ]
 

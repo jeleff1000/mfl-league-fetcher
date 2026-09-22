@@ -14,12 +14,11 @@ swap_size_mb = 4096
   DB_POOL_SIZE = '8'
   MAX_CONCURRENT_QUERIES = '8'
   QUERY_QUEUE_TIMEOUT_SECONDS = '10'
-  # Per-connection cap. The pool opens DB_POOL_SIZE (+1 ops) independent DuckDB
-  # instances, each with its own budget, so worst-case = (POOL_SIZE+1) * this.
-  # (8+1)*1024MB = ~9GB declared vs 8GB RAM; the 4GB swapfile above absorbs the
-  # overflow spike (was 2048MB = ~18GB declared, which OOM-wedged the pool).
-  # Big queries spill to the 20GiB temp dir rather than growing in RAM.
-  DUCKDB_MEMORY_LIMIT = '1024MB'
+  # DuckDB shares this cap across connections to one database instance. Keep
+  # ___leagues and ___ops bounded at 4GB each on the 16GB machine, leaving room
+  # for Python/server overhead while allowing narrow fleet merges to pin their
+  # working blocks. Big queries still spill to the 20GiB temp directory.
+  DUCKDB_MEMORY_LIMIT = '4096MB'
   DUCKDB_THREADS = '1'
   DUCKDB_WRITE_THREADS = '2'
   DUCKDB_MAX_TEMP_DIRECTORY_SIZE = '20GiB'

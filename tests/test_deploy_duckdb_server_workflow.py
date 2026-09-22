@@ -1,4 +1,5 @@
 from pathlib import Path
+import tomllib
 
 
 def test_deploy_waits_for_ready_after_machine_restart() -> None:
@@ -35,6 +36,13 @@ def test_deploy_applies_committed_runtime_without_resetting_live_capacity() -> N
     assert ".config.mounts[0].add_size_gb == 10" in workflow
     assert ".config.mounts[0].size_gb_limit == 200" in workflow
     assert '.runtime_contract.duckdb_version == "v1.5.5"' in workflow
+
+
+def test_production_duckdb_memory_budget_fits_the_machine_and_supports_merges() -> None:
+    config = tomllib.loads(Path("duckdb-server/fly.toml").read_text(encoding="utf-8"))
+
+    assert config["env"]["DUCKDB_MEMORY_LIMIT"] == "4096MB"
+    assert config["vm"][0]["memory"] == "16gb"
 
 
 def test_deploy_refuses_to_restart_with_pending_league_file_swap() -> None:

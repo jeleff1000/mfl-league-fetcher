@@ -300,6 +300,7 @@ jobs:
                 done
             flyctl machines list --app "$FLY_APP" --json | tee machines-after-cleanup.json
             flyctl volumes list --app "$FLY_APP" --json | tee volumes-after-cleanup.json
+            exit 0
           fi
 
           if [ "$INSPECT_BLOCK_ONLY" != "true" ]; then

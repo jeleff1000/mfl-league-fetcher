@@ -3039,6 +3039,96 @@ def test_populate_franchise_id_replaces_invalid_placeholder_franchise_ids(tmp_pa
     assert txn_rows == [("Moneyball", "hidden_moneyball", "The Pale Horse", "hidden_pale_horse")]
 
 
+def test_populate_franchise_id_repairs_stale_espn_trade_perspective_from_guid(tmp_path):
+    """A mirrored trade must use the year-scoped owner identity on both legs."""
+    db_name = "espn_trade_owner_repair_test"
+    db_path = tmp_path / f"{db_name}.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            franchise_id VARCHAR,
+            manager VARCHAR,
+            manager_guid VARCHAR,
+            team_name VARCHAR,
+            year INTEGER,
+            week INTEGER
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("owner_a_0", "Ryan", "owner-a", "Team A", 2024, 1),
+            ("espn_3", "Unknown", "hidden-owner", "CPU Team 1", 2024, 1),
+        ],
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.player_fantasy (
+            year INTEGER,
+            week INTEGER,
+            manager VARCHAR,
+            manager_guid VARCHAR,
+            franchise_id VARCHAR,
+            team_name VARCHAR
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.transactions (
+            transaction_id VARCHAR,
+            year INTEGER,
+            manager VARCHAR,
+            manager_guid VARCHAR,
+            team_name VARCHAR,
+            franchise_id VARCHAR,
+            source_manager VARCHAR,
+            source_manager_guid VARCHAR,
+            source_team_name VARCHAR,
+            source_franchise_id VARCHAR,
+            trade_direction VARCHAR,
+            player VARCHAR
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO public.transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                "trade-1", 2024, "Ryan", "owner-a", "Team A", "owner_a_0",
+                "Unknown", "hidden-owner", "CPU Team 1", "espn_3", "received", "Player A",
+            ),
+            (
+                "trade-1", 2024, "Ryan", "hidden-owner", "CPU Team 1", "owner_a_0",
+                "Ryan", "owner-a", "Team A", "owner_a_0", "sent", "Player A",
+            ),
+        ],
+    )
+    conn.close()
+
+    runner = _MatchupRunner(db_name=db_name, data_dir=str(tmp_path))
+    try:
+        runner.populate_franchise_id()
+        rows = runner._get_connection().execute(
+            """
+            SELECT trade_direction, franchise_id, source_franchise_id
+            FROM public.transactions
+            ORDER BY trade_direction
+            """
+        ).fetchall()
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
+
+    assert rows == [
+        ("received", "owner_a_0", "espn_3"),
+        ("sent", "espn_3", "owner_a_0"),
+    ]
+
+
 def test_ensure_missing_player_stubs_prunes_redundant_stubs_after_franchise_backfill(tmp_path):
     db_name = "matchup_redundant_player_stub_test"
     db_path = tmp_path / f"{db_name}.duckdb"

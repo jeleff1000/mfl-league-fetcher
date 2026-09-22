@@ -2037,7 +2037,11 @@ class MatchupEnrichmentsMixin:
                     WHERE NULLIF(TRIM(t.manager_guid), '') IS NOT NULL
                       AND TRIM(t.manager_guid) = TRIM(lkp.manager_guid)
                       AND t.year = lkp.year
-                   AND {needs_extra_backfill}
+                      AND (
+                          {needs_extra_backfill}
+                          OR TRIM(COALESCE(CAST(t.franchise_id AS VARCHAR), ''))
+                             != TRIM(CAST(lkp.franchise_id AS VARCHAR))
+                      )
                    AND {self._db_filter("t")}
                 """,
                     f"populate_franchise_id: {extra_table} pass 3 (manager_guid unambiguous)",
@@ -2119,7 +2123,11 @@ class MatchupEnrichmentsMixin:
                         WHERE NULLIF(TRIM(t.source_manager_guid), '') IS NOT NULL
                           AND TRIM(t.source_manager_guid) = TRIM(lkp.manager_guid)
                           AND t.year = lkp.year
-                       AND {needs_source_backfill}
+                          AND (
+                              {needs_source_backfill}
+                              OR TRIM(COALESCE(CAST(t.source_franchise_id AS VARCHAR), ''))
+                                 != TRIM(CAST(lkp.franchise_id AS VARCHAR))
+                          )
                        AND {self._db_filter("t")}
                  """,
                         "populate_franchise_id: source_franchise_id pass 2 (source_manager_guid unambiguous)",

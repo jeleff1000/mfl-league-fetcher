@@ -969,6 +969,16 @@ class FranchiseRegistry:
             )
 
         def lookup_franchise_id(row):
+            # Refresh fetchers can bind future schedule rows to an exact
+            # canonical franchise using the provider's stable team key before
+            # this shared pass runs.  Keep that registered identity: a redacted
+            # owner GUID plus a non-unique display name is weaker evidence and
+            # must not reassign the row to a same-name franchise.
+            existing = row.get("franchise_id")
+            if pd.notna(existing):
+                existing = str(existing).strip()
+                if existing in self.franchises:
+                    return existing
             return self.get_franchise_id(
                 manager_guid=row.get("manager_guid"),
                 team_name=row.get("team_name"),

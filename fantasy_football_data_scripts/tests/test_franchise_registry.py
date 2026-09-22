@@ -698,6 +698,40 @@ def test_no_null_franchise_ids_after_apply():
     assert name_nulls.empty, f"{len(name_nulls)} rows missing franchise_name"
 
 
+def test_apply_preserves_registered_canonical_franchise_id_for_redacted_future_schedule():
+    """A resolved future schedule must not be reassigned by a hidden owner name.
+
+    Yahoo can expose a real owner in played weeks and ``--hidden--`` in future
+    weeks.  The refresh binds those rows to a registered franchise before the
+    shared transformations run; applying the registry again must retain that
+    exact identity when another owner has the same display name.
+    """
+    played = _make_matchup_df(
+        _season_rows("owner-a", "Gage", "Older Gage Team", 2026)
+        + _season_rows("owner-b", "Gage", "Sun Gods", 2026)
+    )
+    registry = FranchiseRegistry.from_data(played)
+    canonical = registry.apply_franchise_columns(played)
+    sun_gods_fid = canonical.loc[
+        canonical["team_name"].eq("Sun Gods"), "franchise_id"
+    ].iloc[0]
+
+    future = pd.DataFrame(
+        {
+            "manager_guid": ["--hidden--"],
+            "manager": ["Gage"],
+            "team_name": ["Sun Gods"],
+            "year": [2026],
+            "week": [3],
+            "franchise_id": [sun_gods_fid],
+        }
+    )
+
+    result = registry.apply_franchise_columns(future)
+
+    assert result.loc[0, "franchise_id"] == sun_gods_fid
+
+
 def test_guid_prefix_collision_produces_unique_franchise_ids():
     """Two GUIDs sharing the same 8-char prefix must get different franchise_ids.
 

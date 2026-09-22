@@ -367,6 +367,42 @@ jobs:
           def snapshot_payload():
               connection = duckdb.connect(path, read_only=True)
               try:
+                  checks = {}
+                  errors = {}
+                  aggregate_checks = {
+                      "league_settings": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.league_settings",
+                      "league_context": "SELECT COUNT(*), COUNT(DISTINCT db_name) FROM public.league_context",
+                      "matchup": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.matchup",
+                      "player_fantasy": "SELECT COUNT(*), COUNT(DISTINCT db_name), MAX(year) FROM public.player_fantasy",
+                  }
+                  for name, sql in aggregate_checks.items():
+                      try:
+                          checks[name] = connection.execute(sql).fetchone()
+                      except Exception as exc:
+                          errors[name] = str(exc)
+                  for name in (
+                      "homepage_manager_rankings",
+                      "matchup_h2h_career",
+                      "player_fantasy_season",
+                      "player_fantasy_season_all",
+                      "standings_by_year",
+                  ):
+                      try:
+                          table_columns = [
+                              row[0]
+                              for row in connection.execute(
+                                  f'DESCRIBE public."{name}"'
+                              ).fetchall()
+                          ]
+                          quoted = ", ".join(
+                              '"' + column.replace('"', '""') + '"'
+                              for column in table_columns
+                          )
+                          checks[name] = connection.execute(
+                              f'SELECT COUNT(*), BIT_XOR(hash({quoted})) FROM public."{name}"'
+                          ).fetchone()
+                      except Exception as exc:
+                          errors[name] = str(exc)
                   context_columns = columns(connection, "league_context")
                   context_fields = [
                       field
@@ -439,6 +475,8 @@ jobs:
                       ).fetchall()
                       homepage_manager_rows = [dict(zip(homepage_fields, row)) for row in rows]
                   return {
+                      "checks": checks,
+                      "errors": errors,
                       "league_context": context_rows,
                       "manager_overrides": manager_overrides,
                       "matchup_identities": identity_rows,
@@ -523,6 +561,22 @@ jobs:
               flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
                 -C "/bin/sh -lc \"INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py\"" \
                 | tee identity-snapshot-probe.jsonl
+              jq -e '.snapshot.errors == {}' identity-snapshot-probe.jsonl >/dev/null
+              jq -S '.snapshot.checks' identity-snapshot-probe.jsonl > snapshot-before-restart.json
+              flyctl machine restart "$inspect_machine_id" --app "$FLY_APP"
+              for _ in $(seq 1 60); do
+                inspect_machine_state="$(flyctl machines list --app "$FLY_APP" --json \
+                  | jq -r --arg id "$inspect_machine_id" '.[] | select(.id == $id) | .state')"
+                [ "$inspect_machine_state" = "started" ] && break
+                sleep 2
+              done
+              [ "${inspect_machine_state:-}" = "started" ]
+              flyctl ssh console --app "$FLY_APP" --machine "$inspect_machine_id" \
+                -C "/bin/sh -lc \"INSPECT_DB_NAME='$INSPECT_DB_NAME' DATABASE_SERVER_URL='$DATABASE_SERVER_URL' DATABASE_READ_TOKEN='$DATABASE_READ_TOKEN' python /tmp/identity_snapshot_probe.py\"" \
+                | tee identity-snapshot-probe-after-restart.jsonl
+              jq -e '.snapshot.errors == {}' identity-snapshot-probe-after-restart.jsonl >/dev/null
+              jq -S '.snapshot.checks' identity-snapshot-probe-after-restart.jsonl > snapshot-after-restart.json
+              cmp snapshot-before-restart.json snapshot-after-restart.json
             fi
             cleanup_inspect_machine
             inspect_machine_id=""
@@ -773,6 +827,9 @@ jobs:
             snapshot-validation.jsonl
             identity-probe-machine.log
             identity-snapshot-probe.jsonl
+            identity-snapshot-probe-after-restart.jsonl
+            snapshot-before-restart.json
+            snapshot-after-restart.json
             primary-block-probe.jsonl
             startup-failure.jsonl
             startup-ready.json

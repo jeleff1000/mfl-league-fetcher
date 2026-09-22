@@ -104,6 +104,13 @@ def test_recovery_probe_can_read_but_not_clean_up_retained_backup_volume():
     assert 'if [ "$inspect_state" = "hydrating" ]; then' in source
     assert 'flyctl volumes show "$INSPECT_EXISTING_VOLUME_ID"' in source
     assert '[ "$inspect_state" = "created" ]' in source
+    assert '"homepage_manager_rankings"' in source
+    assert "BIT_XOR(hash({quoted}))" in source
+    assert 'flyctl machine restart "$inspect_machine_id"' in source
+    assert "identity-snapshot-probe-after-restart.jsonl" in source
+    assert "snapshot-before-restart.json" in source
+    assert "snapshot-after-restart.json" in source
+    assert 'cmp snapshot-before-restart.json snapshot-after-restart.json' in source
 
 
 def test_table_pilot_workflow_rejects_primary_before_calling_fly(tmp_path):

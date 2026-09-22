@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           flyctl secrets list --app league-history-duckdb --json \
-            | jq '[.[] | (.Name // .name) | select(test("^(DUCKDB_|SHUTDOWN_)"))]'
+            | jq '[.[] | (.Name // .name) | select(test("^(DUCKDB_|SHUTDOWN_|AWS_|TIGRIS_|S3_|R2_)"))]'
 
       - name: Read bounded effective storage environment
         env:

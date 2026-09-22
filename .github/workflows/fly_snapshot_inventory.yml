@@ -35,6 +35,22 @@ jobs:
           curl -sL https://fly.io/install.sh | sh
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
 
+      - name: List storage-related secret names
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          flyctl secrets list --app league-history-duckdb --json \
+            | jq '[.[] | (.Name // .name) | select(test("^(DUCKDB_|SHUTDOWN_)"))]'
+
+      - name: Read bounded effective storage environment
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          flyctl ssh console --app league-history-duckdb --machine 1781e011b69068 \
+            -C "/bin/sh -lc \"python -c 'import json, os; keys=[\\\"DUCKDB_MEMORY_LIMIT\\\",\\\"DUCKDB_THREADS\\\",\\\"DUCKDB_CHECKPOINT_THRESHOLD\\\",\\\"DUCKDB_MAX_TEMP_DIRECTORY_SIZE\\\",\\\"DUCKDB_EXPECTED_VERSION\\\",\\\"SHUTDOWN_DRAIN_SECONDS\\\"]; print(json.dumps({key: os.getenv(key) for key in keys}, sort_keys=True))'\""
+
       - name: Destroy verified orphan recovery volume
         if: inputs.destroy_recovery_volume_id != ''
         env:

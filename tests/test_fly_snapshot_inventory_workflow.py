@@ -32,3 +32,16 @@ def test_primary_snapshot_maintenance_uses_only_the_secret_volume_id() -> None:
 
     assert "FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}" in maintenance
     assert "vol_" not in maintenance
+
+
+def test_inventory_reports_only_bounded_runtime_configuration() -> None:
+    workflow = Path(".github/workflows/fly_snapshot_inventory.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "flyctl secrets list --app league-history-duckdb --json" in workflow
+    assert "DUCKDB_MEMORY_LIMIT" in workflow
+    assert "DUCKDB_THREADS" in workflow
+    assert "DUCKDB_CHECKPOINT_THRESHOLD" in workflow
+    assert "DUCKDB_MAX_TEMP_DIRECTORY_SIZE" in workflow
+    assert "cat /proc/1/environ" not in workflow

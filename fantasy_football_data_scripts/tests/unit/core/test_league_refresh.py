@@ -154,6 +154,62 @@ def test_future_schedule_uses_unique_active_manager_when_yahoo_redacts_keys():
     assert actual["opponent_franchise_id"].tolist() == ["alexis-current", "gage-current"]
 
 
+def test_future_schedule_uses_team_name_when_manager_is_disambiguated():
+    from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
+
+    class LocalDB:
+        league_name = "league_a"
+
+        @staticmethod
+        def table_exists(table_name):
+            return table_name in {"matchup", "player_fantasy"}
+
+        @staticmethod
+        def read_table(table_name, year=None):
+            if table_name == "player_fantasy":
+                # The roster witness predates display-name disambiguation and
+                # carries the owner's unsuffixed synthetic identity.
+                return pd.DataFrame(
+                    {
+                        "year": [2026],
+                        "manager_guid": ["--hidden--"],
+                        "manager": ["Gage"],
+                        "team_name": ["Sun Gods"],
+                        "franchise_id": ["yh-nick-gage"],
+                    }
+                )
+            return pd.DataFrame(
+                {
+                    "year": [2026, 2026],
+                    "manager_guid": ["yh-nick-gage", "owner-brandon"],
+                    "manager": ["Gage - Sun Gods", "Brandon"],
+                    "team_name": ["Sun Gods", "Bears"],
+                    "franchise_id": ["yh-nick-gage_1", "owner-brandon"],
+                }
+            )
+
+    future = pd.DataFrame(
+        {
+            "year": [2026, 2026],
+            "week": [3, 3],
+            "team_key": ["", ""],
+            "opponent_team_key": ["", ""],
+            "manager_guid": ["--hidden--", "owner-brandon"],
+            "opponent_guid": ["owner-brandon", "--hidden--"],
+            "manager": ["Gage", "Brandon"],
+            "opponent": ["Brandon", "Gage"],
+            "team_name": ["Sun Gods", "Bears"],
+        }
+    )
+
+    actual = resolve_active_schedule_franchise_ids(
+        LocalDB(), future, active_year=2026,
+    )
+
+    assert actual["franchise_id"].tolist() == ["yh-nick-gage_1", "owner-brandon"]
+    assert actual["opponent_franchise_id"].tolist() == ["owner-brandon", "yh-nick-gage_1"]
+
+
 def test_background_refresh_call_overlaps_main_work_and_returns_value():
     from multi_league.core.league_refresh import background_refresh_call
 

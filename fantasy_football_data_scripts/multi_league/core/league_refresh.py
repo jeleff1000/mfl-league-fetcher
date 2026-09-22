@@ -1270,7 +1270,7 @@ def resolve_active_schedule_franchise_ids(
             years = pd.to_numeric(frame["year"], errors="coerce")
             frame = frame.loc[years.eq(int(active_year))].copy()
         columns = [
-            column for column in ("team_key", "manager_guid", "manager", "franchise_id")
+            column for column in ("team_key", "manager_guid", "team_name", "manager", "franchise_id")
             if column in frame.columns
         ]
         if "franchise_id" in columns:
@@ -1320,6 +1320,7 @@ def resolve_active_schedule_franchise_ids(
 
     by_team_key = unique_map("team_key")
     by_guid = unique_map("manager_guid")
+    by_team_name = unique_map("team_name")
     # Yahoo redacts both GUID and team key on some future schedule rows.  A
     # display name is safe only when the played active-season rows prove that
     # it identifies exactly one franchise; duplicate-name managers remain
@@ -1327,7 +1328,13 @@ def resolve_active_schedule_franchise_ids(
     by_manager = unique_map("manager")
     result = schedule.copy()
 
-    def resolve_side(*, team_column: str, guid_column: str, manager_column: str) -> pd.Series:
+    def resolve_side(
+        *,
+        team_column: str,
+        guid_column: str,
+        team_name_column: str | None = None,
+        manager_column: str | None = None,
+    ) -> pd.Series:
         resolved = pd.Series(pd.NA, index=result.index, dtype="string")
         if team_column in result.columns and by_team_key:
             keys = result[team_column].astype("string").str.strip()
@@ -1335,17 +1342,57 @@ def resolve_active_schedule_franchise_ids(
         if guid_column in result.columns and by_guid:
             guids = result[guid_column].astype("string").str.strip()
             resolved = resolved.fillna(guids.map(by_guid).astype("string"))
-        if manager_column in result.columns and by_manager:
+        if team_name_column and team_name_column in result.columns and by_team_name:
+            team_names = result[team_name_column].astype("string").str.strip()
+            resolved = resolved.fillna(team_names.map(by_team_name).astype("string"))
+        if manager_column and manager_column in result.columns and by_manager:
             managers = result[manager_column].astype("string").str.strip()
             resolved = resolved.fillna(managers.map(by_manager).astype("string"))
         return resolved
 
     result["franchise_id"] = resolve_side(
-        team_column="team_key", guid_column="manager_guid", manager_column="manager",
+        team_column="team_key",
+        guid_column="manager_guid",
+        team_name_column="team_name",
+        manager_column="manager",
     )
-    result["opponent_franchise_id"] = resolve_side(
-        team_column="opponent_team_key", guid_column="opponent_guid", manager_column="opponent",
+    opponent_ids = resolve_side(
+        team_column="opponent_team_key",
+        guid_column="opponent_guid",
     )
+    # The full schedule is reciprocal. When Yahoo redacts the opponent's keys,
+    # reuse the franchise already resolved on that opponent's own row for the
+    # same week. This is stronger than a stale roster display-name witness and
+    # remains unambiguous when one owner controls multiple teams.
+    if all(column in result.columns for column in ("year", "week", "manager", "opponent")):
+        reciprocal = pd.DataFrame(
+            {
+                "year": pd.to_numeric(result["year"], errors="coerce"),
+                "week": pd.to_numeric(result["week"], errors="coerce"),
+                "manager": result["manager"].astype("string").str.strip(),
+                "franchise_id": result["franchise_id"].astype("string").str.strip(),
+            }
+        ).dropna()
+        counts = reciprocal.groupby(["year", "week", "manager"])["franchise_id"].nunique()
+        unique_keys = counts.loc[counts.eq(1)].index
+        reciprocal = reciprocal.set_index(["year", "week", "manager"]).loc[unique_keys]
+        reciprocal_map = reciprocal["franchise_id"].to_dict()
+        opponent_keys = zip(
+            pd.to_numeric(result["year"], errors="coerce"),
+            pd.to_numeric(result["week"], errors="coerce"),
+            result["opponent"].astype("string").str.strip(),
+            strict=True,
+        )
+        counterpart_ids = pd.Series(
+            [reciprocal_map.get(key, pd.NA) for key in opponent_keys],
+            index=result.index,
+            dtype="string",
+        )
+        opponent_ids = opponent_ids.fillna(counterpart_ids)
+    if "opponent" in result.columns and by_manager:
+        opponent_names = result["opponent"].astype("string").str.strip()
+        opponent_ids = opponent_ids.fillna(opponent_names.map(by_manager).astype("string"))
+    result["opponent_franchise_id"] = opponent_ids
     missing_team = int(result["franchise_id"].isna().sum())
     missing_opponent = int(result["opponent_franchise_id"].isna().sum())
     if missing_team or missing_opponent:

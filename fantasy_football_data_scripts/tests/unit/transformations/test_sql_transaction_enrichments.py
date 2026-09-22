@@ -409,6 +409,33 @@ def test_fix_unknown_managers_backfills_franchise_id_from_nearest_known_row(tmp_
             runner._conn.close()
 
 
+def test_fix_unknown_managers_preserves_stable_hidden_trade_identity(tmp_path):
+    """A hidden owner with a resolved franchise is not an orphaned transaction."""
+    runner = _setup_txn_db(tmp_path, "txn_hidden_trade_identity")
+    runner.conn.execute(
+        """
+        INSERT INTO public.transactions VALUES
+            ('player-1', 2024, 8, 202408, 'add', 'Ryan', 'fid_ryan', 0),
+            ('player-1', 2024, 9, 202409, 'trade', 'Unknown', 'espn_3', 0)
+        """
+    )
+
+    try:
+        runner.fix_unknown_managers()
+        row = runner.conn.execute(
+            """
+            SELECT manager, franchise_id
+            FROM public.transactions
+            WHERE transaction_type = 'trade'
+            """
+        ).fetchone()
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
+
+    assert row == ("Unknown", "espn_3")
+
+
 def test_fix_unknown_managers_raises_when_franchise_id_column_missing(tmp_path):
     """Site 2 pre-flight check: if transactions table has no franchise_id column, raise."""
     db_name = "txn_unknown_mgr_no_fid"

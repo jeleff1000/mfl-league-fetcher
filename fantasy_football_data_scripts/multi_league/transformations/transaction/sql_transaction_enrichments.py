@@ -1604,6 +1604,15 @@ class TransactionEnrichmentsMixin:
                   AND {self._db_filter('t')}
                   AND (manager IS NULL
                        OR LOWER(TRIM(manager)) IN ('unknown', ''))
+                  -- A resolved franchise belongs to a real hidden/private
+                  -- owner.  Nearest-player inference must only repair true
+                  -- orphans, otherwise it can rewrite one leg of a trade to
+                  -- the counterparty and break the mirrored identity.
+                  AND (
+                      franchise_id IS NULL
+                      OR LOWER(TRIM(COALESCE(CAST(franchise_id AS VARCHAR), '')))
+                         IN ('', '--', '--hidden--', 'none', 'nan', '<na>', 'n/a', 'null')
+                  )
             ),
             known_trans AS (
                 SELECT {', '.join(known_select)}

@@ -247,10 +247,33 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     )
     conn.execute(
         "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
-        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE)"
+        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, "
+        "p_playoffs DOUBLE, p_champ DOUBLE)"
     )
     conn.execute(
-        "INSERT INTO public.matchup VALUES ('afi_data',2026,1,'gray-franchise',152.66,129.66)"
+        "INSERT INTO public.matchup VALUES "
+        "('afi_data',2026,1,'gray-franchise',152.66,129.66,63.4,11.2)"
+    )
+    conn.execute(
+        "CREATE TABLE public.matchup_season (db_name VARCHAR, year INTEGER, "
+        "franchise_id VARCHAR, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup_season VALUES "
+        "('afi_data',2026,'gray-franchise',63.4,11.2)"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER, "
+        "num_teams INTEGER, playoff_start_week INTEGER)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('afi_data',2026,1,2)")
+    conn.execute(
+        "CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, opponent_franchise_id VARCHAR, is_playoffs BOOLEAN)"
+    )
+    conn.execute(
+        "INSERT INTO public.schedule VALUES "
+        "('afi_data',2026,1,'gray-franchise','opponent-franchise',FALSE)"
     )
     conn.execute("CREATE TABLE public.homepage_league_summary (db_name VARCHAR)")
     conn.execute("INSERT INTO public.homepage_league_summary VALUES ('afi_data')")
@@ -261,7 +284,7 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     ):
         conn.execute(f"CREATE TABLE public.{table} (db_name VARCHAR, franchise_id VARCHAR, {metric} INTEGER)")
     publish = (
-        "homepage_league_summary", "matchup_career",
+        "matchup", "matchup_season", "homepage_league_summary", "matchup_career",
         "homepage_manager_rankings", "homepage_current_standings",
     )
     with pytest.raises(IncompleteSourceError, match="matchup_career lacks"):
@@ -279,7 +302,7 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
         provider_id_column="espn_player_id",
-        published_tables=("homepage_league_summary", "homepage_manager_rankings", "homepage_current_standings"),
+        published_tables=("matchup", "matchup_season", "homepage_league_summary", "homepage_manager_rankings", "homepage_current_standings"),
         server_rebuilds_career_rollups=True,
     )["active_scored_career_franchises"] == 1
     conn.execute("DELETE FROM public.homepage_current_standings WHERE db_name='afi_data'")
@@ -293,7 +316,7 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     conn.execute("DROP TABLE public.matchup_career")
     health = assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
-        provider_id_column="espn_player_id", published_tables=("matchup",),
+        provider_id_column="espn_player_id", published_tables=("matchup", "matchup_season"),
         server_rebuilds_career_rollups=True,
         server_rebuilds_homepage_rollups=True,
     )
@@ -303,7 +326,7 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     with pytest.raises(IncompleteSourceError, match="homepages must not be uploaded"):
         assert_refresh_derived_output_health(
             conn, db_name="afi_data", year=2026, weeks=(1,),
-            provider_id_column="espn_player_id", published_tables=("matchup", "homepage_league_summary"),
+            provider_id_column="espn_player_id", published_tables=("matchup", "matchup_season", "homepage_league_summary"),
             server_rebuilds_career_rollups=True,
             server_rebuilds_homepage_rollups=True,
         )
@@ -311,10 +334,171 @@ def test_scored_matchup_franchises_require_career_and_homepage_coverage():
     # worker scratch database intentionally does not build either family.
     assert assert_refresh_derived_output_health(
         conn, db_name="afi_data", year=2026, weeks=(1,),
-        provider_id_column="espn_player_id", published_tables=("matchup",),
+        provider_id_column="espn_player_id", published_tables=("matchup", "matchup_season"),
         server_rebuilds_career_rollups=True,
         server_rebuilds_homepage_rollups=True,
     )["homepage_validation_location"] == "atomic_fly"
+
+
+def test_latest_finalized_week_requires_fresh_playoff_simulation_outputs():
+    import duckdb
+
+    from multi_league.core.league_update_validation import (
+        assert_active_season_simulation_health,
+    )
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, "
+        "is_bye_week BOOLEAN, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup VALUES "
+        "('afi_data',2026,1,'gray',120.0,110.0,FALSE,55.0,8.0), "
+        "('afi_data',2026,1,'blue',110.0,120.0,FALSE,45.0,6.0), "
+        "('afi_data',2026,2,'gray',130.0,125.0,FALSE,NULL,NULL), "
+        "('afi_data',2026,2,'blue',125.0,130.0,FALSE,NULL,NULL), "
+        "('other',2026,2,'other',140.0,100.0,FALSE,NULL,NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE public.matchup_season (db_name VARCHAR, year INTEGER, "
+        "franchise_id VARCHAR, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER, "
+        "num_teams INTEGER, playoff_start_week INTEGER)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('afi_data',2026,2,3)")
+    conn.execute(
+        "CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, opponent_franchise_id VARCHAR, is_playoffs BOOLEAN)"
+    )
+    conn.execute(
+        "INSERT INTO public.schedule VALUES "
+        "('afi_data',2026,1,'gray','blue',FALSE), "
+        "('afi_data',2026,1,'blue','gray',FALSE), "
+        "('afi_data',2026,2,'gray','blue',FALSE), "
+        "('afi_data',2026,2,'blue','gray',FALSE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup_season VALUES "
+        "('afi_data',2026,'gray',55.0,8.0), "
+        "('afi_data',2026,'blue',45.0,6.0)"
+    )
+
+    with pytest.raises(IncompleteSourceError, match="latest finalized week.*simulation"):
+        assert_active_season_simulation_health(conn, db_name="afi_data", year=2026)
+
+    conn.execute(
+        "UPDATE public.matchup SET p_playoffs = CASE franchise_id WHEN 'gray' THEN 62.0 ELSE 38.0 END, "
+        "p_champ = CASE franchise_id WHEN 'gray' THEN 10.0 ELSE 4.0 END "
+        "WHERE db_name='afi_data' AND year=2026 AND week=2"
+    )
+    with pytest.raises(IncompleteSourceError, match="matchup_season.*latest simulation"):
+        assert_active_season_simulation_health(conn, db_name="afi_data", year=2026)
+
+    conn.execute(
+        "UPDATE public.matchup_season SET "
+        "p_playoffs = CASE franchise_id WHEN 'gray' THEN 62.0 ELSE 38.0 END, "
+        "p_champ = CASE franchise_id WHEN 'gray' THEN 10.0 ELSE 4.0 END "
+        "WHERE db_name='afi_data' AND year=2026"
+    )
+    assert assert_active_season_simulation_health(
+        conn, db_name="afi_data", year=2026,
+    ) == {
+        "latest_finalized_week": 2,
+        "latest_simulation_franchises": 2,
+        "simulation_season_franchises": 2,
+    }
+    conn.execute(
+        "DELETE FROM public.matchup WHERE db_name='afi_data' AND year=2026 "
+        "AND week=2 AND franchise_id='blue'"
+    )
+    with pytest.raises(IncompleteSourceError, match="simulation franchise coverage.*expected=2"):
+        assert_active_season_simulation_health(conn, db_name="afi_data", year=2026)
+
+
+def test_playoff_simulation_rejects_a_truncated_future_schedule():
+    import duckdb
+
+    from multi_league.core.league_update_validation import (
+        IncompleteSourceError,
+        assert_active_season_simulation_health,
+    )
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, "
+        "is_bye_week BOOLEAN, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup VALUES "
+        "('afi_data',2026,1,'gray',120,110,FALSE,60,10), "
+        "('afi_data',2026,1,'blue',110,120,FALSE,40,5)"
+    )
+    conn.execute(
+        "CREATE TABLE public.matchup_season (db_name VARCHAR, year INTEGER, "
+        "franchise_id VARCHAR, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup_season VALUES "
+        "('afi_data',2026,'gray',60,10), ('afi_data',2026,'blue',40,5)"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER, "
+        "num_teams INTEGER, playoff_start_week INTEGER)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('afi_data',2026,2,4)")
+    conn.execute(
+        "CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, opponent_franchise_id VARCHAR, is_playoffs BOOLEAN)"
+    )
+    conn.execute(
+        "INSERT INTO public.schedule VALUES "
+        "('afi_data',2026,1,'gray','blue',FALSE), "
+        "('afi_data',2026,1,'blue','gray',FALSE)"
+    )
+
+    with pytest.raises(IncompleteSourceError, match="schedule.*through regular-season week 3"):
+        assert_active_season_simulation_health(conn, db_name="afi_data", year=2026)
+
+
+def test_simulation_gate_checks_schedule_before_the_first_final_matchup():
+    import duckdb
+
+    from multi_league.core.league_update_validation import (
+        IncompleteSourceError,
+        assert_active_season_simulation_health,
+    )
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, "
+        "p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER, "
+        "num_teams INTEGER, playoff_start_week INTEGER)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('new_league',2026,2,3)")
+    conn.execute(
+        "CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, opponent_franchise_id VARCHAR, is_playoffs BOOLEAN)"
+    )
+    conn.execute(
+        "INSERT INTO public.schedule VALUES "
+        "('new_league',2026,1,'one','two',FALSE), "
+        "('new_league',2026,1,'two','one',FALSE)"
+    )
+
+    with pytest.raises(IncompleteSourceError, match="schedule.*through regular-season week 2"):
+        assert_active_season_simulation_health(conn, db_name="new_league", year=2026)
 
 
 def test_yahoo_scoreboard_pair_graph_requires_complete_reciprocal_coverage():

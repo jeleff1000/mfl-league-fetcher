@@ -228,6 +228,12 @@ def build_refresh_plan(
         reasons.add("missing_materialized_week")
         weeks.update(missing_weeks)
 
+    # A local derived-output repair is anchored by persisted league data, not
+    # by the provider/NFL manifest. That manifest can legitimately lag the
+    # latest already-published matchup week.
+    if reasons and materialized:
+        weeks.add(max(materialized))
+
     requires_refresh = bool(resources or reasons or weeks)
     # Retain the latest materialized scope as an overlap witness, but never use
     # it as a lower bound that discards an older correction.
@@ -266,8 +272,10 @@ def build_refresh_plan(
     )
 
 
-def _missing_derived_aggregate_years(reader, *, safe_db: str) -> set[int]:
-    """Find only the three source-backed partitions lost in the storage incident."""
+def _derived_refresh_gaps(
+    reader, *, safe_db: str, active_season: int,
+) -> tuple[set[int], bool]:
+    """Find aggregate damage and the tiny active simulation-schedule gap in one scan."""
     rows = reader.query(
         "WITH source_keys AS ("
         "SELECT DISTINCT 'player_fantasy_season' AS target_name, "
@@ -301,17 +309,44 @@ def _missing_derived_aggregate_years(reader, *, safe_db: str) -> set[int]:
         "FROM source_keys WHERE year IS NOT NULL GROUP BY target_name, year), "
         "target_fingerprints AS ("
         "SELECT target_name, year, COUNT(*) AS key_count, BIT_XOR(HASH(key_value)) AS key_hash "
-        "FROM target_keys WHERE year IS NOT NULL GROUP BY target_name, year) "
-        "SELECT string_agg(CAST(COALESCE(s.year, t.year) AS VARCHAR), ',' "
-        "ORDER BY COALESCE(s.year, t.year)) AS missing_derived_years "
+        "FROM target_keys WHERE year IS NOT NULL GROUP BY target_name, year), "
+        "aggregate_gaps AS ("
+        "SELECT COALESCE(s.year, t.year) AS year "
         "FROM source_fingerprints s FULL OUTER JOIN target_fingerprints t "
         "USING (target_name, year) "
         "WHERE COALESCE(s.key_count, 0) <> COALESCE(t.key_count, 0) "
-        "OR s.key_hash IS DISTINCT FROM t.key_hash",
+        "OR s.key_hash IS DISTINCT FROM t.key_hash), "
+        "config AS ("
+        "SELECT MAX(TRY_CAST(num_teams AS INTEGER)) AS num_teams, "
+        "MAX(TRY_CAST(playoff_start_week AS INTEGER)) - 1 AS regular_season_end "
+        "FROM public.league_settings "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)}), "
+        "coverage AS ("
+        "SELECT TRY_CAST(week AS INTEGER) AS week, COUNT(*) AS row_count, "
+        "COUNT(DISTINCT NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '')) AS franchise_count, "
+        "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) AS opponent_count "
+        "FROM public.schedule "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
+        "AND COALESCE(is_playoffs, FALSE) = FALSE GROUP BY 1), "
+        "complete AS ("
+        "SELECT COUNT(*) AS complete_weeks FROM coverage c CROSS JOIN config f "
+        "WHERE c.week BETWEEN 1 AND f.regular_season_end "
+        "AND c.row_count = f.num_teams AND c.franchise_count = f.num_teams "
+        "AND c.opponent_count = f.num_teams) "
+        "SELECT (SELECT string_agg(CAST(year AS VARCHAR), ',' ORDER BY year) "
+        "FROM aggregate_gaps) AS missing_derived_years, "
+        "CASE WHEN f.num_teams IS NULL OR f.regular_season_end IS NULL "
+        "OR f.num_teams < 1 OR f.regular_season_end < 1 "
+        "OR c.complete_weeks <> f.regular_season_end THEN TRUE ELSE FALSE END "
+        "AS incomplete_simulation_schedule FROM config f CROSS JOIN complete c",
         database="___leagues",
     )
-    raw = str((rows[0] if rows else {}).get("missing_derived_years") or "")
-    return {int(year) for year in raw.split(",") if year.strip()}
+    row = rows[0] if rows else {}
+    raw = str(row.get("missing_derived_years") or "")
+    return (
+        {int(year) for year in raw.split(",") if year.strip()},
+        bool(row.get("incomplete_simulation_schedule")),
+    )
 
 
 def _parse_manifest(raw: object, *, label: str) -> SourceManifest:
@@ -441,13 +476,20 @@ def load_persisted_refresh_plan(
     # too: otherwise an active-week update can rebuild careers from an already
     # incomplete retained season table. This is one league-filtered fingerprint
     # query and never downloads or republishes historical source rows.
-    missing_derived_years = _missing_derived_aggregate_years(reader, safe_db=safe_db)
+    required_reasons: set[str] = set()
+    missing_derived_years, incomplete_simulation_schedule = _derived_refresh_gaps(
+        reader, safe_db=safe_db, active_season=active_season,
+    )
     if missing_derived_years:
+        required_reasons.add("missing_derived_aggregate")
+    if incomplete_simulation_schedule:
+        required_reasons.add("incomplete_simulation_schedule")
+    if required_reasons:
         plan = build_refresh_plan(
             observed,
             published,
             materialized,
-            required_reasons=("missing_derived_aggregate",),
+            required_reasons=required_reasons,
         )
     return PersistedRefreshPlan(
         plan=plan,

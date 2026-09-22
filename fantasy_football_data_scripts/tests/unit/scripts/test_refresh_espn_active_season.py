@@ -145,6 +145,72 @@ def test_zero_espn_schedule_scores_require_every_team_lineup():
         _hydrate_zero_espn_schedule_scores(schedules, rosters)
 
 
+def test_full_espn_schedule_expands_every_regular_week_with_stable_identities():
+    from refresh_espn_active_season import _full_espn_schedule_frame
+
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda team_id, _team_name, _year: {1: "Gray", 2: "Will"}[team_id],
+        get_manager_guid=lambda team_id, _year: {1: "guid-gray", 2: "guid-will"}[team_id],
+        get_franchise_id=lambda team_id, _year: {1: "gray-0", 2: "will-0"}[team_id],
+        get_team_name=lambda team_id, _year: {1: "Gray Team", 2: "Will Team"}[team_id],
+    )
+    raw = [
+        {
+            "matchupPeriodId": week,
+            "playoffTierType": "NONE",
+            "winner": "UNDECIDED",
+            "home": {"teamId": 1},
+            "away": {"teamId": 2},
+        }
+        for week in (1, 2, 3)
+    ]
+
+    schedule = _full_espn_schedule_frame(
+        ctx=ctx,
+        raw_schedule=raw,
+        year=2026,
+        regular_season_weeks=3,
+        expected_team_ids=("1", "2"),
+    )
+
+    assert len(schedule) == 6
+    assert sorted(schedule["week"].unique().tolist()) == [1, 2, 3]
+    future = schedule.loc[schedule["week"].eq(3)].sort_values("franchise_id")
+    assert future[["manager", "franchise_id", "opponent_franchise_id"]].values.tolist() == [
+        ["Gray", "gray-0", "will-0"],
+        ["Will", "will-0", "gray-0"],
+    ]
+
+
+def test_full_espn_schedule_rejects_a_truncated_regular_season():
+    from multi_league.core.league_update_validation import IncompleteSourceError
+    from refresh_espn_active_season import _full_espn_schedule_frame
+
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda team_id, _team_name, _year: str(team_id),
+        get_manager_guid=lambda team_id, _year: f"guid-{team_id}",
+        get_franchise_id=lambda team_id, _year: f"franchise-{team_id}",
+        get_team_name=lambda team_id, _year: f"Team {team_id}",
+    )
+    raw = [{
+        "matchupPeriodId": 1,
+        "playoffTierType": "NONE",
+        "home": {"teamId": 1},
+        "away": {"teamId": 2},
+    }]
+
+    with pytest.raises(IncompleteSourceError, match="missing regular-season weeks.*2"):
+        _full_espn_schedule_frame(
+            ctx=ctx,
+            raw_schedule=raw,
+            year=2026,
+            regular_season_weeks=2,
+            expected_team_ids=("1", "2"),
+        )
+
+
 def test_espn_refresh_rejects_a_missing_prior_week_matchup():
     from refresh_espn_active_season import assert_espn_closed_matchup_weeks
     from multi_league.core.league_refresh import RefreshScopeError

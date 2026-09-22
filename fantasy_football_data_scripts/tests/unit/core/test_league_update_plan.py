@@ -190,10 +190,14 @@ def test_different_database_manifests_are_rejected():
 
 
 class Reader:
-    def __init__(self, manifest_row, weeks=(1, 2, 3), missing_derived_years=()):
+    def __init__(
+        self, manifest_row, weeks=(1, 2, 3), missing_derived_years=(),
+        incomplete_simulation_schedule=False,
+    ):
         self.manifest_row = manifest_row
         self.weeks = weeks
         self.missing_derived_years = missing_derived_years
+        self.incomplete_simulation_schedule = incomplete_simulation_schedule
 
     def query(self, sql, *, database):
         if database == "___ops":
@@ -201,7 +205,10 @@ class Reader:
         assert database == "___leagues"
         if "missing_derived_years" in sql:
             value = ",".join(str(year) for year in self.missing_derived_years) or None
-            return [{"missing_derived_years": value}]
+            return [{
+                "missing_derived_years": value,
+                "incomplete_simulation_schedule": self.incomplete_simulation_schedule,
+            }]
         return [{"year": 2026, "week": week} for week in self.weeks]
 
 
@@ -223,6 +230,29 @@ def test_persisted_plan_treats_missing_derived_aggregate_as_refresh_work():
     assert plan is not None
     assert plan.weeks == (1,)
     assert plan.reasons == ("missing_derived_aggregate",)
+
+
+def test_persisted_plan_treats_a_truncated_simulation_schedule_as_refresh_work():
+    # The persisted NFL manifest can lag a provider week. A local derived-data
+    # repair must still replay the latest materialized league week.
+    current = manifest(nfl=(resource("nfl", "game", "2026:1:A@B", "one"),))
+    row = {
+        "observed_manifest_json": canonical_manifest_json(current),
+        "observed_manifest_digest": manifest_digest(current),
+        "published_manifest_json": canonical_manifest_json(current),
+        "published_manifest_digest": manifest_digest(current),
+    }
+
+    plan = load_persisted_refresh_plan(
+        Reader(row, weeks=(1, 2), incomplete_simulation_schedule=True),
+        database_name="league_a",
+        active_season=2026,
+        expected_observed_digest=manifest_digest(current),
+    )
+
+    assert plan is not None
+    assert plan.weeks == (2,)
+    assert plan.reasons == ("incomplete_simulation_schedule",)
 
 
 def test_persisted_plan_verifies_the_exact_ui_observation_and_selects_changed_week():
@@ -489,6 +519,7 @@ def test_persisted_plan_materialization_check_is_one_grouped_bounded_scan():
     assert "player_fantasy_season_all" in aggregate_gap_sql
     assert "standings_by_year" in aggregate_gap_sql
     assert "BIT_XOR(HASH(key_value))" in aggregate_gap_sql
+    assert "incomplete_simulation_schedule" in aggregate_gap_sql
     assert "EXCEPT" not in aggregate_gap_sql
 
 

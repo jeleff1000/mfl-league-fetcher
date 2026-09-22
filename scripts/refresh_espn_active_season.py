@@ -157,6 +157,94 @@ def _finalized_espn_matchup_weeks(
     return finalized
 
 
+def _full_espn_schedule_frame(
+    *,
+    ctx: Any,
+    raw_schedule: list[dict[str, Any]],
+    year: int,
+    regular_season_weeks: int,
+    expected_team_ids: tuple[str, ...],
+) -> pd.DataFrame:
+    """Expand ESPN's one-call season schedule into canonical team-week rows."""
+    from multi_league.core.league_update_validation import IncompleteSourceError
+
+    expected = {str(team_id) for team_id in expected_team_ids}
+    rows: list[dict[str, Any]] = []
+    teams_by_week: dict[int, list[str]] = {}
+    for matchup in raw_schedule or []:
+        if not isinstance(matchup, dict):
+            continue
+        try:
+            week = int(matchup.get("matchupPeriodId"))
+        except (TypeError, ValueError):
+            continue
+        if week < 1 or week > int(regular_season_weeks):
+            continue
+        home = matchup.get("home")
+        away = matchup.get("away")
+        if not isinstance(home, dict) or not isinstance(away, dict):
+            raise IncompleteSourceError(f"ESPN schedule week {week} has a missing matchup side")
+        try:
+            home_id = int(home.get("teamId"))
+            away_id = int(away.get("teamId"))
+        except (TypeError, ValueError) as exc:
+            raise IncompleteSourceError(f"ESPN schedule week {week} has an invalid team identity") from exc
+        tier = str(matchup.get("playoffTierType") or "NONE").strip().upper()
+        is_playoffs = int(tier == "WINNERS_BRACKET")
+        is_consolation = int(tier != "NONE" and not is_playoffs)
+        winner = str(matchup.get("winner") or "").strip().upper()
+        for side_name, team_id, opponent_id in (
+            ("home", home_id, away_id),
+            ("away", away_id, home_id),
+        ):
+            team_name = ctx.get_team_name(team_id, year)
+            opponent_team_name = ctx.get_team_name(opponent_id, year)
+            franchise_id = ctx.get_franchise_id(team_id, year)
+            opponent_franchise_id = ctx.get_franchise_id(opponent_id, year)
+            result = None
+            if winner in {"HOME", "AWAY"}:
+                result = winner.lower() == side_name
+            elif winner == "TIE":
+                result = None
+            rows.append({
+                "year": int(year),
+                "week": week,
+                "manager": ctx.get_manager_name(team_id, team_name, year),
+                "manager_guid": ctx.get_manager_guid(team_id, year),
+                "franchise_id": franchise_id,
+                "team_name": team_name,
+                "manager_week": f"{franchise_id}_{int(year)}_{week}",
+                "opponent": ctx.get_manager_name(opponent_id, opponent_team_name, year),
+                "opponent_guid": ctx.get_manager_guid(opponent_id, year),
+                "opponent_franchise_id": opponent_franchise_id,
+                "win": int(result is True) if result is not None else None,
+                "loss": int(result is False) if result is not None else None,
+                "is_playoffs": is_playoffs,
+                "is_consolation": is_consolation,
+                "platform": "espn",
+                "league_id": str(ctx.get_league_id_for_year(year)),
+            })
+            teams_by_week.setdefault(week, []).append(str(team_id))
+
+    missing_weeks = [
+        week for week in range(1, int(regular_season_weeks) + 1)
+        if week not in teams_by_week
+    ]
+    if missing_weeks:
+        raise IncompleteSourceError(
+            f"ESPN full schedule is missing regular-season weeks {missing_weeks}"
+        )
+    for week, team_ids in sorted(teams_by_week.items()):
+        observed = set(team_ids)
+        if observed != expected or len(team_ids) != len(expected):
+            raise IncompleteSourceError(
+                f"ESPN full schedule week {week} team coverage mismatch: "
+                f"missing={sorted(expected - observed)}, extra={sorted(observed - expected)}, "
+                f"rows={len(team_ids)}, expected={len(expected)}"
+            )
+    return pd.DataFrame(rows)
+
+
 def _hydrate_zero_espn_schedule_scores(
     schedules: dict[int, list[dict[str, Any]]],
     rosters: pd.DataFrame,
@@ -569,8 +657,23 @@ def _merge_active_payloads(
         local_db, "league_settings", settings, platform="espn", league_id=league_id
     )
 
+    playoff_start_week = int(settings.iloc[0]["playoff_start_week"])
+    regular_season_weeks = playoff_start_week - 1
+    if regular_season_weeks < 1:
+        raise RuntimeError(f"ESPN returned an invalid playoff start week for {active_year}")
+
     def fetch_secondary_payloads():
         secondary_client = ESPNAPIClient(ctx.league_id, ctx.espn_s2, ctx.swid)
+        full_payload = secondary_client.get_raw_league(
+            active_year, ("mScoreboard", "mMatchupScore")
+        )
+        full_schedule = _full_espn_schedule_frame(
+            ctx=ctx,
+            raw_schedule=full_payload.get("schedule", []) if isinstance(full_payload, dict) else [],
+            year=active_year,
+            regular_season_weeks=regular_season_weeks,
+            expected_team_ids=expected_team_ids,
+        )
         schedules: dict[int, list[dict[str, Any]]] = {}
         final_weeks = _finalized_espn_matchup_weeks(
             secondary_client,
@@ -587,7 +690,7 @@ def _merge_active_payloads(
             client=secondary_client,
             league=league,
         )
-        return final_weeks, schedules, transaction_rows
+        return final_weeks, schedules, transaction_rows, full_schedule
 
     secondary_payload_future = start_background_refresh_call(fetch_secondary_payloads)
 
@@ -642,7 +745,14 @@ def _merge_active_payloads(
         )
         roster_rows += len(safe_rows)
 
-    final_matchup_weeks, final_schedule_graphs, transactions = secondary_payload_future.result()
+    final_matchup_weeks, final_schedule_graphs, transactions, full_schedule = secondary_payload_future.result()
+    merge_provider_refresh_table(
+        local_db,
+        "schedule",
+        full_schedule,
+        platform="espn",
+        league_id=league_id,
+    )
     _hydrate_zero_espn_schedule_scores(final_schedule_graphs, rosters)
     assert_espn_closed_matchup_weeks(
         refresh_weeks=refresh_weeks,
@@ -729,6 +839,8 @@ def _merge_active_payloads(
         "final_matchup_rows": int(matchup_rows),
         "stale_matchup_rows_removed": int(stale_matchup_rows_removed),
         "final_matchup_weeks": len(final_matchup_weeks),
+        "schedule_rows": int(len(full_schedule)),
+        "schedule_weeks": int(regular_season_weeks),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
         "placeholder_draft_rows_removed": placeholder_draft_rows_removed,

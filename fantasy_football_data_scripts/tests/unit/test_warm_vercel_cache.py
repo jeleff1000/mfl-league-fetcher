@@ -43,6 +43,7 @@ def test_manifest_route_inventory_maps_touched_tables(tmp_path):
     assert "https://leaguehistory.app/speed_test/transactions" in urls
     assert "https://leaguehistory.app/api/league/speed_test/transactions" in urls
     assert "/api/league/{db}/matchups?meta=1" in cache_required
+    assert "/api/league/{db}/simulations" in cache_required
     assert "/api/league/{db}/transactions" in cache_required
 
 

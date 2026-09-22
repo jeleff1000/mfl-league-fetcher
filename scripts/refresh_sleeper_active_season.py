@@ -394,24 +394,27 @@ def _merge_active_payloads(
     player_cache.refresh_if_stale(client)
     final_matchup_weeks = [week for week in refresh_weeks if _sleeper_week_is_final(active_league, week)]
     matchups = pd.DataFrame()
-    schedule = pd.DataFrame()
+    playoff_start_week = int(settings.iloc[0]["playoff_start_week"])
+    full_schedule_weeks = list(range(1, playoff_start_week))
+    schedule = SleeperScheduleFetcher(ctx, client).fetch_schedule_for_year(
+        active_year, weeks=full_schedule_weeks
+    )
+    if not schedule.empty:
+        merge_provider_refresh_table(
+            local_db, "schedule", schedule, platform="sleeper", league_id=league_id
+        )
     if final_matchup_weeks:
         matchups = SleeperMatchupFetcher(ctx, client).fetch_matchups_for_year(active_year, weeks=final_matchup_weeks)
         if not matchups.empty:
             merge_provider_refresh_table(
                 local_db, "matchup", matchups, platform="sleeper", league_id=league_id
             )
-        schedule = SleeperScheduleFetcher(ctx, client).fetch_schedule_for_year(active_year, weeks=final_matchup_weeks)
-        if not schedule.empty:
-            merge_provider_refresh_table(
-                local_db, "schedule", schedule, platform="sleeper", league_id=league_id
-            )
         matchup_rows = int(len(matchups))
         schedule_rows = int(len(schedule))
     else:
-        print(f"[Sleeper] {active_year} weeks {refresh_weeks}: scoring leg still live; holding matchup/schedule rows")
+        print(f"[Sleeper] {active_year} weeks {refresh_weeks}: scoring leg still live; holding matchup rows")
         matchup_rows = 0
-        schedule_rows = 0
+        schedule_rows = int(len(schedule))
 
     rosters = SleeperRosterFetcher(ctx, client, player_cache).fetch_season_rosters(
         active_year, weeks=refresh_weeks, db=local_db
@@ -503,7 +506,10 @@ def _merge_active_payloads(
         player_id_column="sleeper_player_id",
         rosters=rosters,
         matchups=matchups,
-        schedule=schedule,
+        schedule=(
+            schedule.loc[pd.to_numeric(schedule["week"], errors="coerce").isin(final_matchup_weeks)].copy()
+            if not schedule.empty and "week" in schedule else schedule
+        ),
         draft=draft,
     )
     return {

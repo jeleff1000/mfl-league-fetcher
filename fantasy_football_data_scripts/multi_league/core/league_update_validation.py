@@ -526,6 +526,212 @@ def _derived_id_rows(
     return keyed
 
 
+def assert_active_season_simulation_health(
+    conn: Any, *, db_name: str, year: int,
+) -> dict[str, int | None]:
+    """Require the latest finalized regular week and season rollup to carry fresh sims."""
+    matchup_columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'matchup'"
+        ).fetchall()
+    }
+    if not matchup_columns:
+        return {
+            "latest_finalized_week": None,
+            "latest_simulation_franchises": 0,
+            "simulation_season_franchises": 0,
+        }
+    required = {
+        "db_name", "year", "week", "franchise_id", "team_points",
+        "opponent_points", "p_playoffs", "p_champ",
+    }
+    if not required <= matchup_columns:
+        raise IncompleteSourceError(
+            "matchup simulation columns are missing: "
+            + ", ".join(sorted(required - matchup_columns))
+        )
+    regular_filters = []
+    if "is_bye_week" in matchup_columns:
+        regular_filters.append("COALESCE(is_bye_week, FALSE) = FALSE")
+    if "is_playoffs" in matchup_columns:
+        regular_filters.append("COALESCE(is_playoffs, FALSE) = FALSE")
+    if "is_consolation" in matchup_columns:
+        regular_filters.append("COALESCE(is_consolation, FALSE) = FALSE")
+    regular_sql = "" if not regular_filters else " AND " + " AND ".join(regular_filters)
+    latest_row = conn.execute(
+        "SELECT MAX(week) FROM public.matchup "
+        "WHERE db_name = ? AND year = ? "
+        "AND team_points IS NOT NULL AND opponent_points IS NOT NULL"
+        + regular_sql,
+        [str(db_name), int(year)],
+    ).fetchone()
+    latest_week = latest_row[0] if latest_row else None
+
+    settings_columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'league_settings'"
+        ).fetchall()
+    }
+    if not {"db_name", "year", "num_teams", "playoff_start_week"} <= settings_columns:
+        raise IncompleteSourceError("league settings cannot prove the active regular-season schedule")
+    settings_row = conn.execute(
+        "SELECT CAST(num_teams AS INTEGER), CAST(playoff_start_week AS INTEGER) "
+        "FROM public.league_settings WHERE db_name = ? AND year = ? LIMIT 1",
+        [str(db_name), int(year)],
+    ).fetchone()
+    if (
+        not settings_row or settings_row[0] is None or settings_row[1] is None
+        or int(settings_row[0]) < 1 or int(settings_row[1]) < 2
+    ):
+        raise IncompleteSourceError("league settings have no valid active-season schedule boundary")
+    expected_teams = int(settings_row[0])
+    regular_season_end = int(settings_row[1]) - 1
+
+    schedule_columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'schedule'"
+        ).fetchall()
+    }
+    required_schedule = {
+        "db_name", "year", "week", "franchise_id", "opponent_franchise_id",
+    }
+    if not required_schedule <= schedule_columns:
+        raise IncompleteSourceError(
+            "schedule cannot prove future simulation inputs: "
+            + ", ".join(sorted(required_schedule - schedule_columns))
+        )
+    schedule_filter = ""
+    if "is_playoffs" in schedule_columns:
+        schedule_filter = " AND COALESCE(is_playoffs, FALSE) = FALSE"
+    schedule_rows = conn.execute(
+        "SELECT CAST(week AS INTEGER), COUNT(*), "
+        "COUNT(DISTINCT NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '')), "
+        "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) "
+        "FROM public.schedule WHERE db_name = ? AND year = ? "
+        "AND week BETWEEN 1 AND ?" + schedule_filter + " GROUP BY week ORDER BY week",
+        [str(db_name), int(year), regular_season_end],
+    ).fetchall()
+    complete_weeks = {
+        int(week) for week, row_count, franchise_count, opponent_count in schedule_rows
+        if int(row_count or 0) == expected_teams
+        and int(franchise_count or 0) == expected_teams
+        and int(opponent_count or 0) == expected_teams
+    }
+    missing_schedule_weeks = sorted(set(range(1, regular_season_end + 1)) - complete_weeks)
+    if missing_schedule_weeks:
+        raise IncompleteSourceError(
+            f"schedule must cover every team through regular-season week {regular_season_end}; "
+            f"missing or incomplete weeks={missing_schedule_weeks}"
+        )
+    schedule_franchises = {
+        str(row[0]).strip() for row in conn.execute(
+            "SELECT DISTINCT CAST(franchise_id AS VARCHAR) FROM public.schedule "
+            "WHERE db_name = ? AND year = ? AND week BETWEEN 1 AND ? "
+            "AND NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '') IS NOT NULL"
+            + schedule_filter,
+            [str(db_name), int(year), regular_season_end],
+        ).fetchall()
+    }
+    if len(schedule_franchises) != expected_teams:
+        raise IncompleteSourceError(
+            "schedule active franchise coverage differs from league settings "
+            f"(observed={len(schedule_franchises)}, expected={expected_teams})"
+        )
+    if latest_week is None:
+        return {
+            "latest_finalized_week": None,
+            "latest_simulation_franchises": 0,
+            "simulation_season_franchises": 0,
+        }
+
+    latest_rows = conn.execute(
+        "SELECT CAST(franchise_id AS VARCHAR), COUNT(*), COUNT(p_playoffs), COUNT(p_champ), "
+        "MIN(CAST(p_playoffs AS DOUBLE)), MAX(CAST(p_playoffs AS DOUBLE)), "
+        "MIN(CAST(p_champ AS DOUBLE)), MAX(CAST(p_champ AS DOUBLE)) "
+        "FROM public.matchup WHERE db_name = ? AND year = ? AND week = ? "
+        "AND team_points IS NOT NULL AND opponent_points IS NOT NULL"
+        + regular_sql
+        + " GROUP BY franchise_id",
+        [str(db_name), int(year), int(latest_week)],
+    ).fetchall()
+    latest: dict[str, tuple[float, float]] = {}
+    for franchise_id, row_count, playoff_count, champ_count, p_min, p_max, c_min, c_max in latest_rows:
+        key = str(franchise_id or "").strip()
+        valid = (
+            bool(key)
+            and int(row_count or 0) > 0
+            and int(playoff_count or 0) == int(row_count or 0)
+            and int(champ_count or 0) == int(row_count or 0)
+            and all(value is not None and isfinite(float(value)) for value in (p_min, p_max, c_min, c_max))
+            and 0 <= float(p_min) <= float(p_max) <= 100
+            and 0 <= float(c_min) <= float(c_max) <= 100
+            and abs(float(p_max) - float(p_min)) <= 0.011
+            and abs(float(c_max) - float(c_min)) <= 0.011
+        )
+        if not valid:
+            raise IncompleteSourceError(
+                f"latest finalized week {int(latest_week)} lacks complete simulation output"
+            )
+        latest[key] = (float(p_max), float(c_max))
+    if not latest:
+        raise IncompleteSourceError(
+            f"latest finalized week {int(latest_week)} lacks simulation franchises"
+        )
+    if len(latest) != expected_teams or set(latest) != schedule_franchises:
+        raise IncompleteSourceError(
+            "latest simulation franchise coverage differs from the complete schedule "
+            f"(observed={len(latest)}, expected={expected_teams})"
+        )
+
+    season_columns = {
+        str(row[0]) for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'matchup_season'"
+        ).fetchall()
+    }
+    required_season = {"db_name", "year", "franchise_id", "p_playoffs", "p_champ"}
+    if not required_season <= season_columns:
+        raise IncompleteSourceError(
+            "matchup_season latest simulation columns are missing: "
+            + ", ".join(sorted(required_season - season_columns))
+        )
+    season_rows = conn.execute(
+        "SELECT CAST(franchise_id AS VARCHAR), CAST(p_playoffs AS DOUBLE), CAST(p_champ AS DOUBLE) "
+        "FROM public.matchup_season WHERE db_name = ? AND year = ?",
+        [str(db_name), int(year)],
+    ).fetchall()
+    season: dict[str, tuple[float, float]] = {}
+    for franchise_id, p_playoffs, p_champ in season_rows:
+        key = str(franchise_id or "").strip()
+        if (
+            not key or key in season or p_playoffs is None or p_champ is None
+            or not isfinite(float(p_playoffs)) or not isfinite(float(p_champ))
+            or not 0 <= float(p_playoffs) <= 100 or not 0 <= float(p_champ) <= 100
+        ):
+            raise IncompleteSourceError("matchup_season has invalid latest simulation output")
+        season[key] = (float(p_playoffs), float(p_champ))
+    missing = set(latest) - set(season)
+    extra = set(season) - set(latest)
+    stale = {
+        key for key in latest.keys() & season.keys()
+        if abs(latest[key][0] - season[key][0]) > 0.011
+        or abs(latest[key][1] - season[key][1]) > 0.011
+    }
+    if missing or extra or stale:
+        raise IncompleteSourceError(
+            "matchup_season does not carry the latest simulation output "
+            f"(missing={len(missing)}, extra={len(extra)}, stale={len(stale)})"
+        )
+    return {
+        "latest_finalized_week": int(latest_week),
+        "latest_simulation_franchises": len(latest),
+        "simulation_season_franchises": len(season),
+    }
+
+
 def assert_refresh_derived_output_health(
     conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
     provider_id_column: str, published_tables: tuple[str, ...] | list[str],
@@ -585,14 +791,18 @@ def assert_refresh_derived_output_health(
                 [str(db_name), int(year), *selected_weeks],
             ).fetchall()
         }
-        if "" in active_franchises:
-            raise IncompleteSourceError("scored matchup has no stable franchise identity")
+    if "" in active_franchises:
+        raise IncompleteSourceError("scored matchup has no stable franchise identity")
+    simulation_health = assert_active_season_simulation_health(
+        conn, db_name=db_name, year=year,
+    )
     required_publish = {"homepage_league_summary"}
     if active_players:
         required_publish |= {"player_fantasy_career", "player_fantasy_career_all"}
     if active_franchises:
         required_publish |= {
-            "matchup_career", "homepage_manager_rankings", "homepage_current_standings",
+            "matchup", "matchup_season", "matchup_career",
+            "homepage_manager_rankings", "homepage_current_standings",
         }
     if server_rebuilds_career_rollups:
         if set(published_tables) & set(CAREER_ROLLUP_TABLES):
@@ -674,6 +884,7 @@ def assert_refresh_derived_output_health(
         "active_scored_career_franchises": len(active_franchises),
         "homepage_summary_rows": int(summary) if summary is not None else None,
         "homepage_validation_location": "atomic_fly" if atomic_homepage else "worker",
+        **simulation_health,
     }
 
 

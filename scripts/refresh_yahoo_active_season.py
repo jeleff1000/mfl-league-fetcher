@@ -1590,7 +1590,7 @@ def _merge_refresh_payloads(
     from multi_league.data_fetchers.yahoo.yahoo_draft import fetch_draft_data
     from multi_league.data_fetchers.yahoo.yahoo_matchups import weekly_matchup_data
     from multi_league.data_fetchers.yahoo.yahoo_rosters import fetch_rosters_for_year
-    from multi_league.data_fetchers.yahoo.yahoo_schedules import _derive_schedule_df_from_matchup_df
+    from multi_league.data_fetchers.yahoo.yahoo_schedules import fetch_schedule_for_year
     from multi_league.data_fetchers.yahoo.yahoo_transactions import fetch_transactions
 
     league_key = ctx.get_league_id_for_year(year)
@@ -1680,19 +1680,17 @@ def _merge_refresh_payloads(
             matchup_rows += len(final_matchups)
 
         current_schedule_frames.append(raw_schedule)
-        schedule = _derive_schedule_df_from_matchup_df(
-            raw_schedule,
-            year,
-            getattr(ctx, "manager_name_overrides", None) or {},
-        )
-        merge_provider_refresh_table(
-            local_db,
-            "schedule",
-            schedule,
-            platform="yahoo",
-            league_id=league_key,
-        )
-        schedule_rows += len(schedule)
+    schedule = fetch_schedule_for_year(ctx, year, local_db=local_db)
+    if schedule is None or schedule.empty:
+        raise YahooIncompleteSourceError(f"Yahoo returned no full schedule for {year}")
+    merge_provider_refresh_table(
+        local_db,
+        "schedule",
+        schedule,
+        platform="yahoo",
+        league_id=league_key,
+    )
+    schedule_rows = len(schedule)
 
     transaction_windows = _transaction_matchup_windows(
         local_db,

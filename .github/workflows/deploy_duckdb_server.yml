@@ -124,7 +124,8 @@ jobs:
             .[0].id == "1781e011b69068" and
             .[0].state == "started" and
             .[0].config.stop_config.signal == "SIGTERM" and
-            .[0].config.stop_config.timeout == 300000000000 and
+            (.[0].config.stop_config.timeout == "5m0s" or
+             .[0].config.stop_config.timeout == 300000000000) and
             .[0].config.mounts[0].extend_threshold_percent == 80 and
             .[0].config.mounts[0].add_size_gb == 10 and
             .[0].config.mounts[0].size_gb_limit == 200

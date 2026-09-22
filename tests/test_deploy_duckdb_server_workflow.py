@@ -29,6 +29,7 @@ def test_deploy_applies_committed_runtime_without_resetting_live_capacity() -> N
     assert "flyctl secrets unset --app league-history-duckdb --stage" in workflow
     assert '"DUCKDB_MEMORY_LIMIT" "DUCKDB_THREADS"' in workflow
     assert 'stop_config.signal == "SIGTERM"' in workflow
+    assert '.config.stop_config.timeout == "5m0s"' in workflow
     assert ".config.stop_config.timeout == 300000000000" in workflow
     assert ".config.mounts[0].extend_threshold_percent == 80" in workflow
     assert ".config.mounts[0].add_size_gb == 10" in workflow

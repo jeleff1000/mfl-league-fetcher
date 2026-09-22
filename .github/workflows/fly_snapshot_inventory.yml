@@ -43,6 +43,11 @@ jobs:
           flyctl secrets list --app league-history-duckdb --json \
             | jq '[.[] | (.Name // .name) | select(test("^(DUCKDB_|SHUTDOWN_|AWS_|TIGRIS_|S3_|R2_)"))]'
 
+      - name: List Fly object-storage buckets
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl storage list
+
       - name: Read bounded effective storage environment
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

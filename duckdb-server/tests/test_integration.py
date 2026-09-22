@@ -200,6 +200,11 @@ def test_ready_endpoint(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "serving"
+    assert body["storage_health"]["healthy"] is True
+    assert set(body["wal"]) == {"___leagues", "___ops"}
+    assert body["disk"]["total_bytes"] >= body["disk"]["free_bytes"] >= 0
+    assert body["runtime_contract"]["duckdb_version"]
+    assert "checkpoint" in body
 
 
 def test_ready_endpoint_returns_503_until_serving(client):
@@ -725,6 +730,29 @@ def test_server_state_exposes_runtime_capacity(client):
     assert body["duckdb_config"]["pool_size"] == 2
     assert body["duckdb_config"]["memory_limit"]
     assert body["derived_recovery"]["stage"] == "idle"
+    assert body["storage_health"]["healthy"] is True
+    assert body["wal"]["___leagues"]["bytes"] >= 0
+    assert body["disk"]["used_percent"] >= 0
+    assert body["runtime_contract"]["threads"] >= 1
+    assert "data_dir" not in body
+
+
+def test_low_disk_space_rejects_writes_without_querying_duckdb(client, monkeypatch):
+    import main as main_mod
+
+    monkeypatch.setattr(
+        main_mod,
+        "_disk_state",
+        lambda: {"total_bytes": 100, "used_bytes": 99, "free_bytes": 1, "used_percent": 99.0},
+    )
+    monkeypatch.setattr(main_mod, "MIN_FREE_DISK_BYTES", 2)
+    response = client.post(
+        "/query-rw",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"database": "___leagues", "sql": "CREATE TABLE must_not_run (i INTEGER)"},
+    )
+    assert response.status_code == 503
+    assert "disk free space" in response.text
 
 
 def test_derived_recovery_status_does_not_touch_database(client, monkeypatch):

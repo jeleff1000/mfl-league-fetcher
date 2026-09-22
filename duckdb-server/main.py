@@ -1,6 +1,7 @@
 """DuckDB Server — self-hosted league data API."""
 
 import asyncio
+from dataclasses import asdict
 import hashlib
 import json
 import logging
@@ -178,6 +179,7 @@ SHUTDOWN_DRAIN_SECONDS = _env_float("SHUTDOWN_DRAIN_SECONDS", 240.0, min_value=1
 DUCKDB_WAL_SOFT_MB = _env_float("DUCKDB_WAL_SOFT_MB", 128.0, min_value=1.0)
 DUCKDB_WAL_HARD_MB = _env_float("DUCKDB_WAL_HARD_MB", 512.0, min_value=1.0)
 DUCKDB_WAL_MAX_AGE_SECONDS = _env_float("DUCKDB_WAL_MAX_AGE_SECONDS", 300.0, min_value=1.0)
+MIN_FREE_DISK_BYTES = int(_env_float("DUCKDB_MIN_FREE_DISK_MB", 1024.0, min_value=1.0) * 1024 * 1024)
 SOFT_DRAIN_TIMEOUT = 10
 HARD_DRAIN_TIMEOUT = 30
 POOL_REOPEN_MAX_ATTEMPTS = int(os.environ.get("POOL_REOPEN_MAX_ATTEMPTS", "8"))
@@ -220,6 +222,18 @@ _ops_read_count_lock = threading.Lock()
 # until the final close/rename/reopen handoff.
 _ops_rebuild_lock = threading.Lock()
 _storage_health = StorageHealth()
+_runtime_contract: RuntimeContract | None = None
+_checkpoint_telemetry_lock = threading.Lock()
+_checkpoint_telemetry: dict[str, Any] = {
+    "status": "never",
+    "reason": None,
+    "started_at": None,
+    "completed_at": None,
+    "elapsed_seconds": None,
+    "wal_before_bytes": None,
+    "wal_after_bytes": None,
+    "error": None,
+}
 _wal_policy = WalPolicy(
     soft_bytes=int(DUCKDB_WAL_SOFT_MB * 1024 * 1024),
     max_age_seconds=DUCKDB_WAL_MAX_AGE_SECONDS,
@@ -233,6 +247,19 @@ def _mark_storage_failure_if_fatal(error: BaseException, stage: str) -> bool:
     _storage_health.mark_unhealthy(stage, error)
     logger.critical("DuckDB storage write-closed after %s: %s", stage, error, exc_info=True)
     return True
+
+
+def _safe_storage_error(error: object) -> str:
+    message = str(error)
+    data_dir = str(Path(os.environ.get("DATA_DIR", "/data")))
+    if data_dir:
+        message = message.replace(data_dir, "<data>")
+    return message[:300]
+
+
+def _checkpoint_telemetry_update(**values: Any) -> None:
+    with _checkpoint_telemetry_lock:
+        _checkpoint_telemetry.update(values)
 
 
 def _start_derived_recovery_progress() -> None:
@@ -572,6 +599,17 @@ def _checkpoint_connection_if_wal_large(
     if not force and not checkpoint_due:
         return False
     checkpoint_start = time.perf_counter()
+    checkpoint_started_at = time.time()
+    _checkpoint_telemetry_update(
+        status="running",
+        reason=reason,
+        started_at=checkpoint_started_at,
+        completed_at=None,
+        elapsed_seconds=None,
+        wal_before_bytes=state.bytes,
+        wal_after_bytes=None,
+        error=None,
+    )
     logger.warning(
         "DuckDB WAL %.1f MB exceeds %.1f MB; checkpointing %s",
         before_mb,
@@ -588,10 +626,25 @@ def _checkpoint_connection_if_wal_large(
     except Exception as exc:
         logger.warning("DuckDB checkpoint failed for %s: %s", reason, exc, exc_info=True)
         _storage_health.mark_unhealthy(f"checkpoint {reason}", exc)
+        _checkpoint_telemetry_update(
+            status="failed",
+            completed_at=time.time(),
+            elapsed_seconds=round(time.perf_counter() - checkpoint_start, 4),
+            wal_after_bytes=wal_state(_wal_path(db_path)).bytes,
+            error=_safe_storage_error(exc),
+        )
         if raise_on_error:
             raise
         return False
-    after_mb = _wal_size_mb(db_path)
+    after_state = wal_state(_wal_path(db_path))
+    after_mb = after_state.bytes / (1024 * 1024)
+    _checkpoint_telemetry_update(
+        status="succeeded",
+        completed_at=time.time(),
+        elapsed_seconds=round(time.perf_counter() - checkpoint_start, 4),
+        wal_after_bytes=after_state.bytes,
+        error=None,
+    )
     logger.info(
         "DuckDB checkpoint complete for %s in %.2fs (wal %.1f MB -> %.1f MB)",
         reason,
@@ -684,6 +737,7 @@ async def _checkpoint_if_due(reason: str, *, force: bool = False) -> bool:
             )
         except Exception as exc:
             _storage_health.mark_unhealthy(f"checkpoint {reason}", exc)
+            _state["status"] = "storage_unhealthy"
             logger.error("Coordinated checkpoint failed for %s: %s", reason, exc, exc_info=True)
             return False
         finally:
@@ -742,6 +796,7 @@ def _prepare_ops_wal_for_startup(data_dir: Path) -> None:
 
 
 def _startup_db_sync(data_dir: Path) -> None:
+    global _runtime_contract
     logger.info("DuckDB startup: recovery begin")
     startup_recovery(data_dir)
     logger.info("DuckDB startup: cleanup begin")
@@ -784,7 +839,7 @@ def _startup_db_sync(data_dir: Path) -> None:
             )
     finally:
         db.release_connection(conn)
-    _assert_runtime_contract()
+    _runtime_contract = _assert_runtime_contract()
     logger.info("DuckDB startup: pool init complete")
 
 
@@ -885,7 +940,7 @@ async def shutdown_database(*, deadline: float) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _query_semaphore, _merge_lock, _delta_publish_semaphore, _delta_publish_inflight
-    global _ops_read_count, _ops_write_count, _storage_health
+    global _ops_read_count, _ops_write_count, _runtime_contract, _storage_health
     _state["status"] = "starting"
     data_dir = Path(os.environ.get("DATA_DIR", "/data"))
     storage_owner = StorageOwner(data_dir)
@@ -897,6 +952,7 @@ async def lifespan(app: FastAPI):
         storage_owner.acquire()
         owner_acquired = True
         _storage_health = StorageHealth()
+        _runtime_contract = None
         _ops_read_count = 0
         _ops_write_count = 0
         _query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
@@ -948,6 +1004,45 @@ def _storage_wal_states() -> dict[str, Any]:
     }
 
 
+def _disk_state() -> dict[str, int | float]:
+    usage = shutil.disk_usage(Path(os.environ.get("DATA_DIR", "/data")))
+    used = usage.total - usage.free
+    return {
+        "total_bytes": usage.total,
+        "used_bytes": used,
+        "free_bytes": usage.free,
+        "used_percent": round((used / usage.total) * 100, 2) if usage.total else 0.0,
+    }
+
+
+def _storage_telemetry() -> dict[str, Any]:
+    health = _storage_health.snapshot()
+    public_health = {
+        **health,
+        "error": _safe_storage_error(health["error"]) if health.get("error") else None,
+    }
+    wal = {
+        name: {"bytes": state.bytes, "age_seconds": round(state.age_seconds, 3)}
+        for name, state in _storage_wal_states().items()
+    }
+    with _checkpoint_telemetry_lock:
+        checkpoint = dict(_checkpoint_telemetry)
+    runtime = asdict(_runtime_contract) if _runtime_contract is not None else {
+        "duckdb_version": None,
+        "checkpoint_threshold": None,
+        "memory_limit": None,
+        "threads": None,
+        "max_temp_directory_size": None,
+    }
+    return {
+        "storage_health": public_health,
+        "wal": wal,
+        "disk": _disk_state(),
+        "checkpoint": checkpoint,
+        "runtime_contract": runtime,
+    }
+
+
 def _assert_storage_write_admission() -> None:
     _storage_health.assert_writable()
     blocked = [
@@ -958,6 +1053,11 @@ def _assert_storage_write_admission() -> None:
     if blocked:
         raise StorageUnhealthyError(
             "WAL hard limit reached for " + ", ".join(sorted(blocked))
+        )
+    disk = _disk_state()
+    if disk["free_bytes"] < MIN_FREE_DISK_BYTES:
+        raise StorageUnhealthyError(
+            "DuckDB disk free space is below the write safety reserve"
         )
 
 
@@ -2223,7 +2323,11 @@ async def ready():
     # ___ops replacement is snapshot-based: the old read snapshot remains online while the new
     # file is built. Keep Fly routing traffic during that bounded handoff instead of advertising a
     # machine outage for every research publish.
-    if _state["status"] not in {"serving", "ops_snapshotting"}:
+    storage = _storage_telemetry()
+    if (
+        _state["status"] not in {"serving", "ops_snapshotting"}
+        or not storage["storage_health"]["healthy"]
+    ):
         payload = {
             "status": _state["status"],
             "ready": False,
@@ -2235,6 +2339,7 @@ async def ready():
             "delta_publishes": _delta_publish_inflight,
             "delta_publish_capacity": MAX_INFLIGHT_DELTA_PUBLISHES,
             "pool_size": db.POOL_SIZE,
+            **storage,
         }
         return Response(
             content=json.dumps(payload),
@@ -2255,12 +2360,14 @@ async def ready():
         "pool_size": db.POOL_SIZE,
         "league_file_hash": meta.get("___leagues", {}).get("file_hash", "unknown"),
         "databases": meta,
+        **storage,
     }
 
 
 @app.get("/internal/server-state")
 async def server_state():
     meta = db.get_metadata()
+    storage = _storage_telemetry()
     try:
         memory_info = await asyncio.wait_for(asyncio.to_thread(_get_duckdb_memory_info), timeout=0.5)
     except TimeoutError:
@@ -2285,6 +2392,7 @@ async def server_state():
         "databases": meta,
         "duckdb_memory": memory_info,
         "duckdb_config": db.get_runtime_config(),
+        **storage,
     }
 
 

@@ -37,6 +37,7 @@ swap_size_mb = 4096
   DUCKDB_WAL_HARD_MB = '512'
   DUCKDB_WAL_MAX_AGE_SECONDS = '300'
   DUCKDB_CHECKPOINT_TIMEOUT_SECONDS = '600'
+  DUCKDB_MIN_FREE_DISK_MB = '1024'
   SHUTDOWN_DRAIN_SECONDS = '240'
   # Admin-only full database replacements. The current verified ___ops_nfl
   # artifact is larger than the former 5 GiB ceiling; incremental league
@@ -46,6 +47,11 @@ swap_size_mb = 4096
 [[mounts]]
   source = 'duckdb_data'
   destination = '/data'
+  snapshot_retention = 60
+  scheduled_snapshots = true
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = '10GB'
+  auto_extend_size_limit = '200GB'
 
 [http_service]
   internal_port = 8080

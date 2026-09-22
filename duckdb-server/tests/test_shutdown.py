@@ -13,6 +13,9 @@ def test_fly_grants_sigterm_enough_time_for_bounded_drain():
     assert "kill_signal = 'SIGTERM'" in config
     assert "kill_timeout = 300" in config
     assert "SHUTDOWN_DRAIN_SECONDS = '240'" in config
+    assert "snapshot_retention = 60" in config
+    assert "scheduled_snapshots = true" in config
+    assert "auto_extend_size_threshold = 80" in config
 
 
 def test_shutdown_orders_admission_checkpoint_close(monkeypatch):

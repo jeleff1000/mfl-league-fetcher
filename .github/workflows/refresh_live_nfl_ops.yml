@@ -1,14 +1,17 @@
 name: Refresh Live NFL Ops
 run-name: >-
-  Refresh Live NFL Ops — ${{ github.event_name == 'repository_dispatch' && 'scheduled' || inputs.game_date || 'manual' }}
+  Refresh Live NFL Ops — ${{ (github.event_name == 'repository_dispatch' || github.event_name == 'schedule') && 'scheduled' || inputs.game_date || 'manual' }}
 
 # Track 1 only: this workflow builds a complete local ___ops_nfl replacement
 # from finalized NFLverse data. It never imports, reads, writes, or rebuilds
 # any league table. Promotion is opt-in after the local eight-table artifact
 # passes its receipt and schema gates.
 on:
-  # A dedicated timezone-aware scheduler dispatches this worker.  GitHub
-  # Actions remains the only process that builds or writes the Ops artifact.
+  # Run at 03:17 Eastern during the NFL season. The scope gate exits before
+  # baseline reconstruction on days without newly finalized NFLverse games.
+  schedule:
+    - cron: "17 7 * 9,10 *"
+    - cron: "17 8 * 11,12,1,2 *"
   repository_dispatch:
     types:
       - live-nfl-ops-refresh
@@ -114,7 +117,7 @@ jobs:
           DISPATCH_GAME_DATE: ${{ github.event.client_payload.game_date || '' }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+          if [[ "$EVENT_NAME" == "repository_dispatch" || "$EVENT_NAME" == "schedule" ]]; then
             default_game_date=$(TZ=America/New_York date --date=yesterday +%F)
             game_date="${DISPATCH_GAME_DATE:-$default_game_date}"
             python scripts/discover_live_nfl_ops_refresh.py \
@@ -219,7 +222,7 @@ jobs:
           python scripts/refresh_live_nfl_ops.py "${refresh_args[@]}"
 
       - name: Publish the verified candidate as the next durable baseline
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -245,7 +248,7 @@ jobs:
             publish/ops_nfl.duckdb.sha256 --repo "$OPS_REPOSITORY"
 
       - name: Atomically promote the verified ops artifact
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code:${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -276,7 +279,7 @@ jobs:
           PY
 
       - name: Materialize compact league-update NFL revisions
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -291,7 +294,7 @@ jobs:
             --week "${{ steps.scope.outputs.refresh_week }}"
 
       - name: Verify promoted Fly receipt
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         env:
           PYTHONPATH: ${{ github.workspace }}/code:${{ github.workspace }}/code/fantasy_football_data_scripts
           DATABASE_BACKEND: fly

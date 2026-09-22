@@ -24,7 +24,7 @@ def should_run(event: str, now: datetime) -> bool:
     normalized_event = event.strip()
     if normalized_event == "workflow_dispatch":
         return True
-    if normalized_event != "repository_dispatch":
+    if normalized_event not in {"repository_dispatch", "schedule"}:
         return False
 
     eastern_now = now.astimezone(EASTERN)

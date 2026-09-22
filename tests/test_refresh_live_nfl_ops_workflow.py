@@ -10,13 +10,16 @@ GATE = Path(__file__).resolve().parents[1] / "scripts" / "live_nfl_ops_dispatch_
 LEGACY_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "update_nfl_super_table.yml"
 
 
-def test_live_nfl_ops_workflow_accepts_only_manual_or_dedicated_scheduler_dispatches():
+def test_live_nfl_ops_workflow_accepts_manual_dispatch_and_bounded_actions_schedule():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     triggers = workflow[True]
 
     assert "workflow_dispatch" in triggers
     assert triggers["repository_dispatch"] == {"types": ["live-nfl-ops-refresh"]}
-    assert "schedule" not in triggers
+    assert triggers["schedule"] == [
+        {"cron": "17 7 * 9,10 *"},
+        {"cron": "17 8 * 11,12,1,2 *"},
+    ]
     assert "push" not in triggers
     assert "workflow_run" not in triggers
     assert "repository_dispatch" in workflow["run-name"]
@@ -85,6 +88,8 @@ def test_dispatch_gate_admits_manual_runs_and_only_the_0130_to_0500_et_dispatch_
         return completed.stdout.strip()
 
     assert authorize("workflow_dispatch", "2026-09-14T09:00:00-04:00") == "should_run=true"
+    assert authorize("schedule", "2026-09-14T03:17:00-04:00") == "should_run=true"
+    assert authorize("schedule", "2026-09-14T05:00:00-04:00") == "should_run=false"
     assert authorize("repository_dispatch", "2026-09-14T01:30:00-04:00") == "should_run=true"
     assert authorize("repository_dispatch", "2026-09-14T04:59:59-04:00") == "should_run=true"
     assert authorize("repository_dispatch", "2026-09-14T01:29:59-04:00") == "should_run=false"

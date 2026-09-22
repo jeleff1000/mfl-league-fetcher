@@ -35,6 +35,7 @@ import db
 from auth import get_bearer_token, validate_read_token, validate_admin_token, AuthError
 from swap import atomic_swap, verify_checksum, startup_recovery, SwapError
 import fleet_merge
+from storage_guard import RuntimeContract, StorageOwner
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -104,6 +105,7 @@ _POSTHOG_SLOW_QUERY_THRESHOLD_SECONDS = _env_float(
 )
 
 MAX_CONCURRENT_QUERIES = int(os.environ.get("MAX_CONCURRENT_QUERIES", "5"))
+EXPECTED_DUCKDB_VERSION = os.environ.get("DUCKDB_EXPECTED_VERSION", _duckdb.__version__).lstrip("v")
 QUERY_QUEUE_TIMEOUT_SECONDS = _env_float("QUERY_QUEUE_TIMEOUT_SECONDS", 1.0, min_value=0.1)
 QUERY_OPS_WRITE_WAIT_SECONDS = _env_float(
     "QUERY_OPS_WRITE_WAIT_SECONDS",
@@ -688,7 +690,26 @@ def _startup_db_sync(data_dir: Path) -> None:
             )
     finally:
         db.release_connection(conn)
+    _assert_runtime_contract()
     logger.info("DuckDB startup: pool init complete")
+
+
+def _assert_runtime_contract() -> RuntimeContract:
+    """Reject writes when the effective engine settings drift from deployment config."""
+    configured = db.get_runtime_config()
+    expected = RuntimeContract(
+        duckdb_version=f"v{EXPECTED_DUCKDB_VERSION}",
+        checkpoint_threshold=str(configured["checkpoint_threshold"]),
+        memory_limit=str(configured["memory_limit"]),
+        threads=int(configured["threads"]),
+        max_temp_directory_size=str(configured["temp_limit"]),
+    )
+    conn = db.acquire_connection(timeout=10.0)
+    try:
+        expected.assert_matches(conn)
+        return RuntimeContract.read(conn)
+    finally:
+        db.release_connection(conn)
 
 
 async def _startup_db_background(data_dir: Path) -> None:
@@ -734,13 +755,15 @@ async def _wait_for_startup_before_write() -> bool:
 async def lifespan(app: FastAPI):
     global _query_semaphore, _merge_lock, _delta_publish_semaphore, _delta_publish_inflight
     _state["status"] = "starting"
+    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
+    storage_owner = StorageOwner(data_dir)
+    storage_owner.acquire()
     _query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
     _merge_lock = asyncio.Lock()
     _delta_publish_semaphore = asyncio.Semaphore(MAX_INFLIGHT_DELTA_PUBLISHES)
     with _delta_publish_active_lock:
         _delta_publish_inflight = 0
         _delta_publish_active.clear()
-    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
     startup_task: asyncio.Task | None = None
     if ASYNC_DB_STARTUP:
         startup_task = asyncio.create_task(_startup_db_background(data_dir))
@@ -748,21 +771,24 @@ async def lifespan(app: FastAPI):
         _startup_db_sync(data_dir)
         _set_serving_or_ops_writing()
     watchdog_task = asyncio.create_task(_watchdog())
-    yield
-    watchdog_task.cancel()
-    if startup_task is not None:
-        startup_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await watchdog_task
-    if startup_task is not None:
+    try:
+        yield
+    finally:
+        watchdog_task.cancel()
+        if startup_task is not None:
+            startup_task.cancel()
         with suppress(asyncio.CancelledError):
-            await startup_task
-    db.close_all()
-    if posthog_client is not None:
-        try:
-            posthog_client.flush()
-        except Exception as exc:
-            logger.debug("PostHog flush failed: %s", exc)
+            await watchdog_task
+        if startup_task is not None:
+            with suppress(asyncio.CancelledError):
+                await startup_task
+        db.close_all()
+        storage_owner.release()
+        if posthog_client is not None:
+            try:
+                posthog_client.flush()
+            except Exception as exc:
+                logger.debug("PostHog flush failed: %s", exc)
 
 
 app = FastAPI(lifespan=lifespan)

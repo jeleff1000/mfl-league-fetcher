@@ -3025,6 +3025,23 @@ def test_checkpoint_failure_is_reported_without_hiding_committed_state(client):
     )
 
 
+def test_server_lifespan_exclusively_owns_live_storage(client, data_dir):
+    from storage_guard import StorageOwner, StorageOwnershipError
+
+    competing_owner = StorageOwner(data_dir)
+    with pytest.raises(StorageOwnershipError, match="already owned"):
+        competing_owner.acquire()
+
+
+def test_runtime_gate_rejects_effective_setting_drift(client, monkeypatch):
+    import main as main_mod
+    from storage_guard import RuntimeContractError
+
+    monkeypatch.setattr(main_mod, "EXPECTED_DUCKDB_VERSION", "0.0.0")
+    with pytest.raises(RuntimeContractError, match="duckdb_version"):
+        main_mod._assert_runtime_contract()
+
+
 def test_scoped_recovery_defers_checkpoint_when_wal_checkpointing_is_disabled(monkeypatch):
     import main as main_mod
 

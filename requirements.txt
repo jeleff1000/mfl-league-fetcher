@@ -1,7 +1,7 @@
 # Core dependencies - v2 (PINNED for stability)
 streamlit==1.52.0
-# MotherDuck supports 1.5.1 as of 2026-03-24
-duckdb==1.5.1
+# Keep local import files compatible with the exact Fly DuckDB server release.
+duckdb==1.5.5
 pandas==2.2.3
 pyarrow==15.0.2
 requests==2.32.3

@@ -93,6 +93,16 @@ def test_isolated_full_database_rebuild_workflow_is_not_dispatchable():
     ).exists()
 
 
+def test_recovery_probe_can_read_but_not_clean_up_retained_backup_volume():
+    source = WORKFLOWS[0].read_text(encoding="utf-8")
+
+    assert '[[ "$inspect_name" == wkupd_rebuild_* || "$inspect_name" == duckdb_backup_* ]]' in source
+    cleanup = source.split('if [ "$CLEANUP_RECOVERY_RESOURCES" = "true" ]; then', 1)[1]
+    cleanup = cleanup.split("exit 0", 1)[0]
+    assert 'startswith("wkupd_")' in cleanup
+    assert "duckdb_backup_" not in cleanup
+
+
 def test_table_pilot_workflow_rejects_primary_before_calling_fly(tmp_path):
     import os
     import shutil

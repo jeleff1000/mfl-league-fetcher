@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       inspect_existing_volume_id:
-        description: Optional unattached wkupd_rebuild volume to inspect read-only without restoring another snapshot
+        description: Optional unattached recovery or retained backup volume to inspect read-only
         required: false
         default: ""
         type: string
@@ -335,7 +335,7 @@ jobs:
             if [ "$INSPECT_BLOCK_ONLY" = "true" ]; then
               [[ "$inspect_name" == wkupd_* ]]
             else
-              [[ "$inspect_name" == wkupd_rebuild_* ]]
+              [[ "$inspect_name" == wkupd_rebuild_* || "$inspect_name" == duckdb_backup_* ]]
             fi
             [ "$inspect_state" = "created" ]
             [ "$inspect_attachment" = "null" ]

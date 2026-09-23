@@ -358,6 +358,22 @@ def espn_source_manifest_complete(
     )
 
 
+def _espn_finalized_roster_weeks(
+    *,
+    refresh_weeks: list[int],
+    finalized_ops: pd.DataFrame,
+) -> list[int]:
+    """Fetch roster snapshots only for weeks with finalized NFL games."""
+    if not isinstance(finalized_ops, pd.DataFrame) or "week" not in finalized_ops.columns:
+        return []
+    finalized = {
+        int(value)
+        for value in pd.to_numeric(finalized_ops["week"], errors="coerce").dropna().tolist()
+        if int(value) > 0
+    }
+    return sorted({int(week) for week in refresh_weeks if int(week) in finalized})
+
+
 def _build_context(
     *,
     reader: Any,
@@ -698,28 +714,36 @@ def _merge_active_payloads(
     # LocalLeagueDB.save_table(), which would delete all prior active-season
     # rows before the narrow refresh can merge its safe replacement rows.
     box_scores_by_week: dict[int, list] = {}
-    rosters = fetch_espn_rosters_modern(
-        ctx,
-        active_year,
-        db=local_db,
-        max_weeks=max(refresh_weeks),
-        weeks=refresh_weeks,
-        client=client,
-        league=league,
-        box_scores_out=box_scores_by_week,
+    roster_weeks = _espn_finalized_roster_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_ops=finalized_ops,
     )
-    provider_roster_team_weeks = validate_active_roster_frame(
-        provider="espn",
-        season=active_year,
-        expected_team_ids=expected_team_ids,
-        requested_weeks=tuple(int(week) for week in refresh_weeks),
-        player_id_column="espn_player_id",
-        rosters=rosters,
-    )
+    if roster_weeks:
+        rosters = fetch_espn_rosters_modern(
+            ctx,
+            active_year,
+            db=local_db,
+            max_weeks=max(roster_weeks),
+            weeks=roster_weeks,
+            client=client,
+            league=league,
+            box_scores_out=box_scores_by_week,
+        )
+        provider_roster_team_weeks = validate_active_roster_frame(
+            provider="espn",
+            season=active_year,
+            expected_team_ids=expected_team_ids,
+            requested_weeks=tuple(roster_weeks),
+            player_id_column="espn_player_id",
+            rosters=rosters,
+        )
+    else:
+        rosters = pd.DataFrame()
+        provider_roster_team_weeks = 0
     draft_player_names = _hydrate_espn_draft_player_names(league, rosters)
     roster_rows = 0
     pending_nfl_teams: set[str] = set()
-    for week in refresh_weeks:
+    for week in roster_weeks:
         source = rosters.loc[rosters["week"].astype(int) == int(week)].copy() if rosters is not None else pd.DataFrame()
         ops_week = finalized_ops.loc[finalized_ops["week"].astype(int) == int(week)]
         pending_nfl_teams.update(pending_provider_nfl_teams(source, ops_week))

@@ -99,6 +99,20 @@ def _active_sleeper_roster_scope(rosters: pd.DataFrame) -> pd.DataFrame:
     return scoped
 
 
+def _sleeper_finalized_roster_weeks(
+    *,
+    refresh_weeks: list[int],
+    finalized_ops: pd.DataFrame,
+) -> list[int]:
+    """Fetch and validate Sleeper rosters only for finalized NFL weeks."""
+    from multi_league.core.league_refresh import finalized_roster_weeks
+
+    return finalized_roster_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_ops=finalized_ops,
+    )
+
+
 def _renewal_chain_reaches_seed(
     candidate_league_id: str,
     *,
@@ -393,7 +407,13 @@ def _merge_active_payloads(
     if player_cache is None:
         player_cache = SleeperPlayerCache(ctx.cache_directory)
     player_cache.refresh_if_stale(client)
-    final_matchup_weeks = [week for week in refresh_weeks if _sleeper_week_is_final(active_league, week)]
+    roster_weeks = _sleeper_finalized_roster_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_ops=finalized_ops,
+    )
+    final_matchup_weeks = [
+        week for week in roster_weeks if _sleeper_week_is_final(active_league, week)
+    ]
     matchups = pd.DataFrame()
     playoff_start_week = int(settings.iloc[0]["playoff_start_week"])
     full_schedule_weeks = list(range(1, playoff_start_week))
@@ -420,13 +440,16 @@ def _merge_active_payloads(
         matchup_rows = 0
         schedule_rows = int(len(schedule))
 
-    rosters = SleeperRosterFetcher(ctx, client, player_cache).fetch_season_rosters(
-        active_year, weeks=refresh_weeks, db=local_db
-    )
-    rosters = _active_sleeper_roster_scope(rosters)
+    if roster_weeks:
+        rosters = SleeperRosterFetcher(ctx, client, player_cache).fetch_season_rosters(
+            active_year, weeks=roster_weeks, db=local_db
+        )
+        rosters = _active_sleeper_roster_scope(rosters)
+    else:
+        rosters = pd.DataFrame()
     roster_rows = 0
     pending_nfl_teams: set[str] = set()
-    for week in refresh_weeks:
+    for week in roster_weeks:
         source = rosters.loc[rosters["week"].astype(int) == int(week)].copy() if not rosters.empty else pd.DataFrame()
         pending_nfl_teams.update(pending_provider_nfl_teams(
             source,
@@ -500,22 +523,32 @@ def _merge_active_payloads(
             "Sleeper roster identity count disagrees with active league settings"
         )
     draft = local_db.read_table("draft", year=active_year) if local_db.table_exists("draft") else pd.DataFrame()
-    validation = validate_tabular_active_scope(
-        provider="sleeper",
-        league_id=league_id,
-        season=active_year,
-        expected_team_ids=expected_ids,
-        requested_weeks=tuple(refresh_weeks),
-        finalized_weeks=tuple(final_matchup_weeks),
-        player_id_column="sleeper_player_id",
-        rosters=rosters,
-        matchups=matchups,
-        schedule=(
-            schedule.loc[pd.to_numeric(schedule["week"], errors="coerce").isin(final_matchup_weeks)].copy()
-            if not schedule.empty and "week" in schedule else schedule
-        ),
-        draft=draft,
-    )
+    if roster_weeks:
+        validation = validate_tabular_active_scope(
+            provider="sleeper",
+            league_id=league_id,
+            season=active_year,
+            expected_team_ids=expected_ids,
+            requested_weeks=tuple(roster_weeks),
+            finalized_weeks=tuple(final_matchup_weeks),
+            player_id_column="sleeper_player_id",
+            rosters=rosters,
+            matchups=matchups,
+            schedule=(
+                schedule.loc[pd.to_numeric(schedule["week"], errors="coerce").isin(final_matchup_weeks)].copy()
+                if not schedule.empty and "week" in schedule else schedule
+            ),
+            draft=draft,
+        )
+    else:
+        validation = {
+            "expected_team_weeks": 0,
+            "observed_team_weeks": 0,
+            "observed_final_matchup_weeks": 0,
+            "matchup_team_weeks": 0,
+            "schedule_team_weeks": 0,
+            "draft_picks": len(draft),
+        }
     return {
         "roster_rows": int(roster_rows),
         "final_matchup_rows": matchup_rows,

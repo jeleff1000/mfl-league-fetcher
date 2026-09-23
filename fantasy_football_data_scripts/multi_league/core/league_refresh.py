@@ -779,6 +779,28 @@ def provider_weeks_to_fetch(*, max_week: int, requested_weeks: Iterable[int | st
     return sorted(scoped)
 
 
+def finalized_roster_weeks(
+    *,
+    refresh_weeks: Iterable[int | str],
+    finalized_ops: pd.DataFrame,
+) -> list[int]:
+    """Return requested weeks that have authoritative finalized NFL rows."""
+    if not isinstance(finalized_ops, pd.DataFrame) or "week" not in finalized_ops.columns:
+        return []
+    finalized = {
+        int(value)
+        for value in pd.to_numeric(finalized_ops["week"], errors="coerce").dropna().tolist()
+        if int(value) > 0
+    }
+    return sorted(
+        {
+            week
+            for value in refresh_weeks
+            if (week := _positive_int(value)) is not None and week in finalized
+        }
+    )
+
+
 def filter_rosters_to_finalized_games(
     rosters: pd.DataFrame,
     finalized_ops: pd.DataFrame,

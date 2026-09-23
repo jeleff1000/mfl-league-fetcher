@@ -1557,6 +1557,20 @@ def yahoo_season_is_predraft(raw_settings: dict[str, Any] | None) -> bool:
     return str(metadata.get("draft_status") or "").strip().lower() == "predraft"
 
 
+def _yahoo_finalized_roster_weeks(
+    *,
+    refresh_weeks: list[int],
+    finalized_ops: pd.DataFrame,
+) -> list[int]:
+    """Fetch and validate Yahoo rosters only for finalized NFL weeks."""
+    from multi_league.core.league_refresh import finalized_roster_weeks
+
+    return finalized_roster_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_ops=finalized_ops,
+    )
+
+
 def _merge_refresh_payloads(
     *,
     ctx: Any,
@@ -1605,7 +1619,17 @@ def _merge_refresh_payloads(
         local_db, "league_settings", settings_row, platform="yahoo", league_id=league_key
     )
 
-    rosters, roster_failures = fetch_rosters_for_year(ctx, year, oauth_session=oauth, weeks=refresh_weeks)
+    roster_weeks = _yahoo_finalized_roster_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_ops=finalized_ops,
+    )
+    roster_fetch_weeks = roster_weeks or [max(refresh_weeks)]
+    rosters, roster_failures = fetch_rosters_for_year(
+        ctx,
+        year,
+        oauth_session=oauth,
+        weeks=roster_fetch_weeks,
+    )
     if roster_failures:
         raise YahooIncompleteSourceError(f"Yahoo roster fetch failed for weeks: {roster_failures}")
     expected_team_keys = validate_provider_team_inventory(
@@ -1614,17 +1638,20 @@ def _merge_refresh_payloads(
         team_ids=tuple(rosters.attrs.get("expected_team_keys") or ()),
     )
     rosters = normalize_yahoo_roster_provider_identity(rosters)
-    provider_roster_team_weeks = validate_active_roster_frame(
-        provider="yahoo",
-        season=year,
-        expected_team_ids=expected_team_keys,
-        requested_weeks=tuple(int(week) for week in refresh_weeks),
-        player_id_column="yahoo_player_id",
-        rosters=rosters,
-    )
+    if roster_weeks:
+        provider_roster_team_weeks = validate_active_roster_frame(
+            provider="yahoo",
+            season=year,
+            expected_team_ids=expected_team_keys,
+            requested_weeks=tuple(roster_weeks),
+            player_id_column="yahoo_player_id",
+            rosters=rosters,
+        )
+    else:
+        provider_roster_team_weeks = 0
     roster_rows = 0
     pending_nfl_teams: set[str] = set()
-    for week in refresh_weeks:
+    for week in roster_weeks:
         source = rosters[rosters["week"].astype(int) == int(week)].copy()
         ops_slice = finalized_ops[finalized_ops["week"].astype(int) == int(week)]
         pending_nfl_teams.update(pending_provider_nfl_teams(source, ops_slice))

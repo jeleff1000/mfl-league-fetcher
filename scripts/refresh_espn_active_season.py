@@ -364,14 +364,12 @@ def _espn_finalized_roster_weeks(
     finalized_ops: pd.DataFrame,
 ) -> list[int]:
     """Fetch roster snapshots only for weeks with finalized NFL games."""
-    if not isinstance(finalized_ops, pd.DataFrame) or "week" not in finalized_ops.columns:
-        return []
-    finalized = {
-        int(value)
-        for value in pd.to_numeric(finalized_ops["week"], errors="coerce").dropna().tolist()
-        if int(value) > 0
-    }
-    return sorted({int(week) for week in refresh_weeks if int(week) in finalized})
+    from multi_league.core.league_refresh import finalized_roster_weeks
+
+    return finalized_roster_weeks(
+        refresh_weeks=refresh_weeks,
+        finalized_ops=finalized_ops,
+    )
 
 
 def _build_context(

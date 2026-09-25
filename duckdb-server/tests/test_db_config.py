@@ -151,6 +151,43 @@ def test_init_pool_rechecks_ops_schema_after_existing_reader_is_closed(tmp_path,
         db_mod.close_all()
 
 
+def test_init_pool_attaches_ops_before_exposing_public_pool(tmp_path, monkeypatch):
+    """A pool reopen must establish the shared OPS attachment first.
+
+    Opening public pool handles before attaching ``___ops`` leaves multiple
+    handles on the shared DuckDB instance while the attachment is recreated.
+    DuckDB can then reject the attach with a unique-file-handle conflict after
+    an otherwise successful narrow write.
+    """
+    import db as db_mod
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DB_POOL_SIZE", "1")
+    original_refill = db_mod._refill_pool
+    observed: list[set[str]] = []
+
+    def assert_ops_attached_then_refill(leagues_path):
+        control = db_mod.get_ops_connection()
+        assert control is not None
+        catalogs = {
+            row[0]
+            for row in control.execute(
+                "SELECT database_name FROM duckdb_databases()"
+            ).fetchall()
+        }
+        observed.append(catalogs)
+        assert "___ops" in catalogs
+        original_refill(leagues_path)
+
+    monkeypatch.setattr(db_mod, "_refill_pool", assert_ops_attached_then_refill)
+    try:
+        db_mod.init_pool()
+        assert len(observed) == 1
+        assert {"___leagues", "___ops"} <= observed[0]
+    finally:
+        db_mod.close_all()
+
+
 def test_temp_limit_is_fixed_for_connections_to_same_database(tmp_path, monkeypatch):
     import db as db_mod
 

@@ -128,6 +128,7 @@ def push_conformed_to_fly(
 
     counts: dict[str, int] = {}
     db_lit = _quote_sql(db_name)
+    statements: list[str] = ["BEGIN TRANSACTION;"]
 
     for local_name, fly_suffix in LOCAL_TO_FLY_TABLE.items():
         local_table = f"staging.conformed_{local_name}"
@@ -165,25 +166,19 @@ def push_conformed_to_fly(
 
         # Ensure Fly table exists (all VARCHAR).
         cols_ddl = ", ".join(f'"{c}" VARCHAR' for c in df_str.columns)
-        writer.execute(
-            f"CREATE TABLE IF NOT EXISTS {fully_qualified} ({cols_ddl})",
-            database=STAGING_DB,
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {fully_qualified} ({cols_ddl});"
         )
 
         # ALTER ADD COLUMN IF NOT EXISTS for any new columns (schema evolution).
         for c in df_str.columns:
-            try:
-                writer.execute(
-                    f'ALTER TABLE {fully_qualified} ADD COLUMN IF NOT EXISTS "{c}" VARCHAR',
-                    database=STAGING_DB,
-                )
-            except Exception as e:
-                logger.warning("[bridge] ALTER ADD COLUMN failed for %s.%s: %s", fly_table, c, e)
+            statements.append(
+                f'ALTER TABLE {fully_qualified} ADD COLUMN IF NOT EXISTS "{c}" VARCHAR;'
+            )
 
         # Idempotent: clear this db_name's existing rows.
-        writer.execute(
-            f"DELETE FROM {fully_qualified} WHERE db_name = {db_lit}",
-            database=STAGING_DB,
+        statements.append(
+            f"DELETE FROM {fully_qualified} WHERE db_name = {db_lit};"
         )
 
         # Batch INSERT — keep batches <= 200 rows to stay under Fly POST body limit.
@@ -203,9 +198,8 @@ def push_conformed_to_fly(
                         s = "".join(ch if ord(ch) >= 32 or ch in "\t\n" else " " for ch in s)
                         vals.append(f"'{s}'")
                 value_rows.append(f"({', '.join(vals)})")
-            writer.execute(
-                f"INSERT INTO {fully_qualified} ({cols_quoted}) VALUES {', '.join(value_rows)}",
-                database=STAGING_DB,
+            statements.append(
+                f"INSERT INTO {fully_qualified} ({cols_quoted}) VALUES {', '.join(value_rows)};"
             )
 
         counts[local_name] = len(df_str)
@@ -215,5 +209,9 @@ def push_conformed_to_fly(
             local_table,
             fly_table,
         )
+
+    if any(count > 0 for count in counts.values()):
+        statements.append("COMMIT;")
+        writer.execute("\n".join(statements), database=STAGING_DB)
 
     return counts

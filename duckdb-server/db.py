@@ -473,12 +473,12 @@ def init_pool():
     finally:
         ops_schema_conn.close()
 
-    # Pool connections are normal DuckDB connections so reads can keep a
-    # snapshot open while delta merges commit in another connection.
-    _refill_pool(leagues_path)
-
     # Dedicated OPS control connection; it shares the pool's primary DuckDB
-    # instance but is never checked out to public requests.
+    # instance but is never checked out to public requests. Establish the
+    # shared ___ops attachment before opening any public pool handles. Doing
+    # this in the opposite order can leave several handles on the instance
+    # while DuckDB recreates the attachment after a write, producing a
+    # persistent unique-file-handle conflict on every retry.
     if ops_path.exists():
         # Keep ___ops attached once to the same DuckDB instance as ___leagues.
         # DuckDB rejects a writable primary handle for a file that is also an
@@ -490,6 +490,11 @@ def init_pool():
         )
         _attach_ops_nfl(_ops_conn)
         _ops_conn.execute('USE "___ops"')
+
+    # Pool connections are normal DuckDB connections so reads can keep a
+    # snapshot open while delta merges commit in another connection. They are
+    # opened only after the shared OPS catalog is stable.
+    _refill_pool(leagues_path)
 
     _active_count = 0
     _metadata = _compute_metadata()

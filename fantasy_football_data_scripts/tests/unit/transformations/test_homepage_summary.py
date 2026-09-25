@@ -222,6 +222,49 @@ def test_compute_manager_rankings_handles_text_year_week_columns():
     assert set(standings["manager"]) == {"Alice", "Bob"}
 
 
+def test_compute_manager_rankings_counts_preserved_historical_titles_without_inventing_seasons():
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    db_name = conn.execute("SELECT current_database()").fetchone()[0]
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR,
+            year INTEGER,
+            week INTEGER,
+            manager VARCHAR,
+            franchise_id VARCHAR,
+            team_name VARCHAR,
+            team_points DOUBLE,
+            win INTEGER,
+            loss INTEGER,
+            tie INTEGER,
+            champion INTEGER,
+            is_playoffs INTEGER,
+            is_consolation INTEGER,
+            is_bye_week INTEGER
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (db_name, 1996, 18, "Travis Gray", "gray", "Historical finish (user supplied)", None, None, None, None, 1, 1, 0, 0),
+            (db_name, 2000, 18, "Travis Gray", "gray", "Historical finish (user supplied)", None, None, None, None, 1, 1, 0, 0),
+            (db_name, 2024, 1, "Travis Gray", "gray", "Gray Team", 120.0, 1, 0, 0, 1, 0, 0, 0),
+        ],
+    )
+
+    rankings = compute_manager_rankings(conn, db_name).set_index("franchise_id")
+
+    assert rankings.loc["gray", "championships"] == 3
+    assert rankings.loc["gray", "seasons"] == 1
+    assert rankings.loc["gray", "wins"] == 1
+    assert rankings.loc["gray", "losses"] == 0
+
+    conn.close()
+
+
 def test_tied_career_rank_uses_stable_franchise_identity_across_row_orders():
     def rankings_for(order):
         conn = duckdb.connect(":memory:")

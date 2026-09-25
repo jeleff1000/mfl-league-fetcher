@@ -1623,13 +1623,27 @@ def compute_manager_rankings(
                    {manager_power_select}
             {manager_stats_from}
             GROUP BY franchise_id
+        ),
+        canonical_titles AS (
+            SELECT franchise_id,
+                   {"COUNT(DISTINCT CASE WHEN COALESCE(champion, 0) = 1 THEN year END)" if has_champion else "0"} as championships
+            FROM latest_matchup
+            GROUP BY franchise_id
+        ),
+        manager_stats_with_titles AS (
+            SELECT ms.manager, ms.franchise_id, ms.wins, ms.losses, ms.ties,
+                   COALESCE(ct.championships, ms.championships) as championships,
+                   ms.playoff_appearances, ms.total_years, ms.first_year, ms.last_year,
+                   ms.avg_power_rating
+            FROM manager_stats ms
+            LEFT JOIN canonical_titles ct USING (franchise_id)
         )
         SELECT manager, franchise_id, wins, losses, ties,
                ROUND(CAST(wins AS FLOAT) / NULLIF(wins + losses + ties, 0), 3) as win_pct,
                championships, playoff_appearances, total_years as seasons,
                ROUND(avg_power_rating, 1) as power_rating, first_year, last_year,
                ROW_NUMBER() OVER (ORDER BY wins DESC, championships DESC, franchise_id ASC) as career_rank
-        FROM manager_stats
+        FROM manager_stats_with_titles
         ORDER BY wins DESC, championships DESC, franchise_id ASC
     """).fetchdf()
 

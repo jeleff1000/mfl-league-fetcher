@@ -237,9 +237,16 @@ def _build_context(
         owner_ids = [str(owner_id).strip() for owner_id in merge.get("owner_ids", []) if str(owner_id).strip()]
         if len(owner_ids) < 2:
             continue
-        canonical = owner_ids[0]
-        for old_owner_id in owner_ids[1:]:
-            guid_merges[old_owner_id] = canonical
+        canonical = str(merge.get("into_franchise_id") or owner_ids[0]).strip()
+        for old_owner_id in owner_ids:
+            if old_owner_id != canonical:
+                guid_merges[old_owner_id] = canonical
+
+    # The coverage gate compares conformed rows against these canonical
+    # references. Apply the same explicit merge map to both sides first so a
+    # saved historical/current owner merge is not misclassified as conflict.
+    name_to_guid = {name: guid_merges.get(str(guid), guid) for name, guid in name_to_guid.items()}
+    team_key_to_guid = {key: guid_merges.get(str(guid), guid) for key, guid in team_key_to_guid.items()}
 
     return SimpleNamespace(
         name_to_guid=name_to_guid,

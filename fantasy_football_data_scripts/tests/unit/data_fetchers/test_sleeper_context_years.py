@@ -1,12 +1,18 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[3]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from multi_league.data_fetchers.sleeper.sleeper_context import SleeperContext, resolve_years_to_fetch
+from multi_league.data_fetchers.sleeper.sleeper_context import (
+    SleeperContext,
+    discover_league_history,
+    resolve_years_to_fetch,
+)
 from sleeper_initial_import import _resolve_quick_import_years
 
 
@@ -111,3 +117,21 @@ def test_quick_import_uses_only_current_season_once_scores_exist(tmp_path):
         2026,
         {"season": "2026", "previous_season": "2025", "season_has_scores": True},
     ) == [2026]
+
+
+def test_history_rejects_sleeper_pickem_products_before_fantasy_fetches():
+    class PickemClient:
+        def get_league(self, league_id):
+            return {
+                "league_id": league_id,
+                "name": "Sunday Massacre",
+                "season": "2026",
+                "sport": "pickem:nfl",
+                "previous_league_id": None,
+            }
+
+        def get_league_matchups(self, *_args, **_kwargs):
+            pytest.fail("pick'em products must be rejected before fantasy matchup discovery")
+
+    with pytest.raises(ValueError, match="not a Sleeper fantasy-football league"):
+        discover_league_history(PickemClient(), "1384569135408644096")

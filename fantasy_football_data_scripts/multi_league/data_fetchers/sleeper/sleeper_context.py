@@ -729,6 +729,11 @@ def discover_league_history(
         league = client.get_league(current_id)
         if not isinstance(league, dict) or str(league.get("league_id") or "") != current_id:
             raise ValueError(f"Sleeper renewal chain identity is missing or mismatched: {current_id}")
+        if str(league.get("sport") or "").lower() != "nfl":
+            raise ValueError(
+                f"Sleeper league {current_id} is not a Sleeper fantasy-football league "
+                f"(sport={league.get('sport')!r})"
+            )
 
         season = league.get("season")
         if not str(season or "").isdigit():

@@ -241,8 +241,8 @@ def test_shared_import_discovery_rejects_unprovable_chain(broken):
     from multi_league.data_fetchers.sleeper.sleeper_context import discover_league_history
 
     leagues = {
-        'new': {'league_id':'new', 'season':'2026', 'previous_league_id':'old'},
-        'old': {'league_id':'old', 'season':'2025', 'previous_league_id':None},
+        'new': {'league_id':'new', 'season':'2026', 'sport':'nfl', 'previous_league_id':'old'},
+        'old': {'league_id':'old', 'season':'2025', 'sport':'nfl', 'previous_league_id':None},
     }
     if broken == 'cycle':
         leagues['old']['previous_league_id'] = 'new'

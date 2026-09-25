@@ -1968,7 +1968,8 @@ def _run_local_pipeline(
     keeper_config_hydrated: bool = False,
     historical_source_rows: dict[str, pd.DataFrame] | None = None,
     frontend_configuration_rows: dict[str, pd.DataFrame] | None = None,
-) -> None:
+    active_derived_source_frames: dict[str, pd.DataFrame] | None = None,
+) -> dict[str, dict[str, int]]:
     from multi_league.core.import_pipeline import (
         require_sql_enrichment_success,
         run_transformation_pipeline,
@@ -2076,6 +2077,15 @@ def _run_local_pipeline(
             work_dir=work_dir,
         )
         local_db.connect()
+    restored_active_derived_values: dict[str, dict[str, int]] = {}
+    if active_derived_source_frames:
+        from multi_league.core.league_update_ownership import restore_active_derived_source_values
+
+        restored_active_derived_values = restore_active_derived_source_values(
+            local_db,
+            active_derived_source_frames,
+            active_year=active_year,
+        )
     _run_refresh_aggregates(
         local_db,
         db_name=db_name,
@@ -2083,6 +2093,7 @@ def _run_local_pipeline(
         work_dir=work_dir,
         has_finalized_matchups=has_finalized_matchups,
     )
+    return restored_active_derived_values
 
 
 def _unresolved_provider_schedule_rows(
@@ -2638,7 +2649,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             timer.mark("player_ops_cache")
-            _run_local_pipeline(
+            receipt["restored_active_derived_values"] = _run_local_pipeline(
                 ctx=ctx,
                 context_path=context_path,
                 local_db=local_db,
@@ -2648,16 +2659,9 @@ def main(argv: list[str] | None = None) -> int:
                 keeper_config_hydrated="keeper_config" in transform_source_frames,
                 historical_source_rows=historical_source_rows,
                 frontend_configuration_rows=preservation_witnesses,
+                active_derived_source_frames=transform_source_frames,
             )
             timer.mark("shared_transformations")
-            from multi_league.core.league_update_ownership import restore_active_derived_source_values
-
-            receipt["restored_active_derived_values"] = restore_active_derived_source_values(
-                local_db,
-                transform_source_frames,
-                active_year=active_year,
-            )
-            timer.mark("restore_active_derived_values")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="yahoo_player_id",

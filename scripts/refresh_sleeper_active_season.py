@@ -899,7 +899,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             timer.mark("player_ops_cache")
-            _run_local_pipeline(
+            receipt["restored_active_derived_values"] = _run_local_pipeline(
                 ctx=ctx,
                 context_path=context_path,
                 local_db=local_db,
@@ -910,16 +910,9 @@ def main(argv: list[str] | None = None) -> int:
                 keeper_config_hydrated="keeper_config" in transform_source_frames,
                 historical_source_rows=historical_source_rows,
                 frontend_configuration_rows=preservation_witnesses,
+                active_derived_source_frames=transform_source_frames,
             )
             timer.mark("shared_transformations")
-            from multi_league.core.league_update_ownership import restore_active_derived_source_values
-
-            receipt["restored_active_derived_values"] = restore_active_derived_source_values(
-                local_db,
-                transform_source_frames,
-                active_year=active_year,
-            )
-            timer.mark("restore_active_derived_values")
             receipt["transformed_player_scope"] = assert_transformed_active_player_scope(
                 local_db.connect(), db_name=args.db, year=active_year,
                 weeks=refresh_weeks, provider_id_column="sleeper_player_id",

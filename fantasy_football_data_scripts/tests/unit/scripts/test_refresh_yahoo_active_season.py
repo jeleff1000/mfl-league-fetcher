@@ -644,6 +644,86 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
     assert captured["identity_reconciles"] == 1
 
 
+def test_shared_refresh_pipeline_restores_active_derived_values_before_aggregating(
+    monkeypatch, tmp_path,
+):
+    """Season rollups must include source values restored after simulation."""
+    import multi_league.core.import_pipeline as import_pipeline
+    import multi_league.core.league_update_ownership as ownership
+    import multi_league.transformations.sql_enrichments as sql_enrichments
+    import refresh_yahoo_active_season as refresh
+
+    events = []
+
+    class FakeEnricher:
+        def __init__(self, **_kwargs):
+            pass
+
+        def load_settings_from_db(self):
+            return {}, {}
+
+        def run_all(self):
+            return {}
+
+        def close(self):
+            return None
+
+    class FakeLocalDb:
+        class Connection:
+            @staticmethod
+            def execute(sql, _params):
+                if "COUNT(*), MAX(week)" in sql:
+                    return SimpleNamespace(fetchone=lambda: (12, 3))
+                return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+
+        _conn = Connection()
+
+        def read_table(self, _table, *, year):
+            assert year == 2026
+            return pd.DataFrame()
+
+        def close(self):
+            return None
+
+        def connect(self):
+            return self._conn
+
+    source_frames = {"matchup": pd.DataFrame([{"year": 2026}])}
+    restored = {"matchup": {"p_playoffs": 4, "p_champ": 4}}
+
+    monkeypatch.setattr(import_pipeline, "run_transformation_pipeline", lambda *args, **kwargs: [])
+    monkeypatch.setattr(sql_enrichments, "SQLEnrichments", FakeEnricher)
+    monkeypatch.setattr(refresh, "_attach_ops_cache_for_enrichment", lambda _local_db: None)
+    monkeypatch.setattr(
+        refresh,
+        "_run_refresh_simulations",
+        lambda **_kwargs: events.append("simulations"),
+    )
+    monkeypatch.setattr(
+        ownership,
+        "restore_active_derived_source_values",
+        lambda *_args, **_kwargs: events.append("restore") or restored,
+    )
+    monkeypatch.setattr(
+        refresh,
+        "_run_refresh_aggregates",
+        lambda *_args, **_kwargs: events.append("aggregates"),
+    )
+
+    result = refresh._run_local_pipeline(
+        ctx=SimpleNamespace(manager_name_overrides={}, franchise_merges=[]),
+        context_path=tmp_path / "league_context.json",
+        local_db=FakeLocalDb(),
+        db_name="dom_s_year",
+        active_year=2026,
+        work_dir=tmp_path,
+        active_derived_source_frames=source_frames,
+    )
+
+    assert events == ["simulations", "restore", "aggregates"]
+    assert result == restored
+
+
 def test_active_refresh_inputs_read_independent_fly_scopes_concurrently():
     """Weekly refresh setup must not serialize unrelated ops and league reads."""
     import threading

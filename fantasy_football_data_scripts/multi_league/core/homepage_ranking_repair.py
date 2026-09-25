@@ -39,6 +39,7 @@ _MATCHUP_COLUMNS = (
 )
 _MATCHUP_SEASON_COLUMNS = ("db_name", "year", "franchise_id", "power_rating")
 _LEAGUE_SETTINGS_COLUMNS = ("db_name", "year", "uses_median")
+_LEAGUE_CONTEXT_COLUMNS = ("db_name", "league_rules_json")
 
 
 def _sql_literal(value: object) -> str:
@@ -87,6 +88,10 @@ def _load_manager_rankings_source_frames(reader: Any, db_name: str) -> dict[str,
             f"SELECT {', '.join(_LEAGUE_SETTINGS_COLUMNS)} FROM public.league_settings "
             f"WHERE db_name = {db}"
         ),
+        "league_context": (
+            f"SELECT {', '.join(_LEAGUE_CONTEXT_COLUMNS)} FROM public.league_context "
+            f"WHERE db_name = {db}"
+        ),
     }
     union = " UNION ALL ".join(
         f"SELECT {_sql_literal(name)} AS source_table, json_group_array(to_json(t)) AS payload "
@@ -114,6 +119,7 @@ def _load_manager_rankings_source_frames(reader: Any, db_name: str) -> dict[str,
         "matchup": _MATCHUP_COLUMNS,
         "matchup_season": _MATCHUP_SEASON_COLUMNS,
         "league_settings": _LEAGUE_SETTINGS_COLUMNS,
+        "league_context": _LEAGUE_CONTEXT_COLUMNS,
     }
     return {
         name: (
@@ -133,6 +139,7 @@ def prepare_manager_rankings_repair(
 ) -> dict[str, Any]:
     """Compute and stage only the canonical manager-ranking rollup."""
     from multi_league.transformations.aggregation.aggregation_utils import (
+        get_active_catalog,
         replace_scoped_aggregate_table_from_dataframe,
         set_active_catalog,
     )
@@ -140,7 +147,7 @@ def prepare_manager_rankings_repair(
         compute_manager_rankings,
     )
 
-    required = {"matchup", "matchup_season", "league_settings"}
+    required = {"matchup", "matchup_season", "league_settings", "league_context"}
     missing = sorted(required - set(source_frames))
     if missing:
         raise ValueError("manager-ranking repair is missing source frames: " + ", ".join(missing))
@@ -163,9 +170,13 @@ def prepare_manager_rankings_repair(
 
     if rankings.empty:
         raise RuntimeError(f"manager-ranking repair produced no rows for {db_name}")
-    replace_scoped_aggregate_table_from_dataframe(
-        local_db.connect(), db_name, "homepage_manager_rankings", rankings,
-    )
+    previous_catalog = get_active_catalog()
+    try:
+        replace_scoped_aggregate_table_from_dataframe(
+            local_db.connect(), db_name, "homepage_manager_rankings", rankings,
+        )
+    finally:
+        set_active_catalog(previous_catalog)
     return {"published_tables": ["homepage_manager_rankings"], "rows": int(len(rankings))}
 
 

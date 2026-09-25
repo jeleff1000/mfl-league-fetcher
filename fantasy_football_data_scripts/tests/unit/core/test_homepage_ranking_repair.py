@@ -141,6 +141,9 @@ def test_prepare_rankings_repair_reuses_complete_history_and_saved_median_settin
                 "matchup": matchup,
                 "matchup_season": matchup_season,
                 "league_settings": settings,
+                "league_context": pd.DataFrame([
+                    {"db_name": "history", "league_rules_json": None}
+                ]),
             },
         )
         rankings = local_db.connect().execute(
@@ -176,6 +179,61 @@ def test_prepare_rankings_repair_reuses_complete_history_and_saved_median_settin
             "seasons": 1,
         },
     ]
+
+
+def test_prepare_rankings_repair_preserves_saved_career_season_totals(tmp_path: Path):
+    from multi_league.core.homepage_ranking_repair import prepare_manager_rankings_repair
+    from multi_league.core.local_db import LocalLeagueDB
+
+    matchup = pd.DataFrame([
+        {
+            "db_name": "history",
+            "year": 2026,
+            "week": 1,
+            "manager": "Alpha",
+            "franchise_id": "alpha",
+            "team_points": 100.0,
+            "is_bye_week": 0,
+            "is_consolation": 0,
+            "is_playoffs": 0,
+            "win": 1,
+            "loss": 0,
+            "tie": 0,
+            "above_league_median": 0,
+            "below_league_median": 0,
+            "champion": 0,
+            "power_rating": 101.0,
+        }
+    ])
+    local_db = LocalLeagueDB(tmp_path, "history")
+    try:
+        prepare_manager_rankings_repair(
+            local_db=local_db,
+            db_name="history",
+            source_frames={
+                "matchup": matchup,
+                "matchup_season": pd.DataFrame([
+                    {"db_name": "history", "year": 2026, "franchise_id": "alpha", "power_rating": 101.0}
+                ]),
+                "league_settings": pd.DataFrame([
+                    {"db_name": "history", "year": 2026, "uses_median": False}
+                ]),
+                "league_context": pd.DataFrame([
+                    {
+                        "db_name": "history",
+                        "league_rules_json": '{"manager_seasons_overrides":{"alpha":32}}',
+                    }
+                ]),
+            },
+        )
+        seasons = local_db.connect().execute(
+            "SELECT seasons FROM public.homepage_manager_rankings "
+            "WHERE db_name = 'history' AND franchise_id = 'alpha'"
+        ).fetchone()[0]
+    finally:
+        local_db.close()
+
+    assert seasons == 32
 
 
 def test_all_platform_workers_can_repair_a_missing_rankings_rollup_before_noop():
@@ -230,6 +288,12 @@ def test_missing_rankings_publication_is_one_generation_fenced_rollup(monkeypatc
             "source_table": "league_settings",
             "payload": json.dumps([
                 {"db_name": "repair_me", "year": 2025, "uses_median": False}
+            ]),
+        },
+        {
+            "source_table": "league_context",
+            "payload": json.dumps([
+                {"db_name": "repair_me", "league_rules_json": None}
             ]),
         },
     ]

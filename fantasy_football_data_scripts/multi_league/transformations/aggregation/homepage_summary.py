@@ -209,6 +209,45 @@ def _typed_matchup_dedupe_ctes_sql(db_name: str) -> str:
     """
 
 
+def _load_manager_seasons_overrides(conn, db_name: str) -> dict[str, int]:
+    """Load commissioner-supplied career season totals from saved league rules."""
+    configure_table_catalog(conn)
+    if not table_exists(conn, db_name, "league_context"):
+        return {}
+    context_cols = get_available_columns(conn, db_name, "league_context")
+    if "league_rules_json" not in context_cols:
+        return {}
+    rows = conn.execute(
+        f"SELECT league_rules_json FROM {central_table('league_context')} "
+        f"WHERE {league_db_filter(db_name)}"
+    ).fetchall()
+    if not rows:
+        return {}
+    if len(rows) != 1:
+        raise RuntimeError(f"Expected one league_context row for {db_name}, found {len(rows)}")
+    if not rows[0][0]:
+        return {}
+    try:
+        rules = json.loads(rows[0][0]) if isinstance(rows[0][0], str) else rows[0][0]
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Invalid saved league rules for {db_name}") from error
+    raw = rules.get("manager_seasons_overrides", {}) if isinstance(rules, dict) else {}
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"Invalid manager_seasons_overrides for {db_name}")
+    overrides: dict[str, int] = {}
+    for franchise_id, value in raw.items():
+        if isinstance(value, bool):
+            raise RuntimeError(f"Invalid career season total for {franchise_id}")
+        try:
+            seasons = int(value)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(f"Invalid career season total for {franchise_id}") from error
+        if seasons <= 0:
+            raise RuntimeError(f"Invalid career season total for {franchise_id}")
+        overrides[str(franchise_id)] = seasons
+    return overrides
+
+
 def _escape_sql_literal(value: str) -> str:
     """Escape a string literal for inline DuckDB SQL."""
     return str(value).replace("'", "''")
@@ -1630,22 +1669,54 @@ def compute_manager_rankings(
             FROM latest_matchup
             GROUP BY franchise_id
         ),
+        all_franchises AS (
+            SELECT franchise_id,
+                   ARG_MAX(manager, COALESCE(year, 0) * 100 + COALESCE(week, 0)) AS manager,
+                   MIN(year) AS first_year,
+                   MAX(year) AS last_year
+            FROM latest_matchup
+            GROUP BY franchise_id
+        ),
         manager_stats_with_titles AS (
-            SELECT ms.manager, ms.franchise_id, ms.wins, ms.losses, ms.ties,
-                   COALESCE(ct.championships, ms.championships) as championships,
-                   ms.playoff_appearances, ms.total_years, ms.first_year, ms.last_year,
-                   ms.avg_power_rating
-            FROM manager_stats ms
+            SELECT COALESCE(ms.manager, af.manager) AS manager,
+                   af.franchise_id,
+                   COALESCE(ms.wins, 0) AS wins,
+                   COALESCE(ms.losses, 0) AS losses,
+                   COALESCE(ms.ties, 0) AS ties,
+                   COALESCE(ct.championships, ms.championships, 0) as championships,
+                   COALESCE(ms.playoff_appearances, 0) AS playoff_appearances,
+                   COALESCE(ms.total_years, 0) AS total_years,
+                   COALESCE(ms.first_year, af.first_year) AS first_year,
+                   COALESCE(ms.last_year, af.last_year) AS last_year,
+                   ms.avg_power_rating,
+                   ms.franchise_id IS NOT NULL AS has_played
+            FROM all_franchises af
+            LEFT JOIN manager_stats ms USING (franchise_id)
             LEFT JOIN canonical_titles ct USING (franchise_id)
         )
         SELECT manager, franchise_id, wins, losses, ties,
                ROUND(CAST(wins AS FLOAT) / NULLIF(wins + losses + ties, 0), 3) as win_pct,
                championships, playoff_appearances, total_years as seasons,
                ROUND(avg_power_rating, 1) as power_rating, first_year, last_year,
+               has_played,
                ROW_NUMBER() OVER (ORDER BY wins DESC, championships DESC, franchise_id ASC) as career_rank
         FROM manager_stats_with_titles
         ORDER BY wins DESC, championships DESC, franchise_id ASC
     """).fetchdf()
+
+    seasons_overrides = _load_manager_seasons_overrides(conn, db_name)
+    if not df.empty:
+        mapped = df["franchise_id"].astype(str).map(seasons_overrides)
+        if seasons_overrides:
+            df.loc[mapped.notna(), "seasons"] = mapped[mapped.notna()].astype(int)
+        df = df.loc[
+            df["has_played"].fillna(False).astype(bool)
+            | pd.to_numeric(df["championships"], errors="coerce").fillna(0).gt(0)
+            | mapped.notna()
+        ].drop(columns=["has_played"])
+        df["career_rank"] = range(1, len(df) + 1)
+    else:
+        df = df.drop(columns=["has_played"], errors="ignore")
 
     log(f"  Computed rankings for {len(df)} managers")
     return df
@@ -1963,6 +2034,7 @@ def compute_all_manager_profiles(
         if median_years:
             log("  Using H2H+Median scoring for applicable seasons")
         matchup_cols = ctx.cache.columns("matchup")
+        manager_seasons_overrides = _load_manager_seasons_overrides(local, db_name)
 
         log(f"  Processing {len(managers_df)} managers (local)...")
 
@@ -1981,7 +2053,9 @@ def compute_all_manager_profiles(
 
             career = _compute_manager_career_stats(
                 profile_conn, db_name, franchise_id, manager,
-                median_years=median_years, matchup_cols=matchup_cols,
+                median_years=median_years,
+                matchup_cols=matchup_cols,
+                seasons_override=manager_seasons_overrides.get(str(franchise_id)),
             )
             profile.update(career)
 
@@ -2114,6 +2188,7 @@ def _compute_manager_career_stats(
     use_median: bool = False,
     median_years: Sequence[int] | None = None,
     matchup_cols: set = None,
+    seasons_override: int | None = None,
 ) -> dict[str, Any]:
     """Compute career statistics for a single manager.
 
@@ -2213,7 +2288,9 @@ def _compute_manager_career_stats(
         total_losses = reg_losses + playoff_losses
         total_ties = reg_ties + playoff_ties
         total_games = total_wins + total_losses + total_ties
-        seasons = int(row[12] or 0)
+        if seasons_override is None:
+            seasons_override = _load_manager_seasons_overrides(conn, db_name).get(str(franchise_id))
+        seasons = int(seasons_override if seasons_override is not None else (row[12] or 0))
         playoff_apps = int(row[9] or 0)
 
         reg_denom = reg_wins + reg_losses + reg_ties

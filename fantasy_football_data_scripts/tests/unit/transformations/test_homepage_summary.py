@@ -265,6 +265,116 @@ def test_compute_manager_rankings_counts_preserved_historical_titles_without_inv
     conn.close()
 
 
+def test_compute_manager_rankings_uses_saved_career_seasons_and_keeps_manual_history_only_managers():
+    """A weekly rollup must not replace commissioner-supplied career totals."""
+    conn = duckdb.connect(":memory:")
+    previous_catalog = None
+    try:
+        conn.execute("CREATE SCHEMA public")
+        db_name = conn.execute("SELECT current_database()").fetchone()[0]
+        previous_catalog = set_active_catalog(db_name)
+        conn.execute(
+            """
+            CREATE TABLE public.matchup (
+                db_name VARCHAR,
+                year INTEGER,
+                week INTEGER,
+                manager VARCHAR,
+                franchise_id VARCHAR,
+                team_name VARCHAR,
+                team_points DOUBLE,
+                win INTEGER,
+                loss INTEGER,
+                tie INTEGER,
+                champion INTEGER,
+                is_playoffs INTEGER,
+                is_consolation INTEGER,
+                is_bye_week INTEGER
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (db_name, 1996, 18, "Travis Gray", "gray", "Historical finish (user supplied)", None, None, None, None, 1, 1, 0, 0),
+                (db_name, 2024, 1, "Travis Gray", "gray", "Gray Team", 120.0, 1, 0, 0, 1, 0, 0, 0),
+                (db_name, 1997, 18, "John Knutson", "john", "Historical finish (user supplied)", None, None, None, None, 1, 1, 0, 0),
+            ],
+        )
+        conn.execute("CREATE TABLE public.league_context (db_name VARCHAR, league_rules_json VARCHAR)")
+        conn.execute(
+            "INSERT INTO public.league_context VALUES (?, ?)",
+            [
+                db_name,
+                '{"manager_seasons_overrides":{"gray":32,"john":12}}',
+            ],
+        )
+
+        rankings = compute_manager_rankings(conn, db_name).set_index("franchise_id")
+
+        assert rankings.loc["gray", "seasons"] == 32
+        assert rankings.loc["gray", "wins"] == 1
+        assert rankings.loc["gray", "championships"] == 2
+        assert rankings.loc["john", "manager"] == "John Knutson"
+        assert rankings.loc["john", "seasons"] == 12
+        assert rankings.loc["john", "wins"] == 0
+        assert rankings.loc["john", "championships"] == 1
+    finally:
+        if previous_catalog is not None:
+            set_active_catalog(previous_catalog)
+        conn.close()
+
+
+def test_compute_manager_career_stats_uses_saved_career_seasons():
+    conn = duckdb.connect(":memory:")
+    previous_catalog = None
+    try:
+        conn.execute("CREATE SCHEMA public")
+        db_name = conn.execute("SELECT current_database()").fetchone()[0]
+        previous_catalog = set_active_catalog(db_name)
+        conn.execute(
+            """
+            CREATE TABLE public.matchup (
+                db_name VARCHAR, year INTEGER, week INTEGER, manager VARCHAR,
+                franchise_id VARCHAR, team_name VARCHAR, team_points DOUBLE,
+                opponent_points DOUBLE, win INTEGER, loss INTEGER, tie INTEGER,
+                champion INTEGER, sacko INTEGER, is_playoffs INTEGER,
+                is_consolation INTEGER, is_bye_week INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO public.matchup VALUES (?, 2024, 1, 'Travis Gray', 'gray', "
+            "'Gray Team', 120, 100, 1, 0, 0, 1, 0, 0, 0, 0)",
+            [db_name],
+        )
+        conn.execute("CREATE TABLE public.league_context (db_name VARCHAR, league_rules_json VARCHAR)")
+        conn.execute(
+            "INSERT INTO public.league_context VALUES (?, ?)",
+            [db_name, '{"manager_seasons_overrides":{"gray":32}}'],
+        )
+
+        career = _compute_manager_career_stats(
+            conn,
+            db_name,
+            "gray",
+            "Travis Gray",
+            matchup_cols={
+                "franchise_id", "year", "week", "manager", "team_name",
+                "team_points", "opponent_points", "win", "loss", "tie",
+                "champion", "sacko", "is_playoffs", "is_consolation",
+                "is_bye_week",
+            },
+        )
+
+        assert career["seasons_played"] == 32
+        assert career["playoff_rate"] == 0
+    finally:
+        if previous_catalog is not None:
+            set_active_catalog(previous_catalog)
+        conn.close()
+
+
 def test_tied_career_rank_uses_stable_franchise_identity_across_row_orders():
     def rankings_for(order):
         conn = duckdb.connect(":memory:")

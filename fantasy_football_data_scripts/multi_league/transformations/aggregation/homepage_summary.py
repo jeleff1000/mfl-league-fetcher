@@ -1686,8 +1686,8 @@ def compute_manager_rankings(
                    COALESCE(ct.championships, ms.championships, 0) as championships,
                    COALESCE(ms.playoff_appearances, 0) AS playoff_appearances,
                    COALESCE(ms.total_years, 0) AS total_years,
-                   COALESCE(ms.first_year, af.first_year) AS first_year,
-                   COALESCE(ms.last_year, af.last_year) AS last_year,
+                   LEAST(COALESCE(ms.first_year, af.first_year), af.first_year) AS first_year,
+                   GREATEST(COALESCE(ms.last_year, af.last_year), af.last_year) AS last_year,
                    ms.avg_power_rating,
                    ms.franchise_id IS NOT NULL AS has_played
             FROM all_franchises af

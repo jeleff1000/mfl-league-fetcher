@@ -313,6 +313,7 @@ def test_compute_manager_rankings_uses_saved_career_seasons_and_keeps_manual_his
         rankings = compute_manager_rankings(conn, db_name).set_index("franchise_id")
 
         assert rankings.loc["gray", "seasons"] == 32
+        assert rankings.loc["gray", "first_year"] == 1996
         assert rankings.loc["gray", "wins"] == 1
         assert rankings.loc["gray", "championships"] == 2
         assert rankings.loc["john", "manager"] == "John Knutson"

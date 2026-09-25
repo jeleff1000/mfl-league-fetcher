@@ -99,6 +99,38 @@ def test_future_schedule_rejects_unresolved_provider_team_identity():
         )
 
 
+def test_first_sleeper_season_schedule_uses_canonical_owner_guids():
+    from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
+
+    class EmptyActiveSeason:
+        @staticmethod
+        def table_exists(_table_name):
+            return False
+
+    schedule = pd.DataFrame(
+        {
+            "year": [2026, 2026],
+            "week": [1, 1],
+            "team_key": ["1", "2"],
+            "opponent_team_key": ["2", "1"],
+            "manager_guid": ["owner-a", "owner-b"],
+            "opponent_guid": ["owner-b", "owner-a"],
+            "manager": ["A", "B"],
+            "opponent": ["B", "A"],
+        }
+    )
+
+    actual = resolve_active_schedule_franchise_ids(
+        EmptyActiveSeason(),
+        schedule,
+        active_year=2026,
+        allow_provider_guid_initialization=True,
+    )
+
+    assert actual["franchise_id"].tolist() == ["owner-a", "owner-b"]
+    assert actual["opponent_franchise_id"].tolist() == ["owner-b", "owner-a"]
+
+
 def test_future_schedule_uses_unique_active_manager_when_yahoo_redacts_keys():
     from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
 

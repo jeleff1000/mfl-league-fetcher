@@ -422,7 +422,10 @@ def _merge_active_payloads(
     )
     if not schedule.empty:
         schedule = resolve_active_schedule_franchise_ids(
-            local_db, schedule, active_year=active_year,
+            local_db,
+            schedule,
+            active_year=active_year,
+            allow_provider_guid_initialization=True,
         )
         merge_provider_refresh_table(
             local_db, "schedule", schedule, platform="sleeper", league_id=league_id

@@ -1269,6 +1269,7 @@ def resolve_active_schedule_franchise_ids(
     schedule: pd.DataFrame,
     *,
     active_year: int,
+    allow_provider_guid_initialization: bool = False,
 ) -> pd.DataFrame:
     """Bind a provider's future schedule to the league's canonical franchises.
 
@@ -1299,6 +1300,25 @@ def resolve_active_schedule_franchise_ids(
             witness = frame.loc[:, columns].copy()
             witness["_identity_priority"] = identity_priority
             witnesses.append(witness)
+    if not witnesses and allow_provider_guid_initialization:
+        required = {"team_key", "manager_guid"}
+        if not required.issubset(schedule.columns):
+            raise RefreshScopeError("canonical active-season schedule identity is unavailable")
+        seed = schedule.loc[:, [
+            column
+            for column in ("team_key", "manager_guid", "team_name", "manager")
+            if column in schedule.columns
+        ]].drop_duplicates().copy()
+        from multi_league.core.manager_identity import hidden_manager_guid_mask
+
+        manager_guids = seed["manager_guid"].astype("string").str.strip()
+        invalid = manager_guids.isna() | manager_guids.isin({"", "None", "nan", "<NA>"})
+        invalid |= hidden_manager_guid_mask(manager_guids)
+        if invalid.any():
+            raise RefreshScopeError("canonical active-season schedule identity is unavailable")
+        seed["franchise_id"] = manager_guids
+        seed["_identity_priority"] = 0
+        witnesses.append(seed)
     if not witnesses:
         raise RefreshScopeError("canonical active-season schedule identity is unavailable")
 

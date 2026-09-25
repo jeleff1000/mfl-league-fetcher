@@ -70,6 +70,32 @@ def test_wrong_publication_year_cannot_advance_freshness(completion):
 def test_committed_active_update_and_cache_keep_historical_watermark_pending(completion):
     plan = changed_plan("2025:17")
     with duckdb.connect(":memory:") as conn:
+        conn.execute("""
+            CREATE SCHEMA accounts;
+            CREATE TABLE accounts.league_update_manifests (
+              database_name VARCHAR PRIMARY KEY,
+              platform VARCHAR, active_season INTEGER, through_week INTEGER,
+              observed_manifest_json VARCHAR, observed_manifest_digest VARCHAR,
+              published_manifest_json VARCHAR, published_manifest_digest VARCHAR,
+              published_at TIMESTAMP,
+              probe_status VARCHAR NOT NULL DEFAULT 'unknown', probe_error_code VARCHAR,
+              last_attempt_at TIMESTAMP, last_success_at TIMESTAMP,
+              updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+            CREATE TABLE accounts.league_update_dispatches (
+              database_name VARCHAR PRIMARY KEY, platform VARCHAR NOT NULL, status VARCHAR NOT NULL,
+              workflow_file VARCHAR, workflow_run_id BIGINT, dispatch_token VARCHAR,
+              source_year INTEGER, source_week INTEGER, source_fingerprint VARCHAR,
+              publish_generation VARCHAR, healthy BOOLEAN DEFAULT FALSE,
+              dispatched_at TIMESTAMP, started_at TIMESTAMP, completed_at TIMESTAMP,
+              lease_expires_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW(), error VARCHAR,
+              attempt_id VARCHAR, claim_version BIGINT DEFAULT 0, heartbeat_at TIMESTAMP,
+              observed_manifest_digest VARCHAR, base_generation VARCHAR, bundle_id VARCHAR,
+              cache_state VARCHAR, committed_at TIMESTAMP, cache_verified_at TIMESTAMP,
+              publication_receipt_json VARCHAR
+            )
+        """)
+
         class LocalWriter:
             def execute(self, sql, *, database):
                 assert database == "___ops"

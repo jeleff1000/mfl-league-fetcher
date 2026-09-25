@@ -62,6 +62,109 @@ def test_normalize_transaction_df_does_not_redouble_expanded_trade_rows():
     assert set(twice["manager"]) == {"Alice", "Bob"}
 
 
+def test_normalize_transaction_df_expands_legacy_manager_scoped_trade_rows():
+    raw = pd.DataFrame(
+        [
+            {
+                "transaction_id": "331.l.381581.tr.167",
+                "transaction_type": "trade",
+                "player": "Darrin Reaves",
+                "yahoo_player_id": "27943",
+                "year": 2014,
+                "week": 11,
+                "manager": "Ilan",
+                "manager_guid": "guid-ilan",
+                "franchise_id": "franchise-ilan",
+                "team_name": "Ilan Team",
+            },
+            {
+                "transaction_id": "331.l.381581.tr.167",
+                "transaction_type": "trade",
+                "player": "DeSean Jackson",
+                "yahoo_player_id": "8826",
+                "year": 2014,
+                "week": 11,
+                "manager": "Ilan",
+                "manager_guid": "guid-ilan",
+                "franchise_id": "franchise-ilan",
+                "team_name": "Ilan Team",
+            },
+            {
+                "transaction_id": "331.l.381581.tr.167",
+                "transaction_type": "trade",
+                "player": "Fred Jackson",
+                "yahoo_player_id": "8063",
+                "year": 2014,
+                "week": 11,
+                "manager": "Tani",
+                "manager_guid": "guid-tani",
+                "franchise_id": "franchise-tani",
+                "team_name": "Tani Team",
+            },
+            {
+                "transaction_id": "331.l.381581.tr.167",
+                "transaction_type": "trade",
+                "player": "Hakeem Nicks",
+                "yahoo_player_id": "9293",
+                "year": 2014,
+                "week": 11,
+                "manager": "Tani",
+                "manager_guid": "guid-tani",
+                "franchise_id": "franchise-tani",
+                "team_name": "Tani Team",
+            },
+        ]
+    )
+
+    normalized = normalize_transaction_df(raw, platform="yahoo", league_id="331.l.381581")
+
+    assert len(normalized) == 8
+    assert normalized.groupby(["yahoo_player_id", "trade_direction"]).size().eq(1).all()
+    assert set(normalized["trade_direction"]) == {"received", "sent"}
+    assert normalized["source_franchise_id"].notna().all()
+    assert set(
+        normalized.loc[
+            normalized["yahoo_player_id"] == "27943",
+            ["manager", "source_manager", "trade_direction"],
+        ].itertuples(index=False, name=None)
+    ) == {
+        ("Ilan", "Tani", "received"),
+        ("Tani", "Ilan", "sent"),
+    }
+
+
+def test_normalize_transaction_df_does_not_redouble_legacy_manager_scoped_trade_rows():
+    raw = pd.DataFrame(
+        [
+            {
+                "transaction_id": "legacy-trade",
+                "transaction_type": "trade",
+                "player": "Player A",
+                "year": 2014,
+                "week": 11,
+                "manager": "Alice",
+                "franchise_id": "alice-id",
+            },
+            {
+                "transaction_id": "legacy-trade",
+                "transaction_type": "trade",
+                "player": "Player B",
+                "year": 2014,
+                "week": 11,
+                "manager": "Bob",
+                "franchise_id": "bob-id",
+            },
+        ]
+    )
+
+    once = normalize_transaction_df(raw, platform="yahoo", league_id="331.l.381581")
+    twice = normalize_transaction_df(once, platform="yahoo", league_id="331.l.381581")
+
+    assert len(once) == 4
+    assert len(twice) == 4
+    assert set(twice["trade_direction"]) == {"received", "sent"}
+
+
 def test_normalize_transaction_df_assigns_unique_sequence_for_multi_player_transactions():
     raw = pd.DataFrame(
         [

@@ -146,6 +146,114 @@ def _has_populated_trade_destination_columns(df) -> bool:
     return False
 
 
+def _expand_legacy_manager_scoped_trade_rows(df):
+    """Expand legacy two-party trade rows that only identify the recipient.
+
+    Older external Yahoo imports stored one row per acquired asset with the
+    receiving manager in ``manager`` and no source/destination fields.  The
+    transaction still contains both parties, so recover the canonical
+    received/sent mirror from the two manager identities in that transaction.
+    Ambiguous transactions are deliberately left untouched for validation to
+    reject rather than guessing.
+    """
+    import pandas as pd
+
+    if df is None or df.empty or "transaction_type" not in df.columns or "transaction_id" not in df.columns:
+        return df
+
+    working = df.reset_index(drop=True).copy()
+    trade_mask = working["transaction_type"].fillna("").astype(str).str.lower().isin({"trade", "trade_pick"})
+    if not trade_mask.any():
+        return working
+
+    def populated(value) -> bool:
+        return pd.notna(value) and str(value).strip().lower() not in {"", "none", "nan", "<na>"}
+
+    def row_value(row, column):
+        return row[column] if column in row.index and populated(row[column]) else None
+
+    def party_key(row):
+        for column in ("franchise_id", "manager_guid", "manager"):
+            value = row_value(row, column)
+            if value is not None:
+                return f"{column}:{value}"
+        return None
+
+    context_columns = ("manager", "manager_guid", "team_name", "franchise_id")
+    perspective_columns = (
+        "source_manager",
+        "source_manager_guid",
+        "source_team_name",
+        "source_franchise_id",
+        "destination_manager",
+        "destination_manager_guid",
+        "destination_team_name",
+        "destination_franchise_id",
+        "trade_direction",
+    )
+    group_columns = ["transaction_id"]
+    if "year" in working.columns:
+        group_columns.append("year")
+
+    replacements = {}
+    for _, group in working.loc[trade_mask].groupby(group_columns, dropna=False, sort=False):
+        if not all(populated(value) for value in group["transaction_id"]):
+            continue
+        if any(
+            populated(row_value(row, column))
+            for _, row in group.iterrows()
+            for column in perspective_columns
+        ):
+            continue
+
+        keyed_rows = [(idx, row, party_key(row)) for idx, row in group.iterrows()]
+        party_keys = {key for _, _, key in keyed_rows if key is not None}
+        if len(party_keys) != 2 or any(key is None for _, _, key in keyed_rows):
+            continue
+
+        contexts = {}
+        for _, row, key in keyed_rows:
+            contexts.setdefault(key, {column: row_value(row, column) for column in context_columns})
+        if any(not populated(context["manager"]) or not populated(context["franchise_id"]) for context in contexts.values()):
+            continue
+
+        for idx, row, key in keyed_rows:
+            other_key = next(candidate for candidate in party_keys if candidate != key)
+            current = contexts[key]
+            other = contexts[other_key]
+
+            received = row.copy()
+            sent = row.copy()
+            for suffix, context_column in (
+                ("manager", "manager"),
+                ("manager_guid", "manager_guid"),
+                ("team_name", "team_name"),
+                ("franchise_id", "franchise_id"),
+            ):
+                received[f"source_{suffix}"] = other[context_column]
+                sent[suffix] = other[context_column]
+                sent[f"source_{suffix}"] = current[context_column]
+            received["trade_direction"] = "received"
+            sent["trade_direction"] = "sent"
+            for column in (
+                "destination_manager",
+                "destination_manager_guid",
+                "destination_team_name",
+                "destination_franchise_id",
+            ):
+                received[column] = None
+                sent[column] = None
+            replacements[idx] = [received, sent]
+
+    if not replacements:
+        return working
+
+    rows = []
+    for idx, row in working.iterrows():
+        rows.extend(replacements.get(idx, [row]))
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
 def normalize_transaction_df(df, platform: str, league_id: str | None = None) -> pd.DataFrame:
     """Normalize a transaction DataFrame to canonical schema."""
     import pandas as pd
@@ -231,6 +339,8 @@ def normalize_transaction_df(df, platform: str, league_id: str | None = None) ->
     _fill_guid_backed_id("franchise_id", "manager_guid")
     _fill_guid_backed_id("source_franchise_id", "source_manager_guid")
     _fill_guid_backed_id("destination_franchise_id", "destination_manager_guid")
+
+    df = _expand_legacy_manager_scoped_trade_rows(df)
 
     if _has_populated_trade_destination_columns(df):
         df = duplicate_trade_rows(df)

@@ -36,6 +36,19 @@ def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _espn_current_matchup_period(league: Any) -> int | None:
+    """Return ESPN's provider-owned live matchup boundary, if usable."""
+    for attribute in ("currentMatchupPeriod", "current_week"):
+        raw_value = getattr(league, attribute, None)
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
 def _closed_espn_schedule(
     schedule_rows: list[dict[str, Any]],
     *,
@@ -57,12 +70,12 @@ def _closed_espn_schedule(
     # scores before the current scoring period has started.  Period position
     # is therefore the first closure gate, even when every winner marker looks
     # syntactically final.
-    if current_matchup_period and int(requested_week) >= int(current_matchup_period):
+    if not current_matchup_period:
+        return None
+    if int(requested_week) >= int(current_matchup_period):
         return None
     if espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids):
         return schedule_rows
-    if not current_matchup_period:
-        return None
 
     normalized: list[dict[str, Any]] = []
     for source_row in schedule_rows:
@@ -700,7 +713,7 @@ def _merge_active_payloads(
             year=active_year,
             weeks=refresh_weeks,
             expected_team_ids=expected_team_ids,
-            current_matchup_period=max(refresh_weeks),
+            current_matchup_period=_espn_current_matchup_period(league),
             schedule_out=schedules,
         )
         transaction_rows = fetch_espn_transactions(

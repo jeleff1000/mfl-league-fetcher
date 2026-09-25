@@ -65,6 +65,37 @@ def test_current_espn_period_rejects_a_zero_score_tie_shell():
     ) == []
 
 
+def test_current_espn_period_comes_from_provider_not_requested_week_ceiling():
+    """A future materialized week must not make the live week look closed."""
+    from refresh_espn_active_season import _espn_current_matchup_period
+
+    league = SimpleNamespace(currentMatchupPeriod=3, current_week=3)
+
+    assert _espn_current_matchup_period(league) == 3
+
+
+def test_unknown_espn_period_fails_closed_even_with_winner_marker():
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    client = SimpleNamespace(
+        get_raw_schedule=lambda *_args: [
+            {
+                "matchupPeriodId": 3,
+                "winner": "HOME",
+                "home": {"teamId": 1, "totalPoints": 40.0},
+                "away": {"teamId": 2, "totalPoints": 35.0},
+            }
+        ]
+    )
+
+    assert _finalized_espn_matchup_weeks(
+        client,
+        year=2026,
+        weeks=[3],
+        expected_team_ids=("1", "2"),
+    ) == []
+
+
 def test_closed_espn_period_derives_missing_winners_without_finalizing_current_period():
     from refresh_espn_active_season import _finalized_espn_matchup_weeks
 

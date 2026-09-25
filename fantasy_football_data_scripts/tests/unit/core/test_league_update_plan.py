@@ -94,7 +94,7 @@ def test_identical_complete_manifest_is_a_no_op():
     assert plan.changed_resources == ()
 
 
-def test_freshness_contract_revision_is_not_a_data_partition():
+def test_freshness_contract_revision_replays_latest_materialized_partition():
     published = manifest(
         provider=(resource("espn", "settings", "2026", "same"),),
     )
@@ -108,9 +108,11 @@ def test_freshness_contract_revision_is_not_a_data_partition():
 
     plan = build_refresh_plan(observed, published, materialized_keys={(2026, 1)})
 
-    assert plan.requires_refresh is False
+    assert plan.requires_refresh is True
+    assert plan.weeks == (1,)
+    assert plan.reasons == ("refresh_contract_changed",)
     assert plan.changed_resources == ()
-    assert plan.weeks_by_season == ()
+    assert plan.weeks_by_season == ((2026, (1,)),)
 
 
 def test_missing_derived_aggregate_forces_latest_materialized_week_refresh():

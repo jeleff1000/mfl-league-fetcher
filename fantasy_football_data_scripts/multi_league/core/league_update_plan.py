@@ -207,6 +207,20 @@ def build_refresh_plan(
     weeks: set[int] = set()
     reasons: set[str] = {str(reason) for reason in required_reasons if str(reason).strip()}
 
+    contract_changed = any(
+        row.resource == "freshness_contract"
+        for row in (
+            *delta.provider_added,
+            *delta.provider_changed,
+            *delta.provider_removed,
+        )
+    )
+    if contract_changed:
+        # A contract revision changes how an otherwise-identical provider
+        # payload must be interpreted. Replay one retained partition without
+        # pretending the marker itself is league data.
+        reasons.add("refresh_contract_changed")
+
     full_active = delta.identity_changed or delta.segments_changed
     if full_active:
         reasons.add("segment_identity_changed")

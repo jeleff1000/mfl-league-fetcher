@@ -41,6 +41,30 @@ def test_unfinalized_espn_schedule_log_exposes_the_safe_period_witness(capsys):
     assert "teams=['1', '2']" in output
 
 
+def test_current_espn_period_rejects_a_zero_score_tie_shell():
+    """ESPN can label an unplayed current matchup TIE before kickoff."""
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    client = SimpleNamespace(
+        get_raw_schedule=lambda *_args: [
+            {
+                "matchupPeriodId": 3,
+                "winner": "TIE",
+                "home": {"teamId": 1, "totalPoints": 0.0},
+                "away": {"teamId": 2, "totalPoints": 0.0},
+            }
+        ]
+    )
+
+    assert _finalized_espn_matchup_weeks(
+        client,
+        year=2026,
+        weeks=[3],
+        expected_team_ids=("1", "2"),
+        current_matchup_period=3,
+    ) == []
+
+
 def test_closed_espn_period_derives_missing_winners_without_finalizing_current_period():
     from refresh_espn_active_season import _finalized_espn_matchup_weeks
 

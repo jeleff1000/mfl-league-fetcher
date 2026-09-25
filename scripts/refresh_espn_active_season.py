@@ -53,9 +53,15 @@ def _closed_espn_schedule(
     """
     from multi_league.core.league_refresh import espn_schedule_is_final
 
+    # ESPN can expose a complete team graph with ``winner=TIE`` and 0-0
+    # scores before the current scoring period has started.  Period position
+    # is therefore the first closure gate, even when every winner marker looks
+    # syntactically final.
+    if current_matchup_period and int(requested_week) >= int(current_matchup_period):
+        return None
     if espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids):
         return schedule_rows
-    if not current_matchup_period or int(current_matchup_period) <= int(requested_week):
+    if not current_matchup_period:
         return None
 
     normalized: list[dict[str, Any]] = []

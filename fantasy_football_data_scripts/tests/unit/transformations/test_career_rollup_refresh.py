@@ -656,6 +656,19 @@ def test_homepage_rejects_missing_franchise_before_replacing_outputs(homepage_ch
     assert homepage_chain.execute("SELECT highest_score_points FROM public.homepage_league_summary WHERE db_name='test_league'").fetchone() == (1.0,)
 
 
+def test_homepage_accepts_empty_identity_frames_before_first_played_matchup(homepage_chain):
+    conn = homepage_chain
+    conn.execute("DELETE FROM public.matchup WHERE db_name='test_league'")
+    conn.execute("DELETE FROM public.homepage_league_summary WHERE db_name='test_league'")
+
+    counts = aggregation_utils.aggregate_homepage_rollups(conn, 'test_league')
+
+    assert counts['homepage_league_summary'] == 1
+    assert counts['homepage_manager_rankings'] == 0
+    assert counts['homepage_manager_profiles'] == 0
+    assert counts['homepage_current_standings'] == 0
+
+
 def test_homepage_rejects_lost_summary_value_without_silently_restoring_it(homepage_chain, monkeypatch):
     from multi_league.transformations.aggregation import homepage_summary
 

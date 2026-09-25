@@ -525,6 +525,8 @@ def aggregate_homepage_rollups(
         ).fetchall()}
         frame = frames[table]
         if "franchise_id" not in frame:
+            if frame.empty and not expected:
+                continue
             raise HomepageValidationError(f"{table} lacks franchise identities")
         ids = frame["franchise_id"]
         if ids.isna().any() or ids.duplicated().any() or set(ids.astype(str)) != expected:

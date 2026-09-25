@@ -23,13 +23,18 @@ def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _missing_years(reader: Any, db_name: str) -> list[int]:
+def _missing_years(reader: Any, db_name: str, active_year: int) -> list[int]:
     # Keep the fingerprint contract identical to the planner and server repair
     # gate; this does not download historical rows.
-    from multi_league.core.league_update_plan import _missing_derived_aggregate_years
+    from multi_league.core.league_update_plan import missing_derived_aggregate_years
 
-    safe_db = str(db_name).replace("'", "''")
-    return sorted(_missing_derived_aggregate_years(reader, safe_db=safe_db))
+    return sorted(
+        missing_derived_aggregate_years(
+            reader,
+            database_name=db_name,
+            active_season=int(active_year),
+        )
+    )
 
 
 def _load_context_witness(reader: Any, db_name: str) -> tuple[int, pd.DataFrame]:
@@ -61,7 +66,7 @@ def repair_missing_season_rollups_if_needed(
     merge_timeout_seconds: int = 40,
 ) -> dict[str, Any]:
     """Atomically restore only missing rollups from retained weekly history."""
-    missing_years = _missing_years(reader, db_name)
+    missing_years = _missing_years(reader, db_name, active_year)
     if not missing_years:
         return {"missing_years": [], "published": False}
 
@@ -115,7 +120,7 @@ def repair_missing_season_rollups_if_needed(
 
     if str(result.get("status") or "").upper() != "COMMITTED":
         raise RuntimeError("season-rollup repair did not return a confirmed COMMITTED publication")
-    remaining = _missing_years(reader, db_name)
+    remaining = _missing_years(reader, db_name, active_year)
     if remaining:
         raise RuntimeError(
             f"season-rollup repair left incomplete years for {db_name}: {remaining}"

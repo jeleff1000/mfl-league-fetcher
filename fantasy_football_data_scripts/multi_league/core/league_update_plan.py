@@ -349,6 +349,19 @@ def _derived_refresh_gaps(
     )
 
 
+def missing_derived_aggregate_years(
+    reader, *, database_name: str, active_season: int,
+) -> set[int]:
+    """Return years whose retained source keys and derived rollups diverge."""
+    safe_db = str(database_name).replace("'", "''")
+    years, _ = _derived_refresh_gaps(
+        reader,
+        safe_db=safe_db,
+        active_season=int(active_season),
+    )
+    return years
+
+
 def _parse_manifest(raw: object, *, label: str) -> SourceManifest:
     try:
         value = json.loads(str(raw))

@@ -304,7 +304,11 @@ def _build_context(
     )
     client = SleeperAPIClient()
     context_platform = str(frontend.get("platform") or "").strip().lower()
-    if context_platform == "sleeper" and not known_league_ids.get(str(active_year)):
+    if (
+        context_platform == "sleeper"
+        and not active_league_id
+        and not known_league_ids.get(str(active_year))
+    ):
         # The saved onboarding identity may already be the new-season successor
         # while imported settings still end with the prior season.  Admit it as
         # a candidate; _resolve_active_renewal must still prove its native chain.

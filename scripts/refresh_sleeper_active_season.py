@@ -304,12 +304,12 @@ def _build_context(
     )
     client = SleeperAPIClient()
     context_platform = str(frontend.get("platform") or "").strip().lower()
-    if not known_league_ids and context_platform == "sleeper":
+    if context_platform == "sleeper" and not known_league_ids.get(str(active_year)):
+        # The saved onboarding identity may already be the new-season successor
+        # while imported settings still end with the prior season.  Admit it as
+        # a candidate; _resolve_active_renewal must still prove its native chain.
         saved_active_id = str(frontend.get("league_id") or "").strip()
         if saved_active_id:
-            # A true first-season import has no predecessor chain. Its saved
-            # onboarding identity is sufficient; weekly updates must not walk
-            # provider history to invent an unimported predecessor.
             known_league_ids[str(active_year)] = saved_active_id
     if active_league_id:
         saved_active_id = str(known_league_ids.get(str(active_year)) or "").strip()

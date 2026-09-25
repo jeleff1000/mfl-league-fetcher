@@ -158,9 +158,21 @@ def main() -> int:
         db_filter="db_name = 'kmffl'",
     )
 
-    # Gavi's franchise_id is 'GHZOUGTBZIYGQ6QOMLOD4FZLGA', Yaacov is '2OUWRYUIY4HHEW72H5YVBHPILA'
-    GAVI = "GHZOUGTBZIYGQ6QOMLOD4FZLGA"
-    YAACOV = "2OUWRYUIY4HHEW72H5YVBHPILA"
+    # Resolve the current canonical franchise IDs from the imported rows.  The
+    # external source carries historical Yahoo identifiers, while canonical
+    # franchise discovery may intentionally replace them with stable synthetic
+    # IDs.  Verification must follow the canonical identity, not an obsolete
+    # source identifier.
+    manager_ids = (
+        merged.loc[merged["manager"].isin(["Gavi", "Yaacov"]), ["manager", "franchise_id"]]
+        .dropna()
+        .drop_duplicates()
+        .set_index("manager")["franchise_id"]
+        .astype(str)
+        .to_dict()
+    )
+    GAVI = manager_ids["Gavi"]
+    YAACOV = manager_ids["Yaacov"]
 
     print(f"\n    champion: {result.get('champion')!r}  (expected {GAVI!r} = Gavi)")
     print(f"    runner_up: {result.get('runner_up')!r}  (expected {YAACOV!r} = Yaacov)")

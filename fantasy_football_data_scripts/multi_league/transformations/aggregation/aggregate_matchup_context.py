@@ -642,6 +642,47 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False, *, year:
             label="matchup_season:insert",
         )
 
+        # Simulation snapshots describe the league state at the latest
+        # regular-season period, even when a provider leaves one completed
+        # matchup as a 0-0 shell. Keep those rows out of games/W-L/points, but
+        # do not fall back to the prior week's simulation in matchup_season.
+        latest_sim_cols = [col for col in PLAYOFF_SIM_COLUMNS if col in snapshot_cols]
+        if latest_sim_cols:
+            latest_select = ",\n                    ".join(
+                f"ARG_MAX({col}, week) AS {col}" for col in latest_sim_cols
+            )
+            assignments = ",\n                ".join(
+                f"{col} = latest.{col}" for col in latest_sim_cols
+            )
+            latest_simulation_sql = f"""
+            UPDATE {central_table('matchup_season')} AS season
+            SET {assignments}
+            FROM (
+                SELECT
+                    franchise_id,
+                    {latest_select}
+                FROM {central_table('matchup')}
+                WHERE {league_db_filter(db_name)}
+                  AND year = {yr}
+                  AND week <= {last_reg_week}
+                  AND COALESCE(CAST({'is_playoffs' if has('is_playoffs') else '0'} AS INT), 0) = 0
+                  AND COALESCE(CAST({'is_consolation' if has('is_consolation') else '0'} AS INT), 0) = 0
+                  AND manager IS NOT NULL AND opponent IS NOT NULL
+                  {'AND COALESCE(is_bye_week, 0) = 0' if has('is_bye_week') else ''}
+                  {'AND COALESCE(is_placeholder, 0) = 0' if has('is_placeholder') else ''}
+                GROUP BY franchise_id
+            ) AS latest
+            WHERE season.db_name = '{db_name}'
+              AND season.year = {yr}
+              AND season.franchise_id = latest.franchise_id
+            """
+            execute_scoped(
+                conn,
+                latest_simulation_sql,
+                db_name,
+                label="matchup_season:latest_simulation",
+            )
+
         # -- C. Playoff detection: UPDATE rows with playoff info
         # NULLIF handles empty strings in playoff_round/consolation_round
         pr_expr = "CAST(playoff_round AS VARCHAR)" if has("playoff_round") else "''"

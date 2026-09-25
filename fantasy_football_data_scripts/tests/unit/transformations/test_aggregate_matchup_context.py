@@ -166,6 +166,51 @@ def test_aggregate_matchup_season_excludes_playoffs_from_record_rollup():
     ]
 
 
+def test_matchup_season_uses_latest_simulation_without_counting_zero_score_shell():
+    from multi_league.core.aggregate_ddl import create_aggregate_table_sql
+    from multi_league.transformations.aggregation.aggregate_matchup_context import (
+        aggregate_matchup_season,
+    )
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("ATTACH ':memory:' AS ___leagues")
+    conn.execute('USE "___leagues"')
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(create_aggregate_table_sql("___leagues", "matchup_season"))
+    conn.execute(
+        "CREATE TABLE public.league_settings ("
+        "db_name VARCHAR, year INTEGER, playoff_start_week INTEGER)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR, manager VARCHAR, franchise_id VARCHAR,
+            year INTEGER, week INTEGER, opponent VARCHAR,
+            team_points DOUBLE, opponent_points DOUBLE,
+            win INTEGER, loss INTEGER, tie INTEGER,
+            is_playoffs INTEGER, is_consolation INTEGER,
+            is_bye_week INTEGER, is_placeholder INTEGER,
+            margin DOUBLE, p_playoffs DOUBLE, p_champ DOUBLE
+        )
+        """
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('demo_league', 2026, 15)")
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("demo_league", "Alice", "fid_alice", 2026, 1, "Bob", 100.0, 90.0, 1, 0, 0, 0, 0, 0, 0, 10.0, 55.0, 8.0),
+            ("demo_league", "Alice", "fid_alice", 2026, 2, "Bob", 0.0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0.0, 63.0, 12.0),
+        ],
+    )
+
+    aggregate_matchup_season(conn, "demo_league")
+
+    assert conn.execute(
+        "SELECT games, wins, total_team_points, p_playoffs, p_champ "
+        "FROM public.matchup_season WHERE db_name = 'demo_league'"
+    ).fetchone() == (1, 1, 100.0, 63.0, 12.0)
+
+
 def test_rebuild_matchup_season_fleet_matches_scoped_semantics_and_leaves_homepage_untouched():
     from multi_league.core.aggregate_ddl import create_named_aggregate_table_sql
     from multi_league.transformations.aggregation.aggregate_matchup_context import (

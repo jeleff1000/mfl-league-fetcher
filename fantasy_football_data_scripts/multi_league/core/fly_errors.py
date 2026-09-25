@@ -9,4 +9,5 @@ def is_permanent_storage_error(detail: str) -> bool:
         or ("computed checksum" in detail and "stored checksum" in detail)
         or "database has been invalidated" in detail
         or "current transaction is aborted" in detail
+        or "binder error" in detail
     )

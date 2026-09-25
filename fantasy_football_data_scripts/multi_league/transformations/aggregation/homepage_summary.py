@@ -172,9 +172,10 @@ def _typed_matchup_dedupe_ctes_sql(db_name: str) -> str:
     return f"""
         typed_matchup AS (
             SELECT
-                * EXCLUDE (year, week),
+                * EXCLUDE (year, week, manager),
                 TRY_CAST(year AS INT) AS year,
-                TRY_CAST(week AS INT) AS week
+                TRY_CAST(week AS INT) AS week,
+                CAST(manager AS VARCHAR) AS manager
             FROM {central_table('matchup')}
             WHERE franchise_id IS NOT NULL
               AND TRIM(CAST(franchise_id AS VARCHAR)) != ''

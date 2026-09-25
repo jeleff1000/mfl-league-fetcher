@@ -15,6 +15,7 @@ from multi_league.transformations.aggregation.homepage_summary import (
     _compute_manager_txn_profile,
     _compute_transaction_highlights,
     _normalize_platform_id_sql,
+    _typed_matchup_dedupe_ctes_sql,
     _trade_partner_sql,
     ScopedLocalProfileContext,
     compute_all_manager_profiles,
@@ -23,6 +24,33 @@ from multi_league.transformations.aggregation.homepage_summary import (
     compute_top_rivalries,
 )
 from multi_league.transformations.aggregation.aggregation_utils import LocalProfileContext, set_active_catalog
+
+
+def test_typed_matchup_cte_accepts_integer_inferred_manager_on_empty_partition():
+    """An empty pandas copy may infer manager as INTEGER; homepage SQL must still bind."""
+    conn = duckdb.connect(":memory:")
+    previous_catalog = None
+    try:
+        conn.execute("CREATE SCHEMA public")
+        db_name = conn.execute("SELECT current_database()").fetchone()[0]
+        previous_catalog = set_active_catalog(db_name)
+        conn.execute(
+            "CREATE TABLE public.matchup ("
+            "db_name VARCHAR, year INTEGER, week INTEGER, manager INTEGER, "
+            "franchise_id VARCHAR, team_points DOUBLE, is_bye_week INTEGER)"
+        )
+
+        rows = conn.execute(
+            f"WITH {_typed_matchup_dedupe_ctes_sql(db_name)} "
+            "SELECT manager FROM base_matchup "
+            "ORDER BY CASE WHEN manager IS NOT NULL AND TRIM(manager) != '' THEN 0 ELSE 1 END"
+        ).fetchall()
+
+        assert rows == []
+    finally:
+        if previous_catalog is not None:
+            set_active_catalog(previous_catalog)
+        conn.close()
 
 
 def test_late_clutch_window_ignores_zero_playoff_team_seasons():

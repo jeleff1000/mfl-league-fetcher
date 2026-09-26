@@ -420,6 +420,62 @@ def test_latest_finalized_week_requires_fresh_playoff_simulation_outputs():
         assert_active_season_simulation_health(conn, db_name="afi_data", year=2026)
 
 
+def test_simulation_health_allows_a_midseason_franchise_identity_change():
+    import duckdb
+
+    from multi_league.core.league_update_validation import (
+        assert_active_season_simulation_health,
+    )
+
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA public")
+    conn.execute(
+        "CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, "
+        "is_bye_week BOOLEAN, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup VALUES "
+        "('changed_owner',2026,1,'old_owner',120,110,FALSE,60,10), "
+        "('changed_owner',2026,1,'stable_owner',110,120,FALSE,40,5), "
+        "('changed_owner',2026,2,'new_owner',130,125,FALSE,62,11), "
+        "('changed_owner',2026,2,'stable_owner',125,130,FALSE,38,4)"
+    )
+    conn.execute(
+        "CREATE TABLE public.matchup_season (db_name VARCHAR, year INTEGER, "
+        "franchise_id VARCHAR, p_playoffs DOUBLE, p_champ DOUBLE)"
+    )
+    conn.execute(
+        "INSERT INTO public.matchup_season VALUES "
+        "('changed_owner',2026,'new_owner',62,11), "
+        "('changed_owner',2026,'stable_owner',38,4)"
+    )
+    conn.execute(
+        "CREATE TABLE public.league_settings (db_name VARCHAR, year INTEGER, "
+        "num_teams INTEGER, playoff_start_week INTEGER)"
+    )
+    conn.execute("INSERT INTO public.league_settings VALUES ('changed_owner',2026,2,3)")
+    conn.execute(
+        "CREATE TABLE public.schedule (db_name VARCHAR, year INTEGER, week INTEGER, "
+        "franchise_id VARCHAR, opponent_franchise_id VARCHAR, is_playoffs BOOLEAN)"
+    )
+    conn.execute(
+        "INSERT INTO public.schedule VALUES "
+        "('changed_owner',2026,1,'old_owner','stable_owner',FALSE), "
+        "('changed_owner',2026,1,'stable_owner','old_owner',FALSE), "
+        "('changed_owner',2026,2,'new_owner','stable_owner',FALSE), "
+        "('changed_owner',2026,2,'stable_owner','new_owner',FALSE)"
+    )
+
+    assert assert_active_season_simulation_health(
+        conn, db_name="changed_owner", year=2026,
+    ) == {
+        "latest_finalized_week": 2,
+        "latest_simulation_franchises": 2,
+        "simulation_season_franchises": 2,
+    }
+
+
 def test_playoff_simulation_rejects_a_truncated_future_schedule():
     import duckdb
 

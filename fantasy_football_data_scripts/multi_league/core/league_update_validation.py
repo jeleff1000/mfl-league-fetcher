@@ -626,13 +626,19 @@ def assert_active_season_simulation_health(
             f"schedule must cover every team through regular-season week {regular_season_end}; "
             f"missing or incomplete weeks={missing_schedule_weeks}"
         )
+    if latest_week is None:
+        return {
+            "latest_finalized_week": None,
+            "latest_simulation_franchises": 0,
+            "simulation_season_franchises": 0,
+        }
     schedule_franchises = {
         str(row[0]).strip() for row in conn.execute(
             "SELECT DISTINCT CAST(franchise_id AS VARCHAR) FROM public.schedule "
-            "WHERE db_name = ? AND year = ? AND week BETWEEN 1 AND ? "
+            "WHERE db_name = ? AND year = ? AND week = ? "
             "AND NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '') IS NOT NULL"
             + schedule_filter,
-            [str(db_name), int(year), regular_season_end],
+            [str(db_name), int(year), int(latest_week)],
         ).fetchall()
     }
     if len(schedule_franchises) != expected_teams:
@@ -640,12 +646,6 @@ def assert_active_season_simulation_health(
             "schedule active franchise coverage differs from league settings "
             f"(observed={len(schedule_franchises)}, expected={expected_teams})"
         )
-    if latest_week is None:
-        return {
-            "latest_finalized_week": None,
-            "latest_simulation_franchises": 0,
-            "simulation_season_franchises": 0,
-        }
 
     latest_rows = conn.execute(
         "SELECT CAST(franchise_id AS VARCHAR), COUNT(*), COUNT(p_playoffs), COUNT(p_champ), "

@@ -340,18 +340,28 @@ def assert_espn_closed_matchup_weeks(
     *,
     refresh_weeks: list[int],
     finalized_matchup_weeks: list[int],
+    current_matchup_period: int | None,
 ) -> None:
-    """Require completed fantasy outcomes for every requested prior week.
+    """Require completed fantasy outcomes for every provider-closed week.
 
-    The newest requested week may still be live so its completed NFL games can
-    be published without treating the fantasy matchup as final.  Any earlier
-    requested week is already behind that live boundary and must be complete.
+    A refresh plan may include future repair weeks for schedule/simulation
+    materialization.  ESPN's current matchup period, not the largest requested
+    week, is the authoritative live boundary.
     """
     from multi_league.core.league_refresh import RefreshScopeError
 
     requested = sorted({int(week) for week in refresh_weeks})
     finalized = {int(week) for week in finalized_matchup_weeks}
-    missing = [week for week in requested[:-1] if week not in finalized]
+    try:
+        live_boundary = int(current_matchup_period)
+    except (TypeError, ValueError) as exc:
+        raise RefreshScopeError("ESPN omitted its current matchup period") from exc
+    if live_boundary < 1:
+        raise RefreshScopeError("ESPN returned an invalid current matchup period")
+    missing = [
+        week for week in requested
+        if week < live_boundary and week not in finalized
+    ]
     if missing:
         raise RefreshScopeError(
             "ESPN omitted finalized fantasy matchup outcomes for prior requested weeks "
@@ -694,6 +704,7 @@ def _merge_active_payloads(
     regular_season_weeks = playoff_start_week - 1
     if regular_season_weeks < 1:
         raise RuntimeError(f"ESPN returned an invalid playoff start week for {active_year}")
+    current_matchup_period = _espn_current_matchup_period(league)
 
     def fetch_secondary_payloads():
         secondary_client = ESPNAPIClient(ctx.league_id, ctx.espn_s2, ctx.swid)
@@ -713,7 +724,7 @@ def _merge_active_payloads(
             year=active_year,
             weeks=refresh_weeks,
             expected_team_ids=expected_team_ids,
-            current_matchup_period=_espn_current_matchup_period(league),
+            current_matchup_period=current_matchup_period,
             schedule_out=schedules,
         )
         transaction_rows = fetch_espn_transactions(
@@ -798,6 +809,7 @@ def _merge_active_payloads(
     assert_espn_closed_matchup_weeks(
         refresh_weeks=refresh_weeks,
         finalized_matchup_weeks=final_matchup_weeks,
+        current_matchup_period=current_matchup_period,
     )
     stale_matchup_rows_removed = prune_unfinalized_provider_matchups(
         local_db,

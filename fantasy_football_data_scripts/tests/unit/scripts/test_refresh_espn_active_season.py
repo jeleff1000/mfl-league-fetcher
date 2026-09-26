@@ -277,6 +277,7 @@ def test_espn_refresh_rejects_a_missing_prior_week_matchup():
         assert_espn_closed_matchup_weeks(
             refresh_weeks=[1, 2],
             finalized_matchup_weeks=[],
+            current_matchup_period=2,
         )
 
 
@@ -286,6 +287,17 @@ def test_espn_refresh_allows_the_latest_requested_week_to_remain_live():
     assert_espn_closed_matchup_weeks(
         refresh_weeks=[1, 2],
         finalized_matchup_weeks=[1],
+        current_matchup_period=2,
+    )
+
+
+def test_espn_refresh_does_not_treat_future_repair_weeks_as_the_live_boundary():
+    from refresh_espn_active_season import assert_espn_closed_matchup_weeks
+
+    assert_espn_closed_matchup_weeks(
+        refresh_weeks=[1, 2, 3, 4, 14],
+        finalized_matchup_weeks=[1, 2],
+        current_matchup_period=3,
     )
 
 

@@ -154,6 +154,79 @@ def _discover_espn_import_years(ctx: ESPNContext) -> list[int]:
     return sorted(set(available_years))
 
 
+def _espn_has_verified_unplayed_shell(client: ESPNAPIClient, *, year: int, league_id: int) -> bool:
+    """Prove that a drafted ESPN league has not played its first matchup yet."""
+    try:
+        payload = client.get_raw_league(
+            int(year),
+            ["mSettings", "mTeam", "mRoster", "mMatchupScore", "mDraftDetail"],
+        )
+    except Exception as exc:
+        log(f"[STARTUP SHELL] ESPN verification failed closed: {exc}")
+        return False
+
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("id")) != str(league_id) or str(payload.get("seasonId")) != str(year):
+        return False
+
+    status = payload.get("status")
+    draft = payload.get("draftDetail")
+    teams = payload.get("teams")
+    schedule = payload.get("schedule")
+    if not isinstance(status, dict) or status.get("isActive") is not True:
+        return False
+    if coerce_int(status.get("currentMatchupPeriod")) is None:
+        return False
+    if not isinstance(draft, dict) or draft.get("drafted") is not True:
+        return False
+    if not isinstance(draft.get("picks"), list) or not draft["picks"]:
+        return False
+    if not isinstance(teams, list) or len(teams) < 2:
+        return False
+    if not isinstance(schedule, list) or not schedule:
+        return False
+
+    for team in teams:
+        if not isinstance(team, dict):
+            return False
+        entries = ((team.get("roster") or {}).get("entries"))
+        if not isinstance(entries, list) or not entries:
+            return False
+        overall = ((team.get("record") or {}).get("overall"))
+        if not isinstance(overall, dict):
+            return False
+        try:
+            record_values = (
+                float(overall.get("wins", 0) or 0),
+                float(overall.get("losses", 0) or 0),
+                float(overall.get("ties", 0) or 0),
+                float(overall.get("pointsFor", 0) or 0),
+            )
+        except (TypeError, ValueError):
+            return False
+        if any(value != 0 for value in record_values):
+            return False
+
+    for matchup in schedule:
+        if not isinstance(matchup, dict):
+            return False
+        if str(matchup.get("winner") or "UNDECIDED").upper() != "UNDECIDED":
+            return False
+        for side_name in ("home", "away"):
+            side = matchup.get(side_name)
+            if not isinstance(side, dict) or side.get("teamId") is None:
+                return False
+            try:
+                points = float(side.get("totalPoints", 0) or 0)
+            except (TypeError, ValueError):
+                return False
+            if points != 0:
+                return False
+
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Complete data import for an ESPN fantasy league")
     parser.add_argument("--context", required=True, help="Path to espn_context.json")
@@ -722,6 +795,26 @@ def main():
                 and ctx.start_year == ctx.end_year == get_current_nfl_season_year()
             )
         )
+        if (
+            not has_matchups
+            and not has_rosters
+            and not allow_empty_startup_shell
+            and has_startup_data
+            and is_quick_import
+            and quick_years
+        ):
+            shell_year = max(quick_years)
+            shell_league_id = int(ctx.get_league_id_for_year(shell_year))
+            shell_client = (
+                client
+                if shell_league_id == int(ctx.league_id)
+                else ESPNAPIClient(shell_league_id, ctx.espn_s2, ctx.swid)
+            )
+            allow_empty_startup_shell = _espn_has_verified_unplayed_shell(
+                shell_client,
+                year=shell_year,
+                league_id=shell_league_id,
+            )
 
         if not has_matchups and not has_rosters and not allow_empty_startup_shell:
             log("\n" + "=" * 96)

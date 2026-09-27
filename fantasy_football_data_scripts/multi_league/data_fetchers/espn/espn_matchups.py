@@ -412,9 +412,8 @@ def fetch_espn_matchups_modern(
             )
             continue
         if not _matchup_period_is_final(raw_schedule):
-            previous_snapshot_signature = snapshot_signature
             log(f"  [MATCHUPS] {year} week {week}: fantasy outcomes not final; holding matchup rows")
-            continue
+            break
         raw_schedule_lookup = _index_raw_schedule(raw_schedule, week)
         has_scores = any(
             home_score > 0 or away_score > 0

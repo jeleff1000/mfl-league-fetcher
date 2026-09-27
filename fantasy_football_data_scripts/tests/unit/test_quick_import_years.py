@@ -8,7 +8,69 @@ if str(SCRIPT_ROOT) not in sys.path:
 
 from multi_league.core.year_filter_utils import resolve_quick_import_years, unscored_current_shell_years
 from multi_league.data_fetchers.espn.espn_context import ESPNContext
-from espn_initial_import import _resolve_espn_quick_import_years, _discover_espn_import_years
+import espn_initial_import
+from espn_initial_import import _discover_espn_import_years, _resolve_espn_quick_import_years
+
+
+class _RawESPNClient:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def get_raw_league(self, _year, _views):
+        return self.payload
+
+
+def _unplayed_espn_shell_payload():
+    return {
+        "id": 1374558591,
+        "seasonId": 2026,
+        "status": {"isActive": True, "currentMatchupPeriod": 3},
+        "draftDetail": {"drafted": True, "picks": [{"id": index} for index in range(160)]},
+        "teams": [
+            {
+                "id": team_id,
+                "roster": {"entries": [{"playerId": team_id * 100}]},
+                "record": {"overall": {"wins": 0, "losses": 0, "ties": 0, "pointsFor": 0.0}},
+            }
+            for team_id in range(1, 11)
+        ],
+        "schedule": [
+            {
+                "matchupPeriodId": week,
+                "winner": "UNDECIDED",
+                "home": {"teamId": 1, "totalPoints": 0.0},
+                "away": {"teamId": 2, "totalPoints": 0.0},
+            }
+            for week in range(1, 15)
+        ],
+    }
+
+
+def test_espn_midseason_new_league_is_a_verified_unplayed_shell():
+    payload = _unplayed_espn_shell_payload()
+    verify = getattr(espn_initial_import, "_espn_has_verified_unplayed_shell", None)
+
+    assert verify is not None
+    assert verify(_RawESPNClient(payload), year=2026, league_id=1374558591) is True
+
+
+def test_espn_shell_with_a_completed_matchup_is_not_unplayed():
+    payload = _unplayed_espn_shell_payload()
+    payload["schedule"][0]["winner"] = "HOME"
+    payload["schedule"][0]["home"]["totalPoints"] = 123.45
+    verify = getattr(espn_initial_import, "_espn_has_verified_unplayed_shell", None)
+
+    assert verify is not None
+    assert verify(_RawESPNClient(payload), year=2026, league_id=1374558591) is False
+
+
+def test_espn_malformed_empty_response_is_not_an_unplayed_shell():
+    payload = _unplayed_espn_shell_payload()
+    payload["teams"] = []
+    verify = getattr(espn_initial_import, "_espn_has_verified_unplayed_shell", None)
+
+    assert verify is not None
+    assert verify(_RawESPNClient(payload), year=2026, league_id=1374558591) is False
 
 
 def test_shared_quick_years_include_previous_for_empty_current_shell():

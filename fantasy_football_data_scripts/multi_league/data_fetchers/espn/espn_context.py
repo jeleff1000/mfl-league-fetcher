@@ -572,9 +572,15 @@ def build_manager_names(teams: list) -> dict[int, str]:
     for team in teams:
         team_id = team.team_id if hasattr(team, "team_id") else team.get("team_id", 0)
         owners = team.owners if hasattr(team, "owners") else team.get("owners", [])
+        team_name = (
+            getattr(team, "team_name", None)
+            if hasattr(team, "team_name")
+            else team.get("team_name") or team.get("name")
+        )
+        fallback_name = str(team_name or "Unknown").strip() or "Unknown"
 
         if not owners:
-            raw_names[team_id] = ("Unknown", "")
+            raw_names[team_id] = (fallback_name, "")
             continue
 
         # Use primary owner (first in list)
@@ -585,6 +591,9 @@ def build_manager_names(teams: list) -> dict[int, str]:
         else:
             first = (getattr(owner, "firstName", "Unknown") or "Unknown").strip()
             last = (getattr(owner, "lastName", "") or "").strip()
+
+        if first == "Unknown" and not last:
+            first = fallback_name
 
         raw_names[team_id] = (first, last)
 

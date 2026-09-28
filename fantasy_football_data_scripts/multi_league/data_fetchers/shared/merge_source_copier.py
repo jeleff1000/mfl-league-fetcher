@@ -442,6 +442,31 @@ def _refresh_merge_source_aggregates(
         _refresh_transaction_player_career,
         _refresh_matchup_career,
         _refresh_matchup_h2h_career,
+    ]
+    for refresh in refreshers:
+        stats.update(refresh(reader=reader, writer=writer, target_db=target_db, log_func=log_func))
+
+    stats.update(
+        refresh_merge_source_homepage_aggregates(
+            reader=reader,
+            writer=writer,
+            target_db=target_db,
+            log_func=log_func,
+        )
+    )
+    return stats
+
+
+def refresh_merge_source_homepage_aggregates(
+    *,
+    reader,
+    writer,
+    target_db: str,
+    log_func: Callable[[str], None] = print,
+) -> dict[str, int]:
+    """Refresh only homepage outputs after a scoped season-rollup repair."""
+    stats: dict[str, int] = {}
+    refreshers = [
         _refresh_homepage_manager_rankings,
         _refresh_homepage_current_standings,
         _refresh_homepage_top_rivalries,
@@ -450,7 +475,6 @@ def _refresh_merge_source_aggregates(
     ]
     for refresh in refreshers:
         stats.update(refresh(reader=reader, writer=writer, target_db=target_db, log_func=log_func))
-
     return stats
 
 

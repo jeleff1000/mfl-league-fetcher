@@ -54,15 +54,12 @@ def _merge_years(value: Any) -> list[int]:
     return years
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a league admin merge")
-    parser.add_argument("--merge-data-b64", default=os.environ.get("MERGE_DATA_B64", ""))
-    args = parser.parse_args()
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
-    if not args.merge_data_b64:
-        raise SystemExit("MERGE_DATA_B64 is required")
 
-    payload = _decode_payload(args.merge_data_b64)
+def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str, Any]:
+    """Copy one saved league into another and close only missing rollup gaps."""
     source_db = _assert_db_name(payload.get("source_db"), "source_db")
     target_db = _assert_db_name(payload.get("target_db"), "target_db")
     if source_db == target_db:
@@ -81,12 +78,64 @@ def main() -> None:
             if str(source).strip() and str(target).strip()
         }
 
+    from multi_league.core.db_reader import get_reader
+    from multi_league.core.fly_writer import FlyWriter
+    from multi_league.core.no_week_season_rollup_repair import (
+        repair_missing_season_rollups_if_needed,
+    )
     from multi_league.data_fetchers.shared.merge_source_copier import (
         copy_merge_source_to_public,
+        refresh_merge_source_homepage_aggregates,
     )
 
+    reader = reader or get_reader()
+    writer = writer or FlyWriter()
     ctx = SimpleNamespace(merge_source=merge_source, import_mode="full")
-    stats = copy_merge_source_to_public(ctx, target_db)
+    stats = dict(
+        copy_merge_source_to_public(
+            ctx,
+            target_db,
+            reader=reader,
+            writer=writer,
+        )
+    )
+
+    active_year_value = reader.query_scalar(
+        "SELECT MAX(TRY_CAST(year AS INTEGER)) "
+        "FROM public.matchup "
+        f"WHERE db_name = {_sql_literal(target_db)}",
+        database="___leagues",
+    )
+    if active_year_value is None:
+        raise RuntimeError(f"Merged league {target_db} has no matchup season")
+    active_year = int(active_year_value)
+    repair = repair_missing_season_rollups_if_needed(
+        reader=reader,
+        db_name=target_db,
+        active_year=active_year,
+    )
+    repaired_years = [int(year) for year in repair.get("missing_years") or []]
+    stats["season_rollups_repaired"] = ", ".join(map(str, repaired_years))
+    if repair.get("published"):
+        homepage = refresh_merge_source_homepage_aggregates(
+            reader=reader,
+            writer=writer,
+            target_db=target_db,
+        )
+        stats.update(homepage)
+    return stats
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a league admin merge")
+    parser.add_argument("--merge-data-b64", default=os.environ.get("MERGE_DATA_B64", ""))
+    args = parser.parse_args()
+
+    if not args.merge_data_b64:
+        raise SystemExit("MERGE_DATA_B64 is required")
+
+    payload = _decode_payload(args.merge_data_b64)
+    stats = run_merge(payload)
     print(json.dumps(stats, indent=2, sort_keys=True))
 
 

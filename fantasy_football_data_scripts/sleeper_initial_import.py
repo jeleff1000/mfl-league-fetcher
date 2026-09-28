@@ -188,6 +188,142 @@ def _format_year_filter(year_filter) -> str:
     return format_year_filter(year_filter)
 
 
+def _sleeper_has_verified_unplayed_shell(client, *, year: int, league_id: str) -> bool:
+    """Prove that a drafted Sleeper league legitimately has no played weeks."""
+    try:
+        league_id = str(league_id)
+        league = client.get_league(league_id)
+        if not isinstance(league, dict):
+            return False
+        if str(league.get("league_id")) != league_id or _to_int_or_none(league.get("season")) != year:
+            return False
+        if str(league.get("sport") or "").lower() != "nfl":
+            return False
+
+        settings = league.get("settings")
+        nfl_state = client.get_nfl_state()
+        if not isinstance(settings, dict) or not isinstance(nfl_state, dict):
+            return False
+        if _to_int_or_none(nfl_state.get("season")) != year:
+            return False
+
+        num_teams = _to_int_or_none(settings.get("num_teams"))
+        current_week = _to_int_or_none(nfl_state.get("week"))
+        start_week = _to_int_or_none(settings.get("start_week")) or 1
+        if not num_teams or num_teams < 2 or current_week is None or current_week < 0:
+            return False
+
+        users = client.get_league_users(league_id)
+        rosters = client.get_league_rosters(league_id)
+        if not isinstance(users, list) or not isinstance(rosters, list) or len(rosters) != num_teams:
+            return False
+        user_ids = {
+            str(user.get("user_id"))
+            for user in users
+            if isinstance(user, dict) and user.get("user_id") is not None
+        }
+        if not user_ids:
+            return False
+
+        roster_ids: set[int] = set()
+        for roster in rosters:
+            if not isinstance(roster, dict):
+                return False
+            roster_id = _to_int_or_none(roster.get("roster_id"))
+            owner_id = roster.get("owner_id")
+            players = roster.get("players")
+            record = roster.get("settings")
+            if (
+                roster_id is None
+                or roster_id in roster_ids
+                or owner_id is None
+                or str(owner_id) not in user_ids
+                or not isinstance(players, list)
+                or not players
+                or not isinstance(record, dict)
+            ):
+                return False
+            if any((_to_int_or_none(record.get(key)) or 0) != 0 for key in ("wins", "losses", "ties", "fpts", "fpts_decimal")):
+                return False
+            roster_ids.add(roster_id)
+
+        drafts = client.get_league_drafts(league_id)
+        if not isinstance(drafts, list):
+            return False
+        complete_draft = False
+        for draft in drafts:
+            if not isinstance(draft, dict):
+                return False
+            if _to_int_or_none(draft.get("season")) != year or str(draft.get("status")) != "complete":
+                continue
+            draft_settings = draft.get("settings")
+            draft_id = draft.get("draft_id")
+            if not isinstance(draft_settings, dict) or not draft_id:
+                continue
+            teams = _to_int_or_none(draft_settings.get("teams"))
+            rounds = _to_int_or_none(draft_settings.get("rounds"))
+            picks = client.get_draft_picks(str(draft_id))
+            if (
+                teams == num_teams
+                and rounds
+                and rounds > 0
+                and isinstance(picks, list)
+                and len(picks) == teams * rounds
+                and all(isinstance(pick, dict) and pick.get("player_id") for pick in picks)
+            ):
+                complete_draft = True
+                break
+        if not complete_draft:
+            return False
+
+        # A future configured start week proves why all prior matchup endpoints
+        # are empty. Otherwise require complete zero-score roster coverage.
+        if start_week > current_week:
+            return True
+        if current_week < 1:
+            return False
+
+        matchup_rows: list[dict] = []
+        for week in range(1, current_week + 1):
+            rows = client.get_league_matchups(league_id, week)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                return False
+            matchup_rows.extend(rows)
+        if not matchup_rows:
+            return False
+        if {(_to_int_or_none(row.get("roster_id"))) for row in matchup_rows} != roster_ids:
+            return False
+        return all(float(row.get("custom_points", row.get("points", 0)) or 0) == 0 for row in matchup_rows)
+    except Exception as exc:
+        log(f"[STARTUP SHELL] Sleeper verification failed closed: {exc}")
+        return False
+
+
+def _validate_sleeper_quick_source(ctx, client, db, years) -> bool:
+    """Fail closed when an otherwise-empty quick import is not a proven shell."""
+    if getattr(ctx, "import_mode", "") != "quick":
+        return False
+
+    def row_count(table_name: str) -> int:
+        return db.row_count(table_name) if db.table_exists(table_name) else 0
+
+    if row_count("matchup") > 0 and row_count("player_fantasy") > 0:
+        return False
+    if row_count("league_settings") < 1 or row_count("draft") < 1:
+        raise RuntimeError("Quick import has no played data and is missing local settings or draft rows")
+
+    normalized_years = sorted({_to_int_or_none(value) for value in years} - {None})
+    if not normalized_years:
+        raise RuntimeError("Quick import has no valid Sleeper season to verify")
+    year = normalized_years[-1]
+    league_id = ctx.get_league_id_for_year(year) if hasattr(ctx, "get_league_id_for_year") else ctx.league_id
+    if not league_id or not _sleeper_has_verified_unplayed_shell(client, year=year, league_id=str(league_id)):
+        raise RuntimeError(
+            f"Quick import could not verify an unplayed Sleeper league for {year}; refusing partial publication"
+        )
+    return True
+
+
 def run_track_1_verify(start_year: int, end_year: int, dry_run: bool = False) -> bool:
     """Verify NFL super table has required data. Delegates to shared implementation."""
     return _shared_track_1_verify(start_year, end_year, dry_run=dry_run)
@@ -834,6 +970,14 @@ def main():
         except Exception as e:
             log(f"  FAIL: {e}")
             results["fetchers"].append(("Traded Picks", False))
+
+    if is_quick_import and not args.dry_run:
+        source_years = quick_years or (year_filter if isinstance(year_filter, list) else [year_filter])
+        if _validate_sleeper_quick_source(ctx, client, db, source_years):
+            log(
+                "[QUICK IMPORT] Verified drafted Sleeper startup shell; "
+                "continuing without fabricated matchup or player-week rows"
+            )
 
     if stop_after <= 1:
         log("\n[STOP] Stopped after Phase 1 (fetchers)")

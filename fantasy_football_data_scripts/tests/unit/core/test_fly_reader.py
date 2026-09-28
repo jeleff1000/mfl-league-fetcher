@@ -227,6 +227,27 @@ def test_transient_500_still_retries_after_catalog_fast_fail(fly_env):
     assert mock_sleep.call_count == 1
 
 
+def test_database_detach_binder_race_is_retried(fly_env):
+    reader = FlyReader()
+    sequence = [
+        _resp(
+            500,
+            text=(
+                'Binder Error: Unique file handle conflict: Cannot attach "___ops" - '
+                'the database file "/data/___ops.duckdb" is in the process of being detached'
+            ),
+        ),
+        _resp(200, [{"ok": True}]),
+    ]
+    with (
+        patch("multi_league.core.readers.fly_reader.requests.post", side_effect=sequence) as mock_post,
+        patch("multi_league.core.readers.fly_reader.time.sleep") as mock_sleep,
+    ):
+        assert reader.query("SELECT 1", database="___ops") == [{"ok": True}]
+    assert mock_post.call_count == 2
+    assert mock_sleep.call_count == 1
+
+
 def test_network_error_raises_typed(monkeypatch):
     """ConnectionError from requests raises FlyReaderNetworkError."""
     calls = []

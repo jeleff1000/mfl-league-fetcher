@@ -93,18 +93,27 @@ class FlyReader:
             # missing-table Catalog Error in HTTP 500. Retrying that binder
             # result six times adds ~30 seconds without any chance of success.
             text_lower = (resp.text or "").lower()
+            transient_database_lifecycle = (
+                resp.status_code == 500
+                and "unique file handle conflict" in text_lower
+                and "in the process of being detached" in text_lower
+            )
             missing_catalog_table = (
                 resp.status_code == 500
                 and "catalog error" in text_lower
                 and "does not exist" in text_lower
             )
-            deterministic_query_error = resp.status_code == 500 and any(
-                marker in text_lower
-                for marker in (
-                    "parserexception",
-                    "parser error:",
-                    "binderexception",
-                    "binder error:",
+            deterministic_query_error = (
+                not transient_database_lifecycle
+                and resp.status_code == 500
+                and any(
+                    marker in text_lower
+                    for marker in (
+                        "parserexception",
+                        "parser error:",
+                        "binderexception",
+                        "binder error:",
+                    )
                 )
             )
             if (
@@ -112,7 +121,10 @@ class FlyReader:
                 and attempt < self.MAX_RETRIES - 1
                 and not missing_catalog_table
                 and not deterministic_query_error
-                and not is_permanent_storage_error(resp.text)
+                and (
+                    transient_database_lifecycle
+                    or not is_permanent_storage_error(resp.text)
+                )
             ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
                 time.sleep(self._retry_delay(attempt, resp))

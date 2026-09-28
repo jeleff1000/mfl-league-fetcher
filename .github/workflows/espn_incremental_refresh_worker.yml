@@ -116,7 +116,9 @@ jobs:
           cache-dependency-glob: "requirements-weekly-update-espn.txt"
 
       - name: Install dependencies
-        run: uv pip install --system --quiet -r requirements-weekly-update-espn.txt
+        run: |
+          uv pip install --system --quiet --offline -r requirements-weekly-update-espn.txt || \
+            timeout --signal=KILL 45s uv pip install --system --quiet -r requirements-weekly-update-espn.txt
 
       - name: Validate cache-only recovery request
         if: inputs.cache_only

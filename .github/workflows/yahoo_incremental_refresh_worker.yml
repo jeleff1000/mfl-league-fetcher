@@ -122,7 +122,9 @@ jobs:
           cache-dependency-glob: "requirements-weekly-update-yahoo.txt"
 
       - name: Install dependencies
-        run: uv pip install --system --quiet -r requirements-weekly-update-yahoo.txt
+        run: |
+          uv pip install --system --quiet --offline -r requirements-weekly-update-yahoo.txt || \
+            timeout --signal=KILL 45s uv pip install --system --quiet -r requirements-weekly-update-yahoo.txt
 
       - name: Validate cache-only recovery request
         if: env.INPUT_CACHE_ONLY == 'true'

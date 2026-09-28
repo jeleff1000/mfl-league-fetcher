@@ -640,7 +640,7 @@ def main():
                     ctx.league_ids = {str(ctx.start_year): ctx.league_id}
             except Exception as e:
                 log(f"[HISTORY] Error discovering history: {e}")
-                ctx.league_ids = {str(ctx.start_year): ctx.league_id}
+                raise RuntimeError("Sleeper renewal-chain discovery failed; refusing a mislabeled partial import") from e
         else:
             log(f"[HISTORY] Using {len(ctx.league_ids)} pre-configured league IDs")
             discovered_years = _sync_context_years_from_history(ctx, args.import_mode)

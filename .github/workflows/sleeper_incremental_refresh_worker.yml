@@ -112,7 +112,9 @@ jobs:
           cache-dependency-glob: "requirements-weekly-update-sleeper.txt"
 
       - name: Install dependencies
-        run: uv pip install --system --quiet -r requirements-weekly-update-sleeper.txt
+        run: |
+          uv pip install --system --quiet --offline -r requirements-weekly-update-sleeper.txt || \
+            timeout --signal=KILL 45s uv pip install --system --quiet -r requirements-weekly-update-sleeper.txt
 
       - name: Validate cache-only recovery request
         if: inputs.cache_only

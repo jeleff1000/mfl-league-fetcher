@@ -753,8 +753,8 @@ def discover_league_history(
                 league_ids[str(season)] = current_id
 
         # Follow the chain backwards
-        previous_id = league.get("previous_league_id")
-        current_id = str(previous_id) if previous_id else ""
+        previous_id = str(league.get("previous_league_id") or "").strip()
+        current_id = "" if previous_id in {"", "0"} else previous_id
 
     return league_ids
 

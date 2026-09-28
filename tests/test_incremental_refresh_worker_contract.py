@@ -185,6 +185,16 @@ def test_weekly_runtime_requirements_do_not_install_other_platforms():
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
+def test_weekly_dependency_install_prefers_the_restored_cache_and_caps_network_wait(filename: str):
+    text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
+    install = text.split("- name: Install dependencies", 1)[1].split("- name:", 1)[0]
+
+    assert "uv pip install --system --quiet --offline" in install
+    assert "timeout --signal=KILL 45s uv pip install --system --quiet" in install
+    assert install.index("--offline") < install.index("timeout --signal=KILL 45s")
+
+
+@pytest.mark.parametrize("filename", WORKFLOWS.values())
 def test_executing_manual_or_ui_update_is_main_only_before_checkout(filename: str):
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     guard = text.split("- name: Require canonical public main for publication", 1)[1]

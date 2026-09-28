@@ -135,3 +135,34 @@ def test_history_rejects_sleeper_pickem_products_before_fantasy_fetches():
 
     with pytest.raises(ValueError, match="not a Sleeper fantasy-football league"):
         discover_league_history(PickemClient(), "1384569135408644096")
+
+
+def test_history_treats_sleeper_zero_previous_id_as_the_end_of_the_chain():
+    leagues = {
+        "s26": {"league_id": "s26", "season": "2026", "sport": "nfl", "previous_league_id": "s25"},
+        "s25": {"league_id": "s25", "season": "2025", "sport": "nfl", "previous_league_id": "s24"},
+        "s24": {"league_id": "s24", "season": "2024", "sport": "nfl", "previous_league_id": "s23"},
+        "s23": {"league_id": "s23", "season": "2023", "sport": "nfl", "previous_league_id": "0"},
+    }
+
+    class Client:
+        def get_league(self, league_id):
+            assert league_id != "0"
+            return leagues[league_id]
+
+    assert discover_league_history(Client(), "s26", skip_empty_seasons=False) == {
+        "2023": "s23",
+        "2024": "s24",
+        "2025": "s25",
+        "2026": "s26",
+    }
+
+
+def test_full_import_fails_closed_when_native_history_discovery_errors():
+    source = (SCRIPT_ROOT / "sleeper_initial_import.py").read_text(encoding="utf-8")
+    phase = source[source.index("        if not ctx.league_ids:") :]
+    phase = phase[:phase.index("        else:\n            log(f\"[HISTORY] Using")]
+    error_handler = phase[phase.index("            except Exception as e:") :]
+
+    assert "raise RuntimeError" in error_handler
+    assert "ctx.league_ids = {str(ctx.start_year): ctx.league_id}" not in error_handler

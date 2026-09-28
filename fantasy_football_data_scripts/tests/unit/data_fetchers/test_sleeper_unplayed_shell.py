@@ -142,8 +142,14 @@ def test_scored_sleeper_shell_is_not_treated_as_unplayed():
             if week != 1:
                 return []
             return [
-                {"roster_id": 1, "matchup_id": 1, "points": 101.5, "players": ["player-1"]},
-                {"roster_id": 2, "matchup_id": 1, "points": 99.0, "players": ["player-2"]},
+                {
+                    "roster_id": roster_id,
+                    "matchup_id": ((roster_id - 1) // 2) + 1,
+                    "custom_points": None,
+                    "points": 90.0 + roster_id,
+                    "players": [f"player-{roster_id}"],
+                }
+                for roster_id in range(1, 11)
             ]
 
     verify = getattr(sleeper_initial_import, "_sleeper_has_verified_unplayed_shell", None)

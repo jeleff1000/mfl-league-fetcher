@@ -293,7 +293,13 @@ def _sleeper_has_verified_unplayed_shell(client, *, year: int, league_id: str) -
             return False
         if {(_to_int_or_none(row.get("roster_id"))) for row in matchup_rows} != roster_ids:
             return False
-        return all(float(row.get("custom_points", row.get("points", 0)) or 0) == 0 for row in matchup_rows)
+        for row in matchup_rows:
+            points = row.get("custom_points")
+            if points is None:
+                points = row.get("points", 0)
+            if float(points or 0) != 0:
+                return False
+        return True
     except Exception as exc:
         log(f"[STARTUP SHELL] Sleeper verification failed closed: {exc}")
         return False

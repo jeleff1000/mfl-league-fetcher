@@ -2240,7 +2240,11 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.league_update_timing import PhaseTimer
     from multi_league.core.readers.fly_reader import FlyReader
     from multi_league.core.targets.fly_target import FlyTarget
-    from scripts.league_update_workflow_receipt import record_publication_commit, write_refresh_receipt
+    from scripts.league_update_workflow_receipt import (
+        record_publication_commit,
+        should_run_post_publish_verification,
+        write_refresh_receipt,
+    )
     from multi_league.core.yahoo_league_settings import discover_league_history, fetch_league_settings
 
     timer = PhaseTimer()
@@ -2786,13 +2790,16 @@ def main(argv: list[str] | None = None) -> int:
                 | set(receipt["homepage_rows"])
             )
             timer.mark("fly_publication")
-            receipt["post_publish_counts"] = _scope_counts(
-                reader,
-                db_name=args.db,
-                active_year=active_year,
-                tables=receipt["published_tables"],
-            )
-            timer.mark("post_publish_verification")
+            if should_run_post_publish_verification():
+                receipt["post_publish_counts"] = _scope_counts(
+                    reader,
+                    db_name=args.db,
+                    active_year=active_year,
+                    tables=receipt["published_tables"],
+                )
+                timer.mark("post_publish_verification")
+            else:
+                receipt["post_publish_verification_deferred"] = True
         finally:
             local_db.close()
 

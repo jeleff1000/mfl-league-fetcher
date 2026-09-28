@@ -585,6 +585,13 @@ def test_all_platforms_bound_weekly_fly_merge_to_forty_seconds():
         assert "merge_timeout_seconds=40" in text
 
 
+def test_all_platforms_defer_optional_post_commit_reads_near_deadline():
+    for platform in ("yahoo", "espn", "sleeper"):
+        text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
+        assert "should_run_post_publish_verification" in text
+        assert 'receipt["post_publish_verification_deferred"] = True' in text
+
+
 def test_all_platforms_forward_detected_historical_aggregate_repairs():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")

@@ -6,12 +6,29 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 
 MANUAL_NO_OP_STATUSES = {"NO_FINALIZED_WEEKS", "NO_ACTIVE_RENEWAL"}
+
+
+def should_run_post_publish_verification(
+    *,
+    now_epoch: float | None = None,
+    deadline_epoch: float | None = None,
+    reserve_seconds: float = 10,
+) -> bool:
+    """Leave enough hard-deadline budget to persist and classify a commit."""
+    if deadline_epoch is None:
+        raw_deadline = os.environ.get("LEAGUE_UPDATE_DEADLINE_EPOCH")
+        if not raw_deadline:
+            return True
+        deadline_epoch = float(raw_deadline)
+    now = time.time() if now_epoch is None else float(now_epoch)
+    return float(deadline_epoch) - now > float(reserve_seconds)
 
 
 def write_refresh_receipt(receipt: Mapping[str, Any], path: Path | None) -> None:

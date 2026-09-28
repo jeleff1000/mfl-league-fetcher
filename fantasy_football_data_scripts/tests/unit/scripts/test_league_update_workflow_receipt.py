@@ -8,7 +8,17 @@ import sys
 import pytest
 
 from scripts import league_update_workflow_receipt as subject
-from scripts.league_update_workflow_receipt import classify_publication, failure_status
+from scripts.league_update_workflow_receipt import (
+    classify_publication,
+    failure_status,
+    should_run_post_publish_verification,
+)
+
+
+def test_post_publish_verification_defers_near_hard_deadline():
+    assert should_run_post_publish_verification(now_epoch=100, deadline_epoch=111)
+    assert not should_run_post_publish_verification(now_epoch=100, deadline_epoch=110)
+    assert should_run_post_publish_verification(now_epoch=100, deadline_epoch=None)
 
 
 def test_manual_no_change_is_not_a_commit_and_ui_no_change_is_rejected():

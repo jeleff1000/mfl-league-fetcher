@@ -60,6 +60,12 @@ class TestPlayoffConfig:
         ]:
             assert base in cols
 
+    def test_target_cols_include_playoff_machine_model_parameters(self):
+        cfg = PlayoffConfig(playoff_slots=6, bye_slots=2, num_teams=10, regular_season_weeks=14)
+
+        assert "team_mu" in cfg.target_cols
+        assert "team_sigma" in cfg.target_cols
+
     def test_target_cols_seed_range(self):
         """Canonical seed columns should always reserve x1_seed through x64_seed."""
         cfg = PlayoffConfig(playoff_slots=4, bye_slots=0, num_teams=8, regular_season_weeks=13)

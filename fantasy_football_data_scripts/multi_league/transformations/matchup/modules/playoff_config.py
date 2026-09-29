@@ -32,6 +32,8 @@ class PlayoffConfig:
             "p_final",
             "p_champ",
             "power_rating",
+            "team_mu",
+            "team_sigma",
         ]
         # Keep the canonical x*_seed envelope stable across leagues so smaller
         # brackets simply leave the higher buckets NULL.

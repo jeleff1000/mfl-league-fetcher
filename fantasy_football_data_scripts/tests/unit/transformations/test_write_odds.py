@@ -16,6 +16,9 @@ from multi_league.transformations.matchup.playoff_odds_import import (
     normalize_power_rating_by_season,
     write_odds_to_row,
 )
+from multi_league.transformations.matchup.modules.playoff_scenarios import (
+    calculate_scenario_factors,
+)
 
 
 class _FakeCursor:
@@ -84,6 +87,24 @@ class TestWriteOddsToRow:
         assert df.at[0, "_power_rating_raw"] == 110.5
         assert pd.isna(df.at[0, "power_rating"])
 
+    def test_writes_the_same_shrunk_strength_used_by_the_simulator(self):
+        df = pd.DataFrame(
+            {
+                "manager": ["Alice"],
+                "team_mu": [np.nan],
+                "team_sigma": [np.nan],
+            }
+        )
+        odds_df = pd.DataFrame(
+            {"Team_Mu": [112.25], "Team_Sigma": [21.5]},
+            index=["Alice"],
+        )
+
+        write_odds_to_row(df, 0, "Alice", odds_df, pd.DataFrame(), None)
+
+        assert df.at[0, "team_mu"] == 112.25
+        assert df.at[0, "team_sigma"] == 21.5
+
     def test_skips_missing_manager(self):
         df = pd.DataFrame({"manager": ["Alice"], "p_champ": [np.nan]})
         odds_df = pd.DataFrame({"P_Champ": [10.0]}, index=["Bob"])
@@ -143,6 +164,24 @@ def test_normalize_power_rating_by_season_uses_season_median_raw_values():
 
     assert "_power_rating_raw" not in result.columns
     assert list(result["power_rating"]) == [50.0, 100.0, 150.0, 66.67, 133.33]
+
+
+def test_scenario_factors_preserve_precomputed_simulator_strength():
+    df = pd.DataFrame(
+        {
+            "year": [2026, 2026, 2026, 2026],
+            "week": [1, 1, 2, 2],
+            "franchise_id": ["alice", "bob", "alice", "bob"],
+            "team_points": [180.0, 80.0, 170.0, 90.0],
+            "team_mu": [110.0, 100.0, 112.0, 101.0],
+            "team_sigma": [20.0, 20.0, 19.0, 21.0],
+        }
+    )
+
+    result = calculate_scenario_factors(df)
+
+    assert list(result["team_mu"]) == [110.0, 100.0, 112.0, 101.0]
+    assert list(result["team_sigma"]) == [20.0, 20.0, 19.0, 21.0]
 
 
 def test_ensure_matchup_output_columns_uses_canonical_types():

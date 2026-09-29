@@ -1164,6 +1164,12 @@ def calc_regular_week_outputs(
     if not power_s.empty:
         odds["Power_Rating"] = power_s.reindex(odds.index)
 
+    # Persist the exact shrunk strength parameters used by the Monte Carlo.
+    # The Playoff Machine consumes these when conditioning the same remaining
+    # schedule on user-selected winners.
+    odds["Team_Mu"] = pd.Series(mu_hat, dtype=float).reindex(odds.index)
+    odds["Team_Sigma"] = pd.Series(sigma_hat, dtype=float).reindex(odds.index)
+
     return odds, blended_seed_norm, win_df
 
 
@@ -2484,6 +2490,8 @@ def write_odds_to_row(df, idx, manager, odds_df, seed_df, win_df):
         "avg_seed": "Avg_Seed",
         "exp_final_wins": "Exp_Final_Wins",
         "exp_final_pf": "Exp_Final_PF",
+        "team_mu": "Team_Mu",
+        "team_sigma": "Team_Sigma",
         "p_semis": "P_Semis",
         "p_final": "P_Final",
         "p_champ": "P_Champ",

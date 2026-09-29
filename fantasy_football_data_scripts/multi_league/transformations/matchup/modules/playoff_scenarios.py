@@ -409,10 +409,15 @@ def calculate_scenario_factors(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
 
-    # Initialize columns
-    df["team_mu"] = np.nan
-    df["team_sigma"] = np.nan
-    df["win_probability_vs_avg"] = np.nan
+    # Preserve the exact history-aware, Bayesian-shrunk parameters already
+    # written by the Monte Carlo pass. The cumulative calculation below is a
+    # fallback only for rows that do not have model parameters.
+    if "team_mu" not in df.columns:
+        df["team_mu"] = np.nan
+    if "team_sigma" not in df.columns:
+        df["team_sigma"] = np.nan
+    if "win_probability_vs_avg" not in df.columns:
+        df["win_probability_vs_avg"] = np.nan
 
     if "team_points" not in df.columns:
         print("[WARN] playoff_scenarios: team_points column missing, skipping scenario factors")
@@ -457,13 +462,17 @@ def calculate_scenario_factors(df: pd.DataFrame) -> pd.DataFrame:
 
             # Win probability vs average team (logistic approximation)
             # P(A beats B) ≈ 1 / (1 + 10^((mu_B - mu_A) / scale))
-            scale = 25.0  # Calibrated for fantasy football
-            win_prob = 1 / (1 + 10 ** ((league_mu - team_mu) / scale))
-
-            # Update rows for this franchise/week
             mask = (df["year"] == year) & (df["week"] == week) & (df["franchise_id"] == fid)
-            df.loc[mask, "team_mu"] = round(team_mu, 2)
-            df.loc[mask, "team_sigma"] = round(team_sigma, 2)
+            mu_missing = mask & pd.to_numeric(df["team_mu"], errors="coerce").isna()
+            sigma_missing = mask & pd.to_numeric(df["team_sigma"], errors="coerce").isna()
+            df.loc[mu_missing, "team_mu"] = round(team_mu, 2)
+            df.loc[sigma_missing, "team_sigma"] = round(team_sigma, 2)
+
+            effective_mu = pd.to_numeric(df.loc[mask, "team_mu"], errors="coerce").dropna()
+            model_mu = float(effective_mu.iloc[0]) if not effective_mu.empty else float(team_mu)
+            scale = 25.0  # Calibrated for fantasy football
+            win_prob = 1 / (1 + 10 ** ((league_mu - model_mu) / scale))
+
             df.loc[mask, "win_probability_vs_avg"] = round(win_prob * 100, 1)
 
     return df

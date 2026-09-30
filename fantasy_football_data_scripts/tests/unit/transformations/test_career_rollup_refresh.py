@@ -920,7 +920,7 @@ def test_weekly_homepage_recomputes_current_trade_despite_untouched_legacy_mirro
             (db_name,transaction_id,year,week,transaction_type,trade_direction,
              manager,franchise_id,source_franchise_id,player,NFL_player_id,trade_asset_lamar)
         VALUES ('test_league','legacy-trade',2025,4,'trade','received',
-                'Legacy Alias','legacy-f1','legacy-f2','Legacy Player','legacy-player',12),
+                'Legacy Alias','legacy-f1','legacy-f2','Legacy Player','legacy-player',112),
                ('test_league','current-trade',2026,1,'trade','received',
                 'Shared Alias','f1','f2','Current Player','current-player',18),
                ('test_league','current-trade',2026,1,'trade','sent',

@@ -1459,6 +1459,7 @@ def _compute_best_trade(
         f"'|||' ORDER BY t.player) as headshots"
     )
     partner_select, partner_filter = _trade_partner_sql(txn_cols)
+    selection_mirror_filter = ""
 
     try:
         if "trade_asset_lamar" in txn_cols:
@@ -1497,6 +1498,24 @@ def _compute_best_trade(
                 raise IncompleteTradeMirrorError(
                     f"{invalid} trade assets lack complete mirrored valuations"
                 )
+            if validation_years is not None:
+                selection_mirror_filter = f"""
+                  AND t.trade_asset_lamar IS NOT NULL
+                  AND isfinite(t.trade_asset_lamar)
+                  AND t.trade_direction IN ('received', 'sent')
+                  AND EXISTS (
+                      SELECT 1 FROM {central_table('transactions')} p
+                      WHERE p.db_name = t.db_name AND p.year = t.year
+                        AND p.transaction_id = t.transaction_id
+                        AND p.transaction_type = t.transaction_type
+                        AND p.franchise_id = t.source_franchise_id
+                        AND p.source_franchise_id = t.franchise_id
+                        AND p.trade_direction = CASE t.trade_direction
+                            WHEN 'received' THEN 'sent' ELSE 'received' END
+                        AND {partner_asset_key} = {asset_key}
+                        AND p.trade_asset_lamar = t.trade_asset_lamar
+                  )
+                """
         row = conn.execute(f"""
             WITH trade_received AS (
                 SELECT
@@ -1512,6 +1531,7 @@ def _compute_best_trade(
                 WHERE t.transaction_type IN ('trade', 'trade_pick') AND t.player IS NOT NULL {year_filter}
                   AND t.franchise_id IS NOT NULL AND TRIM(CAST(t.franchise_id AS VARCHAR)) <> ''
                   AND {league_db_filter(db_name, 't')}
+                  {selection_mirror_filter}
                   {trade_received_filter}
                 GROUP BY t.transaction_id, t.franchise_id, t.year
             ),
@@ -1529,6 +1549,7 @@ def _compute_best_trade(
                 WHERE t.transaction_type IN ('trade', 'trade_pick') AND t.player IS NOT NULL {year_filter}
                   AND t.franchise_id IS NOT NULL AND TRIM(CAST(t.franchise_id AS VARCHAR)) <> ''
                   AND {league_db_filter(db_name, 't')}
+                  {selection_mirror_filter}
                   {trade_sent_filter}
                 GROUP BY t.transaction_id, t.franchise_id, t.year
             ),
@@ -1579,15 +1600,14 @@ def _compute_best_trade(
             ORDER BY net_lamar DESC LIMIT 1
         """).fetchone()
         if (
-            row
+            row is None
             and "trade_asset_lamar" in txn_cols
             and validation_years is not None
-            and int(row[1]) not in validation_years
         ):
-            candidate_invalid = count_invalid_trade_assets(f"AND t.year = {int(row[1])}")
-            if candidate_invalid:
+            unselected_invalid = count_invalid_trade_assets("")
+            if unselected_invalid:
                 raise IncompleteTradeMirrorError(
-                    f"{candidate_invalid} trade assets lack complete mirrored valuations"
+                    f"{unselected_invalid} trade assets lack complete mirrored valuations"
                 )
         if row:
             highlights["winner"] = row[3]

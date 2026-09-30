@@ -1398,20 +1398,20 @@ def test_query_rw_retries_pool_reopen_file_handle_conflict(client, monkeypatch):
     import db as db_mod
     import main as main_mod
 
-    original_init_pool = db_mod.init_pool
+    original_reopen_ops = db_mod.reopen_ops_connection
     calls = {"count": 0}
 
-    def flaky_init_pool():
+    def flaky_reopen_ops():
         calls["count"] += 1
         if calls["count"] == 1:
             raise RuntimeError(
                 'Binder Error: Unique file handle conflict: Cannot attach "___ops" - '
                 'the database file "/data/___ops.duckdb" is in the process of being detached'
             )
-        return original_init_pool()
+        return original_reopen_ops()
 
     monkeypatch.setattr(main_mod, "POOL_REOPEN_RETRY_BASE_SECONDS", 0.001)
-    monkeypatch.setattr(db_mod, "init_pool", flaky_init_pool)
+    monkeypatch.setattr(db_mod, "reopen_ops_connection", flaky_reopen_ops)
 
     resp = client.post(
         "/query-rw",
@@ -1430,6 +1430,32 @@ def test_query_rw_retries_pool_reopen_file_handle_conflict(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == [{"manager": "Frank"}]
+
+
+def test_query_rw_uses_lightweight_pool_reopen_without_full_schema_init(client, monkeypatch):
+    import db as db_mod
+    import main as main_mod
+
+    def forbidden_full_init():
+        raise AssertionError("ordinary league writes must not rerun full pool/schema initialization")
+
+    monkeypatch.setattr(db_mod, "init_pool", forbidden_full_init)
+
+    resp = client.post(
+        "/query-rw",
+        json={"sql": "INSERT INTO public.matchup VALUES (2024, 5, 'Lightweight')"},
+        headers={"Authorization": "Bearer test-admin"},
+    )
+
+    assert resp.status_code == 200
+    assert main_mod._state["status"] == "serving"
+    resp = client.post(
+        "/query",
+        json={"sql": "SELECT manager FROM public.matchup WHERE week = 5"},
+        headers={"Authorization": "Bearer test-read"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == [{"manager": "Lightweight"}]
 
 
 def test_query_waits_through_brief_ops_write_state(client, monkeypatch):

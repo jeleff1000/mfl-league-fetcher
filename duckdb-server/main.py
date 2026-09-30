@@ -549,7 +549,12 @@ def _is_duckdb_file_handle_conflict(exc: Exception) -> bool:
 async def _reopen_pool_after_write(context: str) -> None:
     for attempt in range(1, POOL_REOPEN_MAX_ATTEMPTS + 1):
         try:
-            db.init_pool()
+            # Ordinary league writes do not replace either database file and
+            # must not rerun the startup-only ___ops schema bootstrap. Reuse
+            # the existing lightweight reopen helpers after close_all().
+            db.reopen_ops_connection()
+            db.reopen_pool()
+            db.refresh_metadata()
             return
         except Exception as exc:
             if not _is_duckdb_file_handle_conflict(exc) or attempt >= POOL_REOPEN_MAX_ATTEMPTS:

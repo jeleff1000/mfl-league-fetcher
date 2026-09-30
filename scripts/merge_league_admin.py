@@ -13,9 +13,12 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 FFS_DIR = ROOT / "fantasy_football_data_scripts"
@@ -117,6 +120,50 @@ def _persist_merged_league_ids(
     }
 
 
+def _rebuild_league_derived(*, target_db: str, run_id: str) -> dict[str, Any]:
+    """Run the existing bounded, atomic full-chain derived rebuild."""
+    server_url = os.environ.get("DATABASE_SERVER_URL", "").rstrip("/")
+    admin_token = os.environ.get("DATABASE_ADMIN_TOKEN", "")
+    if not server_url or not admin_token:
+        raise RuntimeError("DATABASE_SERVER_URL and DATABASE_ADMIN_TOKEN are required")
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    machine_id = os.environ.get("FLY_PRIMARY_MACHINE_ID", "").strip()
+    if machine_id:
+        headers["fly-force-instance-id"] = machine_id
+    body = {"db_name": target_db, "run_id": run_id}
+
+    response = None
+    for attempt in range(2):
+        try:
+            response = requests.post(
+                f"{server_url}/rebuild-league-derived",
+                json=body,
+                headers=headers,
+                timeout=50,
+            )
+        except requests.exceptions.RequestException as exc:
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            raise RuntimeError("Derived rebuild response remained unavailable") from exc
+        if response.status_code in {429, 500, 502, 503, 504} and attempt == 0:
+            time.sleep(1)
+            continue
+        break
+
+    if response is None or response.status_code != 200:
+        status = response.status_code if response is not None else "unavailable"
+        detail = response.text[:500] if response is not None else "no response"
+        raise RuntimeError(f"Derived rebuild failed ({status}): {detail}")
+    result = response.json()
+    if result.get("status") not in {"COMMITTED", "ALREADY_COMMITTED"}:
+        raise RuntimeError(f"Derived rebuild returned unexpected status: {result}")
+    if result.get("db_name") != target_db:
+        raise RuntimeError("Derived rebuild receipt db_name mismatch")
+    return result
+
+
 def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str, Any]:
     """Copy one saved league into another and close only missing rollup gaps."""
     source_db = _assert_db_name(payload.get("source_db"), "source_db")
@@ -139,25 +186,24 @@ def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str,
 
     from multi_league.core.db_reader import get_reader
     from multi_league.core.fly_writer import FlyWriter
-    from multi_league.core.no_week_season_rollup_repair import (
-        repair_missing_season_rollups_if_needed,
-    )
-    from multi_league.data_fetchers.shared.merge_source_copier import (
-        copy_merge_source_to_public,
-        refresh_merge_source_homepage_aggregates,
-    )
+    from multi_league.data_fetchers.shared.merge_source_copier import copy_merge_source_to_public
 
     reader = reader or get_reader()
     writer = writer or FlyWriter()
     ctx = SimpleNamespace(merge_source=merge_source, import_mode="full")
-    stats = dict(
-        copy_merge_source_to_public(
-            ctx,
-            target_db,
-            reader=reader,
-            writer=writer,
+    finalize_only = payload.get("finalize_only") is True
+    if finalize_only:
+        stats: dict[str, Any] = {"status": "finalizing_existing_copy"}
+    else:
+        stats = dict(
+            copy_merge_source_to_public(
+                ctx,
+                target_db,
+                reader=reader,
+                writer=writer,
+                refresh_aggregates=False,
+            )
         )
-    )
     if years:
         stats.update(
             _persist_merged_league_ids(
@@ -169,29 +215,13 @@ def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str,
             )
         )
 
-    active_year_value = reader.query_scalar(
-        "SELECT MAX(TRY_CAST(year AS INTEGER)) "
-        "FROM public.matchup "
-        f"WHERE db_name = {_sql_literal(target_db)}",
-        database="___leagues",
-    )
-    if active_year_value is None:
-        raise RuntimeError(f"Merged league {target_db} has no matchup season")
-    active_year = int(active_year_value)
-    repair = repair_missing_season_rollups_if_needed(
-        reader=reader,
-        db_name=target_db,
-        active_year=active_year,
-    )
-    repaired_years = [int(year) for year in repair.get("missing_years") or []]
-    stats["season_rollups_repaired"] = ", ".join(map(str, repaired_years))
-    if repair.get("published"):
-        homepage = refresh_merge_source_homepage_aggregates(
-            reader=reader,
-            writer=writer,
-            target_db=target_db,
-        )
-        stats.update(homepage)
+    github_run_id = os.environ.get("GITHUB_RUN_ID", "local")
+    requested_run_id = str(payload.get("run_id") or "").strip()
+    run_id = requested_run_id or f"league-admin-merge-{github_run_id}-{target_db}"
+    derived = _rebuild_league_derived(target_db=target_db, run_id=run_id[:200])
+    stats["derived_rebuild_status"] = derived["status"]
+    if derived.get("generation") is not None:
+        stats["derived_generation"] = int(derived["generation"])
     return stats
 
 

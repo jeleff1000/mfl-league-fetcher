@@ -263,6 +263,32 @@ def test_copy_merge_source_to_public_honors_year_range_without_year_probe():
     assert not any("SELECT DISTINCT TRY_CAST(year AS INTEGER)" in sql for sql, _database in reader.queries)
 
 
+def test_copy_merge_source_can_defer_aggregate_refresh_to_atomic_server_rebuild():
+    reader = FakeReader()
+    writer = FakeWriter()
+    ctx = SimpleNamespace(
+        merge_source={
+            "source_db": "source_db",
+            "year_range": {"start": 2019, "end": 2020},
+        }
+    )
+
+    stats = copy_merge_source_to_public(
+        ctx,
+        "target_db",
+        reader=reader,
+        writer=writer,
+        log_func=lambda _msg: None,
+        refresh_aggregates=False,
+    )
+
+    writes = "\n".join(sql for sql, _database in writer.statements)
+    assert stats["matchup"] == 4
+    assert stats["player_fantasy"] == 6
+    assert "player_fantasy_career" not in stats
+    assert "INSERT INTO ___leagues.public.player_fantasy_career" not in writes
+
+
 def test_copy_merge_source_to_public_copies_multiple_sources():
     reader = FakeReader()
     writer = FakeWriter()

@@ -1864,6 +1864,7 @@ def _copy_one_merge_source_to_public(
     reader,
     writer,
     log_func: Callable[[str], None] = print,
+    refresh_aggregates: bool = True,
 ) -> dict[str, int | str]:
     source_db = _assert_db_name(str(merge_source["source_db"]))
     target_db = _assert_db_name(target_db_name)
@@ -1934,13 +1935,14 @@ def _copy_one_merge_source_to_public(
         merge_years=merge_years,
         log_func=log_func,
     )
-    aggregate_stats = _refresh_merge_source_aggregates(
-        reader=reader,
-        writer=writer,
-        target_db=target_db,
-        log_func=log_func,
-    )
-    stats.update(aggregate_stats)
+    if refresh_aggregates:
+        aggregate_stats = _refresh_merge_source_aggregates(
+            reader=reader,
+            writer=writer,
+            target_db=target_db,
+            log_func=log_func,
+        )
+        stats.update(aggregate_stats)
 
     copied_tables = [key for key in stats if key not in {"status", "merge_years", "single_year_import"}]
     if not copied_tables:
@@ -1956,6 +1958,7 @@ def copy_merge_source_to_public(
     reader=None,
     writer=None,
     log_func: Callable[[str], None] = print,
+    refresh_aggregates: bool = True,
 ) -> dict[str, int | str]:
     """Copy historical source rows to the target league inside Fly.
 
@@ -1985,6 +1988,7 @@ def copy_merge_source_to_public(
             reader=reader,
             writer=writer,
             log_func=log_func,
+            refresh_aggregates=refresh_aggregates,
         )
 
     combined: dict[str, int | str] = {
@@ -2002,6 +2006,7 @@ def copy_merge_source_to_public(
             reader=reader,
             writer=writer,
             log_func=log_func,
+            refresh_aggregates=refresh_aggregates,
         )
         combined[f"source_{index}_db"] = source_db
         combined[f"source_{index}_status"] = str(source_stats.get("status", "unknown"))

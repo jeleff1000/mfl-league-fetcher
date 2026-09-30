@@ -2,7 +2,11 @@ import json
 
 import duckdb
 
-from scripts.merge_league_admin import _persist_merged_league_ids
+from scripts.merge_league_admin import (
+    _persist_merged_league_ids,
+    _rebuild_league_derived,
+    run_merge,
+)
 
 
 class DuckDbAdapter:
@@ -116,3 +120,83 @@ def test_persist_merged_league_ids_rejects_missing_source_year() -> None:
         "2013": "314.l.target",
         "2026": "470.l.target",
     }
+
+
+def test_rebuild_league_derived_uses_bounded_atomic_server_endpoint(monkeypatch) -> None:
+    observed = {}
+
+    class Response:
+        status_code = 200
+        text = '{"status":"COMMITTED"}'
+
+        @staticmethod
+        def json():
+            return {
+                "status": "COMMITTED",
+                "db_name": "pass_interferance",
+                "generation": 42,
+            }
+
+    def fake_post(url, *, json, headers, timeout):
+        observed.update(url=url, json=json, headers=headers, timeout=timeout)
+        return Response()
+
+    monkeypatch.setenv("DATABASE_SERVER_URL", "https://fly.example")
+    monkeypatch.setenv("DATABASE_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("FLY_PRIMARY_MACHINE_ID", "machine-1")
+    monkeypatch.setattr("scripts.merge_league_admin.requests.post", fake_post)
+
+    result = _rebuild_league_derived(
+        target_db="pass_interferance",
+        run_id="admin-merge-123",
+    )
+
+    assert result["status"] == "COMMITTED"
+    assert observed == {
+        "url": "https://fly.example/rebuild-league-derived",
+        "json": {"db_name": "pass_interferance", "run_id": "admin-merge-123"},
+        "headers": {
+            "Authorization": "Bearer admin-token",
+            "fly-force-instance-id": "machine-1",
+        },
+        "timeout": 50,
+    }
+
+
+def test_finalize_only_skips_source_copy_and_runs_existing_derived_rebuild(monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        "scripts.merge_league_admin._persist_merged_league_ids",
+        lambda **_kwargs: {"league_context_year_ids_persisted": "2013, 2014, 2015, 2016"},
+    )
+    monkeypatch.setattr(
+        "scripts.merge_league_admin._rebuild_league_derived",
+        lambda **kwargs: calls.append(kwargs)
+        or {"status": "COMMITTED", "generation": 43, "db_name": kwargs["target_db"]},
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+
+    result = run_merge(
+        {
+            "source_db": "l_1st_down_7500",
+            "target_db": "pass_interferance",
+            "merge_years": [2013, 2014, 2015, 2016],
+            "finalize_only": True,
+        },
+        reader=object(),
+        writer=object(),
+    )
+
+    assert result == {
+        "status": "finalizing_existing_copy",
+        "league_context_year_ids_persisted": "2013, 2014, 2015, 2016",
+        "derived_rebuild_status": "COMMITTED",
+        "derived_generation": 43,
+    }
+    assert calls == [
+        {
+            "target_db": "pass_interferance",
+            "run_id": "league-admin-merge-999-pass_interferance",
+        }
+    ]

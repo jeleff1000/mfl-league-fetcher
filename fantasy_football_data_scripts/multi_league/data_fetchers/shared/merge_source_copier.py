@@ -392,6 +392,36 @@ def _remap_copied_franchise_ids(
     if not target_ids:
         return
 
+    replacements = _query_scalar_with_busy_retry(
+        reader,
+        f"""
+        SELECT COUNT(*) AS cnt
+        FROM (
+            SELECT DISTINCT
+                copied.franchise_id AS source_franchise_id,
+                ids.target_franchise_id
+            FROM {_table_ref("matchup")} AS copied
+            JOIN (
+                SELECT manager, ARG_MAX(franchise_id, TRY_CAST(year AS INTEGER)) AS target_franchise_id
+                FROM {_table_ref("matchup")}
+                WHERE db_name = {_quote_sql(target_db)}
+                  AND TRY_CAST(year AS INTEGER) NOT IN ({year_sql})
+                  AND manager IS NOT NULL
+                  AND TRIM(manager) <> ''
+                  AND franchise_id IS NOT NULL
+                GROUP BY manager
+            ) AS ids ON copied.manager = ids.manager
+            WHERE copied.db_name = {_quote_sql(target_db)}
+              AND TRY_CAST(copied.year AS INTEGER) IN ({year_sql})
+              AND copied.franchise_id IS NOT NULL
+              AND copied.franchise_id IS DISTINCT FROM ids.target_franchise_id
+        ) AS changed_ids
+        """,
+    )
+    if not replacements:
+        log_func("[MERGE_SOURCE] Franchise ids already match; skipped remap writes")
+        return
+
     for table_name in _query_year_scoped_tables(reader):
         columns = _available_columns(reader, table_name)
         if "db_name" not in columns or "year" not in columns:
@@ -418,6 +448,7 @@ def _remap_copied_franchise_ids(
                   AND TRY_CAST(t.year AS INTEGER) IN ({year_sql})
                   AND t.{name_col} = ids.manager
                   AND ids.target_franchise_id IS NOT NULL
+                  AND t.{franchise_col} IS DISTINCT FROM ids.target_franchise_id
                 """,
             )
 

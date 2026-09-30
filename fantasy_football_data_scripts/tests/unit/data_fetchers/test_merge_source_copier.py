@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from multi_league.data_fetchers.shared.merge_source_copier import (
+    _remap_copied_franchise_ids,
     copy_merge_source_to_public,
     maybe_copy_merge_source_to_public,
     _refresh_homepage_manager_profiles,
@@ -174,6 +175,29 @@ class FakeWriter:
     def execute(self, sql: str, database: str):
         self.statements.append((sql, database))
         return []
+
+
+def test_franchise_remap_skips_all_table_writes_when_ids_already_match():
+    class MatchingFranchiseReader(FakeReader):
+        def query_scalar(self, sql: str, database: str):
+            if "source_franchise_id" in sql and "target_franchise_id" in sql:
+                return 0
+            return super().query_scalar(sql, database)
+
+    reader = MatchingFranchiseReader()
+    writer = FakeWriter()
+    logs = []
+
+    _remap_copied_franchise_ids(
+        reader=reader,
+        writer=writer,
+        target_db="target_db",
+        merge_years=[2019, 2020],
+        log_func=logs.append,
+    )
+
+    assert writer.statements == []
+    assert logs == ["[MERGE_SOURCE] Franchise ids already match; skipped remap writes"]
 
 
 def test_copy_merge_source_to_public_duplicates_source_rows_server_side():

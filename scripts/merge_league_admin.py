@@ -186,7 +186,10 @@ def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str,
 
     from multi_league.core.db_reader import get_reader
     from multi_league.core.fly_writer import FlyWriter
-    from multi_league.data_fetchers.shared.merge_source_copier import copy_merge_source_to_public
+    from multi_league.data_fetchers.shared.merge_source_copier import (
+        _repair_copied_trade_mirrors,
+        copy_merge_source_to_public,
+    )
 
     reader = reader or get_reader()
     writer = writer or FlyWriter()
@@ -194,6 +197,14 @@ def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str,
     finalize_only = payload.get("finalize_only") is True
     if finalize_only:
         stats: dict[str, Any] = {"status": "finalizing_existing_copy"}
+        stats.update(
+            _repair_copied_trade_mirrors(
+                reader=reader,
+                writer=writer,
+                target_db=target_db,
+                merge_years=years,
+            )
+        )
     else:
         stats = dict(
             copy_merge_source_to_public(

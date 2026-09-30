@@ -181,6 +181,44 @@ def test_hidden_yahoo_trade_identities_preserve_all_eight_mirrored_valuations(ya
         ]
 
 
+def test_trade_enrichment_repairs_stale_counterparty_franchise_id(yahoo_trade_pipeline):
+    runner = yahoo_trade_pipeline
+    stale_side = runner.conn.execute("""
+        SELECT franchise_id
+        FROM public.transactions
+        WHERE db_name='yahoo_trade_fixture' AND manager='Alpha'
+        LIMIT 1
+    """).fetchone()[0]
+    expected_counterparty = runner.conn.execute("""
+        SELECT franchise_id
+        FROM public.transactions
+        WHERE db_name='yahoo_trade_fixture' AND manager='Beta'
+        LIMIT 1
+    """).fetchone()[0]
+    runner.conn.execute("""
+        UPDATE public.transactions
+        SET source_franchise_id = source_franchise_id || '_stale'
+        WHERE db_name='yahoo_trade_fixture' AND manager='Alpha'
+    """)
+
+    runner._compute_trade_net_lamar()
+
+    assert runner.conn.execute("""
+        SELECT DISTINCT source_franchise_id
+        FROM public.transactions
+        WHERE db_name='yahoo_trade_fixture' AND manager='Alpha'
+    """).fetchall() == [(expected_counterparty,)]
+    assert runner.conn.execute("""
+        SELECT COUNT(*)
+        FROM public.transactions
+        WHERE db_name='yahoo_trade_fixture'
+          AND franchise_id = ?
+          AND trade_direction='sent'
+          AND trade_asset_lamar IS NULL
+    """, [stale_side]).fetchone()[0] == 0
+    assert _compute_best_trade(runner.conn, "yahoo_trade_fixture", platform="yahoo")["net_lamar"] == 7
+
+
 @pytest.mark.parametrize("broken", ["missing_sent", "wrong_identity", "wrong_asset", "missing_value"])
 def test_homepage_still_rejects_broken_yahoo_trade_mirrors(yahoo_trade_pipeline, broken):
     runner = yahoo_trade_pipeline

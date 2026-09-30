@@ -96,6 +96,190 @@ def _trade_asset_key_expr(trans_cols: set[str], alias: str) -> str:
     return player_key
 
 
+def build_trade_counterparty_reconciliation_sql(
+    trans_table: str,
+    trans_cols: set[str],
+    scope_sql,
+) -> str:
+    """Repair stale counterparty ids from the reciprocal row for the same asset.
+
+    Legacy Yahoo trades can retain an old split franchise id on one side even
+    though the opposite row still points back to the correct franchise.  The
+    asset mirror is stronger evidence than display names and remains safe for
+    renamed managers.  Ambiguous candidates are deliberately ignored.
+    """
+    asset_key_t = _trade_asset_key_expr(trans_cols, "t")
+    asset_key_p = _trade_asset_key_expr(trans_cols, "p")
+    asset_key_c = _trade_asset_key_expr(trans_cols, "c")
+    return f"""
+        WITH counterparty_candidates AS (
+            SELECT
+                t.year,
+                t.transaction_id,
+                t.transaction_type,
+                t.franchise_id,
+                t.trade_direction,
+                {asset_key_t} AS asset_key,
+                MIN(p.franchise_id) AS counterparty_franchise_id,
+                COUNT(DISTINCT p.franchise_id) AS candidate_count
+            FROM {trans_table} t
+            JOIN {trans_table} p
+              ON p.year = t.year
+             AND p.transaction_id = t.transaction_id
+             AND p.transaction_type = t.transaction_type
+             AND p.trade_direction = CASE t.trade_direction
+                 WHEN 'received' THEN 'sent' ELSE 'received' END
+             AND {asset_key_p} = {asset_key_t}
+             AND p.source_franchise_id = t.franchise_id
+            WHERE {scope_sql('t')}
+              AND {scope_sql('p')}
+              AND t.transaction_type IN ('trade', 'trade_pick')
+              AND t.trade_direction IN ('received', 'sent')
+              AND t.franchise_id IS NOT NULL
+              AND p.franchise_id IS NOT NULL
+            GROUP BY
+                t.year,
+                t.transaction_id,
+                t.transaction_type,
+                t.franchise_id,
+                t.trade_direction,
+                {asset_key_t}
+            HAVING COUNT(DISTINCT p.franchise_id) = 1
+        )
+        UPDATE {trans_table} c
+        SET source_franchise_id = candidates.counterparty_franchise_id
+        FROM counterparty_candidates candidates
+        WHERE {scope_sql('c')}
+          AND c.year = candidates.year
+          AND c.transaction_id = candidates.transaction_id
+          AND c.transaction_type = candidates.transaction_type
+          AND c.franchise_id = candidates.franchise_id
+          AND c.trade_direction = candidates.trade_direction
+          AND {asset_key_c} = candidates.asset_key
+          AND c.source_franchise_id IS DISTINCT FROM candidates.counterparty_franchise_id
+    """
+
+
+def build_trade_asset_mirror_sql(
+    trans_table: str,
+    trans_cols: set[str],
+    scope_sql,
+) -> str:
+    """Mirror received-side asset values onto the reciprocal sent rows."""
+    asset_key_t = _trade_asset_key_expr(trans_cols, "t")
+    asset_key_r = _trade_asset_key_expr(trans_cols, "r")
+    return f"""
+        WITH received_trade_assets AS (
+            SELECT
+                r.transaction_id,
+                r.year,
+                r.franchise_id as receiving_franchise_id,
+                r.source_franchise_id as sending_franchise_id,
+                {asset_key_r} as asset_key,
+                MAX(COALESCE(r.trade_asset_lamar, 0)) as asset_lamar
+            FROM {trans_table} r
+            WHERE {_trade_received_predicate('r')}
+              AND {scope_sql('r')}
+              AND r.transaction_id IS NOT NULL
+              AND r.franchise_id IS NOT NULL
+            GROUP BY
+                r.transaction_id,
+                r.year,
+                r.franchise_id,
+                r.source_franchise_id,
+                {asset_key_r}
+        )
+        UPDATE {trans_table} t
+        SET trade_asset_lamar = rta.asset_lamar
+        FROM received_trade_assets rta
+        WHERE t.transaction_type IN ('trade', 'trade_pick')
+          AND t.trade_direction = 'sent'
+          AND t.transaction_id = rta.transaction_id
+          AND t.year = rta.year
+          AND t.franchise_id = rta.sending_franchise_id
+          AND COALESCE(t.source_franchise_id, '') = COALESCE(rta.receiving_franchise_id, '')
+          AND {asset_key_t} = rta.asset_key
+          AND {scope_sql('t')}
+    """
+
+
+def build_trade_package_net_sql(trans_table: str, scope_sql) -> str:
+    """Recompute the package value for both sides of every scoped trade."""
+    return f"""
+        WITH trade_package_scores AS (
+            SELECT
+                transaction_id,
+                franchise_id,
+                SUM(
+                    CASE
+                        WHEN trade_direction = 'received' THEN COALESCE(trade_asset_lamar, 0)
+                        WHEN trade_direction = 'sent' THEN -COALESCE(trade_asset_lamar, 0)
+                        ELSE 0
+                    END
+                ) AS net_lamar
+            FROM {trans_table} t
+            WHERE t.transaction_type IN ('trade', 'trade_pick')
+              AND {scope_sql('t')}
+              AND t.transaction_id IS NOT NULL
+              AND t.franchise_id IS NOT NULL
+            GROUP BY transaction_id, franchise_id
+        )
+        UPDATE {trans_table} t
+        SET trade_net_lamar = tps.net_lamar
+        FROM trade_package_scores tps
+        WHERE t.transaction_id = tps.transaction_id
+          AND t.franchise_id = tps.franchise_id
+          AND t.transaction_type IN ('trade', 'trade_pick')
+          AND {scope_sql('t')}
+    """
+
+
+def build_trade_grade_sql(trans_table: str, scope_sql) -> str:
+    """Recompute package grades with the canonical 30-package guard."""
+    return f"""
+        WITH trade_packages AS (
+            SELECT
+                transaction_id,
+                franchise_id,
+                trade_net_lamar
+            FROM {trans_table} t
+            WHERE t.transaction_type IN ('trade', 'trade_pick')
+              AND {scope_sql('t')}
+              AND t.trade_net_lamar IS NOT NULL
+              AND ABS(t.trade_net_lamar) >= 3
+            GROUP BY transaction_id, franchise_id, trade_net_lamar
+        ),
+        package_percentiles AS (
+            SELECT
+                transaction_id,
+                franchise_id,
+                PERCENT_RANK() OVER (ORDER BY trade_net_lamar ASC) * 100 as pctile,
+                COUNT(*) OVER () AS package_count
+            FROM trade_packages
+        )
+        UPDATE {trans_table} t
+        SET
+            trade_percentile = pp.pctile,
+            trade_grade = CASE
+                WHEN pp.pctile >= 95 THEN 'A+'
+                WHEN pp.pctile >= 85 THEN 'A'
+                WHEN pp.pctile >= 75 THEN 'A-'
+                WHEN pp.pctile >= 65 THEN 'B+'
+                WHEN pp.pctile >= 50 THEN 'B'
+                WHEN pp.pctile >= 35 THEN 'B-'
+                WHEN pp.pctile >= 20 THEN 'C'
+                WHEN pp.pctile >= 10 THEN 'D'
+                ELSE 'F'
+            END
+        FROM package_percentiles pp
+        WHERE pp.package_count >= 30
+          AND t.transaction_id = pp.transaction_id
+          AND t.franchise_id = pp.franchise_id
+          AND t.transaction_type IN ('trade', 'trade_pick')
+          AND {scope_sql('t')}
+    """
+
+
 class TransactionEnrichmentsMixin:
     """Mixin providing transaction-related SQL enrichments.
 
@@ -1359,8 +1543,6 @@ class TransactionEnrichmentsMixin:
 
         rows_updated = 0
         trade_received_predicate = _trade_received_predicate("t")
-        asset_key_t = _trade_asset_key_expr(trans_cols, "t")
-        asset_key_r = _trade_asset_key_expr(trans_cols, "r")
         managed_trade_col = next(
             (
                 col
@@ -1372,6 +1554,14 @@ class TransactionEnrichmentsMixin:
         if managed_trade_col is None:
             logger.warning("[_compute_trade_net_lamar] No trade asset LAMAR source column found")
             return 0
+
+        def scope_sql(alias: str) -> str:
+            return self._db_filter(alias)
+
+        rows_updated += self._execute(
+            build_trade_counterparty_reconciliation_sql(trans_table, trans_cols, scope_sql),
+            "trade_net_lamar: reconcile reciprocal counterparty ids",
+        )
 
         # Step 1: Clear existing trade package columns
         sql_clear = f"""
@@ -1394,69 +1584,11 @@ class TransactionEnrichmentsMixin:
 
         rows_updated += self._extend_retained_value("trade_asset_lamar", trade_received_predicate)
 
-        sql_sent = f"""
-            WITH received_trade_assets AS (
-                SELECT
-                    r.transaction_id,
-                    r.year,
-                    r.franchise_id as receiving_franchise_id,
-                    r.source_franchise_id as sending_franchise_id,
-                    {asset_key_r} as asset_key,
-                    MAX(COALESCE(r.trade_asset_lamar, 0)) as asset_lamar
-                FROM {trans_table} r
-                WHERE {trade_received_predicate.replace("t.", "r.")}
-                  AND {self._db_filter('r')}
-                  AND r.transaction_id IS NOT NULL
-                  AND r.franchise_id IS NOT NULL
-                GROUP BY
-                    r.transaction_id,
-                    r.year,
-                    r.franchise_id,
-                    r.source_franchise_id,
-                    {asset_key_r}
-            )
-            UPDATE {trans_table} t
-            SET trade_asset_lamar = rta.asset_lamar
-            FROM received_trade_assets rta
-            WHERE t.transaction_type IN ('trade', 'trade_pick')
-              AND t.trade_direction = 'sent'
-              AND t.transaction_id = rta.transaction_id
-              AND t.year = rta.year
-              AND t.franchise_id = rta.sending_franchise_id
-              AND COALESCE(t.source_franchise_id, '') = COALESCE(rta.receiving_franchise_id, '')
-              AND {asset_key_t} = rta.asset_key
-              AND {self._db_filter('t')}
-        """
+        sql_sent = build_trade_asset_mirror_sql(trans_table, trans_cols, scope_sql)
         rows_updated += self._execute(sql_sent, "trade_net_lamar: mirror received asset values onto sent rows")
 
         # Step 2: Compute trade_net_lamar per franchise side
-        sql_net = f"""
-            WITH trade_package_scores AS (
-                SELECT
-                    transaction_id,
-                    franchise_id,
-                    SUM(
-                        CASE
-                            WHEN trade_direction = 'received' THEN COALESCE(trade_asset_lamar, 0)
-                            WHEN trade_direction = 'sent' THEN -COALESCE(trade_asset_lamar, 0)
-                            ELSE 0
-                        END
-                    ) AS net_lamar
-                FROM {trans_table}
-                WHERE transaction_type IN ('trade', 'trade_pick')
-                  AND {self._db_filter()}
-                  AND transaction_id IS NOT NULL
-                  AND franchise_id IS NOT NULL
-                GROUP BY transaction_id, franchise_id
-            )
-            UPDATE {trans_table} t
-            SET trade_net_lamar = tps.net_lamar
-            FROM trade_package_scores tps
-            WHERE t.transaction_id = tps.transaction_id
-              AND t.franchise_id = tps.franchise_id
-              AND t.transaction_type IN ('trade', 'trade_pick')
-              AND {self._db_filter('t')}
-        """
+        sql_net = build_trade_package_net_sql(trans_table, scope_sql)
         rows_updated += self._execute(sql_net, "trade_net_lamar: compute package net LAMAR")
 
         # Step 6c: Grade trade packages on all-time percentile curve

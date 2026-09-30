@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from multi_league.data_fetchers.shared.merge_source_copier import (
     _remap_copied_franchise_ids,
+    _repair_copied_trade_mirrors,
     copy_merge_source_to_public,
     maybe_copy_merge_source_to_public,
     _refresh_homepage_manager_profiles,
@@ -198,6 +199,56 @@ def test_franchise_remap_skips_all_table_writes_when_ids_already_match():
 
     assert writer.statements == []
     assert logs == ["[MERGE_SOURCE] Franchise ids already match; skipped remap writes"]
+
+
+def test_repair_copied_trade_mirrors_is_scoped_to_target_and_merge_years():
+    class TransactionReader(FakeReader):
+        def query(self, sql: str, database: str):
+            if "table_name = 'transactions'" in sql:
+                return [
+                    {"column_name": name}
+                    for name in [
+                        "db_name",
+                        "year",
+                        "transaction_id",
+                        "transaction_type",
+                        "franchise_id",
+                        "source_franchise_id",
+                        "trade_direction",
+                        "trade_asset_lamar",
+                        "trade_net_lamar",
+                        "trade_grade",
+                        "trade_percentile",
+                        "NFL_player_id",
+                        "yahoo_player_id",
+                        "player",
+                    ]
+                ]
+            return super().query(sql, database)
+
+    reader = TransactionReader()
+    writer = FakeWriter()
+
+    stats = _repair_copied_trade_mirrors(
+        reader=reader,
+        writer=writer,
+        target_db="target_db",
+        merge_years=[2013, 2014, 2015, 2016],
+    )
+
+    assert stats == {"trade_mirror_repair": "completed"}
+    assert len(writer.statements) == 1
+    sql, database = writer.statements[0]
+    assert database == "___leagues"
+    assert sql.count("BEGIN TRANSACTION") == 1
+    assert sql.count("COMMIT") == 1
+    assert "c.db_name = 'target_db'" in sql
+    assert "TRY_CAST(c.year AS INTEGER) IN (2013, 2014, 2015, 2016)" in sql
+    assert "SET source_franchise_id = candidates.counterparty_franchise_id" in sql
+    assert "SET trade_asset_lamar = rta.asset_lamar" in sql
+    assert "SET trade_net_lamar = tps.net_lamar" in sql
+    assert "SET trade_grade = NULL, trade_percentile = NULL" in sql
+    assert "PERCENT_RANK() OVER (ORDER BY trade_net_lamar ASC)" in sql
 
 
 def test_copy_merge_source_to_public_duplicates_source_rows_server_side():

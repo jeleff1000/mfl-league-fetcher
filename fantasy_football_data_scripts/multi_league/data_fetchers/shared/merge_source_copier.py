@@ -455,6 +455,77 @@ def _remap_copied_franchise_ids(
     log_func("[MERGE_SOURCE] Remapped copied franchise ids where target manager identities matched")
 
 
+def _repair_copied_trade_mirrors(
+    *,
+    reader,
+    writer,
+    target_db: str,
+    merge_years: list[int],
+    log_func: Callable[[str], None] = print,
+) -> dict[str, str]:
+    """Repair legacy trade mirrors only inside the copied target-year slice."""
+    if not merge_years:
+        return {}
+
+    columns = _available_columns(reader, "transactions")
+    required = {
+        "db_name",
+        "year",
+        "transaction_id",
+        "transaction_type",
+        "franchise_id",
+        "source_franchise_id",
+        "trade_direction",
+        "trade_asset_lamar",
+        "trade_net_lamar",
+        "trade_grade",
+        "trade_percentile",
+    }
+    if not required.issubset(columns):
+        return {}
+
+    from multi_league.transformations.transaction.sql_transaction_enrichments import (
+        build_trade_asset_mirror_sql,
+        build_trade_counterparty_reconciliation_sql,
+        build_trade_grade_sql,
+        build_trade_package_net_sql,
+    )
+
+    year_sql = _year_list_sql(merge_years)
+
+    def scope_sql(alias: str) -> str:
+        return (
+            f"{alias}.db_name = {_quote_sql(target_db)} "
+            f"AND TRY_CAST({alias}.year AS INTEGER) IN ({year_sql})"
+        )
+
+    def league_scope_sql(alias: str) -> str:
+        return f"{alias}.db_name = {_quote_sql(target_db)}"
+
+    table_ref = _table_ref("transactions")
+    reconcile_sql = build_trade_counterparty_reconciliation_sql(table_ref, columns, scope_sql)
+    mirror_sql = build_trade_asset_mirror_sql(table_ref, columns, scope_sql)
+    package_sql = build_trade_package_net_sql(table_ref, scope_sql)
+    grade_sql = build_trade_grade_sql(table_ref, league_scope_sql)
+    _execute_with_busy_retry(
+        writer,
+        f"""
+        BEGIN TRANSACTION;
+        {reconcile_sql};
+        {mirror_sql};
+        {package_sql};
+        UPDATE {table_ref}
+        SET trade_grade = NULL, trade_percentile = NULL
+        WHERE db_name = {_quote_sql(target_db)}
+          AND transaction_type IN ('trade', 'trade_pick');
+        {grade_sql};
+        COMMIT;
+        """,
+    )
+    log_func(f"[MERGE_SOURCE] Reconciled trade mirrors for target year(s): {year_sql}")
+    return {"trade_mirror_repair": "completed"}
+
+
 def _refresh_merge_source_aggregates(
     *,
     reader,
@@ -1935,6 +2006,15 @@ def _copy_one_merge_source_to_public(
         merge_years=merge_years,
         log_func=log_func,
     )
+    stats.update(
+        _repair_copied_trade_mirrors(
+            reader=reader,
+            writer=writer,
+            target_db=target_db,
+            merge_years=merge_years,
+            log_func=log_func,
+        )
+    )
     if refresh_aggregates:
         aggregate_stats = _refresh_merge_source_aggregates(
             reader=reader,
@@ -1944,7 +2024,11 @@ def _copy_one_merge_source_to_public(
         )
         stats.update(aggregate_stats)
 
-    copied_tables = [key for key in stats if key not in {"status", "merge_years", "single_year_import"}]
+    copied_tables = [
+        key
+        for key in stats
+        if key not in {"status", "merge_years", "single_year_import", "trade_mirror_repair"}
+    ]
     if not copied_tables:
         raise RuntimeError(f"No rows copied from merge_source {source_db} for years {year_sql}")
 

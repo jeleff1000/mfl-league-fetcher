@@ -179,7 +179,14 @@ def test_finalize_only_skips_source_copy_and_runs_existing_derived_rebuild(monke
         lambda **kwargs: calls.append(kwargs)
         or {"status": "COMMITTED", "generation": 43, "db_name": kwargs["target_db"]},
     )
+    monkeypatch.setattr(
+        "multi_league.data_fetchers.shared.merge_source_copier._repair_copied_trade_mirrors",
+        lambda **kwargs: calls.append({"trade_repair": kwargs})
+        or {"trade_mirror_repair": "completed"},
+    )
     monkeypatch.setenv("GITHUB_RUN_ID", "999")
+    result_reader = object()
+    result_writer = object()
 
     result = run_merge(
         {
@@ -188,17 +195,26 @@ def test_finalize_only_skips_source_copy_and_runs_existing_derived_rebuild(monke
             "merge_years": [2013, 2014, 2015, 2016],
             "finalize_only": True,
         },
-        reader=object(),
-        writer=object(),
+        reader=result_reader,
+        writer=result_writer,
     )
 
     assert result == {
         "status": "finalizing_existing_copy",
+        "trade_mirror_repair": "completed",
         "league_context_year_ids_persisted": "2013, 2014, 2015, 2016",
         "derived_rebuild_status": "COMMITTED",
         "derived_generation": 43,
     }
     assert calls == [
+        {
+            "trade_repair": {
+                "reader": result_reader,
+                "writer": result_writer,
+                "target_db": "pass_interferance",
+                "merge_years": [2013, 2014, 2015, 2016],
+            }
+        },
         {
             "target_db": "pass_interferance",
             "run_id": "league-admin-merge-999-pass_interferance",

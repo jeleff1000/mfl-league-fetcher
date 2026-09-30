@@ -2700,6 +2700,7 @@ def _rebuild_league_derived_from_sources(
     *,
     db_name: str,
     run_id: str,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Rebuild one league's canonical derived outputs from persisted source facts.
 
@@ -2715,7 +2716,12 @@ def _rebuild_league_derived_from_sources(
     if not run_id or len(run_id) > 200:
         raise ValueError("run_id is required and must be at most 200 characters")
 
-    deadline = time.monotonic() + DERIVED_REBUILD_TIMEOUT_SECONDS
+    rebuild_timeout = (
+        DERIVED_REBUILD_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else float(timeout_seconds)
+    )
+    deadline = time.monotonic() + rebuild_timeout
     raw_conn = db.connect_database(
         database_path,
         data_dir=db.get_data_dir(),
@@ -2745,7 +2751,7 @@ def _rebuild_league_derived_from_sources(
     def remaining_budget():
         remaining = deadline - time.monotonic()
         if expired.is_set() or remaining <= 0:
-            raise TimeoutError(f"Derived rebuild exceeded {DERIVED_REBUILD_TIMEOUT_SECONDS:g}s SQL deadline")
+            raise TimeoutError(f"Derived rebuild exceeded {rebuild_timeout:g}s SQL deadline")
         return remaining
 
     def execute_step(step_conn, sql, params=None, *, step=""):
@@ -4791,6 +4797,18 @@ async def rebuild_league_derived(request: Request):
         raise HTTPException(status_code=400, detail="invalid league database name")
     if not run_id or len(run_id) > 200:
         raise HTTPException(status_code=400, detail="run_id is required and must be at most 200 characters")
+    requested_timeout = body.get("timeout_seconds")
+    rebuild_timeout = DERIVED_REBUILD_TIMEOUT_SECONDS
+    if requested_timeout is not None:
+        try:
+            rebuild_timeout = float(requested_timeout)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="invalid derived rebuild timeout") from exc
+        if not math.isfinite(rebuild_timeout) or not 10.0 <= rebuild_timeout <= 120.0:
+            raise HTTPException(
+                status_code=400,
+                detail="derived rebuild timeout must be between 10 and 120 seconds",
+            )
 
     database_path = db.get_data_dir() / "___leagues.duckdb"
     publish_token = await _acquire_delta_publish_slot(db_name, run_id)
@@ -4814,6 +4832,7 @@ async def rebuild_league_derived(request: Request):
                 database_path,
                 db_name=db_name,
                 run_id=run_id,
+                timeout_seconds=rebuild_timeout,
             ))
             try:
                 result = await asyncio.shield(worker)

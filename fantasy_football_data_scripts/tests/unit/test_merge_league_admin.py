@@ -154,7 +154,11 @@ def test_rebuild_league_derived_uses_bounded_atomic_server_endpoint(monkeypatch)
     assert result["status"] == "COMMITTED"
     assert observed == {
         "url": "https://fly.example/rebuild-league-derived",
-        "json": {"db_name": "pass_interferance", "run_id": "admin-merge-123"},
+        "json": {
+            "db_name": "pass_interferance",
+            "run_id": "admin-merge-123",
+            "timeout_seconds": 90,
+        },
         "headers": {
             "Authorization": "Bearer admin-token",
             "fly-force-instance-id": "machine-1",

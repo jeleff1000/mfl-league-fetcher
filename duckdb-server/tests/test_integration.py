@@ -2794,6 +2794,30 @@ def test_derived_rebuild_keeps_reads_online_and_commits_once(client, data_dir, d
     assert main_mod._ops_attachment_users == 0
 
 
+def test_derived_rebuild_accepts_bounded_caller_timeout(client, derived_rebuild, monkeypatch):
+    main_mod, _, _ = derived_rebuild
+    monkeypatch.setattr(main_mod, "DERIVED_REBUILD_TIMEOUT_SECONDS", 0.001)
+
+    response = client.post(
+        "/rebuild-league-derived",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"db_name": "alpha", "run_id": "bounded-admin", "timeout_seconds": 10},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMMITTED"
+
+
+def test_derived_rebuild_rejects_unbounded_caller_timeout(client, derived_rebuild):
+    response = client.post(
+        "/rebuild-league-derived",
+        headers={"Authorization": "Bearer test-admin"},
+        json={"db_name": "alpha", "run_id": "unbounded-admin", "timeout_seconds": 121},
+    )
+
+    assert response.status_code == 400
+
+
 @pytest.mark.parametrize("timeout_stage", ["career", "generation", "swallowed"])
 def test_derived_rebuild_deadline_rolls_back_before_releasing_writer(
         client, data_dir, derived_rebuild, monkeypatch, timeout_stage):

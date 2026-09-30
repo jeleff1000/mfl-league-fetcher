@@ -131,7 +131,7 @@ def _rebuild_league_derived(*, target_db: str, run_id: str) -> dict[str, Any]:
     machine_id = os.environ.get("FLY_PRIMARY_MACHINE_ID", "").strip()
     if machine_id:
         headers["fly-force-instance-id"] = machine_id
-    body = {"db_name": target_db, "run_id": run_id}
+    body = {"db_name": target_db, "run_id": run_id, "timeout_seconds": 90}
 
     response = None
     for attempt in range(2):

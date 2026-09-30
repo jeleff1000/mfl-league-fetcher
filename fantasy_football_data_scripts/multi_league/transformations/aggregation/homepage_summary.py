@@ -802,14 +802,26 @@ def compute_league_summary(
         summary.update({f"season_{k}": v for k, v in txn_season.items()})
 
     # ========== BEST TRADE (all-time) ==========
+    trade_validation_years = (
+        {int(value) for value in changed_years}
+        if changed_years
+        else None
+    )
     try:
-        trade_alltime = _compute_best_trade(conn, db_name, year=None, platform=platform, cache=cache)
+        trade_alltime = _compute_best_trade(
+            conn,
+            db_name,
+            year=None,
+            platform=platform,
+            cache=cache,
+            validation_years=trade_validation_years,
+        )
     except IncompleteTradeMirrorError:
         # A weekly publication must not be blocked by an untouched legacy
         # season whose trade mirrors predate the current enrichment contract.
         # Preserve the already-published all-time winner only after proving
         # every year changed by this publication is independently valid.
-        changed_years = {int(value) for value in (changed_years or set())}
+        changed_years = trade_validation_years or set()
         old_winner = (preserved_alltime_trade or {}).get("alltime_trade_winner")
         old_year = (preserved_alltime_trade or {}).get("alltime_trade_year")
         if not changed_years or pd.isna(old_winner) or pd.isna(old_year):
@@ -1390,15 +1402,33 @@ def _trade_partner_sql(txn_cols: Sequence[str]) -> tuple[str, str]:
 
 
 def _compute_best_trade(
-    conn, db_name: str, year: int = None, platform: str = "yahoo", cache: "ColumnCache | None" = None
+    conn,
+    db_name: str,
+    year: int = None,
+    platform: str = "yahoo",
+    cache: "ColumnCache | None" = None,
+    *,
+    validation_years: set[int] | None = None,
 ) -> dict[str, Any]:
     """Compute best trade by net LAMAR.
 
     Uses LAMAR when available, falls back to total fantasy points ROS.
+    Weekly refreshes may validate only the changed years while still selecting
+    the all-time winner from the complete league chain. Full imports and direct
+    calls remain strict across the full selected scope.
     """
     highlights = {}
     configure_table_catalog(conn)
     year_filter = f"AND t.year = {year}" if year else ""
+    if validation_years is None:
+        validation_year_filter = year_filter
+    elif validation_years:
+        validation_year_values = ", ".join(
+            str(int(value)) for value in sorted(validation_years)
+        )
+        validation_year_filter = f"AND t.year IN ({validation_year_values})"
+    else:
+        validation_year_filter = "AND FALSE"
 
     if cache:
         if not cache.exists("transactions"):
@@ -1439,27 +1469,30 @@ def _compute_best_trade(
 
             asset_key = _trade_asset_key_expr(txn_cols, "t")
             partner_asset_key = _trade_asset_key_expr(txn_cols, "p")
-            invalid = conn.execute(f"""
-                SELECT COUNT(*) FROM {central_table('transactions')} t
-                WHERE {league_db_filter(db_name, 't')} {year_filter}
-                  AND t.transaction_type IN ('trade', 'trade_pick')
-                  AND (
-                    t.trade_asset_lamar IS NULL OR NOT isfinite(t.trade_asset_lamar)
-                    OR t.trade_direction IS NULL OR t.trade_direction NOT IN ('received', 'sent')
-                    OR NOT EXISTS (
-                        SELECT 1 FROM {central_table('transactions')} p
-                        WHERE p.db_name = t.db_name AND p.year = t.year
-                          AND p.transaction_id = t.transaction_id
-                          AND p.transaction_type = t.transaction_type
-                          AND p.franchise_id = t.source_franchise_id
-                          AND p.source_franchise_id = t.franchise_id
-                          AND p.trade_direction = CASE t.trade_direction
-                              WHEN 'received' THEN 'sent' ELSE 'received' END
-                          AND {partner_asset_key} = {asset_key}
-                          AND p.trade_asset_lamar = t.trade_asset_lamar
-                    )
-                  )
-            """).fetchone()[0]
+            def count_invalid_trade_assets(filter_sql: str) -> int:
+                return int(conn.execute(f"""
+                    SELECT COUNT(*) FROM {central_table('transactions')} t
+                    WHERE {league_db_filter(db_name, 't')} {filter_sql}
+                      AND t.transaction_type IN ('trade', 'trade_pick')
+                      AND (
+                        t.trade_asset_lamar IS NULL OR NOT isfinite(t.trade_asset_lamar)
+                        OR t.trade_direction IS NULL OR t.trade_direction NOT IN ('received', 'sent')
+                        OR NOT EXISTS (
+                            SELECT 1 FROM {central_table('transactions')} p
+                            WHERE p.db_name = t.db_name AND p.year = t.year
+                              AND p.transaction_id = t.transaction_id
+                              AND p.transaction_type = t.transaction_type
+                              AND p.franchise_id = t.source_franchise_id
+                              AND p.source_franchise_id = t.franchise_id
+                              AND p.trade_direction = CASE t.trade_direction
+                                  WHEN 'received' THEN 'sent' ELSE 'received' END
+                              AND {partner_asset_key} = {asset_key}
+                              AND p.trade_asset_lamar = t.trade_asset_lamar
+                        )
+                      )
+                """).fetchone()[0])
+
+            invalid = count_invalid_trade_assets(validation_year_filter)
             if invalid:
                 raise IncompleteTradeMirrorError(
                     f"{invalid} trade assets lack complete mirrored valuations"
@@ -1545,6 +1578,17 @@ def _compute_best_trade(
             WHERE net_lamar > 0
             ORDER BY net_lamar DESC LIMIT 1
         """).fetchone()
+        if (
+            row
+            and "trade_asset_lamar" in txn_cols
+            and validation_years is not None
+            and int(row[1]) not in validation_years
+        ):
+            candidate_invalid = count_invalid_trade_assets(f"AND t.year = {int(row[1])}")
+            if candidate_invalid:
+                raise IncompleteTradeMirrorError(
+                    f"{candidate_invalid} trade assets lack complete mirrored valuations"
+                )
         if row:
             highlights["winner"] = row[3]
             highlights["winner_players"] = row[4]

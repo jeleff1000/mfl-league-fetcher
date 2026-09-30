@@ -905,6 +905,52 @@ def test_weekly_homepage_preserves_untouched_valid_trade_when_legacy_mirrors_are
     ).fetchone() == (0,)
 
 
+@pytest.mark.parametrize('platform', ['yahoo', 'espn', 'sleeper'])
+def test_weekly_homepage_recomputes_current_trade_despite_untouched_legacy_mirror(
+    homepage_chain,
+    platform,
+):
+    conn = homepage_chain
+    conn.execute(
+        "UPDATE public.matchup SET platform=? WHERE db_name='test_league'",
+        [platform],
+    )
+    conn.execute("""
+        INSERT INTO public.transactions
+            (db_name,transaction_id,year,week,transaction_type,trade_direction,
+             manager,franchise_id,source_franchise_id,player,NFL_player_id,trade_asset_lamar)
+        VALUES ('test_league','legacy-trade',2025,4,'trade','received',
+                'Legacy Alias','legacy-f1','legacy-f2','Legacy Player','legacy-player',12),
+               ('test_league','current-trade',2026,1,'trade','received',
+                'Shared Alias','f1','f2','Current Player','current-player',18),
+               ('test_league','current-trade',2026,1,'trade','sent',
+                'Other Alias','f2','f1','Current Player','current-player',18)
+    """)
+    conn.execute("""
+        UPDATE public.homepage_league_summary SET
+            alltime_trade_winner='Shared Alias', alltime_trade_loser='Other Alias',
+            alltime_trade_winner_players='Current Player', alltime_trade_year=2026,
+            alltime_trade_week=1, alltime_trade_net_lamar=18
+        WHERE db_name='test_league'
+    """)
+
+    aggregation_utils.aggregate_homepage_rollups(
+        conn,
+        'test_league',
+        changed_years={2026},
+    )
+
+    assert conn.execute("""
+        SELECT alltime_trade_winner, alltime_trade_winner_players,
+               alltime_trade_year, alltime_trade_week, alltime_trade_net_lamar,
+               season_trade_winner, season_trade_year, season_trade_net_lamar
+        FROM public.homepage_league_summary WHERE db_name='test_league'
+    """).fetchone() == (
+        'Shared Alias', 'Current Player', 2026, 1, 18.0,
+        'Shared Alias', 2026, 18.0,
+    )
+
+
 def test_weekly_homepage_rejects_incomplete_trade_mirror_in_changed_year(homepage_chain):
     conn = homepage_chain
     conn.execute("""

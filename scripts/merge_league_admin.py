@@ -58,6 +58,65 @@ def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _persist_merged_league_ids(
+    *,
+    reader,
+    writer,
+    source_db: str,
+    target_db: str,
+    merge_years: list[int],
+) -> dict[str, str]:
+    """Persist explicit replacement years in the target's Yahoo renewal chain."""
+    rows = reader.query(
+        "SELECT db_name, league_ids_json FROM public.league_context "
+        f"WHERE db_name IN ({_sql_literal(source_db)}, {_sql_literal(target_db)})",
+        database="___leagues",
+    )
+    by_db = {str(row.get("db_name")): row for row in rows}
+    missing_contexts = [db_name for db_name in (source_db, target_db) if db_name not in by_db]
+    if missing_contexts:
+        raise RuntimeError(
+            "Missing league_context row(s): " + ", ".join(missing_contexts)
+        )
+
+    def parse_ids(db_name: str) -> dict[str, str]:
+        raw = by_db[db_name].get("league_ids_json")
+        try:
+            parsed = json.loads(raw or "{}")
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Invalid league_ids_json for {db_name}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"Invalid league_ids_json for {db_name}")
+        return {
+            str(year): str(league_id)
+            for year, league_id in parsed.items()
+            if str(year).strip() and str(league_id).strip()
+        }
+
+    source_ids = parse_ids(source_db)
+    target_ids = parse_ids(target_db)
+    missing_years = [year for year in merge_years if str(year) not in source_ids]
+    if missing_years:
+        raise RuntimeError(
+            "Source league_context is missing league IDs for merge years: "
+            + ", ".join(map(str, missing_years))
+        )
+
+    for year in merge_years:
+        target_ids[str(year)] = source_ids[str(year)]
+
+    serialized = json.dumps(target_ids, sort_keys=True, separators=(",", ":"))
+    writer.execute(
+        "UPDATE public.league_context "
+        f"SET league_ids_json = {_sql_literal(serialized)}, updated_at = CURRENT_TIMESTAMP "
+        f"WHERE db_name = {_sql_literal(target_db)}",
+        database="___leagues",
+    )
+    return {
+        "league_context_year_ids_persisted": ", ".join(map(str, merge_years))
+    }
+
+
 def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str, Any]:
     """Copy one saved league into another and close only missing rollup gaps."""
     source_db = _assert_db_name(payload.get("source_db"), "source_db")
@@ -99,6 +158,16 @@ def run_merge(payload: dict[str, Any], *, reader=None, writer=None) -> dict[str,
             writer=writer,
         )
     )
+    if years:
+        stats.update(
+            _persist_merged_league_ids(
+                reader=reader,
+                writer=writer,
+                source_db=source_db,
+                target_db=target_db,
+                merge_years=years,
+            )
+        )
 
     active_year_value = reader.query_scalar(
         "SELECT MAX(TRY_CAST(year AS INTEGER)) "

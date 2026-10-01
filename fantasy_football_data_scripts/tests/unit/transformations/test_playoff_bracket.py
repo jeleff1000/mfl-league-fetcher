@@ -934,6 +934,67 @@ class TestConsolationTracerSQL:
 
         conn.close()
 
+    def test_four_team_consolation_finish_follows_bracket_results_not_seed(self):
+        """The winner of the winners' final is 7th even when they entered as seed 10."""
+        year = 2023
+        regular = _make_reg_season(year, 10, 14)
+
+        championship = []
+        championship.append(_make_bye_row(year, 15, "T1", seed=1))
+        championship.append(_make_bye_row(year, 15, "T2", seed=2))
+        championship += _make_matchup_pair(year, 15, "T3", "T6", 120, 80)
+        championship += _make_matchup_pair(year, 15, "T4", "T5", 110, 90)
+        championship += _make_matchup_pair(year, 16, "T1", "T4", 130, 100)
+        championship += _make_matchup_pair(year, 16, "T2", "T3", 125, 95)
+        championship += _make_matchup_pair(year, 17, "T1", "T2", 140, 110)
+        championship += _make_matchup_pair(year, 17, "T3", "T4", 105, 100)
+        championship += _make_matchup_pair(year, 16, "T5", "T6", 95, 85)
+
+        for row in championship:
+            row["is_playoffs"] = 1
+            if row.get("week") == 17 and row.get("franchise_id") in ("T1", "T2"):
+                row["is_championship"] = True
+                row["champion"] = 1 if row["franchise_id"] == "T1" else 0
+
+        # KMFFL 2023 shape: seed 10 wins a semifinal and then the winners' final.
+        consolation = []
+        consolation += _make_matchup_pair(year, 16, "T10", "T7", 158, 134)
+        consolation += _make_matchup_pair(year, 16, "T8", "T9", 128, 103)
+        consolation += _make_matchup_pair(year, 17, "T10", "T8", 143, 113)
+        consolation += _make_matchup_pair(year, 17, "T7", "T9", 141, 135)
+
+        for row in regular + championship + consolation:
+            team_id = row.get("franchise_id")
+            if team_id and team_id.startswith("T"):
+                row["final_playoff_seed"] = int(team_id[1:])
+
+        conn = _build_consolation_db(regular, championship + consolation)
+        settings = {
+            "playoff_teams": 6,
+            "bye_teams": 2,
+            "playoff_start_week": 15,
+            "end_week": 17,
+            "num_teams": 10,
+            "uses_median": False,
+            "playoff_round_type": 0,
+        }
+
+        result = trace_consolation_sql(conn, year, settings, table="matchup", id_col="franchise_id")
+
+        assert result["placements"] == {
+            "T1": 1,
+            "T2": 2,
+            "T3": 3,
+            "T4": 4,
+            "T5": 5,
+            "T6": 6,
+            "T10": 7,
+            "T8": 8,
+            "T7": 9,
+            "T9": 10,
+        }
+        conn.close()
+
     def test_sacko_is_bottom_bracket_loser_path(self):
         """Sacko follows the bottom-bracket loser path and owns the last rank."""
         conn, settings = self._build_10_team_scenario()

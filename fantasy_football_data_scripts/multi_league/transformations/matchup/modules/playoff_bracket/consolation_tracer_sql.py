@@ -701,6 +701,19 @@ def _compute_placement_ranks(
                     placements[winner] = rank
                     placements[loser] = rank + 1
 
+    _assign_four_team_consolation_finishes(
+        conn,
+        table,
+        year,
+        id_col,
+        opp_col,
+        consolation_rounds,
+        placements,
+        playoff_teams,
+        num_teams,
+        db_filter,
+    )
+
     # Step 6b.2: Resolve duplicate ranks from cross-bracket finals
     #
     # After Pass A, multiple teams may share the same rank if the consolation
@@ -874,6 +887,122 @@ def _compute_placement_ranks(
         logger.warning(f"[consolation] {year}: Expected 1 franchise at rank {expected}, found {sacko_count}")
 
     return placements
+
+
+def _assign_four_team_consolation_finishes(
+    conn,
+    table: str,
+    year: int,
+    id_col: str,
+    opp_col: str,
+    consolation_rounds: list[tuple[int, int]],
+    placements: dict[str, int],
+    playoff_teams: int,
+    num_teams: int,
+    db_filter: str = "1=1",
+) -> None:
+    """Assign exact finishes for an unlabelled four-team consolation bracket.
+
+    Yahoo labels both final-week games ``consolation_final``. The final between
+    the prior-round winners decides the two better finishes; the final between
+    the prior-round losers decides the two worse finishes. Without this graph
+    check, Pass B falls back to regular-season seed and can invert the result.
+    """
+    if num_teams - playoff_teams != 4 or len(consolation_rounds) < 2:
+        return
+
+    try:
+        all_teams = {
+            str(row[0])
+            for row in conn.execute(
+                f"SELECT DISTINCT {id_col} FROM {table} "
+                f"WHERE year = {year} AND {db_filter} "
+                f"AND {id_col} IS NOT NULL AND team_points IS NOT NULL"
+            ).fetchall()
+        }
+        playoff_ids = {
+            str(row[0])
+            for row in conn.execute(
+                f"SELECT DISTINCT {id_col} FROM {table} "
+                f"WHERE year = {year} AND {db_filter} "
+                f"AND {id_col} IS NOT NULL "
+                f"AND COALESCE(CAST(is_playoffs AS INTEGER), 0) = 1"
+            ).fetchall()
+        }
+    except Exception:
+        return
+
+    bottom_teams = all_teams - playoff_ids
+    if len(bottom_teams) != 4 or any(team in placements for team in bottom_teams):
+        return
+
+    team_sql = ",".join(f"'{_esc(team)}'" for team in sorted(bottom_teams))
+
+    def round_pairs(window: tuple[int, int]) -> list[tuple[str, str]]:
+        wk_start, wk_end = window
+        try:
+            rows = conn.execute(
+                f"SELECT {id_col}, {opp_col} FROM {table} "
+                f"WHERE year = {year} AND {db_filter} "
+                f"AND week >= {wk_start} AND week <= {wk_end} "
+                f"AND {id_col} IN ({team_sql}) AND {opp_col} IN ({team_sql})"
+            ).fetchall()
+        except Exception:
+            return []
+
+        pairs = {tuple(sorted((str(row[0]), str(row[1])))) for row in rows if row[0] and row[1]}
+        return sorted(pairs)
+
+    previous_window = consolation_rounds[-2]
+    final_window = consolation_rounds[-1]
+    previous_pairs = round_pairs(previous_window)
+    final_pairs = round_pairs(final_window)
+    if len(previous_pairs) != 2 or len(final_pairs) != 2:
+        return
+    if set().union(*map(set, previous_pairs)) != bottom_teams:
+        return
+    if set().union(*map(set, final_pairs)) != bottom_teams:
+        return
+
+    previous_winners: set[str] = set()
+    previous_losers: set[str] = set()
+    for team_a, team_b in previous_pairs:
+        winner, loser = _consolation_round_winner(
+            conn,
+            table,
+            year,
+            id_col,
+            opp_col,
+            team_a,
+            team_b,
+            previous_window[0],
+            previous_window[1],
+            db_filter,
+        )
+        previous_winners.add(winner)
+        previous_losers.add(loser)
+
+    winners_final = next((pair for pair in final_pairs if set(pair) == previous_winners), None)
+    losers_final = next((pair for pair in final_pairs if set(pair) == previous_losers), None)
+    if winners_final is None or losers_final is None:
+        return
+
+    base_rank = playoff_teams + 1
+    for pair, rank in ((winners_final, base_rank), (losers_final, base_rank + 2)):
+        winner, loser = _consolation_round_winner(
+            conn,
+            table,
+            year,
+            id_col,
+            opp_col,
+            pair[0],
+            pair[1],
+            final_window[0],
+            final_window[1],
+            db_filter,
+        )
+        placements[winner] = rank
+        placements[loser] = rank + 1
 
 
 def _get_seed(conn, table, year, id_col, team_id, db_filter="1=1") -> int:

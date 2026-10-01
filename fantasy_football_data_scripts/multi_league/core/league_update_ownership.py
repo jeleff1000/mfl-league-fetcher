@@ -657,6 +657,9 @@ def _assert_derived_values_not_erased(
     if old.empty:
         return 0, 0
     contract = table_ownership(table_name)
+    derived = sorted(contract.derived_columns & set(old.columns) & set(new.columns))
+    if not derived:
+        return 0, 0
     default_keys = tuple(contract.key_columns)
     if any(column not in old.columns or column not in new.columns for column in default_keys):
         raise PreservationError(f"source identity is unavailable in {table_name}: {list(default_keys)}")
@@ -667,7 +670,6 @@ def _assert_derived_values_not_erased(
     new_index = new.set_index(keys, drop=False)
     if old_index.index.has_duplicates or new_index.index.has_duplicates:
         raise PreservationError(f"duplicate source identity in {table_name}: {keys}")
-    derived = sorted(contract.derived_columns & set(old.columns) & set(new.columns))
     optimal_deselections = 0
     ops_rank_deselections = 0
     if (

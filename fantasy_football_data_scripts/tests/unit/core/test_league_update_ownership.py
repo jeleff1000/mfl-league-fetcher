@@ -64,6 +64,34 @@ def test_fully_provider_owned_schedule_replaces_duplicate_existing_rows():
     pd.testing.assert_frame_equal(actual.reset_index(drop=True), incoming)
 
 
+def test_preservation_accepts_active_schedule_duplicate_repair():
+    historical = {
+        "db_name": "league",
+        "year": 2025,
+        "week": 1,
+        "manager_week": "manager_2025_1",
+        "league_id": "449.l.1",
+    }
+    active = {
+        "db_name": "league",
+        "year": 2026,
+        "week": 1,
+        "manager_week": "manager_2026_1",
+        "league_id": "470.l.1",
+    }
+    stale_active = {**active, "league_id": None}
+    before = pd.DataFrame([historical, active, stale_active])
+    after = pd.DataFrame([historical, active])
+
+    receipt = assert_refresh_preservation(
+        {"schedule": before},
+        {"schedule": after},
+        active_year=2026,
+    )
+
+    assert receipt["historical_rows_preserved"] is True
+
+
 def _optimal_week_frames():
     old = pd.DataFrame([
         {"db_name": "afi_data", "year": 2026, "week": 1, "player_week": "p1_2026_1",

@@ -273,6 +273,11 @@ def overlay_provider_columns(
     protected = sorted(
         (contract.derived_columns | contract.user_owned_columns) - set(contract.key_columns)
     )
+    if not protected:
+        # Fully provider-owned rows are replaced by the validated incoming
+        # partition. Stale duplicates in the disposable hydrated snapshot
+        # carry nothing that needs preservation and must not block repair.
+        return incoming.copy()
     available = [column for column in protected if column in existing.columns]
     old = existing.loc[:, [*contract.key_columns, *available]].copy()
     # Historical provider exports can retain a few bye/placeholder rows with

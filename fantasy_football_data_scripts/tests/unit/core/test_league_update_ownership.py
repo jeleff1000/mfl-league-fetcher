@@ -32,6 +32,38 @@ def test_overlay_ignores_legacy_null_ownership_keys_that_cannot_match_provider_r
     assert actual["manager_week"].tolist() == ["manager_2026_1"]
 
 
+def test_fully_provider_owned_schedule_replaces_duplicate_existing_rows():
+    """A unique provider week can repair stale duplicate schedule facts."""
+    contract = table_ownership("schedule")
+    existing = pd.DataFrame(
+        [
+            {
+                "db_name": "league",
+                "manager_week": "manager_2026_1",
+                "league_id": "470.l.1",
+            },
+            {
+                "db_name": "league",
+                "manager_week": "manager_2026_1",
+                "league_id": None,
+            },
+        ]
+    )
+    incoming = pd.DataFrame(
+        [
+            {
+                "db_name": "league",
+                "manager_week": "manager_2026_1",
+                "league_id": "470.l.1",
+            }
+        ]
+    )
+
+    actual = overlay_provider_columns(existing, incoming, contract)
+
+    pd.testing.assert_frame_equal(actual.reset_index(drop=True), incoming)
+
+
 def _optimal_week_frames():
     old = pd.DataFrame([
         {"db_name": "afi_data", "year": 2026, "week": 1, "player_week": "p1_2026_1",

@@ -370,6 +370,7 @@ jobs:
           python initial_import_v3.py \
             --context ../league_context.json \
             ${QUICK_FLAG} \
+            --year "${{ steps.create_quick_context.outputs.season }}" \
             --skip-track-2-upload 2>&1 | tee ../import.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e

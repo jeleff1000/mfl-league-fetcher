@@ -493,6 +493,18 @@ def test_apply_quick_import_explicit_year_keeps_existing_mapping(monkeypatch):
     assert updated.league_ids["2024"] == "449.l.latest"
 
 
+def test_yahoo_quick_worker_passes_selected_season_to_importer():
+    """A historical quick repair must not silently jump to the latest chain year."""
+    workflow = (
+        Path(__file__).resolve().parents[3]
+        / ".github"
+        / "workflows"
+        / "yahoo_quick_import_worker.yml"
+    ).read_text(encoding="utf-8")
+
+    assert '--year "${{ steps.create_quick_context.outputs.season }}"' in workflow
+
+
 def test_apply_quick_import_infers_yahoo_year_from_league_key(monkeypatch):
     monkeypatch.setattr(initial_import_v3, "get_current_nfl_season_year", lambda: 2026)
     monkeypatch.setattr(initial_import_v3, "get_nfl_state", lambda: {})

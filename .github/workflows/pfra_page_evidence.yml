@@ -61,6 +61,12 @@ jobs:
                   or not re.fullmatch(r"[0-9a-f]{40}", commit) or not token):
               raise SystemExit("Explicit approval, reviewed main, and valid staging identity are required.")
 
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, msg, headers, newurl):
+                  return None
+
+          opener = urllib.request.build_opener(NoRedirect())
+
           def api(path, body=None):
               request = urllib.request.Request(
                   "https://api.github.com/repos/" + repo + "/" + path,
@@ -69,7 +75,7 @@ jobs:
                            "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28"},
                   method="GET" if body is None else "POST")
               try:
-                  with urllib.request.urlopen(request, timeout=20) as response:
+                  with opener.open(request, timeout=20) as response:
                       return json.load(response)
               except urllib.error.HTTPError as error:
                   if body is None and error.code == 404:

@@ -1,6 +1,7 @@
 """Exercise the hosted PFRA authorization boundary without dispatching a job."""
 
 import os
+import email.message
 import io
 import json
 import shlex
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import urllib.response
 from pathlib import Path
 
 import pytest
@@ -102,7 +104,7 @@ def test_worker_command_bounds_source_parallelism_to_four():
     assert args[args.index("--source-workers") + 1] == "4"
 
 
-def staging_runner(monkeypatch, tmp_path, *, release=None, tag=None, **changes):
+def staging_runner(monkeypatch, tmp_path, *, release=None, tag=None, redirect_status=None, **changes):
     jobs = workflow()["jobs"]
     assert "stage" in jobs, "staging-only job is missing"
     step = next(s for s in jobs["stage"]["steps"] if s.get("id") == "release")
@@ -122,6 +124,13 @@ def staging_runner(monkeypatch, tmp_path, *, release=None, tag=None, **changes):
         body = json.loads(req.data) if req.data else None
         path = req.full_url.split("mfl-league-fetcher/", 1)[1]
         calls.append((req.method, path, body))
+        if redirect_status:
+            headers = email.message.Message()
+            headers["Location"] = "https://untrusted.example/sentinel-token"
+            response = urllib.response.addinfourl(io.BytesIO(b""),
+                headers, req.full_url, redirect_status)
+            response.msg = "Moved"
+            return response
         if req.method == "GET":
             value = release if path.startswith("releases/tags/") else tag
             if value is None:
@@ -132,9 +141,11 @@ def staging_runner(monkeypatch, tmp_path, *, release=None, tag=None, **changes):
             value = {**body, "id": 123, "upload_url": "https://uploads.github.com/repos/jeleff1000/mfl-league-fetcher/releases/123/assets{?name,label}"}
         else:
             pytest.fail(f"unexpected mutation: {req.method} {path}")
-        return io.BytesIO(json.dumps(value).encode())
+        response = urllib.response.addinfourl(io.BytesIO(json.dumps(value).encode()), {}, req.full_url, 200)
+        response.msg = "OK"
+        return response
 
-    monkeypatch.setattr(urllib.request, "urlopen", request)
+    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", lambda self, req: request(req, req.timeout))
     return lambda: exec(compile(step["run"], "staging-workflow", "exec"), {}), calls
 
 
@@ -174,6 +185,16 @@ def test_staging_creates_nonlatest_prerelease_and_exact_commit_tag(monkeypatch, 
     assert json.loads(output)["release_id"] == 123
     assert json.loads(output)["tag"] == tag
     assert "sentinel-token" not in output + (tmp_path / "summary").read_text()
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_staging_never_follows_authenticated_api_redirect(monkeypatch, tmp_path, status):
+    run, calls = staging_runner(monkeypatch, tmp_path, redirect_status=status)
+    with pytest.raises(SystemExit, match="^Staging API request failed\\.$") as error:
+        run()
+    assert len(calls) == 1
+    assert "sentinel-token" not in str(error.value)
+    assert not (tmp_path / "summary").exists()
 
 
 @pytest.mark.parametrize("fault", [None, "commit", "tag_type", "name", "prerelease", "draft", "tag_name", "body"])

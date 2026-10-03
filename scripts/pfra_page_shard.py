@@ -17,6 +17,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ProcessPoolExecutor
+from itertools import repeat
 from pathlib import Path
 
 
@@ -99,7 +101,10 @@ def validate_manifest(manifest):
         _fail(len(source["pages"]) <= source["page_count"], "too many pages")
         seen_pages = set()
         for page in source["pages"]:
-            _object(page, ("page_number", "visual_id", "render_sha256", "occurrences", "candidate_contracts", "regions"))
+            _object(page, ("page_number", "visual_id", "render_sha256", "occurrences", "candidate_contracts", "regions"),
+                    ("coordinate_frame",))
+            _fail(page.get("coordinate_frame", "UNROTATED_PAGE") in ("UNROTATED_PAGE", "RENDERED_PAGE"),
+                  "invalid coordinate frame")
             _integer(page["page_number"], 1, source["page_count"])
             _fail(page["page_number"] not in seen_pages, "duplicate page")
             seen_pages.add(page["page_number"])
@@ -277,9 +282,14 @@ def _word(x0, y0, x1, y1, text, width, height):
     return {"text": text, "box": box}
 
 
-def _native_words(page, clip):
+def _native_words(page, clip, coordinate_frame):
     raw = page.get_text("words", clip=clip, sort=True)
     _fail(len(raw) <= MAX_WORDS, "too many words")
+    if coordinate_frame == "RENDERED_PAGE":
+        import fitz
+
+        return [_word(*(fitz.Rect(*item[:4]) * page.rotation_matrix), str(item[4]),
+                      page.rect.width, page.rect.height) for item in raw]
     return [_word(*item[:4], str(item[4]), page.rect.width, page.rect.height) for item in raw]
 
 
@@ -318,10 +328,12 @@ def _ocr_words(page, clip, dpi, psm):
 
 def _tesseract_output(png, psm):
     """Stream at most MAX_OCR_OUTPUT+1 bytes, killing slow or noisy OCR."""
+    ocr_env = os.environ.copy()
+    ocr_env["OMP_THREAD_LIMIT"] = "1"
     try:
         process = subprocess.Popen(["tesseract", "stdin", "stdout", "--psm", str(psm), "tsv"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL)
+                                   stderr=subprocess.DEVNULL, env=ocr_env)
     except OSError:
         raise ValueError("OCR_UNAVAILABLE") from None
     output = {}
@@ -372,8 +384,9 @@ def _page_evidence(doc, binding):
     evidence["regions"] = []
     page = doc.load_page(binding["page_number"] - 1)
     evidence["source_rotation"] = page.rotation
-    evidence["coordinate_frame"] = "UNROTATED_PAGE"
-    if page.rotation:
+    frame = binding.get("coordinate_frame", "UNROTATED_PAGE")
+    evidence["coordinate_frame"] = frame
+    if frame == "UNROTATED_PAGE" and page.rotation:
         page.set_rotation(0)  # In-memory document only; source bytes remain immutable.
     _fail(0 < page.rect.width <= 14400 and 0 < page.rect.height <= 14400, "page dimension limit")
     for region in binding["regions"]:
@@ -387,7 +400,8 @@ def _page_evidence(doc, binding):
         clip = fitz.Rect(x0 * page.rect.width, y0 * page.rect.height,
                          x1 * page.rect.width, y1 * page.rect.height)
         try:
-            item["words"] = (_native_words(page, clip) if region["method"] == "native"
+            native_clip = clip * page.derotation_matrix if frame == "RENDERED_PAGE" else clip
+            item["words"] = (_native_words(page, native_clip, frame) if region["method"] == "native"
                              else _ocr_words(page, clip, region.get("dpi", 150), item["psm"]))
         except (ValueError, RuntimeError) as exc:
             item["status"] = "ERROR"
@@ -399,7 +413,27 @@ def _page_evidence(doc, binding):
     return evidence
 
 
-def run_shard(manifest, expected_manifest_sha256, shard_id, execution_commit, *, source_root=None, source_loader=None):
+def _source_evidence(source, source_root, source_loader, remote_source):
+    """Fetch, verify, and extract one source wholly within this process."""
+    import fitz
+
+    if remote_source:
+        def loader(binding):
+            return _fetch_source("pdf", binding["pdf_sha256"], binding["byte_length"],
+                                 expected_length=binding["byte_length"])
+
+        data = _source_bytes(source, None, loader)
+    else:
+        data = _source_bytes(source, source_root, source_loader)
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        _fail(len(doc) == source["page_count"], "source page count mismatch")
+        pages = [_page_evidence(doc, page) for page in source["pages"]]
+    return {"pdf_sha256": source["pdf_sha256"], "byte_length": source["byte_length"],
+            "page_count": source["page_count"], "pages": pages}
+
+
+def run_shard(manifest, expected_manifest_sha256, shard_id, execution_commit, *, source_root=None,
+              source_loader=None, remote_source=False, source_workers=1):
     """Read/hash each selected source once and return evidence without classification."""
     started = time.monotonic()
     validated = validate_manifest(manifest)
@@ -411,25 +445,35 @@ def run_shard(manifest, expected_manifest_sha256, shard_id, execution_commit, *,
     _fail(code_sha == manifest["worker_sha256"], "worker hash mismatch")
     selected = [source for source in manifest["sources"] if source["shard_id"] == shard_id]
     _nonempty_list(selected)
-    import fitz
+    _integer(source_workers, 1, 4)
+    _fail(not (source_loader is not None and source_workers > 1), "SOURCE_LOADER_SERIAL_ONLY")
+    _fail(not (remote_source and source_loader is not None), "SOURCE_LOADER_CONFLICT")
 
     result = {"schema_version": 1, "batch_id": manifest["batch_id"],
               "manifest_sha256": expected_manifest_sha256, "worker_sha256": code_sha,
               "execution_commit": execution_commit, "shard_id": shard_id,
               "status": "EVIDENCE_ONLY", "sources": [], "source_read_count": 0,
               "source_hash_count": 0, "elapsed_ms": 0}
-    for source in selected:
-        data = _source_bytes(source, source_root, source_loader)
-        result["source_read_count"] += 1
-        result["source_hash_count"] += 1
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            _fail(len(doc) == source["page_count"], "source page count mismatch")
-            pages = [_page_evidence(doc, page) for page in source["pages"]]
-        result["sources"].append({"pdf_sha256": source["pdf_sha256"],
-                                  "byte_length": source["byte_length"], "page_count": source["page_count"],
-                                  "pages": pages})
-        if any(region["status"] != "OK" for page in pages for region in page["regions"]):
-            result["status"] = "INCOMPLETE"
+    if source_workers == 1:
+        source_results = (_source_evidence(source, source_root, source_loader, remote_source) for source in selected)
+        pool = None
+    else:
+        pool = ProcessPoolExecutor(max_workers=source_workers)
+        source_results = pool.map(_source_evidence, selected, repeat(source_root), repeat(None), repeat(remote_source))
+    try:
+        for source_result in source_results:
+            result["source_read_count"] += 1
+            result["source_hash_count"] += 1
+            result["sources"].append(source_result)
+            if any(region["status"] != "OK" for page in source_result["pages"] for region in page["regions"]):
+                result["status"] = "INCOMPLETE"
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError("SOURCE_WORKER_ERROR") from None
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return result
 
@@ -476,7 +520,8 @@ def validate_results(manifest, expected_manifest_sha256, results):
                 _integer(page["page_number"], page_binding["page_number"], page_binding["page_number"])
                 for key in ("page_number", "visual_id", "render_sha256", "occurrences", "candidate_contracts"):
                     _fail(canonical_bytes(page[key]) == canonical_bytes(page_binding[key]), "page binding mismatch")
-                _fail(page["coordinate_frame"] == "UNROTATED_PAGE", "coordinate frame mismatch")
+                _fail(page["coordinate_frame"] == page_binding.get("coordinate_frame", "UNROTATED_PAGE"),
+                      "coordinate frame mismatch")
                 _fail(type(page["source_rotation"]) is int and page["source_rotation"] in (0, 90, 180, 270), "invalid rotation")
                 _fail(isinstance(page["regions"], list) and len(page["regions"]) == len(page_binding["regions"]), "region coverage mismatch")
                 page_count += 1
@@ -549,6 +594,7 @@ def main(argv=None):
     run.add_argument("--source-root", required=True)
     run.add_argument("--shard-id", required=True, type=int)
     run.add_argument("--execution-commit", required=True)
+    run.add_argument("--source-workers", type=int, choices=range(1, 5), default=1)
     run.add_argument("--output", required=True)
     merge = commands.add_parser("validate-results")
     merge.add_argument("--manifest", required=True)
@@ -564,6 +610,7 @@ def main(argv=None):
     remote.add_argument("--manifest-sha256", required=True)
     remote.add_argument("--shard-id", required=True, type=int)
     remote.add_argument("--execution-commit", required=True)
+    remote.add_argument("--source-workers", type=int, choices=range(1, 5), default=1)
     remote.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     if args.command == "fetch-manifest":
@@ -588,16 +635,14 @@ def main(argv=None):
         print(canonical_bytes(summary).decode("utf-8"))
     elif args.command == "run-shard":
         result = run_shard(manifest, args.manifest_sha256, args.shard_id, args.execution_commit,
-                           source_root=args.source_root)
+                           source_root=args.source_root, source_workers=args.source_workers)
         _write_json_exclusive(args.output, result)
     elif args.command == "run-remote-shard":
         if Path(args.output).exists():
             raise FileExistsError("output exists")
         _preflight_remote_manifest(manifest, args.manifest_sha256, args.execution_commit)
         result = run_shard(manifest, args.manifest_sha256, args.shard_id, args.execution_commit,
-                           source_loader=lambda source: _fetch_source("pdf", source["pdf_sha256"],
-                                                                       source["byte_length"],
-                                                                       expected_length=source["byte_length"]))
+                           remote_source=True, source_workers=args.source_workers)
         _write_json_exclusive(args.output, result)
         return 0 if result["status"] == "EVIDENCE_ONLY" else 1
     else:

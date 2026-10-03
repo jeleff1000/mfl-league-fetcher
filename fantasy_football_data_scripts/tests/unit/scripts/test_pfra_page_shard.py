@@ -5,6 +5,9 @@ import http.client
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -370,6 +373,108 @@ def test_rotated_pdf_uses_unrotated_page_frame(worker):
     assert evidence["regions"][0]["words"][0]["box"][0] < 0.5
 
 
+RENDERED_CROPS = {
+    0: [0, 0, 0.45, 0.25],
+    90: [0.75, 0, 1, 0.45],
+    180: [0.55, 0.75, 1, 1],
+    270: [0, 0.55, 0.25, 1],
+}
+ALPHA_CENTERS = {0: (0.19, 0.12), 90: (0.88, 0.19), 180: (0.81, 0.88), 270: (0.12, 0.81)}
+MARKER_CENTERS = {0: (0.10, 0.067), 90: (0.933, 0.10), 180: (0.90, 0.933), 270: (0.067, 0.90)}
+
+
+def rendered_frame_pdf_manifest(worker, rotation, method):
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=300)
+    page.insert_text((20, 40), "ALPHA")
+    page.insert_text((110, 260), "BRAVO")
+    page.draw_rect(fitz.Rect(10, 10, 30, 30), color=(1, 0, 0), fill=(1, 0, 0))
+    page.set_rotation(rotation)
+    pdf = doc.tobytes()
+    doc.close()
+    digest = hashlib.sha256(pdf).hexdigest()
+    manifest = manifest_for(digest)
+    manifest["worker_sha256"] = hashlib.sha256(MODULE_PATH.read_bytes()).hexdigest()
+    manifest["sources"][0]["byte_length"] = len(pdf)
+    binding = manifest["sources"][0]["pages"][0]
+    binding["coordinate_frame"] = "RENDERED_PAGE"
+    binding["regions"][0] = {"region_id": "r1", "rect": RENDERED_CROPS[rotation], "method": method,
+                              **({"dpi": 72} if method == "ocr" else {})}
+    return pdf, manifest
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_rendered_native_crop_selects_same_text_and_rotates_word_box(worker, rotation):
+    pdf, manifest = rendered_frame_pdf_manifest(worker, rotation, "native")
+    digest = worker.manifest_sha256(manifest)
+    result = worker.run_shard(manifest, digest, manifest["sources"][0]["shard_id"],
+                              manifest["worker_commit"], source_loader=lambda _source: pdf)
+    page = result["sources"][0]["pages"][0]
+    assert page["coordinate_frame"] == "RENDERED_PAGE"
+    assert page["source_rotation"] == rotation
+    words = page["regions"][0]["words"]
+    assert [word["text"] for word in words] == ["ALPHA"]
+    box = words[0]["box"]
+    center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+    assert all(abs(actual - expected) < 0.04 for actual, expected in zip(center, ALPHA_CENTERS[rotation]))
+    worker.validate_results(manifest, digest, [result])
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_rendered_ocr_crop_preserves_pixel_orientation_and_displayed_box(worker, monkeypatch, rotation):
+    fitz = pytest.importorskip("fitz")
+    pdf, manifest = rendered_frame_pdf_manifest(worker, rotation, "ocr")
+    expected_quadrant = {0: (False, False), 90: (True, False),
+                         180: (True, True), 270: (False, True)}[rotation]
+
+    def synthetic_ocr(png, _psm):
+        pix = fitz.Pixmap(png)
+        red = []
+        for y in range(pix.height):
+            for x in range(pix.width):
+                index = (y * pix.width + x) * pix.n
+                r, g, b = pix.samples[index:index + 3]
+                if r > 180 and g < 90 and b < 90:
+                    red.append((x, y))
+        assert red, "the rendered crop must contain the red orientation marker"
+        left, right = min(x for x, _ in red), max(x for x, _ in red)
+        top, bottom = min(y for _, y in red), max(y for _, y in red)
+        assert ((left + right) / 2 > pix.width / 2, (top + bottom) / 2 > pix.height / 2) == expected_quadrant
+        return (b"level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n" +
+                f"5\t1\t1\t1\t1\t1\t{left}\t{top}\t{right - left + 1}\t{bottom - top + 1}\t90\tMARK\n".encode())
+
+    monkeypatch.setattr(worker, "_tesseract_output", synthetic_ocr)
+    digest = worker.manifest_sha256(manifest)
+    result = worker.run_shard(manifest, digest, manifest["sources"][0]["shard_id"],
+                              manifest["worker_commit"], source_loader=lambda _source: pdf)
+    evidence = result["sources"][0]["pages"][0]["regions"][0]
+    assert evidence["status"] == "OK"
+    assert [word["text"] for word in evidence["words"]] == ["MARK"]
+    box = evidence["words"][0]["box"]
+    center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+    assert all(abs(actual - expected) < 0.04 for actual, expected in zip(center, MARKER_CENTERS[rotation]))
+    worker.validate_results(manifest, digest, [result])
+
+
+def test_result_validator_rejects_rendered_frame_mismatch(worker):
+    pdf, manifest = rendered_frame_pdf_manifest(worker, 90, "native")
+    digest = worker.manifest_sha256(manifest)
+    result = worker.run_shard(manifest, digest, manifest["sources"][0]["shard_id"],
+                              manifest["worker_commit"], source_loader=lambda _source: pdf)
+    result["sources"][0]["pages"][0]["coordinate_frame"] = "UNROTATED_PAGE"
+    with pytest.raises(ValueError, match="coordinate frame mismatch"):
+        worker.validate_results(manifest, digest, [result])
+
+
+@pytest.mark.parametrize("frame", ["", "PDF_PAGE", None, 90])
+def test_manifest_rejects_unknown_coordinate_frame(worker, frame):
+    manifest = manifest_for()
+    manifest["sources"][0]["pages"][0]["coordinate_frame"] = frame
+    with pytest.raises(ValueError, match="coordinate frame"):
+        worker.validate_manifest(manifest)
+
+
 def test_cli_preflight_reports_digest_and_exclusive_results(worker, tmp_path, capsys):
     pdf, manifest = pdf_manifest(worker, text=("ALPHA",))
     digest = worker.manifest_sha256(manifest)
@@ -674,6 +779,112 @@ def test_ten_remote_shards_cover_manifest_and_merger_rejects_missing_one(worker,
     }
     with pytest.raises(ValueError, match="missing or extra result"):
         worker.validate_results(manifest, digest, results[:-1])
+
+
+def parallel_local_sources(worker, tmp_path):
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    manifest = None
+    expected_words = []
+    target_shard = None
+    for index in range(4):
+        for attempt in range(100):
+            word = f"WORD{index}TRY{attempt}"
+            pdf, candidate = pdf_manifest(worker, text=(word,))
+            shard = candidate["sources"][0]["shard_id"]
+            if target_shard is None or shard == target_shard:
+                break
+        else:
+            pytest.fail("could not generate four distinct sources in one shard")
+        target_shard = shard
+        source = candidate["sources"][0]
+        source["pages"][0]["visual_id"] = f"visual-{index}"
+        source["pages"][0]["occurrences"][0]["source_occurrence_id"] = f"occ-{index}"
+        (source_dir / f"{source['pdf_sha256']}.pdf").write_bytes(pdf)
+        if manifest is None:
+            manifest = candidate
+        else:
+            manifest["sources"].append(source)
+        expected_words.append(word)
+    return source_dir, manifest, expected_words
+
+
+def test_parallel_local_cli_keeps_source_order_and_exact_counters(worker, tmp_path):
+    source_dir, manifest, expected_words = parallel_local_sources(worker, tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(worker.canonical_bytes(manifest))
+    output = tmp_path / "result.json"
+    command = [sys.executable, str(MODULE_PATH), "run-shard", "--manifest", str(manifest_path),
+               "--manifest-sha256", worker.manifest_sha256(manifest), "--source-root", str(source_dir),
+               "--shard-id", str(manifest["sources"][0]["shard_id"]),
+               "--execution-commit", manifest["worker_commit"], "--source-workers", "4", "--output", str(output)]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, env=os.environ.copy())
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(output.read_bytes())
+    assert result["source_read_count"] == result["source_hash_count"] == 4
+    assert [source["pdf_sha256"] for source in result["sources"]] == [
+        source["pdf_sha256"] for source in manifest["sources"]
+    ]
+    assert [source["pages"][0]["regions"][0]["words"][0]["text"] for source in result["sources"]] == expected_words
+    worker.validate_results(manifest, worker.manifest_sha256(manifest), [result])
+
+
+def test_parallel_local_cli_fails_without_partial_result_on_bad_source(worker, tmp_path):
+    source_dir, manifest, _ = parallel_local_sources(worker, tmp_path)
+    bad_source = manifest["sources"][2]
+    (source_dir / f"{bad_source['pdf_sha256']}.pdf").write_bytes(b"corrupt")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(worker.canonical_bytes(manifest))
+    output = tmp_path / "result.json"
+    completed = subprocess.run(
+        [sys.executable, str(MODULE_PATH), "run-shard", "--manifest", str(manifest_path),
+         "--manifest-sha256", worker.manifest_sha256(manifest), "--source-root", str(source_dir),
+         "--shard-id", str(manifest["sources"][0]["shard_id"]),
+         "--execution-commit", manifest["worker_commit"], "--source-workers", "4", "--output", str(output)],
+        capture_output=True, text=True, check=False, env=os.environ.copy(),
+    )
+    assert completed.returncode != 0
+    assert not output.exists()
+    assert json.loads(completed.stderr)["error"] == "source length mismatch"
+    assert "corrupt" not in completed.stderr
+
+
+def test_parallel_rejects_injected_source_loader_before_fetch(worker):
+    pdf, manifest = pdf_manifest(worker, text=("ALPHA",))
+    calls = []
+
+    def load(_source):
+        calls.append(1)
+        return pdf
+
+    with pytest.raises(ValueError, match="SOURCE_LOADER_SERIAL_ONLY"):
+        worker.run_shard(manifest, worker.manifest_sha256(manifest), manifest["sources"][0]["shard_id"],
+                         manifest["worker_commit"], source_loader=load, source_workers=2)
+    assert calls == []
+
+
+def test_tesseract_child_limits_openmp_without_changing_parent(worker, monkeypatch):
+    monkeypatch.setenv("OMP_THREAD_LIMIT", "8")
+    captured = []
+
+    class Process:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(b"header\n")
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def start(_argv, **kwargs):
+        captured.append(kwargs["env"])
+        return Process()
+
+    monkeypatch.setattr(worker.subprocess, "Popen", start)
+    assert worker._tesseract_output(b"png", 3) == b"header\n"
+    assert captured[0]["OMP_THREAD_LIMIT"] == "1"
+    assert os.environ["OMP_THREAD_LIMIT"] == "8"
 
 
 RELEASE_BASE = "https://github.com/jeleff1000/mfl-league-fetcher/releases/download/pfra-stage-1"

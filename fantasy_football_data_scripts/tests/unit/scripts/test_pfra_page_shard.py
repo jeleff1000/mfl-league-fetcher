@@ -421,12 +421,18 @@ def test_rendered_native_crop_selects_same_text_and_rotates_word_box(worker, rot
     worker.validate_results(manifest, digest, [result])
 
 
+@pytest.mark.parametrize("crop_rotation", [None, 0, 90])
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_rendered_ocr_crop_preserves_pixel_orientation_and_displayed_box(worker, monkeypatch, rotation):
+def test_rendered_ocr_crop_preserves_pixel_orientation_and_displayed_box(worker, monkeypatch, rotation, crop_rotation):
     fitz = pytest.importorskip("fitz")
     pdf, manifest = rendered_frame_pdf_manifest(worker, rotation, "ocr")
+    if crop_rotation is not None:
+        manifest["sources"][0]["pages"][0]["regions"][0]["crop_rotation"] = crop_rotation
     expected_quadrant = {0: (False, False), 90: (True, False),
                          180: (True, True), 270: (False, True)}[rotation]
+    if crop_rotation == 90:
+        expected_quadrant = {0: (True, False), 90: (True, True),
+                             180: (False, True), 270: (False, False)}[rotation]
 
     def synthetic_ocr(png, _psm):
         pix = fitz.Pixmap(png)
@@ -454,7 +460,30 @@ def test_rendered_ocr_crop_preserves_pixel_orientation_and_displayed_box(worker,
     box = evidence["words"][0]["box"]
     center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
     assert all(abs(actual - expected) < 0.04 for actual, expected in zip(center, MARKER_CENTERS[rotation]))
+    expected_box = {0: [.05, 1/30, .15, .1], 90: [.9, .05, 29/30, .15],
+                    180: [.85, .9, .95, 29/30], 270: [1/30, .85, .1, .95]}[rotation]
+    assert box == pytest.approx(expected_box, abs=.01)
+    assert evidence.get("crop_rotation") == crop_rotation
     worker.validate_results(manifest, digest, [result])
+    if crop_rotation is not None:
+        evidence["crop_rotation"] = 90 if crop_rotation == 0 else 0
+        with pytest.raises(ValueError, match="crop rotation"):
+            worker.validate_results(manifest, digest, [result])
+
+
+@pytest.mark.parametrize("rotation", [True, None, "90", -90, 45, 180, 270])
+def test_manifest_rejects_unsupported_crop_rotation(worker, rotation):
+    manifest = manifest_for()
+    manifest["sources"][0]["pages"][0]["regions"][0].update(method="ocr", crop_rotation=rotation)
+    with pytest.raises(ValueError, match="crop rotation"):
+        worker.validate_manifest(manifest)
+
+
+def test_manifest_rejects_native_crop_rotation(worker):
+    manifest = manifest_for()
+    manifest["sources"][0]["pages"][0]["regions"][0]["crop_rotation"] = 90
+    with pytest.raises(ValueError, match="native region"):
+        worker.validate_manifest(manifest)
 
 
 def test_result_validator_rejects_rendered_frame_mismatch(worker):

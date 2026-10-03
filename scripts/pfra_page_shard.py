@@ -147,7 +147,7 @@ def validate_manifest(manifest):
             _fail(len(page["regions"]) <= MAX_REGIONS, "too many regions")
             seen_regions = set()
             for region in page["regions"]:
-                _object(region, ("region_id", "rect", "method"), ("dpi", "psm"))
+                _object(region, ("region_id", "rect", "method"), ("dpi", "psm", "crop_rotation"))
                 _id(region["region_id"])
                 _fail(region["region_id"] not in seen_regions, "duplicate region")
                 seen_regions.add(region["region_id"])
@@ -161,6 +161,10 @@ def validate_manifest(manifest):
                 if "psm" in region:
                     _fail(region["method"] == "ocr", "native region has psm")
                     _fail(type(region["psm"]) is int and region["psm"] in (3, 6), "invalid psm")
+                if "crop_rotation" in region:
+                    _fail(region["method"] == "ocr", "native region has crop rotation")
+                    _fail(type(region["crop_rotation"]) is int and region["crop_rotation"] in (0, 90),
+                          "invalid crop rotation")
     return {"canonical_sha256": manifest_sha256(manifest), "shard_ids": sorted(nonempty_shards)}
 
 
@@ -293,17 +297,19 @@ def _native_words(page, clip, coordinate_frame):
     return [_word(*item[:4], str(item[4]), page.rect.width, page.rect.height) for item in raw]
 
 
-def _ocr_words(page, clip, dpi, psm):
+def _ocr_words(page, clip, dpi, psm, crop_rotation=0):
     # Render only the requested crop. PNG exists in memory for this call only.
     import fitz
 
     scale = dpi / 72
     pixels = int(clip.width * scale + 1) * int(clip.height * scale + 1)
     _fail(0 < pixels <= MAX_RENDER_PIXELS, "render pixel limit")
-    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
+    matrix = fitz.Matrix(scale, scale).prerotate(crop_rotation)
+    pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False)
     _fail(pix.width * pix.height <= MAX_RENDER_PIXELS, "render pixel limit")
     png = pix.tobytes("png")
     width, height = pix.width, pix.height
+    origin_x, origin_y = pix.x, pix.y
     del pix
     output = _tesseract_output(png, psm)
     del png
@@ -318,10 +324,17 @@ def _ocr_words(page, clip, dpi, psm):
         except ValueError:
             raise ValueError("OCR_BAD_OUTPUT") from None
         text = columns[11].strip()
-        x0 = clip.x0 + left * clip.width / width
-        y0 = clip.y0 + top * clip.height / height
-        x1 = clip.x0 + (left + w) * clip.width / width
-        y1 = clip.y0 + (top + h) * clip.height / height
+        if crop_rotation:
+            # OCR pixels are local to the rotated pixmap. Undo only this crop
+            # transform; page orientation already belongs to the requested frame.
+            x0, y0, x1, y1 = fitz.Rect(origin_x + left, origin_y + top,
+                                      origin_x + left + w, origin_y + top + h) * ~matrix
+        else:
+            # Preserve the established mapping for old manifests/evidence.
+            x0 = clip.x0 + left * clip.width / width
+            y0 = clip.y0 + top * clip.height / height
+            x1 = clip.x0 + (left + w) * clip.width / width
+            y1 = clip.y0 + (top + h) * clip.height / height
         words.append(_word(x0, y0, x1, y1, text, page.rect.width, page.rect.height))
     return words
 
@@ -396,13 +409,16 @@ def _page_evidence(doc, binding):
             item["dpi"] = region["dpi"]
         if region["method"] == "ocr":
             item["psm"] = region.get("psm", 3)
+        if "crop_rotation" in region:
+            item["crop_rotation"] = region["crop_rotation"]
         x0, y0, x1, y1 = region["rect"]
         clip = fitz.Rect(x0 * page.rect.width, y0 * page.rect.height,
                          x1 * page.rect.width, y1 * page.rect.height)
         try:
             native_clip = clip * page.derotation_matrix if frame == "RENDERED_PAGE" else clip
             item["words"] = (_native_words(page, native_clip, frame) if region["method"] == "native"
-                             else _ocr_words(page, clip, region.get("dpi", 150), item["psm"]))
+                             else _ocr_words(page, clip, region.get("dpi", 150), item["psm"],
+                                             region.get("crop_rotation", 0)))
         except (ValueError, RuntimeError) as exc:
             item["status"] = "ERROR"
             item["error"] = str(exc) if str(exc) in {
@@ -527,7 +543,7 @@ def validate_results(manifest, expected_manifest_sha256, results):
                 page_count += 1
                 for region, region_binding in zip(page["regions"], page_binding["regions"]):
                     required = ("region_id", "rect", "method", "status", "error", "words")
-                    _object(region, required, ("dpi", "psm"))
+                    _object(region, required, ("dpi", "psm", "crop_rotation"))
                     for key in ("region_id", "rect", "method"):
                         _fail(canonical_bytes(region[key]) == canonical_bytes(region_binding[key]), "region binding mismatch")
                     _fail(region.get("dpi") == region_binding.get("dpi"), "region dpi mismatch")
@@ -536,6 +552,12 @@ def validate_results(manifest, expected_manifest_sha256, results):
                               "region psm mismatch")
                     else:
                         _fail("psm" not in region, "native region has psm")
+                    _fail(("crop_rotation" in region) == ("crop_rotation" in region_binding),
+                          "region crop rotation mismatch")
+                    if "crop_rotation" in region:
+                        _fail(type(region["crop_rotation"]) is int and
+                              region["crop_rotation"] == region_binding["crop_rotation"],
+                              "region crop rotation mismatch")
                     _fail(region["status"] == "OK" and region["error"] is None, "region extraction incomplete")
                     _fail(isinstance(region["words"], list) and len(region["words"]) <= MAX_WORDS, "invalid words")
                     for word in region["words"]:

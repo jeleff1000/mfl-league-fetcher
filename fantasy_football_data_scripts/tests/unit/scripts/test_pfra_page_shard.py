@@ -250,6 +250,55 @@ def test_ocr_output_is_capped_during_capture(worker, monkeypatch):
     assert result["sources"][0]["pages"][0]["regions"][0]["error"] == "OCR_OUTPUT_LIMIT"
 
 
+@pytest.mark.parametrize(("method", "psm"), [("ocr", True), ("ocr", 4), ("native", 6)])
+def test_manifest_rejects_invalid_or_native_psm(worker, method, psm):
+    manifest = manifest_for()
+    region = manifest["sources"][0]["pages"][0]["regions"][0]
+    region["method"] = method
+    region["psm"] = psm
+    with pytest.raises(ValueError):
+        worker.validate_manifest(manifest)
+
+
+@pytest.mark.parametrize("psm", [None, 6])
+def test_ocr_psm_is_passed_and_bound_to_result(worker, monkeypatch, psm):
+    pdf, manifest = pdf_manifest(worker, text=("ALPHA",), method="ocr")
+    region = manifest["sources"][0]["pages"][0]["regions"][0]
+    if psm is not None:
+        region["psm"] = psm
+    commands = []
+
+    class TesseractProcess:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(
+            b"level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            b"5\t1\t1\t1\t1\t1\t10\t10\t20\t10\t90\tALPHA\n"
+        )
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def start_process(argv, **kwargs):
+        commands.append(argv)
+        return TesseractProcess()
+
+    monkeypatch.setattr(worker.subprocess, "Popen", start_process)
+    result = worker.run_shard(manifest, worker.manifest_sha256(manifest), manifest["sources"][0]["shard_id"],
+                              manifest["worker_commit"], source_loader=lambda source: pdf)
+    evidence = result["sources"][0]["pages"][0]["regions"][0]
+    expected_psm = 3 if psm is None else 6
+    assert commands == [["tesseract", "stdin", "stdout", "--psm", str(expected_psm), "tsv"]]
+    assert evidence["psm"] == expected_psm
+    assert evidence["words"][0]["text"] == "ALPHA"
+    worker.validate_results(manifest, worker.manifest_sha256(manifest), [result])
+    evidence["psm"] = 6 if expected_psm == 3 else 3
+    with pytest.raises(ValueError, match="psm"):
+        worker.validate_results(manifest, worker.manifest_sha256(manifest), [result])
+
+
 def evidence_result(worker):
     pdf, manifest = pdf_manifest(worker)
     result = worker.run_shard(manifest, worker.manifest_sha256(manifest), manifest["sources"][0]["shard_id"],

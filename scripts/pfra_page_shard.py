@@ -133,7 +133,7 @@ def validate_manifest(manifest):
             _fail(len(page["regions"]) <= MAX_REGIONS, "too many regions")
             seen_regions = set()
             for region in page["regions"]:
-                _object(region, ("region_id", "rect", "method"), ("dpi",))
+                _object(region, ("region_id", "rect", "method"), ("dpi", "psm"))
                 _id(region["region_id"])
                 _fail(region["region_id"] not in seen_regions, "duplicate region")
                 seen_regions.add(region["region_id"])
@@ -144,6 +144,9 @@ def validate_manifest(manifest):
                 if "dpi" in region:
                     _integer(region["dpi"], 36, 200)
                 _fail(region["method"] == "ocr" or "dpi" not in region, "native region has dpi")
+                if "psm" in region:
+                    _fail(region["method"] == "ocr", "native region has psm")
+                    _fail(type(region["psm"]) is int and region["psm"] in (3, 6), "invalid psm")
     return {"canonical_sha256": manifest_sha256(manifest), "shard_ids": sorted(nonempty_shards)}
 
 
@@ -173,7 +176,7 @@ def _native_words(page, clip):
     return [_word(*item[:4], str(item[4]), page.rect.width, page.rect.height) for item in raw]
 
 
-def _ocr_words(page, clip, dpi):
+def _ocr_words(page, clip, dpi, psm):
     # Render only the requested crop. PNG exists in memory for this call only.
     import fitz
 
@@ -185,7 +188,7 @@ def _ocr_words(page, clip, dpi):
     png = pix.tobytes("png")
     width, height = pix.width, pix.height
     del pix
-    output = _tesseract_output(png)
+    output = _tesseract_output(png, psm)
     del png
     words = []
     for row in output.decode("utf-8", errors="replace").splitlines()[1:]:
@@ -206,10 +209,10 @@ def _ocr_words(page, clip, dpi):
     return words
 
 
-def _tesseract_output(png):
+def _tesseract_output(png, psm):
     """Stream at most MAX_OCR_OUTPUT+1 bytes, killing slow or noisy OCR."""
     try:
-        process = subprocess.Popen(["tesseract", "stdin", "stdout", "tsv"],
+        process = subprocess.Popen(["tesseract", "stdin", "stdout", "--psm", str(psm), "tsv"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL)
     except OSError:
@@ -271,12 +274,14 @@ def _page_evidence(doc, binding):
                 "status": "OK", "error": None, "words": []}
         if "dpi" in region:
             item["dpi"] = region["dpi"]
+        if region["method"] == "ocr":
+            item["psm"] = region.get("psm", 3)
         x0, y0, x1, y1 = region["rect"]
         clip = fitz.Rect(x0 * page.rect.width, y0 * page.rect.height,
                          x1 * page.rect.width, y1 * page.rect.height)
         try:
             item["words"] = (_native_words(page, clip) if region["method"] == "native"
-                             else _ocr_words(page, clip, region.get("dpi", 150)))
+                             else _ocr_words(page, clip, region.get("dpi", 150), item["psm"]))
         except (ValueError, RuntimeError) as exc:
             item["status"] = "ERROR"
             item["error"] = str(exc) if str(exc) in {
@@ -370,10 +375,15 @@ def validate_results(manifest, expected_manifest_sha256, results):
                 page_count += 1
                 for region, region_binding in zip(page["regions"], page_binding["regions"]):
                     required = ("region_id", "rect", "method", "status", "error", "words")
-                    _object(region, required, ("dpi",))
+                    _object(region, required, ("dpi", "psm"))
                     for key in ("region_id", "rect", "method"):
                         _fail(canonical_bytes(region[key]) == canonical_bytes(region_binding[key]), "region binding mismatch")
                     _fail(region.get("dpi") == region_binding.get("dpi"), "region dpi mismatch")
+                    if region_binding["method"] == "ocr":
+                        _fail(type(region.get("psm")) is int and region["psm"] == region_binding.get("psm", 3),
+                              "region psm mismatch")
+                    else:
+                        _fail("psm" not in region, "native region has psm")
                     _fail(region["status"] == "OK" and region["error"] is None, "region extraction incomplete")
                     _fail(isinstance(region["words"], list) and len(region["words"]) <= MAX_WORDS, "invalid words")
                     for word in region["words"]:

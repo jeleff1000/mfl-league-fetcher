@@ -6,12 +6,17 @@ shape, reads a registry, or writes source data.
 
 import argparse
 import hashlib
+import http.client
 import json
+import os
 import re
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 
@@ -19,6 +24,9 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 IDENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 MAX_PDF_BYTES = 128 * 1024 * 1024
+MAX_MANIFEST_BYTES = 32 * 1024 * 1024
+MAX_RESULT_BYTES = 64 * 1024 * 1024
+HTTP_TIMEOUT_SECONDS = 20
 MAX_PAGES = 2000
 MAX_REGIONS = 32
 MAX_RENDER_PIXELS = 4_000_000
@@ -161,6 +169,62 @@ def _source_bytes(source, source_root, source_loader):
     _fail(isinstance(data, bytes) and len(data) == source["byte_length"], "source length mismatch")
     _fail(hashlib.sha256(data).hexdigest() == source["pdf_sha256"], "source hash mismatch")
     return data
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+def _source_base():
+    base = os.environ.get("PFRA_SOURCE_BASE_URL", "")
+    _fail(base and all(33 <= ord(char) <= 126 for char in base) and
+          "?" not in base and "#" not in base, "SOURCE_BASE_INVALID")
+    try:
+        parts = urllib.parse.urlsplit(base)
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        raise ValueError("SOURCE_BASE_INVALID") from None
+    _fail(parts.scheme == "https" and host and not parts.username and not parts.password and
+          not parts.query and not parts.fragment and "@" not in parts.netloc and
+          re.fullmatch(r"[A-Za-z0-9.-]+", host) and not host.startswith(".") and
+          not host.endswith(".") and ".." not in host and
+          (port is None or 1 <= port <= 65535), "SOURCE_BASE_INVALID")
+    return base.rstrip("/")
+
+
+def _fetch_source(kind, digest, max_bytes, *, expected_length=None):
+    _sha(digest)
+    base = _source_base()
+    token = os.environ.get("PFRA_SOURCE_READ_TOKEN")
+    _fail(not token or all(33 <= ord(char) <= 126 for char in token),
+          "SOURCE_TOKEN_INVALID")
+    suffix = f"/manifests/{digest}.json" if kind == "manifest" else f"/pdfs/{digest}.pdf"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(base + suffix, headers=headers, method="GET")
+    opener = urllib.request.build_opener(_NoRedirect())
+    try:
+        with opener.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            status = response.status
+            _fail(status == 200, "HTTP_REDIRECT" if 300 <= status < 400 else "HTTP_STATUS")
+            declared = response.headers.get("Content-Length")
+            if declared is not None:
+                _fail(declared.isdecimal(), "HTTP_LENGTH_INVALID")
+                _fail(int(declared) <= max_bytes, "HTTP_SIZE_LIMIT")
+                if expected_length is not None:
+                    _fail(int(declared) == expected_length, "HTTP_TRUNCATED")
+            data = response.read(max_bytes + 1)
+            _fail(len(data) <= max_bytes, "HTTP_SIZE_LIMIT")
+            if declared is not None:
+                _fail(len(data) == int(declared), "HTTP_TRUNCATED")
+            if expected_length is not None:
+                _fail(len(data) == expected_length, "HTTP_TRUNCATED")
+            return data
+    except urllib.error.HTTPError as exc:
+        raise ValueError("HTTP_REDIRECT" if 300 <= exc.code < 400 else "HTTP_STATUS") from None
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
+        raise ValueError("HTTP_TRANSPORT") from None
 
 
 def _word(x0, y0, x1, y1, text, width, height):
@@ -404,14 +468,30 @@ def validate_results(manifest, expected_manifest_sha256, results):
 
 
 def _read_json(path, max_bytes):
-    file_path = Path(path)
-    _fail(file_path.stat().st_size <= max_bytes, "JSON input limit")
-    return json.loads(file_path.read_bytes())
+    with Path(path).open("rb") as stream:
+        data = stream.read(max_bytes + 1)
+    _fail(len(data) <= max_bytes, "JSON input limit")
+    try:
+        return json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("INPUT_ERROR") from None
 
 
-def _write_json_exclusive(path, value):
-    with Path(path).open("x", encoding="utf-8") as stream:
-        stream.write(canonical_bytes(value).decode("utf-8") + "\n")
+def _write_json_exclusive(path, value, max_bytes=MAX_RESULT_BYTES):
+    payload = canonical_bytes(value) + b"\n"
+    _fail(len(payload) <= max_bytes, "JSON output limit")
+    with Path(path).open("xb") as stream:
+        stream.write(payload)
+
+
+def _preflight_remote_manifest(manifest, manifest_digest, execution_commit):
+    summary = validate_manifest(manifest)
+    _sha(manifest_digest)
+    _fail(summary["canonical_sha256"] == manifest_digest, "manifest hash mismatch")
+    _fail(execution_commit == manifest["worker_commit"], "execution commit mismatch")
+    _fail(hashlib.sha256(Path(__file__).read_bytes()).hexdigest() == manifest["worker_sha256"],
+          "worker hash mismatch")
+    return summary
 
 
 def main(argv=None):
@@ -432,8 +512,31 @@ def main(argv=None):
     merge.add_argument("--manifest-sha256", required=True)
     merge.add_argument("--results", nargs="+", required=True)
     merge.add_argument("--output", required=True)
+    fetch = commands.add_parser("fetch-manifest")
+    fetch.add_argument("--manifest-sha256", required=True)
+    fetch.add_argument("--execution-commit", required=True)
+    fetch.add_argument("--output", required=True)
+    remote = commands.add_parser("run-remote-shard")
+    remote.add_argument("--manifest", required=True)
+    remote.add_argument("--manifest-sha256", required=True)
+    remote.add_argument("--shard-id", required=True, type=int)
+    remote.add_argument("--execution-commit", required=True)
+    remote.add_argument("--output", required=True)
     args = parser.parse_args(argv)
-    manifest = _read_json(args.manifest, 32 * 1024 * 1024)
+    if args.command == "fetch-manifest":
+        if Path(args.output).exists():
+            raise FileExistsError("output exists")
+        _sha(args.manifest_sha256)
+        data = _fetch_source("manifest", args.manifest_sha256, MAX_MANIFEST_BYTES)
+        try:
+            manifest = json.loads(data)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("INPUT_ERROR") from None
+        summary = _preflight_remote_manifest(manifest, args.manifest_sha256, args.execution_commit)
+        _write_json_exclusive(args.output, manifest, MAX_MANIFEST_BYTES)
+        print(canonical_bytes(summary).decode("utf-8"))
+        return 0
+    manifest = _read_json(args.manifest, MAX_MANIFEST_BYTES)
     if args.command == "validate-manifest":
         summary = validate_manifest(manifest)
         if args.worker_sha256 is not None:
@@ -444,8 +547,18 @@ def main(argv=None):
         result = run_shard(manifest, args.manifest_sha256, args.shard_id, args.execution_commit,
                            source_root=args.source_root)
         _write_json_exclusive(args.output, result)
+    elif args.command == "run-remote-shard":
+        if Path(args.output).exists():
+            raise FileExistsError("output exists")
+        _preflight_remote_manifest(manifest, args.manifest_sha256, args.execution_commit)
+        result = run_shard(manifest, args.manifest_sha256, args.shard_id, args.execution_commit,
+                           source_loader=lambda source: _fetch_source("pdf", source["pdf_sha256"],
+                                                                       source["byte_length"],
+                                                                       expected_length=source["byte_length"]))
+        _write_json_exclusive(args.output, result)
+        return 0 if result["status"] == "EVIDENCE_ONLY" else 1
     else:
-        results = [_read_json(path, 64 * 1024 * 1024) for path in args.results]
+        results = [_read_json(path, MAX_RESULT_BYTES) for path in args.results]
         summary = validate_results(manifest, args.manifest_sha256, results)
         _write_json_exclusive(args.output, summary)
     return 0

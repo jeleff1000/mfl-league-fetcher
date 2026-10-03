@@ -1,0 +1,169 @@
+name: PFRA bounded page evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_sha256:
+        description: Canonical SHA-256 of the frozen ledger-bound manifest
+        required: true
+        type: string
+      public_evidence_approved:
+        description: Explicit approval to publish this batch's manifest and OCR evidence as public-repo artifacts
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pfra-evidence-${{ inputs.manifest_sha256 }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PFRA_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.manifest.outputs.shards }}
+    steps:
+      - name: Require delivery configuration and explicit evidence-publication approval
+        id: authorization
+        shell: python
+        env:
+          PFRA_PUBLIC_EVIDENCE_APPROVED: ${{ inputs.public_evidence_approved }}
+          PFRA_SOURCE_BASE_URL: ${{ secrets.PFRA_SOURCE_BASE_URL }}
+        run: |
+          import os
+          import re
+          if os.environ.get("PFRA_PUBLIC_EVIDENCE_APPROVED") != "true":
+              raise SystemExit("Explicit public evidence artifact approval is required.")
+          if os.environ.get("GITHUB_REPOSITORY") != "jeleff1000/mfl-league-fetcher":
+              raise SystemExit("PFRA execution repository mismatch.")
+          if os.environ.get("GITHUB_REF") != "refs/heads/main":
+              raise SystemExit("PFRA execution requires reviewed main.")
+          if not re.fullmatch(r"[0-9a-f]{64}", os.environ.get("PFRA_MANIFEST_SHA256", "")):
+              raise SystemExit("Invalid frozen manifest hash.")
+          if not os.environ.get("PFRA_SOURCE_BASE_URL"):
+              raise SystemExit("PFRA source delivery configuration is required.")
+
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Fetch and verify the exact manifest before allocating workers
+        id: manifest
+        shell: python
+        env:
+          PFRA_SOURCE_BASE_URL: ${{ secrets.PFRA_SOURCE_BASE_URL }}
+          PFRA_SOURCE_READ_TOKEN: ${{ secrets.PFRA_SOURCE_READ_TOKEN }}
+        run: |
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+          output = Path(os.environ["RUNNER_TEMP"]) / "pfra-manifest.json"
+          result = subprocess.run([
+              sys.executable, "scripts/pfra_page_shard.py", "fetch-manifest",
+              "--manifest-sha256", os.environ["PFRA_MANIFEST_SHA256"],
+              "--execution-commit", os.environ["GITHUB_SHA"], "--output", str(output),
+          ], capture_output=True, text=True)
+          if result.returncode:
+              raise SystemExit("Frozen PFRA manifest preflight failed; no workers started.")
+          summary = json.loads(result.stdout)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write("shards=" + json.dumps(summary["shard_ids"], separators=(",", ":")) + "\n")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pfra-${{ github.run_id }}-manifest
+          path: ${{ runner.temp }}/pfra-manifest.json
+          retention-days: 1
+          if-no-files-found: error
+          overwrite: true
+
+  shard:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        shard_id: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: pfra-${{ github.run_id }}-manifest
+          path: ${{ runner.temp }}/pfra-input
+      - name: Install bounded page evidence dependencies
+        run: |
+          python -m pip install --disable-pip-version-check PyMuPDF==1.28.0
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tesseract-ocr
+      - name: Read each source once and collect only requested page regions
+        env:
+          PFRA_SOURCE_BASE_URL: ${{ secrets.PFRA_SOURCE_BASE_URL }}
+          PFRA_SOURCE_READ_TOKEN: ${{ secrets.PFRA_SOURCE_READ_TOKEN }}
+          PFRA_SHARD_ID: ${{ matrix.shard_id }}
+        run: |
+          python scripts/pfra_page_shard.py run-remote-shard \
+            --manifest "$RUNNER_TEMP/pfra-input/pfra-manifest.json" \
+            --manifest-sha256 "$PFRA_MANIFEST_SHA256" \
+            --shard-id "$PFRA_SHARD_ID" \
+            --execution-commit "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/pfra-shard-$PFRA_SHARD_ID.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pfra-${{ github.run_id }}-shard-${{ matrix.shard_id }}
+          path: ${{ runner.temp }}/pfra-shard-${{ matrix.shard_id }}.json
+          retention-days: 1
+          if-no-files-found: error
+          overwrite: true
+
+  validate:
+    needs: [prepare, shard]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: pfra-${{ github.run_id }}-manifest
+          path: ${{ runner.temp }}/pfra-input
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pfra-${{ github.run_id }}-shard-*
+          path: ${{ runner.temp }}/pfra-results
+          merge-multiple: true
+      - name: Verify exact evidence coverage; never write a classification ledger
+        run: |
+          python scripts/pfra_page_shard.py validate-results \
+            --manifest "$RUNNER_TEMP/pfra-input/pfra-manifest.json" \
+            --manifest-sha256 "$PFRA_MANIFEST_SHA256" \
+            --results "$RUNNER_TEMP"/pfra-results/pfra-shard-*.json \
+            --output "$RUNNER_TEMP/pfra-coverage.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pfra-${{ github.run_id }}-coverage
+          path: ${{ runner.temp }}/pfra-coverage.json
+          retention-days: 1
+          if-no-files-found: error
+          overwrite: true

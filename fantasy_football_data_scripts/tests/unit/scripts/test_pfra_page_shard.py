@@ -1,10 +1,13 @@
 """Contract tests for the read-only PFRA page evidence worker."""
 
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
 import threading
+import urllib.error
+import urllib.request
 from copy import deepcopy
 from pathlib import Path
 
@@ -390,3 +393,296 @@ def test_cli_preflight_reports_digest_and_exclusive_results(worker, tmp_path, ca
     assert worker.main(["validate-results", "--manifest", str(manifest_path), "--manifest-sha256", digest,
                         "--results", str(result_path), "--output", str(summary_path)]) == 0
     assert json.loads(summary_path.read_text())["source_count"] == 1
+
+
+class HTTPResponse(io.BytesIO):
+    def __init__(self, payload, status=200, content_length=None):
+        super().__init__(payload)
+        self.status = status
+        self.headers = {"Content-Length": str(len(payload) if content_length is None else content_length)}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+
+def remote_fixture(worker, monkeypatch, manifest, pdf=None, *, responses=None, base="https://source.example/pfra"):
+    monkeypatch.setenv("PFRA_SOURCE_BASE_URL", base)
+    monkeypatch.setenv("PFRA_SOURCE_READ_TOKEN", "private-token")
+    observed = []
+    payloads = responses if responses is not None else {}
+    if pdf is not None:
+        payloads[f"/pdfs/{manifest['sources'][0]['pdf_sha256']}.pdf"] = pdf
+    payloads.setdefault(f"/manifests/{worker.manifest_sha256(manifest)}.json", worker.canonical_bytes(manifest))
+
+    class Opener:
+        def open(self, request, timeout):
+            observed.append((request.full_url, dict(request.header_items()), timeout))
+            suffix = request.full_url.removeprefix(base)
+            item = payloads[suffix]
+            if isinstance(item, Exception):
+                raise item
+            return item if isinstance(item, HTTPResponse) else HTTPResponse(item)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Opener())
+    return observed
+
+
+def test_fetch_manifest_binds_hash_commit_worker_and_writes_exclusively(worker, monkeypatch, tmp_path, capsys):
+    pdf, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+    observed = remote_fixture(worker, monkeypatch, manifest, pdf)
+    output = tmp_path / "manifest.json"
+    args = ["fetch-manifest", "--manifest-sha256", digest, "--execution-commit", manifest["worker_commit"],
+            "--output", str(output)]
+    assert worker.main(args) == 0
+    assert json.loads(output.read_bytes()) == manifest
+    assert json.loads(capsys.readouterr().out) == {"canonical_sha256": digest, "shard_ids": [manifest["sources"][0]["shard_id"]]}
+    assert observed == [(f"https://source.example/pfra/manifests/{digest}.json",
+                         {"Authorization": "Bearer private-token"}, observed[0][2])]
+    assert 0 < observed[0][2] <= 30
+    with pytest.raises(FileExistsError):
+        worker.main(args)
+    assert len(observed) == 1
+
+
+def test_remote_shard_reads_one_pdf_for_two_pages(worker, monkeypatch, tmp_path):
+    pdf, manifest = pdf_manifest(worker)
+    observed = remote_fixture(worker, monkeypatch, manifest, pdf)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(worker.canonical_bytes(manifest))
+    output = tmp_path / "result.json"
+    assert worker.main(["run-remote-shard", "--manifest", str(manifest_path),
+                        "--manifest-sha256", worker.manifest_sha256(manifest),
+                        "--shard-id", str(manifest["sources"][0]["shard_id"]),
+                        "--execution-commit", manifest["worker_commit"], "--output", str(output)]) == 0
+    result = json.loads(output.read_bytes())
+    assert result["status"] == "EVIDENCE_ONLY"
+    assert result["source_read_count"] == result["source_hash_count"] == 1
+    assert [p["regions"][0]["words"][0]["text"] for p in result["sources"][0]["pages"]] == ["ALPHA", "BRAVO"]
+    assert [url for url, _, _ in observed] == [f"https://source.example/pfra/pdfs/{manifest['sources'][0]['pdf_sha256']}.pdf"]
+    assert list(tmp_path.iterdir()) == [manifest_path, output]
+
+
+@pytest.mark.parametrize("fault", ["wrong_length", "wrong_hash", "oversize", "truncated"])
+def test_remote_pdf_rejects_corrupt_or_unbounded_response(worker, monkeypatch, tmp_path, fault):
+    pdf, manifest = pdf_manifest(worker, text=("ALPHA",))
+    if fault == "wrong_length":
+        payload = pdf[:-1]
+    elif fault == "wrong_hash":
+        payload = pdf[:-1] + bytes([pdf[-1] ^ 1])
+    elif fault == "oversize":
+        payload = pdf + b"x"
+    else:
+        payload = pdf[:-1]
+    remote_fixture(worker, monkeypatch, manifest, responses={f"/pdfs/{manifest['sources'][0]['pdf_sha256']}.pdf": payload})
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(worker.canonical_bytes(manifest))
+    output = tmp_path / "result.json"
+    with pytest.raises(ValueError, match="^(HTTP_SIZE_LIMIT|HTTP_TRUNCATED|source length mismatch|source hash mismatch)$"):
+        worker.main(["run-remote-shard", "--manifest", str(manifest_path),
+                     "--manifest-sha256", worker.manifest_sha256(manifest),
+                     "--shard-id", str(manifest["sources"][0]["shard_id"]),
+                     "--execution-commit", manifest["worker_commit"], "--output", str(output)])
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("binding", ["manifest_hash", "worker_hash", "commit"])
+def test_remote_shard_rejects_stale_binding_before_network(worker, monkeypatch, tmp_path, binding):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    if binding == "worker_hash":
+        manifest["worker_sha256"] = "0" * 64
+    observed = remote_fixture(worker, monkeypatch, manifest)
+    path = tmp_path / "manifest.json"
+    path.write_bytes(worker.canonical_bytes(manifest))
+    digest = "0" * 64 if binding == "manifest_hash" else worker.manifest_sha256(manifest)
+    commit = "0" * 40 if binding == "commit" else manifest["worker_commit"]
+    with pytest.raises(ValueError):
+        worker.main(["run-remote-shard", "--manifest", str(path), "--manifest-sha256", digest,
+                     "--shard-id", str(manifest["sources"][0]["shard_id"]),
+                     "--execution-commit", commit, "--output", str(tmp_path / "result.json")])
+    assert observed == []
+
+
+@pytest.mark.parametrize("base", ["http://source.example", "https://user@source.example", "https://source.example?q=x",
+                                  "https://source.example?", "https://source.example/#frag", "https://source.example#",
+                                  "https://bad host", "https://source.example/\ntrap"])
+def test_remote_rejects_unsafe_base_before_network(worker, monkeypatch, tmp_path, base):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = remote_fixture(worker, monkeypatch, manifest, base=base)
+    with pytest.raises(ValueError, match="SOURCE_BASE_INVALID"):
+        worker.main(["fetch-manifest", "--manifest-sha256", worker.manifest_sha256(manifest),
+                     "--execution-commit", manifest["worker_commit"], "--output", str(tmp_path / "manifest.json")])
+    assert observed == []
+
+
+def test_fetch_manifest_rejects_redirect_without_exposing_token(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+    observed = remote_fixture(worker, monkeypatch, manifest, responses={
+        f"/manifests/{digest}.json": urllib.error.HTTPError("https://source.example", 302, "private-token", {"Location": "https://elsewhere.example"}, None)
+    })
+    with pytest.raises(ValueError, match="^HTTP_REDIRECT$") as error:
+        worker.main(["fetch-manifest", "--manifest-sha256", digest, "--execution-commit", manifest["worker_commit"],
+                     "--output", str(tmp_path / "manifest.json")])
+    assert "private-token" not in str(error.value)
+    assert len(observed) == 1
+    assert not (tmp_path / "manifest.json").exists()
+
+
+def test_redirect_handler_never_constructs_followup_request(worker):
+    handler = worker._NoRedirect()
+    request = urllib.request.Request("https://source.example/manifests/" + "a" * 64 + ".json",
+                                     headers={"Authorization": "Bearer private-token"})
+    assert handler.redirect_request(request, None, 302, "Found", {"Location": "https://elsewhere.example"},
+                                    "https://elsewhere.example") is None
+
+
+def test_remote_incomplete_writes_result_and_exits_nonzero(worker, monkeypatch, tmp_path):
+    pdf, manifest = pdf_manifest(worker, text=("ALPHA",), method="ocr")
+    observed = remote_fixture(worker, monkeypatch, manifest, pdf)
+    monkeypatch.setattr(worker.subprocess, "Popen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError()))
+    path = tmp_path / "manifest.json"
+    path.write_bytes(worker.canonical_bytes(manifest))
+    output = tmp_path / "result.json"
+    assert worker.main(["run-remote-shard", "--manifest", str(path),
+                        "--manifest-sha256", worker.manifest_sha256(manifest),
+                        "--shard-id", str(manifest["sources"][0]["shard_id"]),
+                        "--execution-commit", manifest["worker_commit"], "--output", str(output)]) == 1
+    assert json.loads(output.read_bytes())["status"] == "INCOMPLETE"
+    assert len(observed) == 1
+
+
+def test_remote_rejects_declared_oversize_before_body_read(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+
+    class UnreadableResponse(HTTPResponse):
+        def read(self, size=-1):
+            raise AssertionError("oversize body was read")
+
+    remote_fixture(worker, monkeypatch, manifest, responses={
+        f"/manifests/{digest}.json": UnreadableResponse(b"", content_length=32 * 1024 * 1024 + 1)
+    })
+    with pytest.raises(ValueError, match="^HTTP_SIZE_LIMIT$"):
+        worker.main(["fetch-manifest", "--manifest-sha256", digest, "--execution-commit", manifest["worker_commit"],
+                     "--output", str(tmp_path / "manifest.json")])
+    assert not (tmp_path / "manifest.json").exists()
+
+
+def test_output_limit_prevents_creating_file(worker, tmp_path):
+    output = tmp_path / "result.json"
+    with pytest.raises(ValueError, match="^JSON output limit$"):
+        worker._write_json_exclusive(output, {"words": "X" * 100}, max_bytes=32)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("binding", ["manifest_hash", "worker_hash", "commit"])
+def test_fetch_manifest_rejects_stale_binding_without_output(worker, monkeypatch, tmp_path, binding):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    if binding == "worker_hash":
+        manifest["worker_sha256"] = "0" * 64
+    digest = worker.manifest_sha256(manifest)
+    requested_digest = "0" * 64 if binding == "manifest_hash" else digest
+    remote_fixture(worker, monkeypatch, manifest, responses={
+        f"/manifests/{requested_digest}.json": worker.canonical_bytes(manifest)
+    })
+    output = tmp_path / "manifest.json"
+    with pytest.raises(ValueError):
+        worker.main(["fetch-manifest", "--manifest-sha256", requested_digest,
+                     "--execution-commit", "0" * 40 if binding == "commit" else manifest["worker_commit"],
+                     "--output", str(output)])
+    assert not output.exists()
+
+
+def test_fetch_manifest_reports_generic_transport_error(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+    remote_fixture(worker, monkeypatch, manifest, responses={
+        f"/manifests/{digest}.json": urllib.error.URLError("private-token at https://secret.example")
+    })
+    with pytest.raises(ValueError, match="^HTTP_TRANSPORT$"):
+        worker.main(["fetch-manifest", "--manifest-sha256", digest,
+                     "--execution-commit", manifest["worker_commit"], "--output", str(tmp_path / "manifest.json")])
+
+
+def test_bad_status_line_cannot_expose_server_echoed_token(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+    remote_fixture(worker, monkeypatch, manifest, responses={
+        f"/manifests/{digest}.json": http.client.BadStatusLine("sentinel-private-token")
+    })
+    output = tmp_path / "manifest.json"
+    with pytest.raises(ValueError, match="^HTTP_TRANSPORT$") as error:
+        worker.main(["fetch-manifest", "--manifest-sha256", digest,
+                     "--execution-commit", manifest["worker_commit"], "--output", str(output)])
+    assert "sentinel-private-token" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert not output.exists()
+
+
+def test_empty_optional_read_token_sends_no_authorization(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = remote_fixture(worker, monkeypatch, manifest)
+    monkeypatch.setenv("PFRA_SOURCE_READ_TOKEN", "")
+    digest = worker.manifest_sha256(manifest)
+    assert worker.main(["fetch-manifest", "--manifest-sha256", digest,
+                        "--execution-commit", manifest["worker_commit"],
+                        "--output", str(tmp_path / "manifest.json")]) == 0
+    assert observed[0][1] == {}
+
+
+def test_ten_remote_shards_cover_manifest_and_merger_rejects_missing_one(worker, monkeypatch, tmp_path):
+    manifest = None
+    pdf_responses = {}
+    for shard in range(10):
+        for nonce in range(100):
+            pdf, candidate = pdf_manifest(worker, text=(f"SHARD{shard}TRY{nonce}",))
+            if candidate["sources"][0]["shard_id"] == shard:
+                break
+        else:
+            pytest.fail(f"could not generate source for shard {shard}")
+        source = candidate["sources"][0]
+        source["pages"][0]["visual_id"] = f"visual-{shard}"
+        source["pages"][0]["occurrences"][0]["source_occurrence_id"] = f"occ-{shard}"
+        if manifest is None:
+            manifest = candidate
+        else:
+            manifest["sources"].append(source)
+        pdf_responses[f"/pdfs/{source['pdf_sha256']}.pdf"] = pdf
+    digest = worker.manifest_sha256(manifest)
+    observed = remote_fixture(worker, monkeypatch, manifest, responses=pdf_responses)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(worker.canonical_bytes(manifest))
+    results = []
+    for shard in range(10):
+        output = tmp_path / f"result-{shard}.json"
+        assert worker.main(["run-remote-shard", "--manifest", str(manifest_path),
+                            "--manifest-sha256", digest, "--shard-id", str(shard),
+                            "--execution-commit", manifest["worker_commit"],
+                            "--output", str(output)]) == 0
+        results.append(json.loads(output.read_bytes()))
+    summary = worker.validate_results(manifest, digest, results)
+    assert summary["shard_ids"] == list(range(10))
+    assert (summary["source_count"], summary["page_count"], summary["region_count"]) == (10, 10, 10)
+    assert summary["word_count"] == 10
+    assert len(observed) == 10
+    assert {url for url, _, _ in observed} == {
+        f"https://source.example/pfra/pdfs/{source['pdf_sha256']}.pdf" for source in manifest["sources"]
+    }
+    with pytest.raises(ValueError, match="missing or extra result"):
+        worker.validate_results(manifest, digest, results[:-1])
+
+
+def test_fetch_manifest_rejects_oversize_and_bad_json_cleanly(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+    for payload, error in [(b"x" * (32 * 1024 * 1024 + 1), "HTTP_SIZE_LIMIT"),
+                           (b"private-token is not JSON", "INPUT_ERROR")]:
+        remote_fixture(worker, monkeypatch, manifest, responses={f"/manifests/{digest}.json": payload})
+        with pytest.raises(ValueError, match=f"^{error}$"):
+            worker.main(["fetch-manifest", "--manifest-sha256", digest,
+                         "--execution-commit", manifest["worker_commit"], "--output", str(tmp_path / "manifest.json")])
+        assert not (tmp_path / "manifest.json").exists()

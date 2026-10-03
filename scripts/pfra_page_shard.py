@@ -23,6 +23,7 @@ from pathlib import Path
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 IDENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+RELEASE_PATH = re.compile(r"/jeleff1000/mfl-league-fetcher/releases/download/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 MAX_PDF_BYTES = 128 * 1024 * 1024
 MAX_MANIFEST_BYTES = 32 * 1024 * 1024
 MAX_RESULT_BYTES = 64 * 1024 * 1024
@@ -176,6 +177,41 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _ReleaseRedirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, origin_url):
+        self.origin_url = origin_url
+        self.followed = False
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        if self.followed or request.full_url != self.origin_url or code not in (301, 302, 303, 307, 308):
+            return None
+        if not newurl or any(not 33 <= ord(char) <= 126 for char in newurl) or \
+                "#" in newurl or "\\" in newurl:
+            return None
+        try:
+            target = urllib.parse.urlsplit(newurl)
+        except ValueError:
+            return None
+        if target.scheme != "https" or target.netloc != "release-assets.githubusercontent.com" or \
+                not target.path.startswith("/"):
+            return None
+        self.followed = True
+        # The signed URL is public and must receive no header from the first request.
+        return urllib.request.Request(newurl, method="GET")
+
+    def http_error_302(self, request, response, code, msg, headers):
+        location = (headers.get("Location") or headers.get("location") or
+                    headers.get("URI") or headers.get("uri"))
+        followup = self.redirect_request(request, response, code, msg, headers, location)
+        # urllib's default handler drains the entire redirect body here.
+        response.close()
+        if followup is None:
+            return None
+        return self.parent.open(followup, timeout=getattr(request, "timeout", HTTP_TIMEOUT_SECONDS))
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+
 def _source_base():
     base = os.environ.get("PFRA_SOURCE_BASE_URL", "")
     _fail(base and all(33 <= ord(char) <= 126 for char in base) and
@@ -191,19 +227,26 @@ def _source_base():
           re.fullmatch(r"[A-Za-z0-9.-]+", host) and not host.startswith(".") and
           not host.endswith(".") and ".." not in host and
           (port is None or 1 <= port <= 65535), "SOURCE_BASE_INVALID")
-    return base.rstrip("/")
+    release_route = host == "github.com" or "/releases/download/" in parts.path
+    if release_route:
+        _fail(parts.netloc == "github.com" and RELEASE_PATH.fullmatch(parts.path), "SOURCE_BASE_INVALID")
+    return base.rstrip("/"), release_route
 
 
 def _fetch_source(kind, digest, max_bytes, *, expected_length=None):
     _sha(digest)
-    base = _source_base()
+    base, release_route = _source_base()
     token = os.environ.get("PFRA_SOURCE_READ_TOKEN")
     _fail(not token or all(33 <= ord(char) <= 126 for char in token),
           "SOURCE_TOKEN_INVALID")
-    suffix = f"/manifests/{digest}.json" if kind == "manifest" else f"/pdfs/{digest}.pdf"
+    _fail(not release_route or not token, "SOURCE_TOKEN_INVALID")
+    if release_route:
+        suffix = f"/manifests-{digest}.json" if kind == "manifest" else f"/pdfs-{digest}.pdf"
+    else:
+        suffix = f"/manifests/{digest}.json" if kind == "manifest" else f"/pdfs/{digest}.pdf"
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     request = urllib.request.Request(base + suffix, headers=headers, method="GET")
-    opener = urllib.request.build_opener(_NoRedirect())
+    opener = urllib.request.build_opener(_ReleaseRedirect(request.full_url) if release_route else _NoRedirect())
     try:
         with opener.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             status = response.status

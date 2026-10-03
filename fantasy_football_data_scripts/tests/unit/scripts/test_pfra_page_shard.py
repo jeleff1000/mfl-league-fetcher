@@ -676,6 +676,158 @@ def test_ten_remote_shards_cover_manifest_and_merger_rejects_missing_one(worker,
         worker.validate_results(manifest, digest, results[:-1])
 
 
+RELEASE_BASE = "https://github.com/jeleff1000/mfl-league-fetcher/releases/download/pfra-stage-1"
+SIGNED_ASSET = "https://release-assets.githubusercontent.com/signed-asset?token=private-signed-url"
+
+
+def release_fixture(worker, monkeypatch, payload, *, target=SIGNED_ASSET, second_target=None, token=""):
+    monkeypatch.setenv("PFRA_SOURCE_BASE_URL", RELEASE_BASE)
+    monkeypatch.setenv("PFRA_SOURCE_READ_TOKEN", token)
+    observed = []
+
+    class Opener:
+        def __init__(self, handler):
+            self.handler = handler
+
+        def open(self, request, timeout):
+            observed.append((request.full_url, dict(request.header_items()), timeout))
+            redirected = self.handler.redirect_request(request, None, 302, "Found", {"Location": target}, target)
+            if redirected is None:
+                raise urllib.error.HTTPError(request.full_url, 302, target, {"Location": target}, None)
+            observed.append((redirected.full_url, dict(redirected.header_items()), timeout))
+            if second_target is not None:
+                chained = self.handler.redirect_request(redirected, None, 302, "Found",
+                                                        {"Location": second_target}, second_target)
+                if chained is None:
+                    raise urllib.error.HTTPError(redirected.full_url, 302, second_target,
+                                                 {"Location": second_target}, None)
+            return HTTPResponse(payload)
+
+    def make_opener(handler):
+        return Opener(handler)
+
+    monkeypatch.setattr(urllib.request, "build_opener", make_opener)
+    return observed
+
+
+def test_release_manifest_allows_one_signed_asset_redirect_without_authorization(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    digest = worker.manifest_sha256(manifest)
+    observed = release_fixture(worker, monkeypatch, worker.canonical_bytes(manifest))
+    output = tmp_path / "manifest.json"
+    assert worker.main(["fetch-manifest", "--manifest-sha256", digest,
+                        "--execution-commit", manifest["worker_commit"], "--output", str(output)]) == 0
+    assert json.loads(output.read_bytes()) == manifest
+    assert observed[0][0] == f"{RELEASE_BASE}/manifests-{digest}.json"
+    assert observed[1][0] == SIGNED_ASSET
+    assert observed[0][1] == observed[1][1] == {}
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_release_redirect_closes_unbounded_body_without_reading(worker, status):
+    origin = RELEASE_BASE + "/manifests-" + "a" * 64 + ".json"
+    request = urllib.request.Request(origin, method="GET")
+    request.timeout = 20
+    handler = worker._ReleaseRedirect(origin)
+
+    class UnboundedBody:
+        closed = False
+
+        def read(self, *_args):
+            raise AssertionError("redirect body must not be drained")
+
+        def close(self):
+            self.closed = True
+
+    body = UnboundedBody()
+    followed = []
+
+    class Parent:
+        def open(self, next_request, timeout):
+            followed.append((next_request.full_url, dict(next_request.header_items()), timeout))
+            return HTTPResponse(b"manifest")
+
+    handler.parent = Parent()
+    response = getattr(handler, f"http_error_{status}")(
+        request, body, status, "Found", {"location": SIGNED_ASSET}
+    )
+    assert response.read() == b"manifest"
+    assert body.closed
+    assert followed == [(SIGNED_ASSET, {}, 20)]
+
+
+def test_release_pdf_redirect_still_checks_pdf_binding(worker, monkeypatch, tmp_path):
+    pdf, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = release_fixture(worker, monkeypatch, pdf)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(worker.canonical_bytes(manifest))
+    output = tmp_path / "result.json"
+    assert worker.main(["run-remote-shard", "--manifest", str(manifest_path),
+                        "--manifest-sha256", worker.manifest_sha256(manifest),
+                        "--shard-id", str(manifest["sources"][0]["shard_id"]),
+                        "--execution-commit", manifest["worker_commit"], "--output", str(output)]) == 0
+    assert json.loads(output.read_bytes())["sources"][0]["pages"][0]["regions"][0]["words"][0]["text"] == "ALPHA"
+    assert observed[0][0] == f"{RELEASE_BASE}/pdfs-{manifest['sources'][0]['pdf_sha256']}.pdf"
+    assert observed[1][0] == SIGNED_ASSET
+
+
+@pytest.mark.parametrize("base", [
+    "https://github.com/other/repo/releases/download/pfra-stage-1",
+    "https://evil.example/jeleff1000/mfl-league-fetcher/releases/download/pfra-stage-1",
+    "https://github.com.evil.example/jeleff1000/mfl-league-fetcher/releases/download/pfra-stage-1",
+    RELEASE_BASE + "?secret=1", RELEASE_BASE + "#fragment", RELEASE_BASE + "/../escape",
+    RELEASE_BASE.replace("github.com", "github.com:443"),
+    RELEASE_BASE.replace("pfra-stage-1", "bad%2Ftag"),
+])
+def test_release_rejects_unsafe_base_before_network(worker, monkeypatch, tmp_path, base):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = release_fixture(worker, monkeypatch, worker.canonical_bytes(manifest))
+    monkeypatch.setenv("PFRA_SOURCE_BASE_URL", base)
+    with pytest.raises(ValueError, match="^SOURCE_BASE_INVALID$"):
+        worker.main(["fetch-manifest", "--manifest-sha256", worker.manifest_sha256(manifest),
+                     "--execution-commit", manifest["worker_commit"], "--output", str(tmp_path / "manifest.json")])
+    assert observed == []
+
+
+def test_release_rejects_read_token_before_network(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = release_fixture(worker, monkeypatch, worker.canonical_bytes(manifest), token="private-token")
+    with pytest.raises(ValueError, match="^SOURCE_TOKEN_INVALID$"):
+        worker.main(["fetch-manifest", "--manifest-sha256", worker.manifest_sha256(manifest),
+                     "--execution-commit", manifest["worker_commit"], "--output", str(tmp_path / "manifest.json")])
+    assert observed == []
+
+
+@pytest.mark.parametrize("target", [
+    "http://release-assets.githubusercontent.com/signed-asset?token=secret",
+    "https://evil.example/signed-asset?token=secret",
+    "https://release-assets.githubusercontent.com.evil.example/signed-asset",
+    "https://user@release-assets.githubusercontent.com/signed-asset",
+    "https://release-assets.githubusercontent.com:443/signed-asset",
+    "https://release-assets.githubusercontent.com/signed-asset#fragment",
+    "https://release-assets.githubusercontent.com/signed-asset\nHeader: secret",
+])
+def test_release_rejects_bad_redirect_without_signed_url_leak(worker, monkeypatch, tmp_path, target):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = release_fixture(worker, monkeypatch, worker.canonical_bytes(manifest), target=target)
+    output = tmp_path / "manifest.json"
+    with pytest.raises(ValueError, match="^HTTP_REDIRECT$") as error:
+        worker.main(["fetch-manifest", "--manifest-sha256", worker.manifest_sha256(manifest),
+                     "--execution-commit", manifest["worker_commit"], "--output", str(output)])
+    assert "secret" not in str(error.value)
+    assert not output.exists()
+    assert len(observed) == 1
+
+
+def test_release_rejects_chained_redirect(worker, monkeypatch, tmp_path):
+    _, manifest = pdf_manifest(worker, text=("ALPHA",))
+    observed = release_fixture(worker, monkeypatch, worker.canonical_bytes(manifest), second_target=SIGNED_ASSET)
+    with pytest.raises(ValueError, match="^HTTP_REDIRECT$"):
+        worker.main(["fetch-manifest", "--manifest-sha256", worker.manifest_sha256(manifest),
+                     "--execution-commit", manifest["worker_commit"], "--output", str(tmp_path / "manifest.json")])
+    assert len(observed) == 2
+
+
 def test_fetch_manifest_rejects_oversize_and_bad_json_cleanly(worker, monkeypatch, tmp_path):
     _, manifest = pdf_manifest(worker, text=("ALPHA",))
     digest = worker.manifest_sha256(manifest)

@@ -1302,7 +1302,7 @@ def _cooldown_or_stop(cooldown_level: int, deadline: float, reason: str, gap: Ga
             )
         else:
             logger.info(
-                "[RECOVERY] Rate limited on %s - cooling down %ds (level %d/%d)",
+                "[RECOVERY] Transient failure on %s - cooling down %ds (level %d/%d)",
                 gap.key,
                 int(sleep_time),
                 next_level,
@@ -2106,6 +2106,15 @@ def _resolve_roster_gap(
         if getattr(roster_fetcher, "_access_denied_logged", False):
             raise RecoveryDeferredError(f"Yahoo API access denied while fetching roster week {week} for {league_key}")
         gap.last_error = f"Partial roster recovery for year {gap.year} week {week}: {len(week_failures)} team(s) failed"
+        if gap.year < _get_current_nfl_year():
+            gap.hard_missing = True
+            logger.warning(
+                "[RECOVERY] Yahoo permanently omitted %d completed-season roster payload(s) for %s; "
+                "keeping available rows without retry backoff",
+                len(week_failures),
+                gap.key,
+            )
+            return "empty"
         return False
 
     if week_df is None or week_df.empty:

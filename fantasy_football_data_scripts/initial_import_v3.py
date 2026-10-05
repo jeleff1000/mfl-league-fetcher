@@ -537,6 +537,23 @@ def _quick_import_years_from_ctx(ctx) -> list[int]:
     return []
 
 
+def _import_scope_years(ctx, end_year: int | None = None) -> list[int]:
+    """Return the exact years this invocation may read, transform, and publish."""
+    if getattr(ctx, "import_mode", "") == "quick":
+        years = _quick_import_years_from_ctx(ctx)
+        if not 1 <= len(years) <= 2:
+            raise ValueError("Yahoo quick import requires one or two explicit years")
+        return years
+
+    start_year = coerce_int(getattr(ctx, "start_year", None))
+    resolved_end_year = coerce_int(end_year or getattr(ctx, "end_year", None))
+    if resolved_end_year is None:
+        resolved_end_year = get_current_nfl_season_year()
+    if start_year is None or start_year > resolved_end_year:
+        raise ValueError(f"Invalid Yahoo import year range: {start_year}-{resolved_end_year}")
+    return list(range(start_year, resolved_end_year + 1))
+
+
 def _infer_yahoo_season_from_league_key(league_key: str | None) -> int | None:
     """Infer NFL season from Yahoo's numeric game key when OAuth discovery is unavailable."""
     if not league_key:
@@ -671,7 +688,6 @@ def _apply_quick_import(ctx, year: int = None):
         history_years,
         target_year,
         nfl_state,
-        include_previous_available=True,
     )
     if len(quick_years) > 1:
         reason = "current season has no scores yet"
@@ -1211,7 +1227,7 @@ def main():
     # CRITICAL: Discover league history to ensure correct league_id for each year
     existing_years = set(int(y) for y in ctx.league_ids.keys()) if ctx.league_ids else set()
     if ctx.start_year is not None:
-        expected_years = set(range(ctx.start_year, (ctx.end_year or get_current_nfl_season_year()) + 1))
+        expected_years = set(_import_scope_years(ctx))
         missing_years = expected_years - existing_years
     else:
         # start_year not yet known — discovery will set it
@@ -1478,7 +1494,7 @@ def main():
             log("[FAIL] start_year is None — league history discovery failed (Yahoo API may be rate limited)")
             log("[FAIL] Try again later or provide a context file with start_year set")
             sys.exit(1)
-        years_to_fetch = list(range(ctx.start_year, (ctx.end_year or get_current_nfl_season_year()) + 1))
+        import_years = _import_scope_years(ctx)
 
         # Determine settings directory (league-wide, not player-specific)
         settings_dir = Path(ctx.data_directory) / "league_settings"
@@ -1530,6 +1546,9 @@ def main():
 
                     if local_year:
                         local_year = int(local_year)
+                        if getattr(ctx, "import_mode", "") == "quick" and local_year not in import_years:
+                            log(f"[LOCAL SETTINGS] Skipping out-of-scope quick-import year {local_year}")
+                            continue
                         # Copy to settings directory if not already there
                         dest_file = settings_dir / local_file.name
                         if not dest_file.exists():
@@ -1584,6 +1603,15 @@ def main():
             if getattr(ctx, "has_external_data", False):
                 raise
 
+        if getattr(ctx, "import_mode", "") == "quick":
+            ignored_staging_years = staging_settings_years - set(import_years)
+            if ignored_staging_years:
+                log(
+                    "[STAGING SETTINGS] Ignoring out-of-scope quick-import year(s): "
+                    f"{sorted(ignored_staging_years)}"
+                )
+            staging_settings_years &= set(import_years)
+
         # Combine all external settings years (local + staging)
         external_settings_years = local_settings_years | staging_settings_years
 
@@ -1602,7 +1630,7 @@ def main():
 
         # Fetch settings for each year IN PARALLEL (10-12x faster than sequential)
         # Skip years that already have external settings (local or staging)
-        years = list(range(ctx.start_year, (ctx.end_year or get_current_nfl_season_year()) + 1))
+        years = list(import_years)
         years_to_fetch_from_yahoo = [y for y in years if y not in external_settings_years]
 
         all_settings_ok = True
@@ -1698,6 +1726,14 @@ def main():
         )
         if failed_years:
             log(f"[SETTINGS] Failed years: {sorted(failed_years)}")
+
+        if getattr(ctx, "import_mode", "") == "quick":
+            unexpected_settings_years = set(fetched_settings) - set(import_years)
+            if unexpected_settings_years:
+                raise RuntimeError(
+                    "Quick import settings escaped the explicit year scope: "
+                    f"{sorted(unexpected_settings_years)}"
+                )
 
         results["settings"].append(("League Settings (all years)", all_settings_ok))
 
@@ -2072,7 +2108,7 @@ def main():
         # Phase 0.5: Check if any years are missing settings in the local DuckDB.
         # Phase 0 already fetches and saves all settings to DuckDB, so this only
         # triggers when Phase 0.4 extended the year range with quick-import data.
-        current_year_range = list(range(ctx.start_year, (ctx.end_year or get_current_nfl_season_year()) + 1))
+        current_year_range = _import_scope_years(ctx)
         try:
             db_years = {
                 int(row[0])
@@ -2155,7 +2191,7 @@ def main():
         # -----------------------------------------------------------------
         from multi_league.core.import_utils import compute_fetch_years
 
-        all_years = list(range(ctx.start_year, end_year + 1))
+        all_years = _import_scope_years(ctx, end_year=end_year)
         settings_failed_years = set(failed_years or []) if "failed_years" in locals() else set()
         if settings_failed_years:
             log(f"[FETCHERS] Skipping year(s) without successful settings: {sorted(settings_failed_years)}")
@@ -2377,7 +2413,7 @@ def main():
             # Fallback: use ctx year range if no settings files found
             if not recovery_league_settings:
                 end_yr = ctx.end_year or get_current_nfl_season_year()
-                for y in range(ctx.start_year, end_yr + 1):
+                for y in _import_scope_years(ctx, end_year=end_yr):
                     recovery_league_settings[y] = {}
 
             # Years whose data came from external staging are NOT fetchable

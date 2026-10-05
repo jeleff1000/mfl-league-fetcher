@@ -57,6 +57,17 @@ def test_empty_matchup_endpoint_is_permanent_not_a_rate_limit():
     assert recovery_mod._is_non_retryable_recovery_error("No matchup data found") is True
 
 
+def test_transient_cooldown_is_not_logged_as_rate_limit(monkeypatch, caplog):
+    monkeypatch.setattr(recovery_mod, "COOLDOWN_SCHEDULE", [1])
+    monkeypatch.setattr(recovery_mod.time, "sleep", lambda _seconds: None)
+    gap = Gap("roster", 2006, "wk2", "audit")
+
+    recovery_mod._cooldown_or_stop(0, recovery_mod.time.time() + 10, "transient", gap)
+
+    assert "Transient failure on ('roster', 2006, 'wk2')" in caplog.text
+    assert "Rate limited" not in caplog.text
+
+
 def test_try_resolve_gap_marks_permanently_empty_matchups_hard_missing(monkeypatch):
     gap = Gap("matchup", 2005, "full_year", "manifest")
     monkeypatch.setattr(
@@ -659,6 +670,53 @@ def test_resolve_roster_gap_replays_whole_week_for_narrow_detail(mock_get_fetche
 
     assert result is True
     fetcher.fetch_all_rosters_for_week.assert_called_once()
+    mock_write_rows.assert_called_once()
+
+
+@patch("multi_league.data_fetchers.yahoo.yahoo_recovery._write_recovery_rows")
+@patch("multi_league.data_fetchers.yahoo.yahoo_recovery._get_recovery_roster_fetcher")
+def test_completed_season_partial_roster_is_hard_missing_without_retry(
+    mock_get_fetcher,
+    mock_write_rows,
+    tmp_path,
+    monkeypatch,
+):
+    fetcher = MagicMock()
+    fetcher.fetch_teams.return_value = {
+        "153.l.1.t.1": {"manager_name": "Team A", "manager_guid": "GUID_A"},
+        "153.l.1.t.2": {"manager_name": "Team B", "manager_guid": "GUID_B"},
+    }
+    fetcher.fetch_all_rosters_for_week.return_value = (
+        recovery_mod.pd.DataFrame(
+            {
+                "year": [2006],
+                "week": [2],
+                "team_key": ["153.l.1.t.1"],
+                "manager_name": ["Team A"],
+                "player_name": ["Player A"],
+                "player_id": ["101"],
+            }
+        ),
+        [("Team B", "Yahoo weekly roster payload omitted players")],
+    )
+    mock_get_fetcher.return_value = fetcher
+    monkeypatch.setattr(recovery_mod, "_get_current_nfl_year", lambda: 2026)
+
+    gap = Gap("roster", 2006, "wk2", "audit")
+    ctx = SimpleNamespace(league_ids={"2006": "153.l.1"}, oauth=MagicMock())
+
+    result = _resolve_roster_gap(
+        gap,
+        ctx,
+        tmp_path,
+        oauth=ctx.oauth,
+        roster_fetchers={},
+        roster_teams={},
+        local_db=MagicMock(),
+    )
+
+    assert result == "empty"
+    assert gap.hard_missing is True
     mock_write_rows.assert_called_once()
 
 

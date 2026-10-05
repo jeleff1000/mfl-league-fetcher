@@ -464,12 +464,39 @@ def test_apply_quick_import_prefers_most_recent_mapped_year(monkeypatch):
 
     updated = initial_import_v3._apply_quick_import(ctx)
 
-    assert updated.start_year == 2021
+    assert updated.start_year == 2024
     assert updated.end_year == 2024
-    assert updated.quick_import_years == [2021, 2024]
+    assert updated.quick_import_years == [2024]
     assert updated.import_mode == "quick"
     assert updated.league_id == "449.l.latest"
     assert updated.league_ids["2024"] == "449.l.latest"
+
+
+def test_import_scope_years_preserves_sparse_quick_years():
+    resolver = getattr(initial_import_v3, "_import_scope_years", None)
+
+    assert resolver is not None
+    ctx = SimpleNamespace(
+        import_mode="quick",
+        quick_import_years=[2006, 2013],
+        start_year=2006,
+        end_year=2013,
+    )
+    assert resolver(ctx) == [2006, 2013]
+
+
+def test_import_scope_years_rejects_more_than_two_quick_years():
+    resolver = getattr(initial_import_v3, "_import_scope_years", None)
+
+    assert resolver is not None
+    ctx = SimpleNamespace(
+        import_mode="quick",
+        quick_import_years=[2005, 2006, 2013],
+        start_year=2005,
+        end_year=2013,
+    )
+    with pytest.raises(ValueError, match="one or two explicit years"):
+        resolver(ctx)
 
 
 def test_apply_quick_import_explicit_year_keeps_existing_mapping(monkeypatch):
@@ -503,6 +530,17 @@ def test_yahoo_quick_worker_passes_selected_season_to_importer():
     ).read_text(encoding="utf-8")
 
     assert '--year "${{ steps.create_quick_context.outputs.season }}"' in workflow
+
+
+def test_yahoo_quick_worker_stores_credentials_once():
+    workflow = (
+        Path(__file__).resolve().parents[3]
+        / ".github"
+        / "workflows"
+        / "yahoo_quick_import_worker.yml"
+    ).read_text(encoding="utf-8")
+
+    assert workflow.count("- name: Store credentials") == 1
 
 
 def test_apply_quick_import_infers_yahoo_year_from_league_key(monkeypatch):

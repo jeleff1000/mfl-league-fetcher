@@ -678,6 +678,95 @@ def _setup_trade_retention_db(tmp_path, db_name: str, draft_type: str):
     return _TxnRunner(db_name=db_name, data_dir=str(tmp_path))
 
 
+@pytest.mark.parametrize(
+    ("provider_id_column", "provider_id"),
+    [
+        ("yahoo_player_id", "yahoo-123"),
+        ("espn_player_id", "espn-123"),
+        ("sleeper_player_id", "sleeper-123"),
+    ],
+)
+def test_trade_enrichment_repairs_unique_reciprocal_counterparty_for_every_platform(
+    tmp_path, provider_id_column, provider_id,
+):
+    """A renamed franchise must not prevent a uniquely mirrored asset from grading."""
+    runner = _setup_trade_retention_db(tmp_path, f"txn_reciprocal_{provider_id_column}", "redraft")
+    runner.conn.execute(
+        f"ALTER TABLE public.transactions ADD COLUMN {provider_id_column} VARCHAR"
+    )
+    runner.conn.execute(
+        f"""
+        INSERT INTO public.transactions
+            (transaction_id, year, cumulative_week, transaction_type, trade_direction,
+             manager, franchise_id, source_franchise_id, player, NFL_player_id,
+             manager_lamar_ros_managed, {provider_id_column})
+        VALUES
+            ('tx-refresh', 2026, 202605, 'trade', 'received',
+             'Alpha', 'fid_alpha', 'stale_beta', 'Shared Player', 'NFL-123', 11, ?),
+            ('tx-refresh', 2026, 202605, 'trade', 'sent',
+             'Beta', 'fid_beta', 'stale_alpha', 'Shared Player', 'NFL-123', 0, ?)
+        """,
+        [provider_id, provider_id],
+    )
+
+    try:
+        runner._compute_trade_net_lamar()
+        rows = runner.conn.execute(
+            """
+            SELECT franchise_id, source_franchise_id, trade_direction,
+                   trade_asset_lamar, trade_net_lamar
+            FROM public.transactions
+            ORDER BY trade_direction
+            """
+        ).fetchall()
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
+
+    assert rows == [
+        ("fid_alpha", "fid_beta", "received", 11.0, 11.0),
+        ("fid_beta", "fid_alpha", "sent", 11.0, -11.0),
+    ]
+
+
+def test_trade_enrichment_does_not_guess_ambiguous_reciprocal_counterparty(tmp_path):
+    """The repair must fail closed when one asset has multiple possible senders."""
+    runner = _setup_trade_retention_db(tmp_path, "txn_ambiguous_reciprocal", "redraft")
+    runner.conn.execute(
+        """
+        INSERT INTO public.transactions VALUES
+            ('tx-three-way', 2026, 202605, 'trade', 'received', 'Alpha',
+             'fid_alpha', 'stale_source', 'Shared Player', 'NFL-123', 11,
+             NULL, NULL, NULL, NULL),
+            ('tx-three-way', 2026, 202605, 'trade', 'sent', 'Beta',
+             'fid_beta', 'stale_alpha', 'Shared Player', 'NFL-123', 0,
+             NULL, NULL, NULL, NULL),
+            ('tx-three-way', 2026, 202605, 'trade', 'sent', 'Gamma',
+             'fid_gamma', 'stale_alpha', 'Shared Player', 'NFL-123', 0,
+             NULL, NULL, NULL, NULL)
+        """
+    )
+
+    try:
+        runner._compute_trade_net_lamar()
+        rows = runner.conn.execute(
+            """
+            SELECT franchise_id, source_franchise_id, trade_asset_lamar
+            FROM public.transactions
+            ORDER BY franchise_id
+            """
+        ).fetchall()
+    finally:
+        if runner._conn is not None:
+            runner._conn.close()
+
+    assert rows == [
+        ("fid_alpha", "stale_source", 11.0),
+        ("fid_beta", "fid_alpha", None),
+        ("fid_gamma", "fid_alpha", None),
+    ]
+
+
 def test_dynasty_trade_value_extends_until_player_leaves_roster(tmp_path):
     runner = _setup_trade_retention_db(tmp_path, "txn_dynasty_trade_retention", "dynasty")
     runner.conn.execute(

@@ -103,10 +103,10 @@ def build_trade_counterparty_reconciliation_sql(
 ) -> str:
     """Repair stale counterparty ids from the reciprocal row for the same asset.
 
-    Legacy Yahoo trades can retain an old split franchise id on one side even
-    though the opposite row still points back to the correct franchise.  The
-    asset mirror is stronger evidence than display names and remains safe for
-    renamed managers.  Ambiguous candidates are deliberately ignored.
+    A refreshed trade can retain an old split franchise id on both sides after
+    a franchise rename.  The reciprocal row's current franchise id plus the
+    exact asset mirror is stronger evidence than either stale source id or a
+    display name.  Ambiguous candidates are deliberately ignored.
     """
     asset_key_t = _trade_asset_key_expr(trans_cols, "t")
     asset_key_p = _trade_asset_key_expr(trans_cols, "p")
@@ -130,7 +130,7 @@ def build_trade_counterparty_reconciliation_sql(
              AND p.trade_direction = CASE t.trade_direction
                  WHEN 'received' THEN 'sent' ELSE 'received' END
              AND {asset_key_p} = {asset_key_t}
-             AND p.source_franchise_id = t.franchise_id
+             AND p.franchise_id != t.franchise_id
             WHERE {scope_sql('t')}
               AND {scope_sql('p')}
               AND t.transaction_type IN ('trade', 'trade_pick')

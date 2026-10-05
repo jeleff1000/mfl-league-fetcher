@@ -234,5 +234,6 @@ def test_homepage_still_rejects_broken_yahoo_trade_mirrors(yahoo_trade_pipeline,
             "missing_value": "trade_asset_lamar=NULL",
         }[broken]
         runner.conn.execute(f"UPDATE public.transactions SET {assignment} WHERE {target}")
-    with pytest.raises(RuntimeError, match="trade assets lack complete mirrored valuations"):
+    with pytest.raises(RuntimeError, match="trade assets lack complete mirrored valuations") as exc_info:
         _compute_best_trade(runner.conn, "yahoo_trade_fixture", platform="yahoo")
+    assert "reasons=" in str(exc_info.value)

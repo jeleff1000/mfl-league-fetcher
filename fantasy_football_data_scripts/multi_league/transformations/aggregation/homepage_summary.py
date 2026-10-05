@@ -1470,33 +1470,91 @@ def _compute_best_trade(
 
             asset_key = _trade_asset_key_expr(txn_cols, "t")
             partner_asset_key = _trade_asset_key_expr(txn_cols, "p")
+            opposite_asset_exists = f"""
+                EXISTS (
+                    SELECT 1 FROM {central_table('transactions')} p
+                    WHERE p.db_name = t.db_name AND p.year = t.year
+                      AND p.transaction_id = t.transaction_id
+                      AND p.transaction_type = t.transaction_type
+                      AND p.trade_direction = CASE t.trade_direction
+                          WHEN 'received' THEN 'sent' ELSE 'received' END
+                      AND {partner_asset_key} = {asset_key}
+                )
+            """
+            identity_pair_exists = f"""
+                EXISTS (
+                    SELECT 1 FROM {central_table('transactions')} p
+                    WHERE p.db_name = t.db_name AND p.year = t.year
+                      AND p.transaction_id = t.transaction_id
+                      AND p.transaction_type = t.transaction_type
+                      AND p.franchise_id = t.source_franchise_id
+                      AND p.source_franchise_id = t.franchise_id
+                      AND p.trade_direction = CASE t.trade_direction
+                          WHEN 'received' THEN 'sent' ELSE 'received' END
+                      AND {partner_asset_key} = {asset_key}
+                )
+            """
+            reciprocal_exists = f"""
+                EXISTS (
+                    SELECT 1 FROM {central_table('transactions')} p
+                    WHERE p.db_name = t.db_name AND p.year = t.year
+                      AND p.transaction_id = t.transaction_id
+                      AND p.transaction_type = t.transaction_type
+                      AND p.franchise_id = t.source_franchise_id
+                      AND p.source_franchise_id = t.franchise_id
+                      AND p.trade_direction = CASE t.trade_direction
+                          WHEN 'received' THEN 'sent' ELSE 'received' END
+                      AND {partner_asset_key} = {asset_key}
+                      AND p.trade_asset_lamar = t.trade_asset_lamar
+                )
+            """
+            invalid_asset_predicate = f"""
+                (
+                    t.trade_asset_lamar IS NULL OR NOT isfinite(t.trade_asset_lamar)
+                    OR t.trade_direction IS NULL OR t.trade_direction NOT IN ('received', 'sent')
+                    OR NOT {reciprocal_exists}
+                )
+            """
+
             def count_invalid_trade_assets(filter_sql: str) -> int:
                 return int(conn.execute(f"""
                     SELECT COUNT(*) FROM {central_table('transactions')} t
                     WHERE {league_db_filter(db_name, 't')} {filter_sql}
                       AND t.transaction_type IN ('trade', 'trade_pick')
-                      AND (
-                        t.trade_asset_lamar IS NULL OR NOT isfinite(t.trade_asset_lamar)
-                        OR t.trade_direction IS NULL OR t.trade_direction NOT IN ('received', 'sent')
-                        OR NOT EXISTS (
-                            SELECT 1 FROM {central_table('transactions')} p
-                            WHERE p.db_name = t.db_name AND p.year = t.year
-                              AND p.transaction_id = t.transaction_id
-                              AND p.transaction_type = t.transaction_type
-                              AND p.franchise_id = t.source_franchise_id
-                              AND p.source_franchise_id = t.franchise_id
-                              AND p.trade_direction = CASE t.trade_direction
-                                  WHEN 'received' THEN 'sent' ELSE 'received' END
-                              AND {partner_asset_key} = {asset_key}
-                              AND p.trade_asset_lamar = t.trade_asset_lamar
-                        )
-                      )
+                      AND {invalid_asset_predicate}
                 """).fetchone()[0])
+
+            def invalid_trade_reason_counts(filter_sql: str) -> dict[str, int]:
+                rows = conn.execute(f"""
+                    SELECT reason, COUNT(*)
+                    FROM (
+                        SELECT CASE
+                            WHEN t.trade_asset_lamar IS NULL OR NOT isfinite(t.trade_asset_lamar)
+                                THEN 'missing_or_nonfinite_value'
+                            WHEN t.trade_direction IS NULL OR t.trade_direction NOT IN ('received', 'sent')
+                                THEN 'invalid_direction'
+                            WHEN NOT {opposite_asset_exists}
+                                THEN 'missing_asset_pair'
+                            WHEN NOT {identity_pair_exists}
+                                THEN 'counterparty_mismatch'
+                            ELSE 'mirrored_value_mismatch'
+                        END AS reason
+                        FROM {central_table('transactions')} t
+                        WHERE {league_db_filter(db_name, 't')} {filter_sql}
+                          AND t.transaction_type IN ('trade', 'trade_pick')
+                          AND {invalid_asset_predicate}
+                    ) invalid_assets
+                    GROUP BY reason
+                    ORDER BY reason
+                """).fetchall()
+                return {str(reason): int(count) for reason, count in rows}
 
             invalid = count_invalid_trade_assets(validation_year_filter)
             if invalid:
+                reason_counts = invalid_trade_reason_counts(validation_year_filter)
                 raise IncompleteTradeMirrorError(
-                    f"{invalid} trade assets lack complete mirrored valuations"
+                    f"{invalid} trade assets lack complete mirrored valuations; "
+                    f"reasons={json.dumps(reason_counts, sort_keys=True)}"
                 )
             if validation_years is not None:
                 selection_mirror_filter = f"""

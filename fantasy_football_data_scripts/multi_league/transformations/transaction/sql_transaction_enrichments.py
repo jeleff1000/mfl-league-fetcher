@@ -64,30 +64,54 @@ def _trade_received_predicate(alias: str) -> str:
 
 def _trade_asset_key_expr(trans_cols: set[str], alias: str) -> str:
     """Build a stable asset key that matches mirrored sent/received trade rows."""
-    key_parts: list[str] = []
-    for col in [
-        "NFL_player_id",
-        "yahoo_player_id",
-        "sleeper_player_id",
-        "espn_player_id",
-        "player",
-        "traded_pick_season",
-        "traded_pick_round",
-        "traded_pick_original_owner",
+    def has_column(column: str) -> bool:
+        return column in trans_cols or column.lower() in trans_cols
+
+    # Native provider ids are the immutable identity shared by both trade
+    # perspectives. NFL ids and display names are enrichments: either can be
+    # stale or unresolved on one leg during a refresh and must not split an
+    # otherwise exact provider asset pair.
+    identity_candidates: list[str] = []
+    for column, label in [
+        ("yahoo_player_id", "yahoo"),
+        ("sleeper_player_id", "sleeper"),
+        ("espn_player_id", "espn"),
+        ("NFL_player_id", "nfl"),
+        ("player", "name"),
     ]:
-        if col in trans_cols or col.lower() in trans_cols:
-            key_parts.append(f"COALESCE(CAST({alias}.{col} AS VARCHAR), '')")
-    if not key_parts:
-        return "''"
-    player_key = f"CONCAT_WS('|', {', '.join(key_parts)})"
+        if has_column(column):
+            value = f"NULLIF(TRIM(CAST({alias}.{column} AS VARCHAR)), '')"
+            identity_candidates.append(
+                f"CASE WHEN {value} IS NOT NULL THEN CONCAT('{label}|', {value}) END"
+            )
+    player_key = (
+        f"COALESCE({', '.join(identity_candidates)}, '')"
+        if identity_candidates
+        else "''"
+    )
 
     # Sleeper can retain a stale conveyed-player mapping on one perspective of
     # a draft-pick trade.  The pick ID is the asset identity; the player fields
     # are enrichment and must not prevent the sent/received legs from pairing.
-    if "transaction_type" in trans_cols and "sleeper_player_id" in trans_cols:
+    if has_column("transaction_type") and has_column("sleeper_player_id"):
+        pick_values = [
+            f"NULLIF(TRIM(CAST({alias}.{column} AS VARCHAR)), '')"
+            for column in [
+                "traded_pick_season",
+                "traded_pick_round",
+                "traded_pick_original_owner",
+            ]
+            if has_column(column)
+        ]
+        pick_fields = (
+            f"CASE WHEN COALESCE({', '.join(pick_values)}) IS NOT NULL "
+            f"THEN CONCAT_WS('|', {', '.join(pick_values)}) END"
+            if pick_values
+            else "NULL"
+        )
         pick_key = (
-            f"COALESCE(NULLIF(CAST({alias}.sleeper_player_id AS VARCHAR), ''), "
-            f"{player_key})"
+            f"COALESCE(NULLIF(TRIM(CAST({alias}.sleeper_player_id AS VARCHAR)), ''), "
+            f"{pick_fields}, {player_key})"
         )
         return (
             f"CASE WHEN {alias}.transaction_type = 'trade_pick' "

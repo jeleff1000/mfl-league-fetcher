@@ -704,7 +704,7 @@ def test_trade_enrichment_repairs_unique_reciprocal_counterparty_for_every_platf
             ('tx-refresh', 2026, 202605, 'trade', 'received',
              'Alpha', 'fid_alpha', 'stale_beta', 'Shared Player', 'NFL-123', 11, ?),
             ('tx-refresh', 2026, 202605, 'trade', 'sent',
-             'Beta', 'fid_beta', 'stale_alpha', 'Shared Player', 'NFL-123', 0, ?)
+             'Beta', 'fid_beta', 'stale_alpha', 'Stale Player Name', 'STALE-NFL', 0, ?)
         """,
         [provider_id, provider_id],
     )

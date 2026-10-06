@@ -601,7 +601,7 @@ def fetch_schedule_for_year(
         return derived_df
 
     combined = pd.concat([derived_df, fetched_df], ignore_index=True)
-    combined = combined.drop_duplicates(subset=["year", "week", "manager"], keep="first").reset_index(drop=True)
+    combined = combined.drop_duplicates(subset=["manager_week"], keep="first").reset_index(drop=True)
     return coerce_dtypes(combined)
 
 

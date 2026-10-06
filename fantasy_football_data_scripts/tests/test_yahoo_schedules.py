@@ -171,6 +171,65 @@ class TestFetchScheduleForYear:
         assert sorted(df["week"].unique().tolist()) == [1, 2, 3]
         assert mock_build_and_save.call_args.kwargs["weeks_to_fetch"] == [2, 3]
 
+    @patch("multi_league.data_fetchers.yahoo.yahoo_schedules.build_and_save_for_year")
+    def test_combined_schedule_keeps_same_manager_on_distinct_team_keys(self, mock_build_and_save):
+        local_db = MagicMock()
+
+        def read_table(table_name, year=None):
+            if table_name == "matchup":
+                return pd.DataFrame(
+                    {
+                        "year": [2026, 2026],
+                        "week": [1, 1],
+                        "manager": ["Shared Owner", "Beta Owner"],
+                        "manager_guid": ["shared-owner", "owner-b"],
+                        "team_key": ["470.l.1.t.1", "470.l.1.t.2"],
+                        "team_name": ["Alpha", "Beta"],
+                        "opponent": ["Beta Owner", "Shared Owner"],
+                        "team_points": [101.0, 99.0],
+                        "opponent_points": [99.0, 101.0],
+                        "win": [1, 0],
+                        "loss": [0, 1],
+                    }
+                )
+            if table_name == "league_settings":
+                return pd.DataFrame({"year": [2026], "start_week": [1], "end_week": [2]})
+            return pd.DataFrame()
+
+        local_db.read_table.side_effect = read_table
+        future = pd.DataFrame(
+            {
+                "is_playoffs": [0, 0, 0, 0],
+                "is_consolation": [0, 0, 0, 0],
+                "manager": ["Shared Owner", "Beta Owner", "Shared Owner", "Delta Owner"],
+                "manager_guid": ["shared-owner", "owner-b", "shared-owner", "owner-d"],
+                "team_key": ["470.l.1.t.1", "470.l.1.t.2", "470.l.1.t.3", "470.l.1.t.4"],
+                "opponent_team_key": ["470.l.1.t.2", "470.l.1.t.1", "470.l.1.t.4", "470.l.1.t.3"],
+                "opponent_guid": ["owner-b", "shared-owner", "owner-d", "shared-owner"],
+                "team_name": ["Alpha", "Beta", "Omega", "Delta"],
+                "cumulative_week": [202602] * 4,
+                "manager_week": [f"470.l.1.t.{team}_2026_2" for team in range(1, 5)],
+                "manager_year": [f"470.l.1.t.{team}_2026" for team in range(1, 5)],
+                "opponent": ["Beta Owner", "Shared Owner", "Delta Owner", "Shared Owner"],
+                "opponent_week": [2] * 4,
+                "opponent_year": [2026] * 4,
+                "week": [2] * 4,
+                "year": [2026] * 4,
+                "team_points": [0.0] * 4,
+                "opponent_points": [0.0] * 4,
+                "win": [0] * 4,
+                "loss": [0] * 4,
+            }
+        )
+        mock_build_and_save.return_value = (None, None, len(future), future)
+        ctx = SimpleNamespace(manager_name_overrides={}, get_oauth_session=MagicMock())
+
+        result = fetch_schedule_for_year(ctx=ctx, year=2026, local_db=local_db)
+        future_rows = result.loc[result["week"].eq(2)]
+
+        assert len(future_rows) == 4
+        assert future_rows["manager_week"].is_unique
+
     @patch("multi_league.data_fetchers.yahoo.yahoo_schedules.parse_week_schedule", return_value=[])
     @patch("multi_league.data_fetchers.yahoo.yahoo_schedules.league_weeks", return_value=[1])
     @patch("multi_league.data_fetchers.yahoo.yahoo_schedules.get_league_for_year")

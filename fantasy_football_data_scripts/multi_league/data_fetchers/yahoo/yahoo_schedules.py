@@ -232,14 +232,21 @@ def parse_week_schedule(league_key: str, season_year: int, week: int, manager_ov
         # Calculate cumulative_week (YYYYWW format: e.g., 202401 for 2024 week 1)
         cumulative_week = season_year * 100 + week_num
 
-        # Create manager composite keys (manager without spaces + identifier)
-        manager1_no_spaces = t1["manager"].replace(" ", "")
-        manager2_no_spaces = t2["manager"].replace(" ", "")
+        # Yahoo allows one account to own multiple teams and unrelated owners
+        # can share a nickname.  The season-scoped team key is the unique
+        # schedule identity, matching the local-matchup derivation path.
+        def schedule_identity(team: dict) -> tuple[str, str]:
+            team_key = str(team.get("team_key") or "").strip()
+            if team_key:
+                return (
+                    f"{team_key}_{season_year}_{week_num}",
+                    f"{team_key}_{season_year}",
+                )
+            manager_key = str(team.get("manager") or "").replace(" ", "")
+            return f"{manager_key}{cumulative_week}", f"{manager_key}{season_year}"
 
-        manager1_week = f"{manager1_no_spaces}{cumulative_week}"
-        manager1_year = f"{manager1_no_spaces}{season_year}"
-        manager2_week = f"{manager2_no_spaces}{cumulative_week}"
-        manager2_year = f"{manager2_no_spaces}{season_year}"
+        manager1_week, manager1_year = schedule_identity(t1)
+        manager2_week, manager2_year = schedule_identity(t2)
 
         # ties => win=0, loss=0
         rows.append(

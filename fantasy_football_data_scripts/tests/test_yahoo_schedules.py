@@ -39,6 +39,40 @@ def test_yahoo_schedule_rows_carry_both_provider_team_identities():
     assert rows[1]["opponent_team_key"] == "470.l.1.t.1"
 
 
+def test_yahoo_api_schedule_keeps_multiple_teams_owned_by_one_manager_distinct():
+    response = MagicMock()
+    response.text = """
+    <fantasy_content><league><scoreboard><matchups>
+      <matchup><week>4</week><is_playoffs>0</is_playoffs><is_consolation>0</is_consolation><teams>
+        <team><team_key>470.l.1.t.1</team_key><name>Alpha</name><team_points><total>0</total></team_points>
+          <managers><manager><guid>shared-owner</guid><nickname>Shared Owner</nickname></manager></managers></team>
+        <team><team_key>470.l.1.t.2</team_key><name>Beta</name><team_points><total>0</total></team_points>
+          <managers><manager><guid>owner-b</guid><nickname>Beta Owner</nickname></manager></managers></team>
+      </teams></matchup>
+      <matchup><week>4</week><is_playoffs>0</is_playoffs><is_consolation>0</is_consolation><teams>
+        <team><team_key>470.l.1.t.3</team_key><name>Omega</name><team_points><total>0</total></team_points>
+          <managers><manager><guid>shared-owner</guid><nickname>Shared Owner</nickname></manager></managers></team>
+        <team><team_key>470.l.1.t.4</team_key><name>Delta</name><team_points><total>0</total></team_points>
+          <managers><manager><guid>owner-d</guid><nickname>Delta Owner</nickname></manager></managers></team>
+      </teams></matchup>
+    </matchups></scoreboard></league></fantasy_content>
+    """
+    response.raise_for_status.return_value = None
+    fake_oauth = SimpleNamespace(session=SimpleNamespace(get=lambda _url: response))
+
+    with patch("multi_league.data_fetchers.yahoo.yahoo_schedules.oauth", fake_oauth):
+        rows = parse_week_schedule("470.l.1", 2026, 4)
+
+    assert len(rows) == 4
+    assert len({row["manager_week"] for row in rows}) == 4
+    assert [row["manager_week"] for row in rows] == [
+        "470.l.1.t.1_2026_4",
+        "470.l.1.t.2_2026_4",
+        "470.l.1.t.3_2026_4",
+        "470.l.1.t.4_2026_4",
+    ]
+
+
 class TestFetchScheduleForYear:
     @patch("multi_league.data_fetchers.yahoo.yahoo_schedules.parse_week_schedule")
     def test_prefers_local_matchup_rows(self, mock_parse_week_schedule):

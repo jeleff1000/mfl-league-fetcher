@@ -238,6 +238,32 @@ def test_full_espn_schedule_expands_every_regular_week_with_stable_identities():
     ]
 
 
+def test_full_espn_schedule_keeps_two_teams_with_one_owner_distinct():
+    """ESPN's provider team identity remains the staging key for shared owners."""
+    from refresh_espn_active_season import _full_espn_schedule_frame
+
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda team_id, _team_name, _year: "Shared Owner" if team_id in {1, 2} else str(team_id),
+        get_manager_guid=lambda team_id, _year: "owner-shared" if team_id in {1, 2} else f"guid-{team_id}",
+        get_franchise_id=lambda team_id, _year: {1: "owner-shared_0", 2: "owner-shared_1"}[team_id],
+        get_team_name=lambda team_id, _year: {1: "Alpha", 2: "Bravo"}[team_id],
+    )
+    schedule = _full_espn_schedule_frame(
+        ctx=ctx,
+        raw_schedule=[{
+            "matchupPeriodId": 1, "playoffTierType": "NONE", "winner": "HOME",
+            "home": {"teamId": 1}, "away": {"teamId": 2},
+        }],
+        year=2026,
+        regular_season_weeks=1,
+        expected_team_ids=("1", "2"),
+    )
+
+    assert schedule["manager"].tolist() == ["Shared Owner", "Shared Owner"]
+    assert schedule["manager_week"].tolist() == ["owner-shared_0_2026_1", "owner-shared_1_2026_1"]
+
+
 def test_full_espn_schedule_rejects_a_truncated_regular_season():
     from multi_league.core.league_update_validation import IncompleteSourceError
     from refresh_espn_active_season import _full_espn_schedule_frame

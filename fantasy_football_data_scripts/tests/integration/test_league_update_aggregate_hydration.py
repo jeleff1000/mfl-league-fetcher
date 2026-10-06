@@ -242,8 +242,9 @@ def test_matchup_refresh_collapses_legacy_duplicate_team_week_by_incoming_identi
         local.close()
 
 
-def test_schedule_refresh_replaces_only_the_incoming_week_when_identity_key_changes(tmp_path):
-    """A corrected Yahoo team key must not leave the old name-keyed row behind."""
+@pytest.mark.parametrize("platform", ["yahoo", "sleeper", "espn"])
+def test_schedule_refresh_replaces_only_the_incoming_week_when_identity_key_changes(tmp_path, platform):
+    """A corrected provider team key must not leave an old name-keyed row behind."""
     local = LocalLeagueDB(tmp_path, "domination_league")
     try:
         local.ensure_table("schedule")
@@ -266,7 +267,7 @@ def test_schedule_refresh_replaces_only_the_incoming_week_when_identity_key_chan
         }])
 
         merge_provider_refresh_table(
-            local, "schedule", incoming, platform="yahoo", league_id="470.l.1",
+            local, "schedule", incoming, platform=platform, league_id="470.l.1",
         )
 
         stored = local.read_table("schedule")

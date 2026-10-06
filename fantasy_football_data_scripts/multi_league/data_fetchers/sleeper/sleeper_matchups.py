@@ -1264,9 +1264,13 @@ class SleeperMatchupFetcher:
         # Calculate derived metrics
         df = self._calculate_derived_metrics(df)
 
-        # Add composite keys
-        df["manager_week"] = df["manager"] + "_" + df["year"].astype(str) + "_" + df["week"].astype(str)
-        df["manager_year"] = df["manager"] + "_" + df["year"].astype(str)
+        # Keep raw provider rows distinct through staging.  Canonical manager
+        # identities, aliases, and multi-team ownership are resolved by the
+        # shared SQL identity pipeline after this fetch; display names are not
+        # safe source keys because one owner may operate multiple rosters.
+        provider_team_key = df["team_key"].astype(str)
+        df["manager_week"] = provider_team_key + "_" + df["year"].astype(str) + "_" + df["week"].astype(str)
+        df["manager_year"] = provider_team_key + "_" + df["year"].astype(str)
 
         # Summary log (reduced from per-week logging)
         min_week = df["week"].min()

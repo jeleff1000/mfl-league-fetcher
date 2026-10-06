@@ -1235,10 +1235,12 @@ def merge_provider_refresh_table(
             roster_hints, on=list(contract.key_columns), how="left", validate="one_to_one",
         )
         protected = resolve_roster_defense_keys(protected, platform).drop(columns=["nfl_team_api"])
-    if table_name == "schedule" and str(platform).strip().lower() == "yahoo":
-        # Yahoo's stable team key can replace a legacy display-name key during
-        # refresh. Replace only the complete incoming week partitions in this
-        # disposable local DB so the obsolete key cannot survive beside it.
+    if table_name == "schedule":
+        # Provider schedule responses are complete for each requested
+        # db/year/week partition.  Replace only those incoming partitions in
+        # this disposable local DB so a corrected provider team key cannot
+        # coexist with an older display-name-derived key.  The shared identity
+        # pipeline subsequently applies canonical aliases and merges.
         scope = normalized[["db_name", "year", "week"]].drop_duplicates()
         conn = local_db.connect()
         conn.register("_schedule_refresh_scope", scope)

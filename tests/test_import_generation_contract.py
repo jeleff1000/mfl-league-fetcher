@@ -32,8 +32,16 @@ def test_import_capture_precedes_source_reads_and_delta_publish_requires_it(work
     source_step = "Resolve lock key" if sleeper else (
         "Parse import plan" if workflow_file.startswith("multi_platform_") else "Parse league data"
     )
-    assert names.index("Capture import publication generation") < names.index(source_step)
-    assert capture["env"]["IMPORT_LOCK_KEY"]
+    if sleeper:
+        # Sleeper name resolution can safely suffix a colliding display-name slug.
+        # The generation fence must protect that resolved target, not the raw
+        # concurrency key supplied at dispatch time.
+        assert names.index(source_step) < names.index("Capture import publication generation")
+        assert capture["env"]["RESOLVED_TARGET_DB"] == "${{ steps.resolve.outputs.database_name }}"
+        assert 'capture_import_generation.py --db-name "$RESOLVED_TARGET_DB"' in capture["run"]
+    else:
+        assert names.index("Capture import publication generation") < names.index(source_step)
+        assert capture["env"]["IMPORT_LOCK_KEY"]
 
     publish_job = (
         jobs["import-sleeper-history" if "full" in workflow_file else "import-sleeper-league"]

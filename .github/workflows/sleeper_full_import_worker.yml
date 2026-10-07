@@ -79,14 +79,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Capture import publication generation
-        id: snapshot
-        env:
-          IMPORT_LOCK_KEY: ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}
-          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
-          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
-        run: python scripts/capture_import_generation.py --db-name "$IMPORT_LOCK_KEY"
-
       - name: Resolve lock key
         id: resolve
         run: |
@@ -97,6 +89,14 @@ jobs:
           DATABASE_BACKEND: fly
           DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+
+      - name: Capture import publication generation
+        id: snapshot
+        env:
+          RESOLVED_TARGET_DB: ${{ steps.resolve.outputs.database_name }}
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+        run: python scripts/capture_import_generation.py --db-name "$RESOLVED_TARGET_DB"
 
       - name: Verify resolved import lock
         env:

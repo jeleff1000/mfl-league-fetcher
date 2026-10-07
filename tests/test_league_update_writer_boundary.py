@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("lock,target,expected", [
     ("kmffl", "kmffl", 0),
+    ("league_of_throws", "league_of_throws_7a57", 0),
     ("other", "kmffl", 1),
+    ("league_of_throws", "unrelated_7a57", 1),
     ("", "kmffl", 1),
     ("kmffl", "", 1),
 ])

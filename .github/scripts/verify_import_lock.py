@@ -1,4 +1,4 @@
-"""Reject import dispatches queued under a key other than their resolved Fly target."""
+"""Validate an import concurrency key and its collision-safe Fly target."""
 
 import argparse
 import re
@@ -16,8 +16,12 @@ def main() -> int:
     if not DB_NAME_RE.fullmatch(args.lock) or not DB_NAME_RE.fullmatch(args.target):
         print("Import lock or target is not a valid database name.", file=sys.stderr)
         return 1
-    if args.lock != args.target:
-        print("Import lock does not match the resolved publication target.", file=sys.stderr)
+    # A dispatch is serialized by its caller's readable slug.  Resolution may
+    # append a deterministic collision suffix when that slug belongs to a
+    # different league.  The target must therefore be either the exact key or
+    # that key's collision-safe child; an unrelated target remains forbidden.
+    if args.target != args.lock and not args.target.startswith(f"{args.lock}_"):
+        print("Import lock is not an ancestor of the resolved publication target.", file=sys.stderr)
         return 1
     return 0
 

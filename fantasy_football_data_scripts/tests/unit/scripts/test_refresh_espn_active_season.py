@@ -783,7 +783,7 @@ def test_espn_draft_manifest_preserves_matching_settled_sentinel_pick():
     payload["draftDetail"]["picks"][4]["playerId"] = -1
     parsed = _parsed_draft(6)
     parsed[4].playerId = -1
-    parsed[4].playerName = "Unknown"
+    parsed[4].playerName = ""
 
     manifest, absent = _espn_draft_manifest(
         SimpleNamespace(get_raw_league=lambda *_args: payload),

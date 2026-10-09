@@ -574,7 +574,17 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
     unresolved_player_ids = [
         "<missing>" if player_id in (None, "") else str(player_id)
         for player_id, player_name in zip(parsed_player_ids, parsed_player_names)
-        if player_id in (None, "") or not player_name or player_name.lower() == "unknown"
+        # ESPN can preserve a completed draft slot as an exact -1/Unknown
+        # sentinel.  Its raw and parsed IDs still have to agree below; this
+        # admission only keeps an unchanged sentinel from blocking a refresh.
+        if (
+            player_id in (None, "")
+            or not player_name
+            or (
+                player_name.lower() == "unknown"
+                and str(player_id).strip() != "-1"
+            )
+        )
     ]
     if unresolved_player_ids:
         raise RefreshScopeError(
@@ -1392,3 +1402,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

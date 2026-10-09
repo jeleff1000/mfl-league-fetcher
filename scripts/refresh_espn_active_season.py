@@ -569,7 +569,15 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
         raise RefreshScopeError("ESPN draft order disagrees with league team count")
 
     parsed_player_ids = [getattr(pick, "playerId", None) for pick in parsed]
-    parsed_player_names = [str(getattr(pick, "playerName", None) or "").strip() for pick in parsed]
+    parsed_player_names = [
+        "Unknown"
+        if str(player_id).strip() == "-1" and player_name.lower() in {"", "unknown"}
+        else player_name
+        for player_id, player_name in (
+            (player_id, str(getattr(pick, "playerName", None) or "").strip())
+            for player_id, pick in zip(parsed_player_ids, parsed)
+        )
+    ]
     raw_player_ids = [pick.get("playerId") for pick in picks]
     unresolved_player_ids = [
         "<missing>" if player_id in (None, "") else str(player_id)
@@ -579,9 +587,8 @@ def _espn_draft_manifest(client: Any, league: Any, year: int) -> tuple[pd.DataFr
         # admission only keeps an unchanged sentinel from blocking a refresh.
         if (
             player_id in (None, "")
-            or not player_name
             or (
-                player_name.lower() == "unknown"
+                (not player_name or player_name.lower() == "unknown")
                 and str(player_id).strip() != "-1"
             )
         )

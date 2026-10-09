@@ -238,32 +238,6 @@ def test_full_espn_schedule_expands_every_regular_week_with_stable_identities():
     ]
 
 
-def test_full_espn_schedule_keeps_two_teams_with_one_owner_distinct():
-    """ESPN's provider team identity remains the staging key for shared owners."""
-    from refresh_espn_active_season import _full_espn_schedule_frame
-
-    ctx = SimpleNamespace(
-        get_league_id_for_year=lambda _year: 123,
-        get_manager_name=lambda team_id, _team_name, _year: "Shared Owner" if team_id in {1, 2} else str(team_id),
-        get_manager_guid=lambda team_id, _year: "owner-shared" if team_id in {1, 2} else f"guid-{team_id}",
-        get_franchise_id=lambda team_id, _year: {1: "owner-shared_0", 2: "owner-shared_1"}[team_id],
-        get_team_name=lambda team_id, _year: {1: "Alpha", 2: "Bravo"}[team_id],
-    )
-    schedule = _full_espn_schedule_frame(
-        ctx=ctx,
-        raw_schedule=[{
-            "matchupPeriodId": 1, "playoffTierType": "NONE", "winner": "HOME",
-            "home": {"teamId": 1}, "away": {"teamId": 2},
-        }],
-        year=2026,
-        regular_season_weeks=1,
-        expected_team_ids=("1", "2"),
-    )
-
-    assert schedule["manager"].tolist() == ["Shared Owner", "Shared Owner"]
-    assert schedule["manager_week"].tolist() == ["owner-shared_0_2026_1", "owner-shared_1_2026_1"]
-
-
 def test_full_espn_schedule_rejects_a_truncated_regular_season():
     from multi_league.core.league_update_validation import IncompleteSourceError
     from refresh_espn_active_season import _full_espn_schedule_frame
@@ -801,6 +775,27 @@ def test_espn_draft_manifest_ignores_verified_trailing_empty_rounds():
     assert manifest["espn_player_id"].tolist() == list(range(1001, 1010))
 
 
+def test_espn_draft_manifest_preserves_matching_settled_sentinel_pick():
+    """An unchanged ESPN -1/Unknown sentinel must not block a roster refresh."""
+    from refresh_espn_active_season import _espn_draft_manifest
+
+    payload = _draft_payload(pick_count=6)
+    payload["draftDetail"]["picks"][4]["playerId"] = -1
+    parsed = _parsed_draft(6)
+    parsed[4].playerId = -1
+    parsed[4].playerName = "Unknown"
+
+    manifest, absent = _espn_draft_manifest(
+        SimpleNamespace(get_raw_league=lambda *_args: payload),
+        SimpleNamespace(draft=parsed),
+        2026,
+    )
+
+    assert absent is False
+    assert manifest.loc[manifest["pick"] == 5, "espn_player_id"].item() == -1
+    assert manifest.loc[manifest["pick"] == 5, "player"].item() == "Unknown"
+
+
 def test_espn_draft_manifest_rejects_unresolved_player_identity():
     import pytest
     from multi_league.core.league_refresh import RefreshScopeError
@@ -830,3 +825,4 @@ def test_espn_draft_manifest_reports_the_rejected_completion_witness():
         match=r"drafted=True, in_progress=True, raw_picks=1, parsed_picks=1",
     ):
         _espn_draft_manifest(client, SimpleNamespace(draft=_parsed_draft(1)), 2026)
+

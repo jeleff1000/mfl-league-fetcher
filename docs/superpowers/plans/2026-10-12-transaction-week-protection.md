@@ -4,7 +4,7 @@
 
 **Goal:** Protect every future Yahoo, ESPN, and Sleeper import/update from fabricated transaction weeks.
 
-**Architecture:** Retain provider-native Sleeper/ESPN periods. Yahoo requires exact dated league windows. One local DuckDB validation helper protects existing full, quick, fleet, and legacy publication boundaries before any upload; no additional network calls, persistent tables, or pipeline.
+**Architecture:** Retain provider-native Sleeper/ESPN periods. Yahoo requires exact dated league windows. One local DuckDB validation helper protects existing full, quick, fleet, and legacy publication boundaries before any upload; no additional network calls, production tables, or pipeline. Retain the independent, already-fetched Yahoo calendar in worker scratch for live weeks that do not yet have final matchup rows.
 
 **Tech stack:** Python, pandas, DuckDB, existing public GitHub workers.
 
@@ -40,7 +40,7 @@ Interface: `TransactionWeekError(ValueError)` and `native_transaction_week(value
 
 Files: `core/transaction_periods.py`, `core/delta_publish.py`, `core/fleet_publish.py`, legacy branch of `core/local_db.py`; `tests/unit/core/test_transaction_periods.py`.
 
-Interface: `validate_transaction_weeks(conn, db_names: list[str]) -> None`, reads only staged local `public.transactions` and Yahoo dated `public.matchup`; raises `TransactionWeekError` with bounded offending IDs.
+Interface: `validate_transaction_weeks(conn, db_names: list[str]) -> None`, reads only staged local `public.transactions`, Yahoo dated `public.matchup`, and the independent worker-local Yahoo calendar; raises `TransactionWeekError` with bounded offending IDs.
 
 - [x] Add RED tests that call the real full/quick/fleet builders with bad transaction weeks and assert failure before bundle creation; validate legitimate native/estimated/preseason data, missing Yahoo windows, and mixed-league scoping.
 - [x] Implement a shared local check at the existing builders and legacy upload path. No upload occurs when it fails. Avoid duplicate quick/fleet validation.
@@ -73,3 +73,13 @@ Interface: `validate_transaction_weeks(conn, db_names: list[str]) -> None`, read
 - Repeated final local input pilot accepted the same real examples at Yahoo 1974.77 ms, Sleeper 15.32 ms, ESPN 16.08 ms. These are small local samples, not a full-import latency guarantee. No added verification API calls occur in the production helper.
 - Final Fly readiness: serving/healthy, zero active queries, zero publishes, zero league WAL bytes, unchanged league file hash `sha256:b0ac1d0767212f61` throughout this goal. No live write/restart/rebuild/capacity change occurred.
 - Closed: all listed tasks complete for this transaction-week bug. Limitation: the complete repository suite and new end-to-end production imports were not run; the explicit targeted tests, no-write production-input pilots, local builder tests, and exact-SHA boundary guard are the completion evidence.
+
+## Live-week regression closure (2026-10-12)
+
+- Confirmed four consecutive failures (`38315091337`, `38316861411`, `38317034848`, `38317211170`), all `the_high_meadow` on `a7b2b9c`, before bundle publication. The prior guard incorrectly required final matchup rows for valid week-5 transactions; final matchup rows correctly stopped at week 4. OAuth and Fly uploads were not the failing boundaries.
+- RED reproduced the same missing-calendar rejection in full, quick, and fleet builders. Fix retains the independent provider calendar already used by `fetch_transactions` in runner-local `__yahoo_transaction_windows`; stage copies only the requested league/year. The scratch relation is excluded from every canonical manifest and never uploaded to Fly. No new provider request, workflow, pipeline, server/schema change, or rebuild.
+- GREEN: 85 targeted transaction/fetch/delta/fleet tests plus one existing staging-isolation test. Wrong weeks, conflicting real dates, other-league and wrong-year calendars remain rejected. Fetch integration tests cover both supplied and loaded calendars. Ruff, compile checks, diff checks and public-boundary validator passed. Independent read-only review found no critical/important issues.
+- Full repository `python -m pytest -q --maxfail=1` remains blocked at collection by the unrelated sparse-checkout omission `multi_league.data_fetchers.fleaflicker` in `test_fleaflicker_canonical.py`; no full-suite pass is claimed.
+- Code `2740ac00c3af16ca947c5c07774a1f962d3b7458` pushed to public `main`; exact-SHA Public Worker Boundary Guard `38318563587` succeeded. A fresh existing-worker dispatch (not a rerun pinned to old code) recovered the league: [38318579361](https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/38318579361), `COMMITTED`, source week 5. Worker timing 48.378s, refresh workflow step 51s; Fly publication 5.816s; cache publication verified and lifecycle completed 3s later. Dispatch-to-completed lifecycle 67s including setup, not represented as worker processing time.
+- Receipt proves historical rows, homepage values, user configuration and active aliases preserved. Separate bounded before/after Fly queries confirm identical year counts and manager/franchise identity hashes for all 14 seasons (2013–2026). Week-5 player data and 36 transaction rows are present; matchup remains finalized only through week 4. All five homepage outputs were included in the same publication.
+- Fly remained serving/healthy; no machine restart, table rebuild, capacity change, or manual production data repair. This is production verification of the affected Yahoo refresh; no new full import or ESPN/Sleeper refresh is claimed.

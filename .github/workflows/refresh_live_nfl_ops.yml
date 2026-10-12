@@ -7,11 +7,8 @@ run-name: >-
 # any league table. Promotion is opt-in after the local eight-table artifact
 # passes its receipt and schema gates.
 on:
-  # Run at 03:17 Eastern during the NFL season. The scope gate exits before
-  # baseline reconstruction on days without newly finalized NFLverse games.
-  schedule:
-    - cron: "17 7 * 9,10 *"
-    - cron: "17 8 * 11,12,1,2 *"
+  # The isolated Fly clock dispatches at 03:00 America/New_York. GitHub's
+  # best-effort schedule is intentionally absent: it was delivering hours late.
   repository_dispatch:
     types:
       - live-nfl-ops-refresh

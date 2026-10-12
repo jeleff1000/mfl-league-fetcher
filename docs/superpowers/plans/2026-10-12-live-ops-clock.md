@@ -56,10 +56,10 @@
 **Interfaces:** The clock sends `repository_dispatch` `live-nfl-ops-refresh` with a date key and explicit `game_date`.
 
 - [x] Unit-test DST-aware next-run calculation, duplicate date suppression, restart catch-up, and dispatch acknowledgment handling.
-- [ ] Deploy one 256 MB clock with a scoped GitHub dispatch credential and durable date marker.
-- [ ] Verify a no-op timed dispatch from that machine, including clock and runner timestamps.
-- [ ] Select the production runner from measured start latency and actual job requirements; record any deviation from the initially proposed 512 MB runner.
-- [ ] Remove the original schedule only after the new trigger is operational; verify remote `main`, deployed source, and next scheduled time.
+- [x] Deploy one 256 MB clock with an encrypted GitHub dispatch credential and durable date marker.
+- [x] Verify a no-op timed dispatch from that machine, including clock and runner timestamps.
+- [x] Select the production runner from measured start latency and actual job requirements; record any deviation from the initially proposed 512 MB runner.
+- [x] Remove the original schedule only after the new trigger is operational; verify remote `main`, deployed source, and next scheduled time.
 
 ## Execution record
 
@@ -70,3 +70,7 @@
 - Ruling: retain the existing hosted processing runner after equivalent measured latency. Deploy only the 256 MB external clock; an additional permanent runner would require resources comparable to the current Ops job.
 - Review fixes: retain unresolved pending dates across 03:00, keep probe and production acknowledgment state separate, paginate lost-acknowledgment searches, and deduplicate repeated daily keys at the workflow boundary.
 - Validation: 25 clock, admission, duplicate, and workflow tests passed in 3.05 seconds.
+- Production clock: `league-history-ops-clock`, machine `8ed954ef456048`, 256 MB, separate private network, no public services, volume `vol_r7ymem2ykw73ydnr` holding only dispatch markers.
+- Today's initial marker `ops-2026-10-12` was seeded from successful scheduled run `38279642877`, avoiding a duplicate afternoon data refresh.
+- Deployed-clock no-write run `38299086467` passed: intended `2026-10-12T19:39:25.179810+00:00`, dispatch `19:39:25.180046Z`, runner execution `19:39:31.808368Z`, total 6.629 seconds. The machine-exec transport hit its default deadline while waiting; the saved acknowledgment and successful GitHub run resolved that ambiguous client result without redispatch.
+- Next real dispatch: `2026-10-13T03:00:00-04:00` (07:00 UTC). The actual first overnight data publication has not been observed yet.

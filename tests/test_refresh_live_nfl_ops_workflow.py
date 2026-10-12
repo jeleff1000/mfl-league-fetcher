@@ -10,16 +10,13 @@ GATE = Path(__file__).resolve().parents[1] / "scripts" / "live_nfl_ops_dispatch_
 LEGACY_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "update_nfl_super_table.yml"
 
 
-def test_live_nfl_ops_workflow_accepts_manual_dispatch_and_bounded_actions_schedule():
+def test_live_nfl_ops_workflow_accepts_manual_and_external_clock_dispatch():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     triggers = workflow[True]
 
     assert "workflow_dispatch" in triggers
     assert triggers["repository_dispatch"] == {"types": ["live-nfl-ops-refresh"]}
-    assert triggers["schedule"] == [
-        {"cron": "17 7 * 9,10 *"},
-        {"cron": "17 8 * 11,12,1,2 *"},
-    ]
+    assert "schedule" not in triggers
     assert "push" not in triggers
     assert "workflow_run" not in triggers
     assert "repository_dispatch" in workflow["run-name"]

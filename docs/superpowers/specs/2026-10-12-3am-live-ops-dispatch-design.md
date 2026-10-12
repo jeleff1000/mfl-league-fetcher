@@ -25,8 +25,10 @@ on the existing GitHub-hosted runners.
 
 ## Safety Contract
 
-- The Fly machine has no Fly DuckDB write credential and cannot access league
-  tables directly.
+- The clock process has no Fly DuckDB credential and cannot access league
+  tables directly. The runner receives the existing GitHub Actions workflow
+  secrets only when GitHub starts the approved Ops job; no database credential
+  is stored in the clock configuration.
 - It receives two least-privilege GitHub credentials: one to register the
   runner and one to dispatch this single workflow event. A GitHub App is
   preferred; a fine-grained repository token is acceptable only if it is

@@ -43,6 +43,30 @@ def test_valid_native_and_yahoo_periods(platform, week, timestamp):
         validate_transaction_weeks(conn, ["qa"])
 
 
+@pytest.mark.parametrize('lane', ['full', 'quick', 'fleet'])
+@pytest.mark.parametrize('platform', ['espn', 'sleeper'])
+def test_native_periods_publish_without_matchup_calendar(tmp_path, platform, lane):
+    """Preseason, live-week and postseason moves do not depend on final games."""
+    from multi_league.core.league_refresh import stage_refresh_partitions
+    with staged(platform, 0, timestamp=None) as conn:
+        conn.execute('DROP TABLE public.matchup')
+        conn.execute("INSERT INTO public.transactions VALUES "
+                     "('qa','live-week',0,?,2024,6,NULL,202406,NULL,NULL),"
+                     "('qa','postseason',0,?,2024,18,NULL,202418,NULL,NULL)", [platform, platform])
+        if lane == 'fleet':
+            with stage_refresh_partitions(conn, db_name='qa', active_year=2024,
+                                          tables=['transactions']) as stage:
+                bundle = build_fleet_partition_bundle(stage, active_year=2024,
+                    league_generations={'qa':0}, tables=['transactions'], output_dir=tmp_path)
+        else:
+            bundle = build_delta_bundle(conn, db_name='qa', import_mode=lane, platform=platform,
+                                        base_generation=0, output_dir=tmp_path)
+        assert bundle.path.is_file()
+        assert conn.execute('SELECT week,cumulative_week FROM public.transactions ORDER BY week').fetchall() == [
+            (0,202400), (6,202406), (18,202418)]
+        assert '__yahoo_transaction_windows' not in str(bundle.manifest)
+
+
 def test_validation_does_not_inspect_unrelated_league():
     from multi_league.core.transaction_periods import validate_transaction_weeks
     with staged("yahoo", 1, db_name="other") as conn:

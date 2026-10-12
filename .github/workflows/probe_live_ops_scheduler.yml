@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v5
-      - name: Prove Fly credential and isolated app access
+      - name: Prove Fly credential access
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: timeout 40s python scripts/probe_live_ops_scheduler.py
+        run: timeout 40s python scripts/manage_live_ops_scheduler.py --inspect-only

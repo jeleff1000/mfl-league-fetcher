@@ -94,8 +94,14 @@ class GitHub:
             "created": ">=" + due.astimezone(timezone.utc).isoformat(),
             "per_page": 100,
         })
-        runs = self.request("GET", f"actions/runs?{params}")["workflow_runs"]
-        return any(key in run.get("display_title", "").split() for run in runs)
+        page = 1
+        while True:
+            runs = self.request("GET", f"actions/runs?{params}&page={page}")["workflow_runs"]
+            if any(key in run.get("display_title", "").split() for run in runs):
+                return True
+            if len(runs) < 100:
+                return False
+            page += 1
 
 
 class Clock:
@@ -103,6 +109,9 @@ class Clock:
         self.state_path = state_path
         self.github = github
         self.state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        if not self.state and os.environ.get("CLOCK_BOOTSTRAP_KEY"):
+            self.state = {"acknowledged_key": os.environ["CLOCK_BOOTSTRAP_KEY"]}
+            self.save()
 
     def save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,26 +125,43 @@ class Clock:
     def dispatch(self, due: datetime, *, probe: bool = False) -> bool:
         payload = payload_for(due, probe=probe)
         key = payload["client_payload"]["dispatch_key"]
-        if self.state.get("acknowledged_key") == key:
+        state = self.state.get("probe", {}) if probe else self.state
+
+        def record(value: dict) -> None:
+            if probe:
+                self.state["probe"] = value
+            else:
+                self.state = {**value, **({"probe": self.state["probe"]} if "probe" in self.state else {})}
+            self.save()
+
+        if state.get("acknowledged_key") == key:
             return False
-        if self.state.get("pending_key") == key:
+        if state.get("pending_key") == key:
             if self.github.accepted(key, due):
-                self.state = {"acknowledged_key": key, "acknowledged_at": datetime.now(timezone.utc).isoformat()}
-                self.save()
+                record({"acknowledged_key": key, "acknowledged_at": datetime.now(timezone.utc).isoformat()})
                 print(json.dumps({"dispatch_key": key, "recovered_acknowledgment": True}), flush=True)
                 return False
             # GitHub run creation is asynchronous. Give it one full minute to
             # expose an accepted request before considering a same-key retry.
-            pending_since = instant(self.state["pending_since"])
+            pending_since = instant(state["pending_since"])
             if (datetime.now(timezone.utc) - pending_since).total_seconds() < 60:
                 return False
-        self.state = {"pending_key": key, "pending_since": datetime.now(timezone.utc).isoformat()}
-        self.save()
+        record({"pending_key": key, "pending_since": datetime.now(timezone.utc).isoformat(), "pending_due": due.isoformat()})
         self.github.request("POST", "dispatches", payload)
-        self.state = {"acknowledged_key": key, "acknowledged_at": datetime.now(timezone.utc).isoformat()}
-        self.save()
-        print(json.dumps({**payload["client_payload"], "acknowledged_at": self.state["acknowledged_at"]}), flush=True)
+        acknowledged_at = datetime.now(timezone.utc).isoformat()
+        record({"acknowledged_key": key, "acknowledged_at": acknowledged_at})
+        print(json.dumps({**payload["client_payload"], "acknowledged_at": acknowledged_at}), flush=True)
         return True
+
+    def pending_due(self, now: datetime) -> datetime:
+        if self.state.get("pending_due"):
+            return instant(self.state["pending_due"])
+        key = self.state.get("acknowledged_key", "")
+        if key.startswith("ops-"):
+            following = due_on(date.fromisoformat(key.removeprefix("ops-")) + timedelta(days=1))
+            if following <= now:
+                return following
+        return latest_due(now)
 
 
 def main() -> None:
@@ -145,20 +171,21 @@ def main() -> None:
     args = parser.parse_args()
     github = GitHub(os.environ["GITHUB_DISPATCH_TOKEN"])
     clock = Clock(args.state, github)
-    print(json.dumps({"next_scheduled_for": next_due(datetime.now(timezone.utc)).isoformat(), "probe": bool(args.probe_at)}), flush=True)
+    print(json.dumps({"next_scheduled_for": next_due(datetime.now(timezone.utc)).isoformat(), "probe": bool(args.probe_at), "revision": os.environ.get("CLOCK_REVISION")}), flush=True)
     while True:
         now = datetime.now(timezone.utc)
-        due = args.probe_at or latest_due(now)
+        due = args.probe_at or clock.pending_due(now)
         if now >= due and (args.probe_at or due.month in SEASON_MONTHS):
             try:
                 clock.dispatch(due, probe=bool(args.probe_at))
-                if args.probe_at and clock.state.get("acknowledged_key"):
+                if args.probe_at and clock.state.get("probe", {}).get("acknowledged_key"):
                     return
             except (RuntimeError, OSError) as exc:
                 print(json.dumps({"dispatch_error": str(exc), "retry_in_seconds": 10}), flush=True)
                 time.sleep(10)
                 continue
-        time.sleep(min(5, max(0.1, (next_due(now) - now).total_seconds())))
+        wake_at = args.probe_at or next_due(now)
+        time.sleep(min(5, max(0.1, (wake_at - now).total_seconds())))
 
 
 if __name__ == "__main__":

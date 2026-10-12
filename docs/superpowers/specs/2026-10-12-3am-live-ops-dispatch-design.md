@@ -9,38 +9,36 @@ league data, or replace the existing Ops pipeline.
 
 ## Design
 
-One small always-on Fly app, `league-history-ops-runner`, has two processes in
-the same 512 MB machine:
+One 256 MB always-on Fly app, `league-history-ops-clock`, wakes at 03:00
+America/New_York and sends one `repository_dispatch` event to public
+`jeleff1000/mfl-league-fetcher`, with event type `live-nfl-ops-refresh`, its
+original intended timestamp, explicit game date, and daily correlation key.
+A 1 GB Fly volume (the minimum volume allocation) stores only the small
+dispatch acknowledgment file. The existing workflow continues on its current
+GitHub-hosted runner and retains all data processing and publication logic.
 
-1. A timezone-aware clock wakes at 03:00 America/New_York and sends one
-   `repository_dispatch` event to `jeleff1000/mfl-league-fetcher` with event
-   type `live-nfl-ops-refresh` and a `scheduled_for` date key.
-2. A single repo-scoped GitHub Actions self-hosted runner labeled
-   `live-nfl-ops` remains connected and accepts only the overnight Ops job.
-
-The existing workflow retains all data fetching, validation, atomic
-publication, and idempotency logic. Only its live-Ops job is pinned to
-`[self-hosted, live-nfl-ops]`; all import and league-refresh workflows remain
-on the existing GitHub-hosted runners.
+The approved disposable self-hosted runner was tested and removed. Its 9.231
+second start latency was essentially identical to the hosted runner's 9.159
+seconds. The existing data job reconstructs a 6.5 GB baseline, so a permanent
+512 MB runner would be undersized. The measured delay is scheduled-event
+delivery, addressed by the external clock; the retained hosted runner's queue
+delay is measured separately and is not guaranteed by the clock.
 
 ## Safety Contract
 
-- The clock process has no Fly DuckDB credential and cannot access league
-  tables directly. The runner receives the existing GitHub Actions workflow
-  secrets only when GitHub starts the approved Ops job; no database credential
-  is stored in the clock configuration.
-- It receives two least-privilege GitHub credentials: one to register the
-  runner and one to dispatch this single workflow event. A GitHub App is
-  preferred; a fine-grained repository token is acceptable only if it is
-  scoped to `mfl-league-fetcher` and Actions administration/dispatch.
+- The clock has no Fly DuckDB credential and its app has a separate private
+  network. The data runner receives its existing workflow secrets from GitHub.
+- The clock stores the app's existing GitHub dispatch credential as an
+  encrypted Fly secret. Its runtime API target is fixed to the public worker
+  repository. Temporary runner registration tokens are used only for probes.
 - `scheduled_for` is the idempotency key. The workflow records and rejects a
   duplicate key before its data phase.
 - A clock retry is permitted only when GitHub did not acknowledge the dispatch;
   it must reuse the same key.
-- The legacy GitHub `schedule` trigger is removed after the Fly clock's first
-  successful production run, so there is exactly one overnight authority.
-- Failure to register, dispatch, or start a runner raises an alert and does not
-  fall back to a second data writer.
+- The legacy GitHub `schedule` trigger is removed after the real Fly clock's
+  end-to-end no-write dispatch has passed and the production clock is running.
+- Dispatch failures are logged with a retry interval; worker failures retain
+  the existing GitHub Actions status and notifications.
 
 ## Timing and Observability
 
@@ -52,20 +50,22 @@ measured.
 
 ## Validation Sequence
 
-1. Provision the machine with the no-op `ops-runner-probe` workflow only.
+1. Provision the disposable machine with the no-op runner probe only.
 2. Dispatch that probe manually and verify the public workflow starts on the
    labeled Fly runner without touching Fly DuckDB.
 3. Trigger the clock once with a future/test key and verify the full timestamp
    chain and duplicate-key behavior.
-4. Run the existing Ops workflow with `apply=false`; verify the runner uses
-   the public checkout and creates no database write.
-5. Enable the 03:00 Eastern clock, retain the first day's evidence, then
-   remove the GitHub `schedule` trigger.
+4. Compare the same clock dispatch with a hosted runner, then remove all
+   disposable probe resources.
+5. Enable the 03:00 Eastern clock, seed today's marker only from an already
+   successful scheduled Ops run, and remove the original `schedule` trigger.
+6. The first real overnight data publication remains a separate production
+   observation; a no-write timing probe does not prove that publication.
 
 ## Required Authority
 
-The public worker repository already has `FLY_API_TOKEN` as an Actions secret.
-Provisioning and the disposable probe must run in GitHub Actions, where that
-secret is available, rather than copying it to a local shell or app repository.
-The runner also needs a GitHub App or fine-grained token capable of registering
-a repository-scoped Actions runner and sending `repository_dispatch`.
+The public worker repository has `FLY_API_TOKEN` as an Actions secret. A usable
+local Fly login is also present in the user's Fly configuration; local
+provisioning mints a one-hour organization token from that login. No token
+values are printed or committed. The local app's GitHub token can register
+temporary runners and dispatch public worker events.

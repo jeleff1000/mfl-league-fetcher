@@ -33,9 +33,9 @@
 
 **Interfaces:** `python scripts/probe_live_ops_scheduler.py inspect` consumes `FLY_API_TOKEN`; prints only nonsecret app/org and status information.
 
-- [ ] Read the existing app through `GET https://api.machines.dev/v1/apps/league-history-duckdb` with a 10-second request limit.
-- [ ] Expose only the organization slug and HTTP status, never the credential or raw machine environment.
-- [ ] Dispatch the manual workflow on `main`, verify the access receipt, and identify whether a separate disposable app can be created.
+- [x] Read the existing app through `GET https://api.machines.dev/v1/apps/league-history-duckdb` with a 10-second request limit.
+- [x] Expose only the organization slug and HTTP status, never the credential or raw machine environment.
+- [x] Prove local Fly login can mint a one-hour organization token; use the FlyV1 authorization scheme unchanged.
 
 ### Task 2: Disposable clock-to-runner probe
 
@@ -43,11 +43,11 @@
 
 **Interfaces:** The control workflow consumes a short-lived GitHub runner registration token; the no-op workflow consumes timestamps and a unique runner label.
 
-- [ ] Register an ephemeral runner with an exclusive probe label and no database secrets.
-- [ ] Create one isolated Fly app/machine using the official Actions runner image, 512 MB, no volumes/services.
-- [ ] Wait up to 40 seconds for the runner to listen, send a timed dispatch, and record actual job start.
-- [ ] Verify the probe job has no checkout, database environment, or publication step.
-- [ ] Destroy the exact probe app/machine and remove any leftover GitHub runner registration.
+- [x] Register an ephemeral runner with an exclusive probe label and no database secrets.
+- [x] Create one isolated Fly app/machine using the official Actions runner image, 512 MB, no volumes/services.
+- [x] Wait up to 40 seconds for the runner to listen, send a timed dispatch, and record actual job start.
+- [x] Verify the probe job has no checkout, database environment, or publication step.
+- [x] Destroy the exact probe app/machine and remove any leftover GitHub runner registration.
 
 ### Task 3: Production clock and handoff
 
@@ -55,7 +55,7 @@
 
 **Interfaces:** The clock sends `repository_dispatch` `live-nfl-ops-refresh` with a date key and explicit `game_date`.
 
-- [ ] Unit-test DST-aware next-run calculation, duplicate date suppression, restart catch-up, and dispatch acknowledgment handling.
+- [x] Unit-test DST-aware next-run calculation, duplicate date suppression, restart catch-up, and dispatch acknowledgment handling.
 - [ ] Deploy one 256 MB clock with a scoped GitHub dispatch credential and durable date marker.
 - [ ] Verify a no-op timed dispatch from that machine, including clock and runner timestamps.
 - [ ] Select the production runner from measured start latency and actual job requirements; record any deviation from the initially proposed 512 MB runner.
@@ -65,3 +65,8 @@
 
 - Ruling: a 512 MB machine cannot run the existing Ops data job because its baseline alone is 6.5 GB. That capacity is used only for the disposable timing probe; production runner selection depends on the evidence.
 - Approved execution: inline, using the public repository's existing deployment secret.
+- Credential probe: `38297225146` proved the Actions secret can read the app but returned HTTP 403 on app creation. The local Fly login successfully minted a one-hour organization token and created isolated probe apps.
+- Task 2 evidence: self-hosted run `38298069619` passed at 9.231 seconds; hosted run `38298167173` passed at 9.159 seconds. Both probe apps were destroyed; GitHub runner inventory returned zero.
+- Ruling: retain the existing hosted processing runner after equivalent measured latency. Deploy only the 256 MB external clock; an additional permanent runner would require resources comparable to the current Ops job.
+- Review fixes: retain unresolved pending dates across 03:00, keep probe and production acknowledgment state separate, paginate lost-acknowledgment searches, and deduplicate repeated daily keys at the workflow boundary.
+- Validation: 25 clock, admission, duplicate, and workflow tests passed in 3.05 seconds.

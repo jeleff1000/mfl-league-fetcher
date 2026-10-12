@@ -89,7 +89,7 @@ def test_dispatch_gate_admits_manual_runs_and_only_the_0130_to_0500_et_dispatch_
 
     assert authorize("workflow_dispatch", "2026-09-14T09:00:00-04:00") == "should_run=true"
     assert authorize("schedule", "2026-09-14T03:17:00-04:00") == "should_run=true"
-    assert authorize("schedule", "2026-09-14T05:00:00-04:00") == "should_run=false"
+    assert authorize("schedule", "2026-09-14T05:00:00-04:00") == "should_run=true"
     assert authorize("repository_dispatch", "2026-09-14T01:30:00-04:00") == "should_run=true"
     assert authorize("repository_dispatch", "2026-09-14T04:59:59-04:00") == "should_run=true"
     assert authorize("repository_dispatch", "2026-09-14T01:29:59-04:00") == "should_run=false"

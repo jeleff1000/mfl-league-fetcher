@@ -1,6 +1,6 @@
 name: Refresh Live NFL Ops
 run-name: >-
-  Refresh Live NFL Ops — ${{ (github.event_name == 'repository_dispatch' || github.event_name == 'schedule') && 'scheduled' || inputs.game_date || 'manual' }}
+  Refresh Live NFL Ops — ${{ (github.event_name == 'repository_dispatch' || github.event_name == 'schedule') && 'scheduled' || inputs.game_date || 'manual' }} ${{ github.event.client_payload.dispatch_key || '' }}
 
 # Track 1 only: this workflow builds a complete local ___ops_nfl replacement
 # from finalized NFLverse data. It never imports, reads, writes, or rebuilds
@@ -57,6 +57,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   # The durable baseline lives in this worker repository, so the scoped
   # workflow token can replace only these release assets.
   contents: write
@@ -78,6 +79,18 @@ jobs:
       OUTPUT_PATH: ${{ github.workspace }}/output/ops_nfl.duckdb
 
     steps:
+      - name: Record clock and runner timestamps
+        env:
+          CLOCK_SCHEDULED_FOR: ${{ github.event.client_payload.scheduled_for || '' }}
+          CLOCK_DISPATCHED_AT: ${{ github.event.client_payload.dispatched_at || '' }}
+          CLOCK_DISPATCH_KEY: ${{ github.event.client_payload.dispatch_key || '' }}
+        run: |
+          jq -n --arg scheduled_for "$CLOCK_SCHEDULED_FOR" \
+            --arg dispatched_at "$CLOCK_DISPATCHED_AT" --arg dispatch_key "$CLOCK_DISPATCH_KEY" \
+            --arg runner_started_at "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" \
+            '{scheduled_for:$scheduled_for, dispatched_at:$dispatched_at,
+              dispatch_key:$dispatch_key, runner_started_at:$runner_started_at}'
+
       - name: Checkout pipeline source
         uses: actions/checkout@v5
         with:
@@ -88,9 +101,13 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CLOCK_SCHEDULED_FOR: ${{ github.event.client_payload.scheduled_for || '' }}
+          CLOCK_DISPATCH_KEY: ${{ github.event.client_payload.dispatch_key || '' }}
         run: |
           python code/scripts/live_nfl_ops_dispatch_gate.py \
             --event "$EVENT_NAME" \
+              --scheduled-for "$CLOCK_SCHEDULED_FOR" \
+              --dispatch-key "$CLOCK_DISPATCH_KEY" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Set up Python

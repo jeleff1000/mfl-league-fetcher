@@ -69,3 +69,47 @@ def test_next_day_dispatches_once(tmp_path: Path):
 def test_probe_event_cannot_trigger_data_worker():
     payload = payload_for(instant('2026-10-12T19:00:00Z'), probe=True)
     assert payload['event_type'] == 'live-nfl-ops-clock-probe'
+
+
+def test_pending_dispatch_survives_the_next_three_am(tmp_path):
+    import pytest
+    api = DispatchAPI()
+    api.lose_response = True
+    due = latest_due(instant('2026-10-12T19:00:00Z'))
+    state = tmp_path / 'clock.json'
+    with pytest.raises(TimeoutError):
+        Clock(state, api).dispatch(due)
+    assert Clock(state, api).pending_due(instant('2026-10-13T12:00:00Z')) == due
+
+
+def test_probe_does_not_erase_production_acknowledgment(tmp_path):
+    api = DispatchAPI()
+    state = tmp_path / 'clock.json'
+    due = latest_due(instant('2026-10-12T19:00:00Z'))
+    clock = Clock(state, api)
+    clock.dispatch(due)
+    clock.dispatch(due, probe=True)
+    assert Clock(state, api).dispatch(due) is False
+    assert len(api.calls) == 2
+
+
+def test_clock_catches_up_each_missed_day(tmp_path):
+    api = DispatchAPI()
+    clock = Clock(tmp_path / 'clock.json', api)
+    clock.dispatch(latest_due(instant('2026-10-12T19:00:00Z')))
+    now = instant('2026-10-15T12:00:00Z')
+    assert clock.pending_due(now).date().isoformat() == '2026-10-13'
+    clock.dispatch(clock.pending_due(now))
+    assert clock.pending_due(now).date().isoformat() == '2026-10-14'
+
+
+def test_acknowledgment_search_includes_later_pages():
+    from scripts.live_ops_clock import GitHub
+
+    class Pages(GitHub):
+        def request(self, method, suffix, payload=None):
+            if suffix.endswith('page=1'):
+                return {'workflow_runs': [{'display_title': 'unrelated'}] * 100}
+            return {'workflow_runs': [{'display_title': 'Refresh Live NFL Ops ops-2026-10-12'}]}
+
+    assert Pages('unused').accepted('ops-2026-10-12', instant('2026-10-12T07:00:00Z')) is True

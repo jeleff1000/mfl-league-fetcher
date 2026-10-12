@@ -122,7 +122,16 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
             df = local_db.read_table("matchup", year=year)
             available = [c for c in needed_cols if c in df.columns]
             if "year" in available and "week" in available:
-                windows = df[available].drop_duplicates(subset=["year", "week"]).sort_values(["year", "week"]).copy()
+                windows = df[available].copy()
+                # Synthetic/byes can precede a real matchup for the same week.
+                # Never let their null dates discard the provider's dated row.
+                if {"week_start", "week_end"}.issubset(windows.columns):
+                    dated = (pd.to_datetime(windows["week_start"], errors="coerce").notna()
+                             & pd.to_datetime(windows["week_end"], errors="coerce").notna())
+                    windows = windows.loc[dated]
+                else:
+                    windows = windows.iloc[:0]
+                windows = windows.drop_duplicates(subset=["year", "week"]).sort_values(["year", "week"])
                 if "cumulative_week" not in windows.columns:
                     windows["year"] = pd.to_numeric(windows["year"], errors="coerce").astype("Int64")
                     windows["week"] = pd.to_numeric(windows["week"], errors="coerce").astype("Int64")

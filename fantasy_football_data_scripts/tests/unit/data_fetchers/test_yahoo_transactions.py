@@ -1,12 +1,27 @@
 """Regression tests for Yahoo transaction parsing edge cases."""
 
 import pandas as pd
+from types import SimpleNamespace
 
 from multi_league.data_fetchers.yahoo.yahoo_transactions import (
     _resolve_transaction_team_keys,
     backfill_unknown_drop_managers,
     process_transactions_chronologically,
+    load_matchup_windows,
+    map_transaction_to_week,
 )
+
+
+def test_matchup_windows_prefer_dated_rows_over_null_duplicates(tmp_path):
+    class LocalDB:
+        def read_table(self, table, year):
+            return pd.DataFrame([
+                {'year': 2024, 'week': 6, 'week_start': None, 'week_end': None},
+                {'year': 2024, 'week': 6, 'week_start': '2024-10-08', 'week_end': '2024-10-14'},
+            ])
+
+    windows = load_matchup_windows(SimpleNamespace(matchup_data_directory=tmp_path), 2024, LocalDB())
+    assert map_transaction_to_week('1728520236', 2024, windows) == (6, '2024-10-08', '2024-10-14')
 
 
 def test_resolve_transaction_team_keys_falls_back_to_parent_drop_team():

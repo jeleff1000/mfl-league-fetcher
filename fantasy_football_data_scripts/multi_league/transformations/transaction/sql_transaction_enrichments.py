@@ -310,6 +310,63 @@ class TransactionEnrichmentsMixin:
     Requires SQLEnrichmentsBase infrastructure (self._execute, self._table_exists, etc.)
     """
 
+    def transaction_weeks_from_matchup(self) -> int:
+        """Resolve Yahoo event weeks from existing, exact dated league windows.
+
+        Legacy imports could default every transaction to week one when null
+        matchup duplicates hid the date windows. No provider calls or new date
+        estimates: only a unique timestamp/window match can change a row.
+        Epoch seconds are compared in UTC, matching the import's date contract.
+        Sleeper/ESPN native period assignments are deliberately left intact.
+        """
+        if not self._table_exists("transactions") or not self._table_exists("matchup"):
+            return 0
+        required = {"year", "week", "week_start", "week_end"}
+        trans_cols = self._get_table_columns("transactions")
+        if not (required | {"timestamp", "platform", "cumulative_week"}).issubset(trans_cols):
+            return 0
+        if not required.issubset(self._get_table_columns("matchup")):
+            return 0
+        return self._execute(self._transaction_week_mapping_sql(), "Resolve Yahoo transaction weeks from matchup dates")
+
+    def _transaction_week_mapping_sql(self) -> str:
+        trans = self._qualified_name("transactions")
+        matchup = self._qualified_name("matchup")
+        return f"""
+            WITH windows AS (
+                SELECT DISTINCT m.year, m.week,
+                    TRY_CAST(m.week_start AS DATE) AS week_start,
+                    TRY_CAST(m.week_end AS DATE) AS week_end
+                FROM {matchup} m
+                WHERE {self._db_filter('m')}
+                  AND TRY_CAST(m.week_start AS DATE) IS NOT NULL
+                  AND TRY_CAST(m.week_end AS DATE) >= TRY_CAST(m.week_start AS DATE)
+            ), events AS (
+                SELECT DISTINCT t.year, t.timestamp,
+                    CAST(timezone('UTC', to_timestamp(TRY_CAST(t.timestamp AS DOUBLE))) AS DATE) AS event_date
+                FROM {trans} t
+                WHERE {self._db_filter('t')} AND LOWER(t.platform) = 'yahoo'
+                  AND TRY_CAST(t.timestamp AS DOUBLE) BETWEEN 1 AND 253402300799
+            ), mapped AS (
+                SELECT e.year, e.timestamp, MIN(w.week) AS week,
+                       MIN(w.week_start) AS week_start, MIN(w.week_end) AS week_end
+                FROM events e JOIN windows w
+                  ON e.year = w.year AND e.event_date BETWEEN w.week_start AND w.week_end
+                GROUP BY e.year, e.timestamp
+                HAVING COUNT(*) = 1
+            )
+            UPDATE {trans} t
+            SET week = mapped.week, cumulative_week = mapped.year * 100 + mapped.week,
+                week_start = CAST(mapped.week_start AS VARCHAR), week_end = CAST(mapped.week_end AS VARCHAR)
+            FROM mapped
+            WHERE {self._db_filter('t')} AND LOWER(t.platform) = 'yahoo'
+              AND t.year = mapped.year AND t.timestamp = mapped.timestamp
+              AND (t.week IS DISTINCT FROM mapped.week
+                OR t.cumulative_week IS DISTINCT FROM mapped.year * 100 + mapped.week
+                OR t.week_start IS DISTINCT FROM CAST(mapped.week_start AS VARCHAR)
+                OR t.week_end IS DISTINCT FROM CAST(mapped.week_end AS VARCHAR))
+        """
+
     def _managed_roster_periods_sql(self, join_key: str) -> str:
         """Shared acquisition windows; scoring-roster ownership resolves drop legs.
 

@@ -7,11 +7,11 @@ run-name: >-
 # any league table. Promotion is opt-in after the local eight-table artifact
 # passes its receipt and schema gates.
 on:
-  # Run at 03:17 Eastern during the NFL season. The scope gate exits before
-  # baseline reconstruction on days without newly finalized NFLverse games.
+  # Give Actions several delivery chances during 03:00â€“03:59 Eastern. The
+  # boundary gate rejects delayed deliveries before any Fly or NFL data work.
   schedule:
-    - cron: "17 7 * 9,10 *"
-    - cron: "17 8 * 11,12,1,2 *"
+    - cron: "*/5 7 * 9,10 *"
+    - cron: "*/5 8 * 11,12,1,2 *"
   repository_dispatch:
     types:
       - live-nfl-ops-refresh

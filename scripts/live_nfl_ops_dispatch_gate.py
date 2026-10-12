@@ -2,8 +2,9 @@
 """Authorize a live NFL Ops worker invocation at the GitHub boundary.
 
 Manual dispatches are deliberately unrestricted so an operator can repair a
-missed final slate. Scheduled runs trust the cron event because GitHub may
-start them hours late. Automated repository dispatches are accepted only during
+missed final slate. Scheduled runs are admitted only from 03:00 through 03:59
+America/New_York so a delayed GitHub event cannot publish at an arbitrary time.
+Automated repository dispatches are accepted only during
 the 01:30–05:00 America/New_York service window; the downstream NFLverse scope
 gate still decides whether finalized REG or POST data exists to publish.
 """
@@ -23,12 +24,17 @@ EASTERN = ZoneInfo("America/New_York")
 def should_run(event: str, now: datetime) -> bool:
     """Return whether this trigger may enter the live Ops refresh path."""
     normalized_event = event.strip()
-    if normalized_event in {"workflow_dispatch", "schedule"}:
+    if normalized_event == "workflow_dispatch":
         return True
-    if normalized_event != "repository_dispatch":
+    if normalized_event not in {"repository_dispatch", "schedule"}:
         return False
 
     eastern_now = now.astimezone(EASTERN)
+    if normalized_event == "schedule":
+        start = eastern_now.replace(hour=3, minute=0, second=0, microsecond=0)
+        end = eastern_now.replace(hour=4, minute=0, second=0, microsecond=0)
+        return start <= eastern_now < end
+
     start = eastern_now.replace(hour=1, minute=30, second=0, microsecond=0)
     end = eastern_now.replace(hour=5, minute=0, second=0, microsecond=0)
     return start <= eastern_now < end

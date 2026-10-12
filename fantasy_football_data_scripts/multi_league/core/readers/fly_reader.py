@@ -69,23 +69,32 @@ class FlyReader:
         preview = " ".join(str(sql).split())
         return preview if len(preview) <= 240 else preview[:237] + "..."
 
-    def _post(self, sql: str, database: str) -> list[dict]:
+    def _post(
+        self,
+        sql: str,
+        database: str,
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> list[dict]:
+        timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        attempts = self.MAX_RETRIES if max_retries is None else max_retries
         last_error: str | None = None
-        for attempt in range(self.MAX_RETRIES):
+        for attempt in range(attempts):
             try:
                 resp = requests.post(
                     f"{self.url}/query",
                     json={"sql": sql, "database": database},
                     headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=self.TIMEOUT_SECONDS,
+                    timeout=timeout,
                 )
             except self.RETRY_EXCEPTIONS as e:
                 last_error = f"Network error: {e}"
-                if attempt < self.MAX_RETRIES - 1:
+                if attempt < attempts - 1:
                     time.sleep(self._retry_delay(attempt))
                     continue
                 raise FlyReaderNetworkError(
-                    f"{last_error} after {attempt + 1}/{self.MAX_RETRIES} attempts "
+                    f"{last_error} after {attempt + 1}/{attempts} attempts "
                     f"[database={database}; sql={self._sql_preview(sql)}]"
                 ) from e
 
@@ -118,7 +127,7 @@ class FlyReader:
             )
             if (
                 resp.status_code in self.RETRY_STATUS
-                and attempt < self.MAX_RETRIES - 1
+                and attempt < attempts - 1
                 and not missing_catalog_table
                 and not deterministic_query_error
                 and (
@@ -147,7 +156,7 @@ class FlyReader:
                 ) from e
 
         raise FlyReaderError(
-            f"Query exhausted retries after {self.MAX_RETRIES} attempts: {last_error or 'unknown error'} "
+            f"Query exhausted retries after {attempts} attempts: {last_error or 'unknown error'} "
             f"[database={database}; sql={self._sql_preview(sql)}]"
         )
 
@@ -164,32 +173,65 @@ class FlyReader:
             )
         return database
 
-    def query(self, sql: str, database: str) -> list[dict]:
-        return self._post(sql, self._require_db(database))
+    def query(
+        self,
+        sql: str,
+        database: str,
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> list[dict]:
+        return self._post(
+            sql,
+            self._require_db(database),
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+        )
 
-    def query_df(self, sql: str, database: str) -> pd.DataFrame:
+    def query_df(
+        self,
+        sql: str,
+        database: str,
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> pd.DataFrame:
         import pandas as pd
 
-        rows = self._post(sql, self._require_db(database))
+        rows = self._post(
+            sql,
+            self._require_db(database),
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+        )
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    def query_df_parquet(self, sql: str, database: str) -> pd.DataFrame:
+    def query_df_parquet(
+        self,
+        sql: str,
+        database: str,
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> pd.DataFrame:
         """Read a wide result without materializing every value through JSON."""
         import pandas as pd
 
         database = self._require_db(database)
+        timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        attempts = self.MAX_RETRIES if max_retries is None else max_retries
         last_error: str | None = None
-        for attempt in range(self.MAX_RETRIES):
+        for attempt in range(attempts):
             try:
                 resp = requests.post(
                     f"{self.url}/query-parquet",
                     json={"sql": sql, "database": database},
                     headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=self.TIMEOUT_SECONDS,
+                    timeout=timeout,
                 )
             except self.RETRY_EXCEPTIONS as exc:
                 last_error = f"Network error: {exc}"
-                if attempt < self.MAX_RETRIES - 1:
+                if attempt < attempts - 1:
                     time.sleep(self._retry_delay(attempt))
                     continue
                 raise FlyReaderNetworkError(
@@ -197,7 +239,7 @@ class FlyReader:
                 ) from exc
             if (
                 resp.status_code in self.RETRY_STATUS
-                and attempt < self.MAX_RETRIES - 1
+                and attempt < attempts - 1
                 and not is_permanent_storage_error(resp.text)
             ):
                 last_error = f"Parquet query failed ({resp.status_code}): {resp.text}"
@@ -211,8 +253,20 @@ class FlyReader:
             return pd.read_parquet(BytesIO(resp.content))
         raise FlyReaderError(f"Parquet query exhausted retries: {last_error or 'unknown error'}")
 
-    def query_scalar(self, sql: str, database: str) -> object:
-        rows = self._post(sql, self._require_db(database))
+    def query_scalar(
+        self,
+        sql: str,
+        database: str,
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> object:
+        rows = self._post(
+            sql,
+            self._require_db(database),
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+        )
         if not rows:
             return None
         first_row = rows[0]

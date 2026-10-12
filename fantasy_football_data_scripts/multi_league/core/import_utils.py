@@ -96,8 +96,10 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
         "AND opponent_nfl_team IS NOT NULL"
     )
     query = f"SELECT {projection} FROM nfl_historical.nfl_player_stats_all WHERE {predicate}"
+    from multi_league.core.ops_cache import OPS_REFRESH_READ_KWARGS
+
     reader = get_reader()
-    expected = reader.query_df(query, database="___ops")
+    expected = reader.query_df(query, database="___ops", **OPS_REFRESH_READ_KWARGS)
 
     def local_keys() -> set[tuple]:
         with duckdb.connect(str(path), read_only=True) as cache:
@@ -218,7 +220,9 @@ def run_track_1_verify(
             WHERE year BETWEEN {start_year} AND {end_year}
             GROUP BY year ORDER BY year
         """
-        result = reader.query_df(query, database="___ops")
+        from multi_league.core.ops_cache import OPS_REFRESH_READ_KWARGS
+
+        result = reader.query_df(query, database="___ops", **OPS_REFRESH_READ_KWARGS)
         return _verify_result(result, "Fly")
 
     except Exception as e:

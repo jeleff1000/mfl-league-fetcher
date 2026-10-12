@@ -115,6 +115,7 @@ def authorize_scheduled_demo(
 
 
 from multi_league.core.ops_cache import (
+    OPS_REFRESH_READ_KWARGS,
     _finalized_ops,
     _sql_literal,
     _quoted_identifier,
@@ -1324,7 +1325,9 @@ def _build_active_year_ops_cache(
 
     def schema(table: str, *, omit: set[str] | None = None) -> list[tuple[str, str]]:
         omitted = omit or set()
-        rows = reader.query(f"DESCRIBE {table}", database=OPS_DATABASE)
+        rows = reader.query(
+            f"DESCRIBE {table}", database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+        )
         result = [
             (str(row["column_name"]), str(row["column_type"]))
             for row in rows
@@ -1349,6 +1352,7 @@ def _build_active_year_ops_cache(
     stats = reader.query_df_parquet(
         f"SELECT {stats_projection} FROM {stats_target} WHERE year = {int(year)}",
         database=OPS_DATABASE,
+        **OPS_REFRESH_READ_KWARGS,
     )
     if stats.empty:
         raise RuntimeError(f"Fly returned no NFL ops rows for active year {year}")
@@ -1366,6 +1370,7 @@ def _build_active_year_ops_cache(
         f"WHERE NFL_player_id IN (SELECT DISTINCT NFL_player_id FROM {stats_target} "
         f"WHERE year = {int(year)})",
         database=OPS_DATABASE,
+        **OPS_REFRESH_READ_KWARGS,
     )
     if bios.empty:
         raise RuntimeError(f"Fly returned no player_bio rows for active year {year}")

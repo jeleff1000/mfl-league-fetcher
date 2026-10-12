@@ -14,6 +14,9 @@ import pandas as pd
 from multi_league.core.league_update_manifest import resolve_nfl_scoring_input_columns
 
 OPS_DATABASE = "___ops"
+# An active import/refresh needs a small finalized slice, never permission to
+# spend its whole worker lifetime retrying while the Ops artifact is promoted.
+OPS_REFRESH_READ_KWARGS = {"timeout_seconds": 8, "max_retries": 3}
 
 
 def _sql_literal(value: object) -> str:
@@ -36,7 +39,9 @@ def _ops_revision_columns(schema_columns: Iterable[str]) -> tuple[str, ...]:
 def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.DataFrame:
     """Read skinny revisions; rank values are hashed on Fly, not downloaded."""
     target = "nfl_historical.nfl_player_stats_all"
-    schema = reader.query(f"DESCRIBE {target}", database=OPS_DATABASE)
+    schema = reader.query(
+        f"DESCRIBE {target}", database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+    )
     revision_columns = _ops_revision_columns(str(row["column_name"]) for row in schema)
     revision_expr = ", ".join(_quoted_identifier(column) for column in revision_columns)
     week_clause = f" AND week <= {int(through_week)}" if through_week is not None else ""
@@ -47,6 +52,7 @@ def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.Da
         f"WHERE year = {int(year)} AND COALESCE(season_type, 'REG') = 'REG'{week_clause} "
         "AND NFL_player_id IS NOT NULL AND nfl_team IS NOT NULL AND opponent_nfl_team IS NOT NULL",
         database=OPS_DATABASE,
+        **OPS_REFRESH_READ_KWARGS,
     )
 
 
@@ -131,7 +137,9 @@ def _patch_research_ops_cache_from_fly(
         if missing:
             raise RuntimeError("research ops cache is missing required weekly columns: " + ", ".join(missing))
         target = "nfl_historical.nfl_player_stats_all"
-        fly_schema_rows = reader.query(f"DESCRIBE {target}", database=OPS_DATABASE)
+        fly_schema_rows = reader.query(
+            f"DESCRIBE {target}", database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+        )
         timer.mark("fly_schema")
         fly_columns = {
             str(row["column_name"]): str(row["column_type"])
@@ -182,6 +190,7 @@ def _patch_research_ops_cache_from_fly(
                     "AND COALESCE(season_type, 'REG') = 'REG' "
                     f"AND (NFL_player_id, nfl_team, opponent_nfl_team) IN (VALUES {admission_values})",
                     database=OPS_DATABASE,
+                    **OPS_REFRESH_READ_KWARGS,
                 )
                 if (set(expected[list(_OPS_KEY_COLUMNS)].itertuples(index=False, name=None)) != expected_keys
                         or len(expected) != len(expected_keys)):
@@ -226,9 +235,13 @@ def _patch_research_ops_cache_from_fly(
                 )
                 parquet_query = getattr(reader, "query_df_parquet", None)
                 source = (
-                    parquet_query(source_sql, database=OPS_DATABASE)
+                    parquet_query(
+                        source_sql, database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+                    )
                     if parquet_query is not None
-                    else reader.query_df(source_sql, database=OPS_DATABASE)
+                    else reader.query_df(
+                        source_sql, database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+                    )
                 )
             else:
                 source = pd.DataFrame(columns=columns)

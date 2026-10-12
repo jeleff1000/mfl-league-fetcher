@@ -64,6 +64,53 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 
+def test_active_year_ops_cache_uses_the_short_ui_retry_budget(tmp_path):
+    from refresh_yahoo_active_season import _build_active_year_ops_cache
+
+    class Reader:
+        calls = []
+
+        def query(self, sql, *, database, **kwargs):
+            assert database == "___ops"
+            self.calls.append(kwargs)
+            if "player_bio" in sql:
+                return [
+                    {"column_name": "NFL_player_id", "column_type": "VARCHAR"},
+                    {"column_name": "headshot_url", "column_type": "VARCHAR"},
+                ]
+            return [
+                {"column_name": name, "column_type": column_type}
+                for name, column_type in (
+                    ("NFL_player_id", "VARCHAR"),
+                    ("year", "INTEGER"),
+                    ("week", "INTEGER"),
+                    ("season_type", "VARCHAR"),
+                    ("nfl_team", "VARCHAR"),
+                    ("opponent_nfl_team", "VARCHAR"),
+                )
+            ]
+
+        def query_df_parquet(self, sql, *, database, **kwargs):
+            assert database == "___ops"
+            self.calls.append(kwargs)
+            if "player_bio" in sql:
+                return pd.DataFrame([{"NFL_player_id": "player-1", "headshot_url": None}])
+            return pd.DataFrame([{
+                "NFL_player_id": "player-1", "year": 2026, "week": 5,
+                "season_type": "REG", "nfl_team": "CHI", "opponent_nfl_team": "GB",
+            }])
+
+    reader = Reader()
+    _build_active_year_ops_cache(
+        reader,
+        output=tmp_path / "active_ops.duckdb",
+        year=2026,
+        scoring_info={},
+    )
+
+    assert reader.calls == [{"timeout_seconds": 8, "max_retries": 3}] * 4
+
+
 def test_weekly_snapshot_reads_each_franchise_identity_row_once():
     from multi_league.core.delta_publish import canonical_table_registry
     from refresh_yahoo_active_season import UPDATE_REFRESH_SOURCE_TABLES, _source_frames
@@ -734,16 +781,18 @@ def test_active_refresh_inputs_read_independent_fly_scopes_concurrently():
         def __init__(self):
             self.barrier = threading.Barrier(2)
 
-        def query(self, _sql, *, database):
+        def query(self, _sql, *, database, **kwargs):
             assert database == "___ops"
+            assert kwargs == {"timeout_seconds": 8, "max_retries": 3}
             return [
                 {"column_name": "NFL_player_id"},
                 {"column_name": "nfl_team"},
                 {"column_name": "opponent_nfl_team"},
             ]
 
-        def query_df(self, _sql, *, database):
+        def query_df(self, _sql, *, database, **kwargs):
             assert database == "___ops"
+            assert kwargs == {"timeout_seconds": 8, "max_retries": 3}
             try:
                 self.barrier.wait(timeout=0.25)
             except threading.BrokenBarrierError as exc:

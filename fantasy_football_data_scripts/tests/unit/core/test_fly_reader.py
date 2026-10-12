@@ -66,6 +66,50 @@ def test_query_df_parquet_decodes_binary_response(fly_env):
     assert post.call_args.args[0] == "https://fly.test/query-parquet"
 
 
+def test_query_df_parquet_honors_caller_retry_budget(fly_env):
+    """A UI refresh must fail quickly instead of consuming its whole worker cap."""
+    reader = FlyReader()
+    with (
+        patch(
+            "multi_league.core.readers.fly_reader.requests.post",
+            return_value=_resp(503, text="ops promotion in progress"),
+        ) as post,
+        patch("multi_league.core.readers.fly_reader.time.sleep"),
+        pytest.raises(RuntimeError, match=r"503"),
+    ):
+        reader.query_df_parquet(
+            "SELECT 1",
+            database="___ops",
+            timeout_seconds=4,
+            max_retries=2,
+        )
+
+    assert post.call_count == 2
+    assert [call.kwargs["timeout"] for call in post.call_args_list] == [4, 4]
+
+
+def test_query_honors_caller_retry_budget(fly_env):
+    """Schema probes must share the UI refresh's bounded OPS read budget."""
+    reader = FlyReader()
+    with (
+        patch(
+            "multi_league.core.readers.fly_reader.requests.post",
+            return_value=_resp(503, text="ops promotion in progress"),
+        ) as post,
+        patch("multi_league.core.readers.fly_reader.time.sleep"),
+        pytest.raises(RuntimeError, match=r"503"),
+    ):
+        reader.query(
+            "DESCRIBE nfl_historical.nfl_player_stats_all",
+            database="___ops",
+            timeout_seconds=4,
+            max_retries=2,
+        )
+
+    assert post.call_count == 2
+    assert [call.kwargs["timeout"] for call in post.call_args_list] == [4, 4]
+
+
 def test_post_retries_503_then_succeeds(fly_env):
     """Existing behavior: 503 is retried until success."""
     reader = FlyReader()

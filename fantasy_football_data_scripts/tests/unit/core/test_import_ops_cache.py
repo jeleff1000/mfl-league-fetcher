@@ -37,21 +37,24 @@ def ops_sources(tmp_path, monkeypatch):
     class Reader:
         fail = False
         queries = []
+        read_kwargs = []
 
-        def query_df(self, sql, *, database):
+        def query_df(self, sql, *, database, **kwargs):
             assert database == "___ops"
             assert "SELECT *" not in sql.upper()
             self.queries.append(sql)
+            self.read_kwargs.append(kwargs)
             if self.fail:
                 raise RuntimeError("Fly unavailable")
             return live.execute(sql).fetchdf()
 
         query_df_parquet = query_df
 
-        def query(self, sql, *, database):
-            return self.query_df(sql, database=database).to_dict("records")
+        def query(self, sql, *, database, **kwargs):
+            return self.query_df(sql, database=database, **kwargs).to_dict("records")
 
     reader = Reader()
+    reader.read_kwargs.clear()
     monkeypatch.setenv("OPS_CACHE_PATH", str(cache_path))
     monkeypatch.setenv("DATABASE_BACKEND", "fly")
     monkeypatch.setattr(db_reader, "get_reader", lambda: reader)
@@ -85,6 +88,18 @@ def test_stale_cache_import_hydrates_live_ranks_without_replacing_history(ops_so
     assert len(downloads) == 2
     assert all("year = 2026" in sql for sql in downloads)
     assert all('NULL AS "recon_correction_log"' in sql for sql in downloads)
+
+
+def test_import_ops_cache_reads_use_the_short_ui_retry_budget(ops_sources):
+    _cache_path, _live, reader = ops_sources
+
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+
+    assert reader.read_kwargs
+    assert all(
+        kwargs == {"timeout_seconds": 8, "max_retries": 3}
+        for kwargs in reader.read_kwargs
+    ), reader.read_kwargs
 
 
 def test_existing_latest_week_receives_corrected_ranks_with_identical_keys(ops_sources):

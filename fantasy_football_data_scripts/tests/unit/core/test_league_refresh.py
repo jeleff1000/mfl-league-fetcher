@@ -2619,16 +2619,18 @@ def test_active_refresh_patches_only_finalized_game_rows_in_research_ops_cache(
         def __init__(self):
             self.sql: list[str] = []
 
-        def query(self, sql, *, database):
+        def query(self, sql, *, database, **kwargs):
             assert database == "___ops"
+            assert kwargs == {"timeout_seconds": 8, "max_retries": 3}
             assert sql == "DESCRIBE nfl_historical.nfl_player_stats_all"
             return [
                 {"column_name": column, "column_type": "VARCHAR" if column.endswith("id") or column in {"season_type", "game_date", "nfl_team", "opponent_nfl_team"} else "INTEGER" if column in {"year", "week"} else "DOUBLE"}
                 for column in source.columns
             ]
 
-        def query_df(self, sql, *, database):
+        def query_df(self, sql, *, database, **kwargs):
             assert database == "___ops"
+            assert kwargs == {"timeout_seconds": 8, "max_retries": 3}
             self.sql.append(sql)
             if fetch_fails:
                 raise RuntimeError("source fetch failed")
@@ -2728,8 +2730,9 @@ def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
         def __init__(self):
             self.parquet_sql: list[str] = []
 
-        def query(self, sql, *, database):
+        def query(self, sql, *, database, **kwargs):
             assert database == "___ops"
+            assert kwargs == {"timeout_seconds": 8, "max_retries": 3}
             if sql == "DESCRIBE nfl_historical.nfl_player_stats_all":
                 return [
                     {
@@ -2749,8 +2752,9 @@ def test_weekly_worker_builds_a_bounded_active_year_ops_cache(tmp_path):
                 ]
             raise AssertionError(sql)
 
-        def query_df_parquet(self, sql, *, database):
+        def query_df_parquet(self, sql, *, database, **kwargs):
             assert database == "___ops"
+            assert kwargs == {"timeout_seconds": 8, "max_retries": 3}
             self.parquet_sql.append(sql)
             return bios.copy() if "player_bio" in sql else stats.copy()
 

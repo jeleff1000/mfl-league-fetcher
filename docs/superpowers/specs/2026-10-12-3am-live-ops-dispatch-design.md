@@ -64,7 +64,8 @@ measured.
 
 ## Required Authority
 
-Provisioning requires a Fly deployment credential and a GitHub App or
-fine-grained token capable of registering a repository-scoped Actions runner
-and sending `repository_dispatch`. Neither credential is present in this
-session.
+The public worker repository already has `FLY_API_TOKEN` as an Actions secret.
+Provisioning and the disposable probe must run in GitHub Actions, where that
+secret is available, rather than copying it to a local shell or app repository.
+The runner also needs a GitHub App or fine-grained token capable of registering
+a repository-scoped Actions runner and sending `repository_dispatch`.

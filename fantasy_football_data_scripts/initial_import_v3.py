@@ -49,6 +49,7 @@ import re
 # Import new modular utilities
 from multi_league.core.date_utils import get_current_nfl_season_year, get_nfl_state
 from multi_league.core.fetch_runtime import runtime_from_source
+from multi_league.core.transaction_periods import TransactionWeekError
 from multi_league.core.script_runner import log
 from multi_league.core.scoring_variant import derive_scoring_variant
 from multi_league.core.year_filter_utils import (
@@ -920,6 +921,8 @@ def run_v3_fetcher(
             else:
                 clear_manifest(ctx.data_directory, fetcher_name, year)
 
+        except TransactionWeekError:
+            raise
         except Exception as e:
             write_manifest(ctx.data_directory, fetcher_name, year, error=str(e), failed_year=True)
             failures[year] = str(e)
@@ -2463,6 +2466,8 @@ def main():
 
         except ImportError:
             log("[RECOVERY] yahoo_recovery module not available — skipping (legacy mode)")
+        except TransactionWeekError:
+            raise
         except Exception as e:
             log(f"[RECOVERY] Warning: Recovery util failed with {e} — continuing with available data")
 

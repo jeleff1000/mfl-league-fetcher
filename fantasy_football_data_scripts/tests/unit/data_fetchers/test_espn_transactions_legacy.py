@@ -61,6 +61,21 @@ def _make_mock_ctx(teams_info):
     return ctx
 
 
+@pytest.mark.parametrize('max_week', [None, 1])
+@pytest.mark.parametrize('kind', ['waiver', 'trade'])
+def test_espn_missing_native_period_is_not_swallowed(kind, max_week):
+    from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
+
+    transaction = {'id':'bad-period','items':[{'playerId':1,'fromTeamId':1,'toTeamId':2,'type':'ADD'}]}
+    class Client:
+        def get_raw_waivers(self, year, **kwargs):
+            return [transaction] if kind == 'waiver' else []
+        def get_raw_trades(self, year, **kwargs):
+            return [transaction] if kind == 'trade' else []
+    with pytest.raises(ValueError, match='transaction week'):
+        fetch_espn_transactions_modern(_make_mock_ctx({}),2026,max_week=max_week,client=Client(),league=SimpleNamespace(teams=[]))
+
+
 def _run_legacy(ctx, draft, teams, year=2018):
     """Helper to run fetch_espn_transactions_legacy with mocked ESPN API."""
     from multi_league.data_fetchers.espn.espn_transactions import (

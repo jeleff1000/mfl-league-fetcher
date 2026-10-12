@@ -1097,6 +1097,9 @@ class LocalLeagueDB:
                 if bundle is not None:
                     shutil.rmtree(bundle.path.parent, ignore_errors=True)
 
+        from multi_league.core.transaction_periods import validate_transaction_weeks
+
+        validate_transaction_weeks(conn, [db_name], platform=platform)
         expected_remote = _expected_remote_tables()
 
         # Get all local tables, filter to canonical set only

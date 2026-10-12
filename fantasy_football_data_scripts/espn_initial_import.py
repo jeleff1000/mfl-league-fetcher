@@ -62,6 +62,7 @@ from multi_league.data_fetchers.espn import (
 from multi_league.core.script_runner import log, run_script
 from multi_league.core.date_utils import get_current_nfl_season_year, get_nfl_state
 from multi_league.core.fetch_runtime import runtime_from_source
+from multi_league.core.transaction_periods import TransactionWeekError
 from multi_league.core.import_utils import (
     run_track_1_verify,
     upload_league_tables as _shared_upload_league_tables,
@@ -739,6 +740,8 @@ def main():
                 if not txn_df.empty:
                     db.save_table("transactions", txn_df, platform="espn", league_id=str(ctx.league_id))
                     log(f"  [LOCAL DB] transactions: {len(txn_df):,} rows written")
+            except TransactionWeekError:
+                raise
             except Exception as e:
                 log(f"  FAIL: Transactions - {e}")
                 results["fetchers"].append(("Transactions", False))

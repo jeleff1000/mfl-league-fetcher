@@ -46,6 +46,7 @@ from .sleeper_player_cache import SleeperPlayerCache
 from .sleeper_context import SleeperContext, YearFilter, resolve_years_to_fetch
 from .sleeper_roster_identity import build_year_roster_map
 from multi_league.core.date_utils import get_current_nfl_season_year
+from multi_league.core.transaction_periods import native_transaction_week
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +294,7 @@ class SleeperTransactionFetcher:
         txn_type = txn.get("type", "unknown")
         status = txn.get("status", "unknown")
         created_ts = txn.get("created", 0)  # Milliseconds
-        leg = txn.get("leg", 1)  # Week/round number
+        leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
 
         # Get adds and drops
         adds = txn.get("adds") or {}  # player_id -> roster_id
@@ -461,7 +462,7 @@ class SleeperTransactionFetcher:
 
         txn_id = txn.get("transaction_id", "")
         created_ts = txn.get("created", 0)
-        leg = txn.get("leg", 1)
+        leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
 
         # Convert timestamp
         human_ts = convert_timestamp(created_ts)

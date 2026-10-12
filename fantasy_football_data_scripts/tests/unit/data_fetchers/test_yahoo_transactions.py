@@ -1,6 +1,7 @@
 """Regression tests for Yahoo transaction parsing edge cases."""
 
 import pandas as pd
+import pytest
 from types import SimpleNamespace
 
 from multi_league.data_fetchers.yahoo.yahoo_transactions import (
@@ -22,6 +23,42 @@ def test_matchup_windows_prefer_dated_rows_over_null_duplicates(tmp_path):
 
     windows = load_matchup_windows(SimpleNamespace(matchup_data_directory=tmp_path), 2024, LocalDB())
     assert map_transaction_to_week('1728520236', 2024, windows) == (6, '2024-10-08', '2024-10-14')
+
+
+def test_matchup_windows_do_not_hide_conflicting_dates(tmp_path):
+    class LocalDB:
+        def read_table(self, table, year):
+            return pd.DataFrame([
+                {"year":2024,"week":6,"week_start":"2024-10-08","week_end":"2024-10-14"},
+                {"year":2024,"week":6,"week_start":"2024-10-09","week_end":"2024-10-15"},
+            ])
+    windows = load_matchup_windows(SimpleNamespace(matchup_data_directory=tmp_path), 2024, LocalDB())
+    with pytest.raises(ValueError, match="transaction week"):
+        map_transaction_to_week('1728520236', 2024, windows)
+
+
+@pytest.mark.parametrize('windows,stamp', [
+    ([], '1728520236'),
+    ([{'year':2024,'week':6,'week_start':None,'week_end':None}], '1728520236'),
+    ([{'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'}], 'invalid'),
+    ([{'year':2024,'week':5,'week_start':'2024-10-01','week_end':'2024-10-07'},
+      {'year':2024,'week':7,'week_start':'2024-10-15','week_end':'2024-10-21'}], '1728520236'),
+    ([{'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'},
+      {'year':2024,'week':7,'week_start':'2024-10-08','week_end':'2024-10-14'}], '1728520236'),
+])
+def test_yahoo_unverified_transaction_week_is_not_fabricated(windows, stamp):
+    frame = pd.DataFrame(windows, columns=['year','week','week_start','week_end'])
+    with pytest.raises(ValueError, match='transaction week'):
+        map_transaction_to_week(stamp, 2024, frame)
+
+
+@pytest.mark.parametrize("stamp,week", [(1728345599, 5), (1728345600, 6), (1728345601, 6)])
+def test_yahoo_week_changes_at_utc_midnight(stamp, week):
+    windows = pd.DataFrame([
+        {"year":2024, "week":5, "week_start":"2024-10-01", "week_end":"2024-10-07"},
+        {"year":2024, "week":6, "week_start":"2024-10-08", "week_end":"2024-10-14"},
+    ])
+    assert map_transaction_to_week(str(stamp), 2024, windows)[0] == week
 
 
 def test_resolve_transaction_team_keys_falls_back_to_parent_drop_team():

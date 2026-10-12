@@ -16,6 +16,7 @@ Output columns match CanonicalTransactionColumns for pipeline compatibility.
 import logging
 
 import pandas as pd
+from multi_league.core.transaction_periods import TransactionWeekError, native_transaction_week
 
 import sys
 
@@ -124,7 +125,9 @@ def fetch_espn_transactions_modern(
         for txn in raw_waivers:
             txn_id = txn.get("id")
             txn_type_raw = txn.get("type", "unknown")
-            scoring_period = txn.get("scoringPeriodId", 0)
+            scoring_period = native_transaction_week(
+                txn.get("scoringPeriodId"), platform="espn", transaction_id=txn_id
+            )
             items = txn.get("items", [])
             txn_date = txn.get("processDate") or txn.get("proposalDate")
             faab_bid = txn.get("bidAmount", 0) or 0
@@ -192,6 +195,8 @@ def fetch_espn_transactions_modern(
 
         if _verbose:
             log(f"  [TRANSACTIONS] Found {len(raw_waivers)} waiver/FA transactions for {year} ({len(rows)} rows)")
+    except TransactionWeekError:
+        raise
     except Exception as e:
         if strict_active_scope:
             raise RuntimeError(f"ESPN waivers for {year} could not be verified") from e
@@ -207,7 +212,9 @@ def fetch_espn_transactions_modern(
             trades = client.get_raw_trades(year, max_weeks=max_weeks)
         for trade in trades:
             trade_id = trade.get("id")
-            scoring_period = trade.get("scoringPeriodId", 0)
+            scoring_period = native_transaction_week(
+                trade.get("scoringPeriodId"), platform="espn", transaction_id=trade_id
+            )
             items = trade.get("items", [])
             accept_date = trade.get("acceptDate")
 
@@ -271,6 +278,8 @@ def fetch_espn_transactions_modern(
 
         if _verbose:
             log(f"  [TRANSACTIONS] Found {len(trades)} trades for {year}")
+    except TransactionWeekError:
+        raise
     except Exception as e:
         if strict_active_scope:
             raise RuntimeError(f"ESPN trades for {year} could not be verified") from e
@@ -519,6 +528,8 @@ def fetch_all_espn_transactions(ctx: "ESPNContext") -> pd.DataFrame:
                 df = future.result()
                 if df is not None and not df.empty:
                     all_dfs.append(df)
+            except TransactionWeekError:
+                raise
             except Exception as e:
                 log(f"  [TRANSACTIONS] {year}: FAILED - {e}")
 

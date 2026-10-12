@@ -66,6 +66,7 @@ from multi_league.data_fetchers.sleeper import (
 from multi_league.core.script_runner import log
 from multi_league.core.date_utils import get_current_nfl_season_year
 from multi_league.core.fetch_runtime import runtime_from_source
+from multi_league.core.transaction_periods import TransactionWeekError
 from multi_league.core.year_filter_utils import (
     coerce_int,
     format_year_filter,
@@ -905,6 +906,8 @@ def main():
                 total_transactions = sum(len(df) for df in transactions_dfs.values())
                 log(f"  OK: {total_transactions:,} transactions across {len(transactions_dfs)} years")
             results["fetchers"].append(("Transactions", True))
+        except TransactionWeekError:
+            raise
         except Exception as e:
             log(f"  FAIL: {e}")
             results["fetchers"].append(("Transactions", False))
@@ -935,6 +938,8 @@ def main():
                         log(f"  OK: No offseason transactions in {offseason_year} shell")
                 else:
                     log(f"  [DRY-RUN] Would fetch offseason transactions from {offseason_year} shell")
+            except TransactionWeekError:
+                raise
             except Exception as e:
                 log(f"  WARNING: Could not fetch offseason transactions from {offseason_year}: {e}")
 

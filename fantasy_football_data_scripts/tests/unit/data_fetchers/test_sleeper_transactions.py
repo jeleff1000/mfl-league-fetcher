@@ -163,6 +163,24 @@ def test_fetch_transactions_for_year_resolves_retired_roster_ids(tmp_path):
     assert pick_row["source_manager_guid"] == "user-14"
 
 
+@pytest.mark.parametrize('bad_leg', [None, '', 'bad', -1, 1.5, True, 23])
+def test_sleeper_does_not_default_invalid_legs_to_week_one(tmp_path, bad_leg):
+    client = _FakeClient()
+    client.transactions[('2022-league',1)][0]['leg'] = bad_leg
+    fetcher = SleeperTransactionFetcher(_make_ctx(tmp_path), client=client, player_cache=_FakePlayerCache())
+    with pytest.raises(ValueError, match='transaction week'):
+        fetcher.fetch_transactions_for_year(2022)
+
+
+def test_sleeper_pick_trade_requires_its_native_leg(tmp_path):
+    client = _FakeClient()
+    fetcher = SleeperTransactionFetcher(_make_ctx(tmp_path), client=client, player_cache=_FakePlayerCache())
+    trade = dict(client.transactions[('2022-league',1)][2])
+    del trade['leg']
+    with pytest.raises(ValueError, match='transaction week'):
+        fetcher._parse_trade_picks(trade, 2022, {})
+
+
 def test_fetch_transactions_for_year_can_stop_at_active_refresh_week(tmp_path):
     """Weekly refreshes must not poll unplayed future Sleeper transaction weeks."""
     ctx = _make_ctx(tmp_path)

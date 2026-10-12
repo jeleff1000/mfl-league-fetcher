@@ -71,6 +71,7 @@ except ImportError:
 setup_module_path()
 
 from multi_league.core.date_utils import get_current_nfl_season_year
+from multi_league.core.transaction_periods import TransactionWeekError, dated_matchup_windows, native_transaction_week
 
 import pandas as pd
 import requests
@@ -122,16 +123,7 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
             df = local_db.read_table("matchup", year=year)
             available = [c for c in needed_cols if c in df.columns]
             if "year" in available and "week" in available:
-                windows = df[available].copy()
-                # Synthetic/byes can precede a real matchup for the same week.
-                # Never let their null dates discard the provider's dated row.
-                if {"week_start", "week_end"}.issubset(windows.columns):
-                    dated = (pd.to_datetime(windows["week_start"], errors="coerce").notna()
-                             & pd.to_datetime(windows["week_end"], errors="coerce").notna())
-                    windows = windows.loc[dated]
-                else:
-                    windows = windows.iloc[:0]
-                windows = windows.drop_duplicates(subset=["year", "week"]).sort_values(["year", "week"])
+                windows = dated_matchup_windows(df[available])
                 if "cumulative_week" not in windows.columns:
                     windows["year"] = pd.to_numeric(windows["year"], errors="coerce").astype("Int64")
                     windows["week"] = pd.to_numeric(windows["week"], errors="coerce").astype("Int64")
@@ -152,7 +144,7 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
         try:
             df = pd.read_parquet(cache)
             cols = ["year", "week", "week_start", "week_end", "cumulative_week"]
-            df = df[[c for c in cols if c in df.columns]].drop_duplicates()
+            df = dated_matchup_windows(df[[c for c in cols if c in df.columns]])
             if not df.empty:
                 return df
         except Exception:  # noqa: broad-except
@@ -160,6 +152,7 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
     # 2) Try building directly from Yahoo (independent of matchup job)
     try:
         win = build_week_windows_from_yahoo(ctx, year)
+        win = dated_matchup_windows(win)
         if not win.empty:
             try:
                 cache.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +174,7 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
                 .sort_values(["year", "week"])
                 .copy()
             )
+            win = dated_matchup_windows(win)
             win["year"] = pd.to_numeric(win["year"], errors="coerce").astype("Int64")
             win["week"] = pd.to_numeric(win["week"], errors="coerce").astype("Int64")
             win["cumulative_week"] = win["year"].astype("Int64").astype(str) + win["week"].astype("Int64").astype(
@@ -596,70 +590,35 @@ def map_transaction_to_week(ts: str, year: int, matchup_windows: pd.DataFrame) -
     exact windows emitted by weekly_matchup_data_v2.
     Returns string week_start/week_end to match the matchup file.
     """
-    rows = matchup_windows[matchup_windows["year"] == year].sort_values("week")
-    if rows.empty:
-        return 1, None, None
-
-    # Parse the transaction timestamp
+    required = {"year", "week", "week_start", "week_end"}
+    if not required.issubset(matchup_windows.columns):
+        raise TransactionWeekError(f"Unverified Yahoo transaction week for {year}: missing dated windows")
+    rows = matchup_windows[matchup_windows["year"] == year].drop_duplicates().copy()
     try:
-        t_pd = pd.to_datetime(datetime.fromtimestamp(int(ts)))
-    except (ValueError, TypeError, OverflowError):
-        # Unknown timestamp → default to the first week
-        r0 = rows.iloc[0]
-        return int(r0["week"]), r0.get("week_start"), r0.get("week_end")
-
-    # Filter to only rows with valid week_start and week_end dates
-    # This prevents using incomplete/future weeks from matchup windows
-    valid_rows = rows[rows["week_start"].notna() & rows["week_end"].notna()].copy()
-
-    if valid_rows.empty:
-        # No valid windows at all - default to week 1
-        return 1, None, None
-
-    # Prepare typed windows for comparison, but preserve original strings for return
-    comp = valid_rows.copy()
-    comp["_ws"] = pd.to_datetime(comp["week_start"], errors="coerce")
-    comp["_we"] = pd.to_datetime(comp["week_end"], errors="coerce")
-
-    # Add one day to week_end to include the entire end date (not just midnight)
-    # This ensures transactions on the last day of the week are included
-    comp["_we_inclusive"] = comp["_we"] + pd.Timedelta(days=1)
-
-    # Remove any rows where date parsing failed
-    comp = comp[comp["_ws"].notna() & comp["_we"].notna()]
-
+        if int(ts) <= 0:
+            raise ValueError
+        t_pd = pd.to_datetime(int(ts), unit="s", utc=True)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise TransactionWeekError(f"Unverified Yahoo transaction week for {year}: invalid timestamp") from exc
+    comp = rows.copy()
+    comp["_ws"] = pd.to_datetime(comp["week_start"], errors="coerce", utc=True)
+    comp["_we"] = pd.to_datetime(comp["week_end"], errors="coerce", utc=True)
+    comp = comp[comp["_ws"].notna() & comp["_we"].notna() & (comp["_we"] >= comp["_ws"])].drop_duplicates(
+        subset=["year", "week", "_ws", "_we"]
+    ).sort_values("_ws")
     if comp.empty:
-        return 1, None, None
-
-    # Before the first window → week 1
+        raise TransactionWeekError(f"Unverified Yahoo transaction week for {year}: no valid dated windows")
+    comp["_we_inclusive"] = comp["_we"] + pd.Timedelta(days=1)
+    # Keep the established preseason convention only when a real first window exists.
     first = comp.iloc[0]
-    if pd.notna(first["_ws"]) and t_pd < first["_ws"]:
-        return int(first["week"]), first.get("week_start"), first.get("week_end")
-
-    # Inside any [week_start, week_end] (inclusive of entire end day)
-    # Use < with _we_inclusive (next day) instead of <= with _we (midnight)
-    m = (comp["_ws"].notna()) & (comp["_we"].notna()) & (t_pd >= comp["_ws"]) & (t_pd < comp["_we_inclusive"])
-    if m.any():
-        r = comp[m].iloc[0]
-        return int(r["week"]), r.get("week_start"), r.get("week_end")
-
-    # After final valid window → estimate the week based on date
-    last = comp.iloc[-1]
-    last_week_num = int(last["week"])
-    last_week_end_inclusive = last["_we_inclusive"]
-
-    # Calculate days since last known week ended (using inclusive end)
-    days_since_last = (t_pd - last_week_end_inclusive).days
-
-    # Estimate week (assuming 7 days per week)
-    # Add 1 because if transaction is 1-7 days after, it's the next week
-    estimated_week = last_week_num + max(1, (days_since_last // 7) + 1)
-
-    # Cap at reasonable maximum (18 weeks for NFL season including playoffs)
-    estimated_week = min(estimated_week, 18)
-
-    # Return estimated week with no date boundaries (since they don't exist yet)
-    return estimated_week, None, None
+    matches = comp[(t_pd >= comp["_ws"]) & (t_pd < comp["_we_inclusive"])]
+    if t_pd < first["_ws"]:
+        matches = comp[comp["_ws"] == first["_ws"]]
+    if len(matches) != 1:
+        raise TransactionWeekError(f"Unverified Yahoo transaction week for {year}: uncovered or ambiguous date")
+    row = matches.iloc[0]
+    week = native_transaction_week(row["week"], platform="yahoo", transaction_id=ts)
+    return week, row["week_start"], row["week_end"]
 
 
 # =============================================================================
@@ -982,6 +941,8 @@ def fetch_transactions_for_year(
 
             start += count
 
+        except TransactionWeekError:
+            raise
         except (APITimeoutError, RecoverableAPIError) as e:
             print(f"    ERROR: {e}")
             failed_at_offset = start
@@ -1166,6 +1127,8 @@ def fetch_transactions_for_year(
                 resume_start += count
                 print(f"  [{year}] Retry recovered page at offset {resume_start - count}")
 
+            except TransactionWeekError:
+                raise
             except Exception as e:
                 print(f"  [{year}] Retry failed at offset {resume_start}: {e}")
                 break
@@ -1600,6 +1563,8 @@ def fetch_all_transaction_years(
             if not df.empty:
                 results[year] = df
                 total_records += len(df)
+        except TransactionWeekError:
+            raise
         except Exception as e:
             print(f"ERROR: Failed to fetch transactions for {year}: {e}")
             continue

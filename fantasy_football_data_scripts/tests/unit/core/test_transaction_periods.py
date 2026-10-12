@@ -1,0 +1,191 @@
+"""Publication must not turn unavailable transaction periods into valid weeks."""
+
+import duckdb
+import pytest
+
+from multi_league.core.delta_publish import build_delta_bundle
+from multi_league.core.fleet_publish import build_fleet_partition_bundle
+
+
+def staged(platform, week, *, timestamp=1728520236, db_name="qa"):
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute("CREATE TABLE public.transactions (db_name VARCHAR, transaction_id VARCHAR, "
+                 "transaction_sequence INTEGER, platform VARCHAR, year INTEGER, week DOUBLE, "
+                 "timestamp BIGINT, cumulative_week BIGINT, week_start VARCHAR, week_end VARCHAR)")
+    conn.execute("INSERT INTO public.transactions VALUES (?, 'trade', 0, ?, 2024, ?, ?, ?, NULL, NULL)",
+                 [db_name, platform, week, timestamp, None if week is None else int(202400 + week)])
+    conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+                 "week_start VARCHAR, week_end VARCHAR, manager_week VARCHAR)")
+    conn.execute("INSERT INTO public.matchup VALUES (?, 2024, 6, '2024-10-08', '2024-10-14', 'qa_2024_6')", [db_name])
+    return conn
+
+
+@pytest.mark.parametrize("lane", ["full", "quick", "fleet"])
+@pytest.mark.parametrize("platform,week", [("yahoo", 1), ("sleeper", None), ("espn", 1.5)])
+def test_every_bundle_lane_rejects_bad_period_before_artifact(tmp_path, lane, platform, week):
+    with staged(platform, week) as conn:
+        with pytest.raises(ValueError, match="transaction week"):
+            if lane == "fleet":
+                build_fleet_partition_bundle(conn, active_year=2024, league_generations={"qa": 0},
+                                             tables=["transactions"], output_dir=tmp_path)
+            else:
+                build_delta_bundle(conn, db_name="qa", import_mode=lane, platform=platform,
+                                   base_generation=0, output_dir=tmp_path)
+        assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("platform,week,timestamp", [("sleeper", 0, None), ("sleeper", 1, 1700000000),
+                                                    ("espn", 12, None), ("yahoo", 6, 1728520236)])
+def test_valid_native_and_yahoo_periods(platform, week, timestamp):
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged(platform, week, timestamp=timestamp) as conn:
+        validate_transaction_weeks(conn, ["qa"])
+
+
+def test_validation_does_not_inspect_unrelated_league():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged("yahoo", 1, db_name="other") as conn:
+        validate_transaction_weeks(conn, ["qa"])
+
+
+def test_yahoo_cached_period_needs_real_dated_windows():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged("yahoo", 6) as conn:
+        conn.execute("DELETE FROM public.matchup")
+        with pytest.raises(ValueError, match="transaction week"):
+            validate_transaction_weeks(conn, ["qa"])
+
+
+def test_legacy_upload_rejects_bad_period_before_remote_write(monkeypatch, tmp_path):
+    from multi_league.core.local_db import LocalLeagueDB
+    from multi_league.core.targets import fly_target
+    class NoWriteTarget:
+        def merge_league(self, *args, **kwargs):
+            pytest.fail("invalid transaction reached upload")
+    monkeypatch.setattr(fly_target, "FlyTarget", NoWriteTarget)
+    monkeypatch.setenv("FLY_PUBLISH_FORMAT", "duckdb")
+    db = LocalLeagueDB(tmp_path, "qa")
+    try:
+        conn = db.connect()
+        conn.execute("CREATE TABLE public.transactions (year INTEGER, week INTEGER, platform VARCHAR)")
+        conn.execute("INSERT INTO public.transactions VALUES (2024, NULL, 'espn')")
+        with pytest.raises(ValueError, match="transaction week"):
+            db.upload_to_fly("qa", import_mode="full", platform="espn", finalize_merge_source=False)
+    finally:
+        db.close()
+
+
+def test_yahoo_period_uses_utc_even_when_duckdb_timezone_differs():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    from datetime import UTC, datetime
+    stamp = int(datetime(2024, 10, 8, 0, 0, tzinfo=UTC).timestamp())
+    with staged("yahoo", 6, timestamp=stamp) as conn:
+        conn.execute("SET TimeZone='America/Los_Angeles'")
+        validate_transaction_weeks(conn, ["qa"])
+
+
+def test_yahoo_preseason_convention_requires_an_actual_first_window():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged("yahoo", 1, timestamp=1724000000) as conn:
+        conn.execute("UPDATE public.matchup SET week=1, week_start='2024-09-05', week_end='2024-09-09'")
+        validate_transaction_weeks(conn, ["qa"])
+
+
+def test_explicit_estimated_espn_history_is_preserved():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged("espn", 6, timestamp=None) as conn:
+        conn.execute("ALTER TABLE public.transactions ADD COLUMN is_estimated BOOLEAN DEFAULT TRUE")
+        validate_transaction_weeks(conn, ["qa"])
+
+
+@pytest.mark.parametrize("script,fetcher", [("espn_initial_import.py", "fetch_all_espn_transactions"),
+                                          ("sleeper_initial_import.py", "fetch_all_sleeper_transactions")])
+def test_import_orchestrator_does_not_swallow_bad_transaction_period(script, fetcher):
+    """Execute the real fetch try/except without installing or running an entire import."""
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+    from multi_league.core.transaction_periods import TransactionWeekError
+    source = Path(__file__).resolve().parents[3] / script
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    candidates = [node for node in ast.walk(tree) if isinstance(node, ast.Try)
+                  and any(isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                          and child.func.id == fetcher for statement in node.body for child in ast.walk(statement))]
+    node = min(candidates, key=lambda item: item.end_lineno - item.lineno)
+    def failed_fetch(*args, **kwargs):
+        raise TransactionWeekError("Unverified transaction week")
+    namespace = {fetcher: failed_fetch, "TransactionWeekError": TransactionWeekError,
+                 "ctx": SimpleNamespace(), "args": SimpleNamespace(dry_run=False),
+                 "log": lambda *args: None, "results": {"fetchers": []}, "fetcher_dfs": {},
+                 "client": None, "player_cache": None, "year_filter": None, "db": None}
+    with pytest.raises(TransactionWeekError):
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
+
+
+def test_fleet_validates_every_league_actually_exported(tmp_path):
+    with staged("yahoo", 1, db_name="other") as conn:
+        with pytest.raises(ValueError, match="transaction week"):
+            build_fleet_partition_bundle(conn, active_year=2024, league_generations={"qa":0},
+                                         tables=["transactions"], output_dir=tmp_path)
+
+
+@pytest.mark.parametrize("lane", ["full", "quick"])
+def test_yahoo_hint_applies_to_blank_cached_platform(tmp_path, lane):
+    with staged(None, 1) as conn:
+        with pytest.raises(ValueError, match="transaction week"):
+            build_delta_bundle(conn, db_name="qa", import_mode=lane, platform="yahoo",
+                               base_generation=0, output_dir=tmp_path)
+
+
+def test_unresolved_transaction_provenance_is_rejected():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged(None, 1) as conn:
+        with pytest.raises(ValueError, match="transaction week"):
+            validate_transaction_weeks(conn,["qa"])
+
+
+def test_period_guard_does_not_change_other_provider_import_contracts():
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged("mfl", None) as conn:
+        validate_transaction_weeks(conn,["qa"])
+
+
+def test_yahoo_import_wrapper_propagates_invalid_period():
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+    from multi_league.core.transaction_periods import TransactionWeekError
+    source = Path(__file__).resolve().parents[3] / "initial_import_v3.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run_v3_fetcher")
+    node = next(node for node in ast.walk(fn) if isinstance(node, ast.Try))
+    def failed_fetch(*args, **kwargs):
+        raise TransactionWeekError("Unverified transaction week")
+    namespace = {"fetch_year_fn": failed_fetch, "TransactionWeekError":TransactionWeekError,
+                 "ensure_session_healthy":lambda oauth,ctx: oauth, "ctx":SimpleNamespace(data_directory=None),
+                 "oauth":None,"year":2024,"fetcher_name":"transactions","failures":{},
+                 "write_manifest":lambda *args,**kwargs:None,"log":lambda *args:None}
+    with pytest.raises(TransactionWeekError):
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),"exec"),namespace)
+
+
+@pytest.mark.parametrize("script,callee", [("sleeper_initial_import.py", "fetch_sleeper_transactions"),
+                                         ("initial_import_v3.py", "run_yahoo_recovery")])
+def test_offseason_and_outer_recovery_handlers_propagate_invalid_period(script, callee):
+    import ast
+    from pathlib import Path
+    from multi_league.core.transaction_periods import TransactionWeekError
+    source = Path(__file__).resolve().parents[3] / script
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    candidates = [node for node in ast.walk(tree) if isinstance(node, ast.Try)
+                  and any(isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                          and child.func.id == callee for statement in node.body for child in ast.walk(statement))]
+    node = min(candidates, key=lambda item:item.end_lineno - item.lineno)
+    # Isolate the actual handler chain: the rest of this try requires an entire import.
+    node.body = [ast.Raise(exc=ast.Call(func=ast.Name(id="TransactionWeekError",ctx=ast.Load()),
+                                      args=[ast.Constant("Unverified transaction week")],keywords=[]),cause=None)]
+    ast.fix_missing_locations(node)
+    namespace = {"TransactionWeekError":TransactionWeekError,"log":lambda *args:None,"offseason_year":2025}
+    with pytest.raises(TransactionWeekError):
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),"exec"),namespace)

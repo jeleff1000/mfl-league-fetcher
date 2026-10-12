@@ -235,6 +235,7 @@ def build_fleet_partition_bundle(
     repair_missing_season_rollups: bool = False,
     quick_years: list[int] | None = None,
     empty_active_partitions: set[str] | None = None,
+    platform: str | None = None,
 ) -> FleetBundle:
     """Build a fleet partition bundle from a staged fleet DuckDB.
 
@@ -274,6 +275,11 @@ def build_fleet_partition_bundle(
         if not rebuild_homepage_rollups or len(league_generations) != 1:
             raise FleetScopeError("Quick publication requires one generation-fenced league and full rollups")
     requested = list(tables) if tables is not None else sorted(registry)
+    if "transactions" in requested:
+        from multi_league.core.transaction_periods import validate_transaction_weeks
+
+        # Export includes every staged transaction league, not just generation-map keys.
+        validate_transaction_weeks(conn, [], platform=platform)
     unknown = sorted(set(requested) - set(registry))
     if unknown:
         raise ValueError(f"Unknown canonical tables requested: {', '.join(unknown)}")

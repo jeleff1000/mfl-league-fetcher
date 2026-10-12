@@ -437,7 +437,11 @@ def build_delta_bundle(
         return _build_quick_partition_bundle(
             conn, db_name=db_name, base_generation=base_generation,
             registry=registry, output_dir=output_dir,
+            platform=platform,
         )
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+
+    validate_transaction_weeks(conn, [db_name], platform=platform)
     normalized_platform = (
         (platform or os.environ.get("PLATFORM") or os.environ.get("LEAGUE_PLATFORM") or "unknown").lower().strip()
     )
@@ -582,6 +586,7 @@ def _build_quick_partition_bundle(
     base_generation: int | None,
     registry: dict[str, dict[str, Any]],
     output_dir: str | Path | None,
+    platform: str | None = None,
 ) -> DeltaBundle:
     """Publish quick seasons through the existing full-chain v3 merge contract.
 
@@ -627,5 +632,6 @@ def _build_quick_partition_bundle(
         tables=tables + list(CONFIG_TABLE_COLUMN_TYPES), output_dir=output_dir,
         rebuild_career_rollups=True, rebuild_homepage_rollups=True,
         quick_years=sorted(years),
+        platform=platform,
     )
     return DeltaBundle(path=bundle.path, manifest=bundle.manifest)

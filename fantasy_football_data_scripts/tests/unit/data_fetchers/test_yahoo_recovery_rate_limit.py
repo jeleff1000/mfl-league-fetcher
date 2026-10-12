@@ -24,6 +24,53 @@ from multi_league.data_fetchers.yahoo.yahoo_recovery_api import (
     fetch_single_team_roster,
     fetch_single_week_matchups,
 )
+from multi_league.core.transaction_periods import TransactionWeekError
+
+
+def test_transaction_recovery_api_propagates_invalid_week(monkeypatch):
+    from multi_league.data_fetchers.yahoo import yahoo_recovery_api as api, yahoo_transactions as tx
+    monkeypatch.setattr(tx, "fetch_team_mappings", lambda *args: ({}, {}, {}))
+    monkeypatch.setattr(api, "_build_matchup_windows", lambda *args: None)
+    def invalid(*args, **kwargs):
+        raise TransactionWeekError("Unverified transaction week")
+    monkeypatch.setattr(tx, "fetch_transactions_for_year", invalid)
+    with pytest.raises(TransactionWeekError):
+        api.fetch_transactions_for_year_recovery(None, "449.l.1", 2024, None)
+
+
+def test_transaction_recovery_dispatch_propagates_invalid_week(tmp_path, monkeypatch):
+    def invalid(*args, **kwargs):
+        raise TransactionWeekError("Unverified transaction week")
+    monkeypatch.setattr(recovery_mod, "_resolve_transaction_gap", invalid)
+    with pytest.raises(TransactionWeekError):
+        recovery_mod._try_resolve_gap(Gap("transaction",2024,"full_year","manifest"),None,tmp_path)
+
+
+def test_transaction_recovery_loop_propagates_invalid_week(tmp_path, monkeypatch):
+    ctx = SimpleNamespace(data_dir=str(tmp_path), league_ids={"2024":"449.l.1"},oauth=MagicMock())
+    gap = Gap("transaction",2024,"full_year","manifest")
+    monkeypatch.setattr(recovery_mod,"COOLDOWN_SCHEDULE",[0])
+    monkeypatch.setattr(recovery_mod,"MAX_PASSES",1)
+    monkeypatch.setattr(recovery_mod,"_detect_gaps_from_manifests",lambda *args:[gap])
+    monkeypatch.setattr(recovery_mod,"_detect_gaps_from_local_db",lambda *args,**kwargs:[])
+    monkeypatch.setattr(recovery_mod,"_rewrite_active_manifests",lambda *args:None)
+    def invalid(*args, **kwargs):
+        raise TransactionWeekError("Unverified transaction week")
+    monkeypatch.setattr(recovery_mod,"_try_resolve_gap",invalid)
+    with pytest.raises(TransactionWeekError):
+        run_yahoo_recovery(ctx,{"2024":{}},dead_man_minutes=1,local_db=MagicMock())
+
+
+def test_transaction_recovery_preserves_dated_duplicate(tmp_path):
+    import pandas as pd
+    from multi_league.data_fetchers.yahoo.yahoo_recovery_api import _build_matchup_windows
+    from multi_league.data_fetchers.yahoo.yahoo_transactions import map_transaction_to_week
+    db = MagicMock()
+    db.read_table.return_value = pd.DataFrame([
+        {"year":2024,"week":6,"week_start":None,"week_end":None},
+        {"year":2024,"week":6,"week_start":"2024-10-08","week_end":"2024-10-14"},
+    ])
+    assert map_transaction_to_week('1728520236',2024,_build_matchup_windows(db,2024))[0] == 6
 
 
 @patch("multi_league.data_fetchers.yahoo.yahoo_matchups.parse_matchups_for_week")

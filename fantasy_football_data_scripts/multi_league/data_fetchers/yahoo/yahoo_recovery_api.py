@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+from multi_league.core.transaction_periods import TransactionWeekError, dated_matchup_windows
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,8 @@ def fetch_transactions_for_year_recovery(
         )
         return df
 
+    except TransactionWeekError:
+        raise
     except Exception as e:
         if is_recovery_deferred_error(e):
             raise RecoveryDeferredError(str(e)) from e
@@ -217,7 +220,7 @@ def _build_matchup_windows(local_db, year: int) -> pd.DataFrame:
         df = local_db.read_table("matchup", year=year)
         available = [c for c in needed_cols if c in df.columns]
         if "year" in available and "week" in available:
-            year_df = df[available].drop_duplicates(subset=["year", "week"])
+            year_df = dated_matchup_windows(df[available])
             if not year_df.empty:
                 result = year_df.sort_values("week").reset_index(drop=True)
                 if "cumulative_week" not in result.columns:

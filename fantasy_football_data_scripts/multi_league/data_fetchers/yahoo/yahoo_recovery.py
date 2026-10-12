@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
+from multi_league.core.transaction_periods import TransactionWeekError
 
 from multi_league.data_fetchers.yahoo.yahoo_recovery_api import (
     RecoveryDeferredError,
@@ -2242,6 +2243,8 @@ def _try_resolve_gap(
             logger.warning("[RECOVERY] Unknown fetcher type: %s", gap.fetcher)
             gap.last_error = f"Unknown fetcher type: {gap.fetcher}"
             return False
+    except TransactionWeekError:
+        raise
     except RecoveryDeferredError as e:
         gap.last_error = str(e)
         logger.info("[RECOVERY] Deferred %s due to Yahoo throttling/auth: %s", gap.key, e)
@@ -2539,6 +2542,8 @@ def run_yahoo_recovery(
 
             try:
                 result = resolve_fn(gap)
+            except TransactionWeekError:
+                raise
             except Exception as e:
                 logger.warning("[RECOVERY] Error resolving %s: %s", gap.key, e)
                 result = False

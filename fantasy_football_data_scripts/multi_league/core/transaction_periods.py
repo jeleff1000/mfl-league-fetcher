@@ -7,6 +7,30 @@ class TransactionWeekError(ValueError):
     """A transaction's week cannot be verified from its provider data."""
 
 
+YAHOO_TRANSACTION_WINDOWS = "__yahoo_transaction_windows"
+
+
+def retain_yahoo_transaction_windows(conn, *, db_name: str, year: int, windows) -> None:
+    """Keep the already-fetched provider calendar in worker scratch, never Fly.
+
+    Live-week transactions exist before final matchup rows do. Publication must
+    use the independent calendar used by the fetcher, not the transaction's own
+    derived dates, and must not pretend that a live matchup is final.
+    """
+    frame = dated_matchup_windows(windows)[["year", "week", "week_start", "week_end"]]
+    table = f"public.{YAHOO_TRANSACTION_WINDOWS}"
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {table} "
+                 "(db_name VARCHAR, year INTEGER, week INTEGER, week_start DATE, week_end DATE)")
+    conn.execute(f"DELETE FROM {table} WHERE db_name = ? AND year = ?", [db_name, int(year)])
+    conn.register("__provider_transaction_calendar", frame)
+    try:
+        conn.execute(f"INSERT INTO {table} SELECT ?, year, week, "
+                     "try_cast(week_start AS DATE), try_cast(week_end AS DATE) "
+                     "FROM __provider_transaction_calendar WHERE year = ?", [db_name, int(year)])
+    finally:
+        conn.unregister("__provider_transaction_calendar")
+
+
 def dated_matchup_windows(frame):
     """Remove undated synthetic rows without discarding conflicting real windows."""
     import pandas as pd
@@ -86,12 +110,19 @@ def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | Non
     yahoo_scope = f"{scope} AND {provider} = 'yahoo'"
     if not conn.execute(f"SELECT 1 FROM public.transactions t WHERE {yahoo_scope} LIMIT 1").fetchone():
         return
-    windows_cols = columns("matchup")
-    if "timestamp" not in cols or not {"year", "week", "week_start", "week_end"}.issubset(windows_cols):
-        raise TransactionWeekError("Unverified Yahoo transaction week: missing timestamps or dated windows")
+    required = {"year", "week", "week_start", "week_end"}
+    calendar_sql = []
     owned_name = literal(db_names[0]) if len(db_names) == 1 else "NULL"
+    for table in ("matchup", YAHOO_TRANSACTION_WINDOWS):
+        window_cols = columns(table)
+        if required.issubset(window_cols):
+            window_db = f"coalesce(nullif(db_name, ''), {owned_name})" if "db_name" in window_cols else owned_name
+            calendar_sql.append(f"SELECT {window_db} AS db_name, year, week, "
+                                "try_cast(week_start AS DATE) AS ws, try_cast(week_end AS DATE) AS we "
+                                f"FROM public.{table}")
+    if "timestamp" not in cols or not calendar_sql:
+        raise TransactionWeekError("Unverified Yahoo transaction week: missing timestamps or dated windows")
     txn_db = f"coalesce(nullif(t.db_name, ''), {owned_name})" if "db_name" in cols else owned_name
-    window_db = f"coalesce(nullif(db_name, ''), {owned_name})" if "db_name" in windows_cols else owned_name
     invalid = conn.execute(f"""
         WITH events AS (
             SELECT DISTINCT {txn_db} AS db_name, {id_expr} AS transaction_id,
@@ -100,12 +131,9 @@ def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | Non
                         THEN cast(to_timestamp(try_cast(t.timestamp AS DOUBLE)) AT TIME ZONE 'UTC' AS DATE)
                    END AS event_date
             FROM public.transactions t WHERE {yahoo_scope}
-        ), windows AS (
-            SELECT DISTINCT {window_db} AS db_name, year, week,
-                   try_cast(week_start AS DATE) AS ws, try_cast(week_end AS DATE) AS we
-            FROM public.matchup
-            WHERE try_cast(week_start AS DATE) IS NOT NULL
-              AND try_cast(week_end AS DATE) >= try_cast(week_start AS DATE)
+        ), calendar AS ({' UNION ALL '.join(calendar_sql)}), windows AS (
+            SELECT DISTINCT db_name, year, week, ws, we FROM calendar
+            WHERE ws IS NOT NULL AND we >= ws
         ), starts AS (
             SELECT db_name, year, min(ws) AS first_start FROM windows GROUP BY db_name, year
         ), verified AS (

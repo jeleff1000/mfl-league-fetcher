@@ -1471,6 +1471,13 @@ def fetch_transactions(
     if matchup_windows is None:
         matchup_windows = load_matchup_windows(ctx, year, local_db=local_db)
 
+    if local_db is not None:
+        from multi_league.core.transaction_periods import retain_yahoo_transaction_windows
+
+        retain_yahoo_transaction_windows(
+            local_db.connect(), db_name=local_db.league_name, year=year, windows=matchup_windows,
+        )
+
     # Fetch team mappings (with manager name normalization including --hidden-- fallback)
     manager_overrides = ctx.manager_name_overrides if ctx else {}
     team_mappings, guid_mappings, team_name_mappings = fetch_team_mappings(

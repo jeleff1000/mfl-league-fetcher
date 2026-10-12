@@ -37,6 +37,32 @@ def test_matchup_windows_do_not_hide_conflicting_dates(tmp_path):
         map_transaction_to_week('1728520236', 2024, windows)
 
 
+@pytest.mark.parametrize('provided', [True, False])
+def test_fetch_retains_independent_live_week_calendar(tmp_path, monkeypatch, provided):
+    from multi_league.core.local_db import LocalLeagueDB
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+
+    windows = pd.DataFrame([
+        {'year':2024,'week':5,'week_start':'2024-10-01','week_end':'2024-10-07'},
+        {'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'},
+    ])
+    ctx = SimpleNamespace(get_oauth_session=lambda:None, game_code='nfl',
+        get_league_id_for_year=lambda year:'449.l.123', manager_name_overrides={}, data_directory=tmp_path)
+    monkeypatch.setattr(fetcher.yfa, 'Game', lambda *args:None)
+    monkeypatch.setattr(fetcher, 'fetch_team_mappings', lambda *args,**kwargs:({}, {}, {}))
+    monkeypatch.setattr(fetcher, 'load_matchup_windows', lambda *args,**kwargs:windows)
+    monkeypatch.setattr(fetcher, 'fetch_transactions_for_year', lambda *args,**kwargs:[])
+    with LocalLeagueDB(tmp_path, 'qa') as db:
+        result = fetcher.fetch_transactions(ctx, 2024, windows if provided else None, local_db=db)
+        assert result.empty
+        assert db.connect().execute('SELECT db_name,year,week,week_start::VARCHAR,week_end::VARCHAR '
+            'FROM public.__yahoo_transaction_windows ORDER BY week').fetchall() == [
+            ('qa',2024,5,'2024-10-01','2024-10-07'), ('qa',2024,6,'2024-10-08','2024-10-14')]
+        # The next fetch replaces this year's witness, not other years/leagues.
+        fetcher.fetch_transactions(ctx, 2024, windows.iloc[:1], local_db=db)
+        assert db.connect().execute('SELECT week FROM public.__yahoo_transaction_windows').fetchall() == [(5,)]
+
+
 @pytest.mark.parametrize('windows,stamp', [
     ([], '1728520236'),
     ([{'year':2024,'week':6,'week_start':None,'week_end':None}], '1728520236'),

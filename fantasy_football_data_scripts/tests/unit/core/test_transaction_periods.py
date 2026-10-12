@@ -57,6 +57,55 @@ def test_yahoo_cached_period_needs_real_dated_windows():
             validate_transaction_weeks(conn, ["qa"])
 
 
+def _ongoing_yahoo_calendar(conn):
+    # Independent Yahoo calendar, not dates copied from transaction output.
+    conn.execute("UPDATE public.matchup SET week=5, week_start='2024-10-01', week_end='2024-10-07'")
+    conn.execute("CREATE TABLE public.__yahoo_transaction_windows "
+                 "(db_name VARCHAR, year INTEGER, week INTEGER, week_start DATE, week_end DATE)")
+    conn.execute("INSERT INTO public.__yahoo_transaction_windows VALUES "
+                 "('qa',2024,5,'2024-10-01','2024-10-07'),"
+                 "('qa',2024,6,'2024-10-08','2024-10-14'),"
+                 "('other',2024,6,'2024-10-09','2024-10-15'),"
+                 "('qa',2023,6,'2023-10-10','2023-10-16')")
+
+
+@pytest.mark.parametrize('lane', ['full', 'quick', 'fleet'])
+def test_ongoing_yahoo_week_publishes_without_finalizing_matchup(tmp_path, lane):
+    from multi_league.core.league_refresh import stage_refresh_partitions
+    with staged('yahoo', 6) as conn:
+        _ongoing_yahoo_calendar(conn)
+        if lane == 'fleet':
+            with stage_refresh_partitions(conn, db_name='qa', active_year=2024,
+                                          tables=['matchup', 'transactions']) as stage:
+                bundle = build_fleet_partition_bundle(stage, active_year=2024,
+                    league_generations={'qa':0}, tables=['matchup','transactions'], output_dir=tmp_path)
+                assert stage.execute('SELECT db_name,year,week FROM public.__yahoo_transaction_windows ORDER BY week').fetchall() == [
+                    ('qa',2024,5), ('qa',2024,6)]
+        else:
+            bundle = build_delta_bundle(conn, db_name='qa', import_mode=lane, platform='yahoo',
+                                        base_generation=0, output_dir=tmp_path)
+        assert '__yahoo_transaction_windows' not in str(bundle.manifest)
+        assert conn.execute('SELECT week FROM public.matchup').fetchall() == [(5,)]
+
+
+@pytest.mark.parametrize('bad', ['wrong_week', 'conflict', 'other_league', 'wrong_year'])
+def test_ongoing_calendar_does_not_bypass_yahoo_validation(tmp_path, bad):
+    with staged('yahoo', 6) as conn:
+        _ongoing_yahoo_calendar(conn)
+        if bad == 'wrong_week':
+            conn.execute('UPDATE public.transactions SET week=1,cumulative_week=202401')
+        elif bad == 'conflict':
+            conn.execute("INSERT INTO public.__yahoo_transaction_windows VALUES ('qa',2024,6,'2024-10-09','2024-10-15')")
+        elif bad == 'other_league':
+            conn.execute("DELETE FROM public.__yahoo_transaction_windows WHERE db_name='qa'")
+        else:
+            conn.execute('UPDATE public.__yahoo_transaction_windows SET year=2023')
+        with pytest.raises(ValueError, match='transaction week'):
+            build_fleet_partition_bundle(conn, active_year=2024, league_generations={'qa':0},
+                tables=['matchup','transactions'], output_dir=tmp_path)
+        assert not list(tmp_path.iterdir())
+
+
 def test_legacy_upload_rejects_bad_period_before_remote_write(monkeypatch, tmp_path):
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.targets import fly_target

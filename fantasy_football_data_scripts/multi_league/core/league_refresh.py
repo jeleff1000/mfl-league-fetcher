@@ -1953,15 +1953,21 @@ def stage_refresh_partitions(
             """
         ).fetchall()
     }
+    # Validation-only Yahoo calendar: live transactions precede final matchup
+    # rows. Keep its exact scoped provider dates, but never add it to the manifest.
+    from multi_league.core.transaction_periods import YAHOO_TRANSACTION_WINDOWS
+
+    if "transactions" in requested and YAHOO_TRANSACTION_WINDOWS in available:
+        requested.append(YAHOO_TRANSACTION_WINDOWS)
     stage = duckdb.connect(":memory:")
     stage.execute("CREATE SCHEMA public")
     try:
         for table in requested:
             if table not in available:
                 continue
-            spec = registry[table]
+            spec = registry.get(table)
             table_ref = f"public.{qident(table)}"
-            if str(spec["cadence_class"]) == CADENCE_ACTIVE_SEASON:
+            if table == YAHOO_TRANSACTION_WINDOWS or str(spec["cadence_class"]) == CADENCE_ACTIVE_SEASON:
                 frame = source.execute(
                     f"SELECT * FROM {table_ref} WHERE db_name = ? AND year = ?",
                     [db_name, int(active_year)],

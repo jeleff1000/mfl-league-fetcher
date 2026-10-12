@@ -51,7 +51,7 @@ Interface: `validate_transaction_weeks(conn, db_names: list[str]) -> None`, read
 - [x] Run representative no-write input pilots for each platform; record guard timing and exact acceptance/rejection. No new full imports are needed to prove a pre-publication gate.
 - [x] Independent review of the diff, then test any substantive findings RED/GREEN.
 - [x] Run the project test command with a bounded first-error check; name any environment/checkout blocker separately from targeted results.
-- [ ] Push verified fixes to public `main`, verify remote SHA and boundary guard. Confirm Fly remains ready with no writes from this goal.
+- [x] Push verified fixes to public `main`, verify remote SHA and boundary guard. Confirm Fly remains ready with no writes from this goal.
 - [x] Completion audit: all three platforms, quick/full/multiplatform/refresh/manual/legacy paths; absent/invalid periods fail, valid periods survive, no added provider calls.
 
 ## Evidence
@@ -69,4 +69,7 @@ Interface: `validate_transaction_weeks(conn, db_names: list[str]) -> None`, read
 - The guard applies new period constraints only to Yahoo/ESPN/Sleeper; a regression proves unrelated MFL archived contracts are unchanged.
 - Final-implementation cold input pilot under concurrent local test load: Yahoo 5344.47 ms, Sleeper 10.90 ms, ESPN 6.11 ms; all accepted, and injected Yahoo week 1 rejected. Do not misreport only the earlier faster sample as a latency guarantee. An isolated conversion probe measured UTC-zone vs UTC-epoch conversion at 2.68 vs 2.22 ms, so there is no evidence for changing the date algorithm; no speculative optimization was made.
 - No new full production import/update was launched. Verification uses real read-only input samples, real local publication builders, injected parser/recovery failures, and existing regression tests. Already-running jobs pinned to older SHAs cannot acquire this change retroactively.
-- Remote-main publication verification remains pending below.
+- Final code commit `39356b9fbe978e74980a365d46e0ee79d7489084` was pushed and independently verified against remote `refs/heads/main`. Public Worker Boundary Guard [38311977121](https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/38311977121) completed successfully on that exact SHA. All three quick workers and the multiplatform worker check `refs/heads/main` and checkout the public repo; all three refreshes use the guarded fleet builder, while multiplatform publication uses guarded `upload_to_fly`.
+- Repeated final local input pilot accepted the same real examples at Yahoo 1974.77 ms, Sleeper 15.32 ms, ESPN 16.08 ms. These are small local samples, not a full-import latency guarantee. No added verification API calls occur in the production helper.
+- Final Fly readiness: serving/healthy, zero active queries, zero publishes, zero league WAL bytes, unchanged league file hash `sha256:b0ac1d0767212f61` throughout this goal. No live write/restart/rebuild/capacity change occurred.
+- Closed: all listed tasks complete for this transaction-week bug. Limitation: the complete repository suite and new end-to-end production imports were not run; the explicit targeted tests, no-write production-input pilots, local builder tests, and exact-SHA boundary guard are the completion evidence.

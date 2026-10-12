@@ -57,6 +57,7 @@ def payload_for(due: datetime, *, probe: bool = False) -> dict:
             "scheduled_for": due.isoformat(),
             "dispatched_at": datetime.now(timezone.utc).isoformat(),
             "game_date": (local.date() - timedelta(days=1)).isoformat(),
+            **({"runner": os.environ.get("OPS_PROBE_RUNNER", '["ubuntu-latest"]')} if probe else {}),
         },
     }
 

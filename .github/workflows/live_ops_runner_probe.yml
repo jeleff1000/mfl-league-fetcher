@@ -23,7 +23,7 @@ permissions: {}
 
 jobs:
   timestamp:
-    runs-on: ${{ fromJSON(inputs.runner || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON(github.event.client_payload.runner || inputs.runner || '["ubuntu-latest"]') }}
     timeout-minutes: 1
     steps:
       - name: Record actual runner execution
@@ -32,25 +32,19 @@ jobs:
           SCHEDULED_FOR: ${{ github.event.client_payload.scheduled_for || inputs.scheduled_for }}
           DISPATCHED_AT: ${{ github.event.client_payload.dispatched_at || '' }}
         run: |
-          python - <<'PY'
-          import json, os
-          from datetime import datetime, timezone
-          started = datetime.now(timezone.utc)
-          due = datetime.fromisoformat(os.environ['SCHEDULED_FOR'].replace('Z', '+00:00'))
-          receipt = {
-              'dispatch_key': os.environ['DISPATCH_KEY'],
-              'scheduled_for': due.isoformat(),
-              'dispatched_at': os.environ['DISPATCHED_AT'],
-              'runner_started_at': started.isoformat(),
-              'start_latency_seconds': round((started - due).total_seconds(), 3),
-              'runner_name': os.environ['RUNNER_NAME'],
-              'database_access': False,
-          }
-          print(json.dumps(receipt))
-          with open('clock-probe-receipt.json', 'w') as handle:
-              json.dump(receipt, handle)
-          assert 0 <= receipt['start_latency_seconds'] <= 60, receipt
-          PY
+          set -euo pipefail
+          started=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+          started_epoch=$(date -d "$started" +%s.%N)
+          due_epoch=$(date -d "$SCHEDULED_FOR" +%s.%N)
+          latency=$(awk -v started="$started_epoch" -v due="$due_epoch" 'BEGIN {printf "%.3f", started-due}')
+          jq -n --arg key "$DISPATCH_KEY" --arg due "$SCHEDULED_FOR" \
+            --arg sent "$DISPATCHED_AT" --arg started "$started" \
+            --arg runner "$RUNNER_NAME" --argjson latency "$latency" \
+            '{dispatch_key:$key, scheduled_for:$due, dispatched_at:$sent,
+              runner_started_at:$started, runner_name:$runner,
+              start_latency_seconds:$latency, database_access:false}' \
+            | tee clock-probe-receipt.json
+          awk -v latency="$latency" 'BEGIN {exit !(latency >= 0 && latency <= 60)}'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

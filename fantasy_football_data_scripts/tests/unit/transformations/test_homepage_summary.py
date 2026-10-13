@@ -819,7 +819,11 @@ def test_compute_all_manager_profiles_separates_duplicate_manager_names_by_franc
     assert profiles["current_team_name"].tolist() == ["Alpha", "Beta"]
 
 
-def test_compute_transaction_highlights_lookup_headshots_after_selecting_rows():
+@pytest.mark.parametrize("platform", ["yahoo", "sleeper", "espn"])
+@pytest.mark.parametrize("unused_manager_lamar", [0.0, None, -2.0])
+def test_compute_transaction_highlights_rank_pickups_by_earned_manager_lamar(
+    platform, unused_manager_lamar
+):
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA IF NOT EXISTS public")
     conn.execute("ATTACH ':memory:' AS \"___ops\"")
@@ -855,26 +859,40 @@ def test_compute_transaction_highlights_lookup_headshots_after_selecting_rows():
         "INSERT INTO public.transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             ("txn_highlight_test", "add", "Pickup Star", "Alice", 2024, 3, "nfl_add", "101", 12.5, 11.0, 55.0),
-            ("txn_highlight_test", "add", "Fallback Star", "Carol", 2024, 4, "nfl_fallback", "303", 0.0, 20.0, 25.0),
+            ("txn_highlight_test", "add", "Bench Star", "Carol", 2024, 4, "nfl_fallback", "303", unused_manager_lamar, 20.0, 25.0),
             ("txn_highlight_test", "drop", "Drop Regret", "Bob", 2024, 7, "nfl_drop", "202", 0.0, 18.0, 60.0),
+            ("txn_highlight_test", "drop", "Replacement Player", "Carol", 2024, 8, "nfl_replacement", "404", 0.0, 0.0, 100.0),
         ],
     )
     conn.executemany(
         'INSERT INTO "___ops".nfl_historical.player_bio VALUES (?, ?, ?, ?)',
         [
             ("nfl_add", "101", "Pickup Star", "https://img.example/add.png"),
-            ("nfl_fallback", "303", "Fallback Star", "https://img.example/fallback.png"),
+            ("nfl_fallback", "303", "Bench Star", "https://img.example/fallback.png"),
             ("nfl_drop", "202", "Drop Regret", "https://img.example/drop.png"),
         ],
     )
 
-    highlights = _compute_transaction_highlights(conn, "txn_highlight_test", platform="yahoo")
+    # The centralized schema contains all native ID columns; headshot SQL
+    # validates each platform's bio ID even when the NFL ID matches first.
+    for column in ("sleeper_player_id", "espn_player_id"):
+        conn.execute(f"ALTER TABLE public.transactions ADD COLUMN {column} VARCHAR")
+        conn.execute(f"UPDATE public.transactions SET {column} = yahoo_player_id")
+    for column in ("sleeper_player_id", "espn_id"):
+        conn.execute(f'ALTER TABLE "___ops".nfl_historical.player_bio ADD COLUMN {column} VARCHAR')
+        conn.execute(f'UPDATE "___ops".nfl_historical.player_bio SET {column} = yahoo_player_id')
 
-    assert highlights["best_pickup_player"] == "Fallback Star"
-    assert highlights["best_pickup_lamar"] == 20.0
-    assert highlights["best_pickup_headshot"] == "https://img.example/fallback.png"
+    highlights = _compute_transaction_highlights(conn, "txn_highlight_test", platform=platform)
+
+    assert highlights["best_pickup_player"] == "Pickup Star"
+    assert highlights["best_pickup_manager"] == "Alice"
+    assert highlights["best_pickup_lamar"] == 12.5
+    assert highlights["best_pickup_headshot"] == "https://img.example/add.png"
     assert highlights["worst_drop_player"] == "Drop Regret"
+    assert highlights["worst_drop_manager"] == "Bob"
+    assert highlights["worst_drop_lamar"] == 18.0
     assert highlights["worst_drop_headshot"] == "https://img.example/drop.png"
+    conn.close()
 
 
 def test_local_profile_context_player_lookup_without_remote_register():

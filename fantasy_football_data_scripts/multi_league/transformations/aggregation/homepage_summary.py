@@ -1272,8 +1272,9 @@ def _compute_transaction_highlights(
 ) -> dict[str, Any]:
     """Compute transaction highlights (best pickup, worst drop).
 
-    Uses LAMAR when available, falls back to total fantasy points ROS when LAMAR
-    columns are empty/zero (common for current season before full calculations run).
+    Pickups use started value earned by the acquiring manager. Drops use
+    post-release player value left on the table. Zero is valid in both cases;
+    raw fantasy points must never substitute for either LAMAR measure.
 
     Args:
         conn: Database connection
@@ -1300,29 +1301,21 @@ def _compute_transaction_highlights(
     nfl_id_select = "t.NFL_player_id" if txn_has_nfl_id else "NULL"
     platform_id_select = f"t.{player_id_col}" if player_id_col in txn_cols else "NULL"
 
-    # Build LAMAR expression with fallbacks
-    # Priority: manager_lamar_ros_managed > player_lamar_ros_total > total_points_ros_total
-    lamar_parts = []
-    if "manager_lamar_ros_managed" in txn_cols:
-        lamar_parts.append("NULLIF(t.manager_lamar_ros_managed, 0)")
-    if "player_lamar_ros_total" in txn_cols:
-        lamar_parts.append("NULLIF(t.player_lamar_ros_total, 0)")
-    if "total_points_ros_total" in txn_cols:
-        lamar_parts.append("NULLIF(t.total_points_ros_total, 0)")
-    lamar_parts.append("0")
-    lamar_expr = f"COALESCE({', '.join(lamar_parts)})"
+    # Bench production or production after release is not pickup credit.
+    lamar_expr = (
+        "COALESCE(t.manager_lamar_ros_managed, 0)"
+        if "manager_lamar_ros_managed" in txn_cols else "0"
+    )
     # Build drop regret expression with fallbacks
     # For worst drops, we want the player's LAMAR remaining after they were dropped
     # This shows how much value was "left on the table" by dropping them
     drop_parts = []
     if "drop_regret_score" in txn_cols:
-        drop_parts.append("NULLIF(t.drop_regret_score, 0)")
+        drop_parts.append("t.drop_regret_score")
     if "player_lamar_ros_total" in txn_cols:
-        drop_parts.append("NULLIF(t.player_lamar_ros_total, 0)")
-    if "player_lamar_ros" in txn_cols:  # Fallback when _total is 0
-        drop_parts.append("NULLIF(t.player_lamar_ros, 0)")
-    if "total_points_ros_total" in txn_cols:
-        drop_parts.append("NULLIF(t.total_points_ros_total, 0)")
+        drop_parts.append("t.player_lamar_ros_total")
+    if "player_lamar_ros" in txn_cols:
+        drop_parts.append("t.player_lamar_ros")
     drop_parts.append("0")
     drop_expr = f"COALESCE({', '.join(drop_parts)})"
 

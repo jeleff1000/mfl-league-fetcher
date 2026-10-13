@@ -53,7 +53,7 @@ import re
 import time
 from pathlib import Path
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from xml.etree import ElementTree as ET
 
 try:
@@ -71,7 +71,9 @@ except ImportError:
 setup_module_path()
 
 from multi_league.core.date_utils import get_current_nfl_season_year
-from multi_league.core.transaction_periods import TransactionWeekError, dated_matchup_windows, native_transaction_week
+from multi_league.core.transaction_periods import (
+    TransactionWeekError, dated_matchup_windows, local_yahoo_transaction_windows, native_transaction_week,
+)
 
 import pandas as pd
 import requests
@@ -117,24 +119,42 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
       2) build from Yahoo API (scoreboard) -> then cache
       3) (optional) read matchup_data_week_all_year_{year}.parquet if present
     """
+    active_year = int(year) == get_current_nfl_season_year()
+    today = pd.Timestamp(datetime.now(UTC)).normalize()
+    bounds = {}
     if local_db is not None:
-        needed_cols = ["year", "week", "week_start", "week_end", "cumulative_week"]
         try:
-            df = local_db.read_table("matchup", year=year)
-            available = [c for c in needed_cols if c in df.columns]
-            if "year" in available and "week" in available:
-                windows = dated_matchup_windows(df[available])
-                if "cumulative_week" not in windows.columns:
-                    windows["year"] = pd.to_numeric(windows["year"], errors="coerce").astype("Int64")
-                    windows["week"] = pd.to_numeric(windows["week"], errors="coerce").astype("Int64")
-                    windows["cumulative_week"] = windows["year"].astype(str) + windows["week"].astype(str).str.zfill(2)
-                    windows["cumulative_week"] = pd.to_numeric(windows["cumulative_week"], errors="coerce").astype(
-                        "Int64"
-                    )
-                if not windows.empty:
-                    return windows.reset_index(drop=True)
+            settings = local_db.read_table('league_settings', year=year)
+            for column in ('start_week', 'end_week'):
+                if column in settings:
+                    values = pd.to_numeric(settings[column], errors='coerce').dropna().unique()
+                    if len(values) == 1 and values[0] == int(values[0]) and 1 <= values[0] <= 22:
+                        bounds[column] = int(values[0])
         except Exception:
             pass
+
+    def usable_calendar(frame):
+        windows = dated_matchup_windows(frame)
+        windows = windows[pd.to_numeric(windows['year'], errors='coerce') == int(year)]
+        if active_year and not windows.empty:
+            start = pd.to_datetime(windows['week_start'], utc=True)
+            end = pd.to_datetime(windows['week_end'], utc=True) + pd.Timedelta(days=1)
+            weeks = pd.to_numeric(windows['week'], errors='coerce')
+            has_start = weeks.min() == bounds.get('start_week')
+            if 'start_week' in bounds and not has_start:
+                return windows.iloc[:0]
+            before_start = today < start.min() and weeks.min() == bounds.get('start_week')
+            after_end = has_start and today >= end.max() and weeks.max() == bounds.get('end_week')
+            if not ((start <= today) & (today < end)).any() and not before_start and not after_end:
+                return windows.iloc[:0]
+        return windows
+
+    if local_db is not None:
+        # A prior fetch may already have retained the full independent calendar.
+        # Final matchup rows alone stop before the live week; nonempty != current.
+        windows = usable_calendar(local_yahoo_transaction_windows(local_db, year))
+        if not windows.empty:
+            return windows.reset_index(drop=True)
 
     mdir = ctx.matchup_data_directory
     cache = mdir / f"matchup_windows_{year}.parquet"  # year-scoped!
@@ -144,7 +164,7 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
         try:
             df = pd.read_parquet(cache)
             cols = ["year", "week", "week_start", "week_end", "cumulative_week"]
-            df = dated_matchup_windows(df[[c for c in cols if c in df.columns]])
+            df = usable_calendar(df[[c for c in cols if c in df.columns]])
             if not df.empty:
                 return df
         except Exception:  # noqa: broad-except
@@ -174,7 +194,7 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
                 .sort_values(["year", "week"])
                 .copy()
             )
-            win = dated_matchup_windows(win)
+            win = usable_calendar(win)
             win["year"] = pd.to_numeric(win["year"], errors="coerce").astype("Int64")
             win["week"] = pd.to_numeric(win["week"], errors="coerce").astype("Int64")
             win["cumulative_week"] = win["year"].astype("Int64").astype(str) + win["week"].astype("Int64").astype(
@@ -226,29 +246,17 @@ def build_week_windows_from_yahoo(ctx, year: int) -> pd.DataFrame:
     except Exception:
         start_week, end_week = 1, 17
 
+    weeks = ','.join(str(w) for w in range(start_week, end_week + 1))
+    root = fetch_url(f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/scoreboard;week={weeks}", oauth)
     rows = []
-    for w in range(start_week, end_week + 1):
-        url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/scoreboard;week={w}"
-        try:
-            root = fetch_url(url, oauth)
-        except Exception:  # noqa: broad-except
-            continue
-        wstarts, wends = [], []
-        for m in root.findall(".//matchup"):
-            ws = (m.findtext("week_start") or "").strip()
-            we = (m.findtext("week_end") or "").strip()
-            if ws:
-                wstarts.append(ws)
-            if we:
-                wends.append(we)
-        week_start = min(wstarts) if wstarts else None
-        week_end = max(wends) if wends else None
+    for matchup in root.findall(".//matchup"):
+        week = native_transaction_week(matchup.findtext("week"), platform="yahoo", transaction_id=league_key)
         rows.append(
             {
                 "year": int(year),
-                "week": int(w),
-                "week_start": week_start,
-                "week_end": week_end,
+                "week": week,
+                "week_start": (matchup.findtext("week_start") or "").strip(),
+                "week_end": (matchup.findtext("week_end") or "").strip(),
             }
         )
     win = pd.DataFrame(rows)
@@ -259,14 +267,8 @@ def build_week_windows_from_yahoo(ctx, year: int) -> pd.DataFrame:
     win["cumulative_week"] = win["year"].astype("Int64").astype(str) + win["week"].astype("Int64").astype(
         str
     ).str.zfill(2)
-    with pd.option_context("mode.use_inf_as_na", True):
-        win["cumulative_week"] = pd.to_numeric(win["cumulative_week"], errors="coerce").astype("Int64")
-    return (
-        win.dropna(subset=["year", "week"])
-        .drop_duplicates(subset=["year", "week"])
-        .sort_values(["year", "week"])
-        .reset_index(drop=True)
-    )
+    win["cumulative_week"] = pd.to_numeric(win["cumulative_week"], errors="coerce").astype("Int64")
+    return dated_matchup_windows(win).reset_index(drop=True)
 
 
 # =============================================================================

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
-from multi_league.core.transaction_periods import TransactionWeekError, dated_matchup_windows
+from multi_league.core.transaction_periods import TransactionWeekError, local_yahoo_transaction_windows
 
 logger = logging.getLogger(__name__)
 
@@ -216,26 +216,7 @@ def _build_matchup_windows(local_db, year: int) -> pd.DataFrame:
     if local_db is None:
         return pd.DataFrame(columns=needed_cols)
 
-    try:
-        df = local_db.read_table("matchup", year=year)
-        available = [c for c in needed_cols if c in df.columns]
-        if "year" in available and "week" in available:
-            year_df = dated_matchup_windows(df[available])
-            if not year_df.empty:
-                result = year_df.sort_values("week").reset_index(drop=True)
-                if "cumulative_week" not in result.columns:
-                    result["year"] = pd.to_numeric(result["year"], errors="coerce").astype("Int64")
-                    result["week"] = pd.to_numeric(result["week"], errors="coerce").astype("Int64")
-                    result["cumulative_week"] = result["year"].astype(str) + result["week"].astype(str).str.zfill(2)
-                    result["cumulative_week"] = pd.to_numeric(result["cumulative_week"], errors="coerce").astype(
-                        "Int64"
-                    )
-                return result
-    except Exception:
-        pass
-
-    # Return empty with correct columns so map_transaction_to_week handles gracefully.
-    return pd.DataFrame(columns=needed_cols)
+    return local_yahoo_transaction_windows(local_db, year)
 
 
 def fetch_draft_for_year(oauth, league_key: str, year: int) -> pd.DataFrame:

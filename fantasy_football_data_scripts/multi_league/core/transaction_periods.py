@@ -44,6 +44,24 @@ def dated_matchup_windows(frame):
     ).sort_values(["year", "week"]).copy()
 
 
+def local_yahoo_transaction_windows(local_db, year: int):
+    """Combine retained live dates and final dates without discarding history."""
+    import pandas as pd
+    frames = []
+    fields = ['year', 'week', 'week_start', 'week_end']
+    for table in (YAHOO_TRANSACTION_WINDOWS, 'matchup'):
+        try:
+            frame = dated_matchup_windows(local_db.read_table(table, year=year))
+            frame = frame[pd.to_numeric(frame['year'], errors='coerce') == int(year)]
+            if not frame.empty:
+                frames.append(frame[fields])
+        except Exception:
+            continue
+    windows = dated_matchup_windows(pd.concat(frames, ignore_index=True)) if frames else pd.DataFrame(columns=fields)
+    windows['cumulative_week'] = pd.to_numeric(windows['year']) * 100 + pd.to_numeric(windows['week'])
+    return windows.reset_index(drop=True)
+
+
 def native_transaction_week(value, *, platform: str, transaction_id) -> int:
     """Keep explicit provider periods, including preseason zero; never default."""
     try:

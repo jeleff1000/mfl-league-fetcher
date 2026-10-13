@@ -2143,6 +2143,7 @@ def _unresolved_provider_schedule_rows(
             native_index = identity_columns.index("team_key") + 1
             fallback_keys = {(int(row[0]), str(row[index]).strip()) for row in rows
                              if row[0] is not None and row[index] is not None
+                             and str(row[index]).strip()
                              and not str(row[native_index] or "").strip()}
             native = provider_schedule["team_key"].astype("string").str.strip()
         else:

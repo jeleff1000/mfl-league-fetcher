@@ -876,12 +876,13 @@ def test_partial_final_week_retains_only_unresolved_team_schedule_rows(identity_
         conn.close()
 
 
-@pytest.mark.parametrize("final_native,provider_native,expected", [
-    ("team-a", "team-b", ["team-b"]),
-    (None, "team-b", []),
-    ("team-a", None, []),
+@pytest.mark.parametrize("final_native,provider_native,franchise,expected", [
+    ("team-a", "team-b", "shared", ["team-b"]),
+    (None, "team-b", "shared", []),
+    ("team-a", None, "shared", []),
+    (None, "team-b", "", ["team-b"]),
 ])
-def test_schedule_native_team_identity_precedes_shared_franchise(final_native, provider_native, expected):
+def test_schedule_native_team_identity_precedes_shared_franchise(final_native, provider_native, franchise, expected):
     import duckdb
     from refresh_yahoo_active_season import _unresolved_provider_schedule_rows
 
@@ -889,8 +890,8 @@ def test_schedule_native_team_identity_precedes_shared_franchise(final_native, p
     try:
         conn.execute("CREATE SCHEMA public")
         conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, team_key VARCHAR, franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, is_bye_week BOOLEAN)")
-        conn.execute("INSERT INTO public.matchup VALUES ('league_a', 2026, 4, ?, 'shared', 100, 90, false)", [final_native])
-        source = pd.DataFrame([{"week": 4, "team_key": provider_native, "franchise_id": "shared"}])
+        conn.execute("INSERT INTO public.matchup VALUES ('league_a', 2026, 4, ?, ?, 100, 90, false)", [final_native, franchise])
+        source = pd.DataFrame([{"week": 4, "team_key": provider_native, "franchise_id": franchise}])
         remaining = _unresolved_provider_schedule_rows(source,
             local_db=SimpleNamespace(connect=lambda: conn), db_name="league_a", active_year=2026)
         assert remaining["team_key"].tolist() == expected

@@ -2008,7 +2008,10 @@ def _run_local_pipeline(
 
     local_db.connect()
     _attach_ops_cache_for_enrichment(local_db)
-    from multi_league.core.league_refresh import resolve_active_player_nfl_ids_from_bio
+    from multi_league.core.league_refresh import (
+        resolve_active_player_nfl_ids_from_bio,
+        resolve_active_schedule_franchise_ids,
+    )
 
     resolved_active_ids = resolve_active_player_nfl_ids_from_bio(
         local_db.connect(),
@@ -2035,6 +2038,14 @@ def _run_local_pipeline(
         results = enricher.run_all()
         require_sql_enrichment_success(results)
 
+        active_matchup_row = local_db.connect().execute(
+            "SELECT COUNT(*), MAX(week) FROM public.matchup "
+            "WHERE db_name = ? AND year = ? AND team_points IS NOT NULL "
+            "AND opponent_points IS NOT NULL AND COALESCE(is_bye_week, FALSE) = FALSE",
+            [db_name, int(active_year)],
+        ).fetchone()
+        has_finalized_matchups = int(active_matchup_row[0] or 0) > 0
+
         # The common matchup enrichment rebuilds schedule from finalized matchup
         # rows. Restore only provider rows that are still live: restoring a
         # finalized week would append its provider manager_week alongside the
@@ -2042,6 +2053,12 @@ def _run_local_pipeline(
         if not local_db._conn:
             local_db.connect()
 
+        # Saved merges have already rewritten the final matchup identities.
+        # Align the captured provider graph before excluding finalized rows.
+        if has_finalized_matchups and not provider_schedule.empty and getattr(ctx, "franchise_merges", None):
+            provider_schedule = resolve_active_schedule_franchise_ids(
+                local_db, provider_schedule, active_year=active_year,
+            )
         provider_schedule = _unresolved_provider_schedule_rows(
             provider_schedule,
             local_db=local_db,
@@ -2065,14 +2082,6 @@ def _run_local_pipeline(
         frontend_configuration_rows or {},
         db_name=db_name,
     )
-    active_matchup_row = local_db.connect().execute(
-        "SELECT COUNT(*), MAX(week) FROM public.matchup "
-        "WHERE db_name = ? AND year = ? AND team_points IS NOT NULL "
-        "AND opponent_points IS NOT NULL AND COALESCE(is_bye_week, FALSE) = FALSE",
-        [db_name, int(active_year)],
-    ).fetchone()
-    active_matchup_count = int(active_matchup_row[0] or 0)
-    has_finalized_matchups = active_matchup_count > 0
     if has_finalized_matchups:
         local_db.close()
         _run_refresh_simulations(

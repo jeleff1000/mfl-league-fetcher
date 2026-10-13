@@ -627,14 +627,25 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
     class FakeLocalDb:
         class Connection:
             @staticmethod
-            def execute(_sql, _params):
+            def execute(_sql, _params=None):
+                if "information_schema.columns" in _sql:
+                    return SimpleNamespace(fetchall=lambda: [("franchise_id",)])
                 return SimpleNamespace(fetchone=lambda: (0, None), fetchall=lambda: [])
 
         _conn = Connection()
 
         def read_table(self, _table, *, year):
             assert year == 2026
-            return pd.DataFrame([{"db_name": "demo_league", "year": 2026, "manager_week": "Joe202601"}])
+            if _table == "matchup":
+                return pd.DataFrame([
+                    {"year": 2026, "manager_guid": "owner-joe", "franchise_id": "stable-joe"},
+                    {"year": 2026, "manager_guid": "owner-tom", "franchise_id": "stable-tom"},
+                ])
+            return pd.DataFrame([{
+                "db_name": "demo_league", "year": 2026, "week": 2,
+                "manager_week": "Joe202602", "manager_guid": "owner-joe",
+                "opponent_guid": "owner-tom", "franchise_id": "seasonal-joe",
+            }])
 
         def close(self):
             return None
@@ -643,7 +654,7 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
             return self._conn
 
         def table_exists(self, _table):
-            return False
+            return _table == "matchup"
 
         def row_count(self, _table):
             return 0
@@ -689,6 +700,101 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
     assert captured["restored_table"] == "schedule"
     assert captured["restored_rows"] == 1
     assert captured["identity_reconciles"] == 1
+
+
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+@pytest.mark.parametrize("final_mode", ["complete", "partial", "none"])
+def test_shared_refresh_schedule_keeps_saved_owner_merges_without_final_duplicates(
+    monkeypatch, tmp_path, platform, final_mode,
+):
+    """Raw owner IDs must align before filtering final team-weeks (178 -> 168)."""
+    import multi_league.core.import_pipeline as import_pipeline
+    import multi_league.core.league_refresh as league_refresh
+    import multi_league.transformations.sql_enrichments as sql_enrichments
+    import refresh_yahoo_active_season as refresh
+
+    def row(week, team):
+        opponent = team + 1 if team % 2 else team - 1
+        return {
+            "db_name": "league_a", "year": 2026, "week": week,
+            "team_key": str(team), "manager_guid": f"current-{team}",
+            "franchise_id": f"current-{team}_0", "manager": f"M{team}",
+            "franchise_name": f"M{team}", "opponent": f"M{opponent}",
+            "opponent_guid": f"current-{opponent}",
+            "opponent_franchise_id": f"current-{opponent}_0",
+            "manager_week": f"current-{team}_0_2026_{week}",
+            "team_points": 100.0, "opponent_points": 90.0, "is_bye_week": False,
+        }
+
+    final_rows = pd.DataFrame([row(week, team)
+        for week in range(1, 6) for team in range(1, 13)
+        if not (final_mode == "partial" and week == 4 and team in (7, 8))])
+    if final_mode == "none":
+        final_rows = final_rows.iloc[:0].copy()
+    provider = pd.DataFrame([row(week, team)
+        for week in range(1, 15) for team in range(1, 13)]).drop(columns="team_key")
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.register("final_fixture", final_rows)
+    conn.execute("CREATE TABLE public.matchup AS SELECT * FROM final_fixture")
+    conn.register("provider_fixture", provider)
+    conn.execute("CREATE TABLE public.schedule AS SELECT * FROM provider_fixture")
+
+    class Local:
+        _conn = conn
+
+        def connect(self):
+            return conn
+
+        def close(self):
+            pass  # The fixture owns this in-memory connection.
+
+        def table_exists(self, table):
+            return bool(conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name=?", [table]).fetchone()[0])
+
+        def read_table(self, table, *, year):
+            return conn.execute(f"SELECT * FROM public.{table} WHERE db_name='league_a' AND year=?", [year]).fetchdf()
+
+        def merge_table(self, table, frame, keys, **kwargs):
+            assert table == "schedule" and keys == ["db_name", "manager_week"]
+            conn.register("restored_fixture", frame)
+            columns = ", ".join(provider.columns)
+            conn.execute("DELETE FROM public.schedule WHERE manager_week IN (SELECT manager_week FROM restored_fixture)")
+            conn.execute(f"INSERT INTO public.schedule ({columns}) SELECT {columns} FROM restored_fixture")
+
+    # Keep actual saved-merge SQL and identity/filter/merge behavior. Only
+    # unrelated NFL enrichment, simulations and aggregate work is stubbed.
+    def identity_enrichments(enricher):
+        enricher._apply_saved_franchise_merges()
+        # Mirror the canonical composite keys observed in the live pipeline.
+        conn.execute("UPDATE public.matchup SET manager_week=franchise_id || '_2026_' || CAST(week AS VARCHAR)")
+        columns = ", ".join(provider.columns)
+        conn.execute(f"CREATE OR REPLACE TABLE public.schedule AS SELECT {columns} FROM public.matchup")
+        return {}
+
+    monkeypatch.setattr(import_pipeline, "run_transformation_pipeline", lambda *args, **kwargs: [])
+    monkeypatch.setattr(sql_enrichments.SQLEnrichments, "run_all", identity_enrichments)
+    monkeypatch.setattr(sql_enrichments.SQLEnrichments, "load_settings_from_db", lambda self: ({}, {}))
+    monkeypatch.setattr(sql_enrichments.SQLEnrichments, "_attach_ops", lambda *args: None)
+    monkeypatch.setattr(refresh, "_attach_ops_cache_for_enrichment", lambda *args: None)
+    monkeypatch.setattr(league_refresh, "resolve_active_player_nfl_ids_from_bio", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(refresh, "_run_refresh_simulations", lambda **kwargs: None)
+    monkeypatch.setattr(refresh, "_run_refresh_aggregates", lambda *args, **kwargs: None)
+    ctx = SimpleNamespace(manager_name_overrides={}, get_league_id_for_year=lambda _: "provider-league",
+        franchise_merges=[{"display_name": f"Preferred{team}", "owner_ids": [f"saved-{team}", f"current-{team}"]} for team in (2, 12)])
+    try:
+        for _ in range(2):
+            refresh._run_local_pipeline(ctx=ctx, context_path=tmp_path / "context.json",
+                local_db=Local(), db_name="league_a", active_year=2026,
+                work_dir=tmp_path, platform=platform)
+            assert conn.execute("SELECT COUNT(*) FROM public.schedule").fetchone()[0] == 168
+            assert conn.execute("SELECT week FROM public.schedule GROUP BY week HAVING COUNT(*) <> 12 OR COUNT(DISTINCT franchise_id) <> 12").fetchall() == []
+            assert conn.execute("SELECT COUNT(*) FROM public.schedule WHERE franchise_id IN ('current-2_0', 'current-12_0')").fetchone()[0] == 0
+            assert conn.execute("SELECT DISTINCT manager FROM public.schedule WHERE franchise_id IN ('saved-2_0', 'saved-12_0') ORDER BY manager").fetchall() == [("Preferred12",), ("Preferred2",)]
+            if final_mode == "partial":
+                assert conn.execute("SELECT COUNT(*) FROM public.schedule WHERE week=4 AND franchise_id IN ('current-7_0', 'current-8_0')").fetchone()[0] == 2
+    finally:
+        conn.close()
 
 
 def test_shared_refresh_pipeline_restores_active_derived_values_before_aggregating(

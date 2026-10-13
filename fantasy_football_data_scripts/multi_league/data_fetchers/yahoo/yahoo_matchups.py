@@ -52,6 +52,11 @@ import numpy as np
 import pandas as pd
 import time
 
+
+def _is_transient_yahoo_service_error(error: Exception) -> bool:
+    """Yahoo's temporary user-database outage is not an OAuth revocation."""
+    return "udb validation unavailable" in str(error).lower()
+
 try:
     import yahoo_fantasy_api as yfa
 
@@ -568,6 +573,10 @@ def parse_matchups_from_xml(
         # Yahoo's playoff/consolation booleans are too broad for canonical
         # semantics, but winner_team_key is authoritative matchup graph data.
         winner_team_key = matchup.findtext("winner_team_key", default="") or None
+        provider_final_tie = (
+            (matchup.findtext("status", default="") or "").strip().lower() == "postevent"
+            and (matchup.findtext("is_tied", default="") or "").strip() == "1"
+        )
         week_start = matchup.findtext("week_start", default="") or ""
         week_end = matchup.findtext("week_end", default="") or ""
         matchup_recap_url = matchup.findtext("matchup_recap_url", default="") or ""
@@ -587,6 +596,7 @@ def parse_matchups_from_xml(
             row.update(
                 {
                     "week_start": week_start,
+                    "provider_final_tie": provider_final_tie,
                     "week_end": week_end,
                     "matchup_recap_url": matchup_recap_url,
                     "matchup_recap_title": matchup_recap_title,
@@ -737,6 +747,10 @@ def weekly_matchup_data(
                 league = gm.to_league(yearid)
                 break
             except Exception as league_error:
+                if _is_transient_yahoo_service_error(league_error) and league_attempt < 3:
+                    print(f"[league] Temporary Yahoo UDB error (attempt {league_attempt}/3); retrying")
+                    time.sleep(league_attempt)
+                    continue
                 error_str = str(league_error).lower()
                 is_token_error = (
                     "invalid cookie" in error_str
@@ -775,6 +789,10 @@ def weekly_matchup_data(
                 settings = league.settings() if hasattr(league, "settings") else {}
                 break
             except Exception as settings_error:
+                if _is_transient_yahoo_service_error(settings_error) and settings_attempt < 3:
+                    print(f"[settings] Temporary Yahoo UDB error (attempt {settings_attempt}/3); retrying")
+                    time.sleep(settings_attempt)
+                    continue
                 error_str = str(settings_error).lower()
                 is_token_error = (
                     "invalid cookie" in error_str
@@ -870,14 +888,19 @@ def weekly_matchup_data(
         resolved_guid = resolve_yahoo_manager_guids(all_df)
         all_df["manager_guid"] = resolved_guid.where(resolved_guid.notna(), all_df.get("manager_guid"))
 
+        final_tie_mask = all_df.get("provider_final_tie", pd.Series(False, index=all_df.index)).eq(True)
+        final_tie_team_weeks = [
+            (int(row.year), int(row.week), str(row.team_key))
+            for row in all_df.loc[final_tie_mask].itertuples()
+        ]
         # Transient identity-input columns are consumed above; drop so they do
         # not flow into the canonical matchup/schedule schema.
-        all_df = all_df.drop(columns=["manager_nickname_raw", "manager_image_url"], errors="ignore")
+        all_df = all_df.drop(columns=["manager_nickname_raw", "manager_image_url", "provider_final_tie"], errors="ignore")
 
         # Split: played games (have scores) → matchup table,
         # ALL games (played + unplayed) → schedule table.
         # A game is "played" if either team has non-zero points.
-        played_mask = (all_df["team_points"].fillna(0) != 0) | (all_df["opponent_points"].fillna(0) != 0)
+        played_mask = (all_df["team_points"].fillna(0) != 0) | (all_df["opponent_points"].fillna(0) != 0) | final_tie_mask
         df = all_df[played_mask].copy()
         schedule_df = all_df.copy()  # schedule gets everything
 
@@ -918,6 +941,7 @@ def weekly_matchup_data(
 
         # Attach schedule_df for the caller to write to the schedule table
         df.attrs["schedule_df"] = schedule_df
+        df.attrs["final_tie_team_weeks"] = final_tie_team_weeks
 
         return df, failed_weeks
 

@@ -933,8 +933,8 @@ def filter_matchups_to_final_results(
     Yahoo exposes live partial matchup scores as soon as the first NFL game
     ends.  The shared matchup transforms interpret any pair of scores as a
     completed win/loss, so those rows must wait until Yahoo marks the matchup
-    final.  A rare tied matchup with no winner key is conservatively retried
-    on the next refresh rather than publishing an invented result.
+    final. Completed Yahoo ties have no winner key; accept only the explicit
+    postevent/is_tied witness carried as transient fetcher metadata.
     """
     if winner_column not in matchups.columns:
         raise RefreshScopeError(f"matchup payload is missing required column: {winner_column}")
@@ -944,7 +944,15 @@ def filter_matchups_to_final_results(
     # ESPN exposes a partial matchup scoring period as ``UNDECIDED``.  It
     # cannot be allowed through merely because it is a non-empty string: the
     # shared transforms would turn its partial scores into wins and losses.
-    return matchups.loc[outcomes.ne("") & outcomes.str.upper().ne("UNDECIDED")].copy()
+    final = outcomes.ne("") & outcomes.str.upper().ne("UNDECIDED")
+    final_ties = set(matchups.attrs.get("final_tie_team_weeks") or [])
+    if winner_column == "winner_team_key" and final_ties and {"year", "week", "team_key"}.issubset(matchups.columns):
+        final |= pd.Series([
+            (int(row.year), int(row.week), str(row.team_key)) in final_ties
+            if pd.notna(row.year) and pd.notna(row.week) else False
+            for row in matchups.itertuples()
+        ], index=matchups.index)
+    return matchups.loc[final].copy()
 
 
 def espn_schedule_is_final(

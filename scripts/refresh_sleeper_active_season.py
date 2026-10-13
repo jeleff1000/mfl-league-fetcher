@@ -274,13 +274,17 @@ def _load_persisted_sleeper_chain(
         # The full import persists every provider leg in league_settings.
         # Resolve that timeline before any Sleeper API call so a Yahoo/ESPN
         # continuation cannot be accidentally fetched by this worker.
-        resolve_active_update_segment(
+        segment = resolve_active_update_segment(
             active_year=int(active_year),
             context_platform=context.get("platform"),
             context_league_id=context.get("league_id"),
             settings_rows=setting_rows,
             expected_platform="sleeper",
         )
+        # Only the persisted active-season settings can establish this anchor;
+        # a caller/context candidate still has to prove its predecessor chain.
+        context = dict(context)
+        context["_imported_active_league_id"] = segment.current_league_id
     return context, known
 
 
@@ -325,7 +329,9 @@ def _build_context(
         for year, league_id in known_league_ids.items()
         if str(year).isdigit() and int(year) < int(active_year) and league_id
     ]
-    seed_league_id = max(predecessors)[1] if predecessors else None
+    seed_league_id = frontend.get("_imported_active_league_id") or (
+        max(predecessors)[1] if predecessors else None
+    )
     if seed_league_id is None and not known_league_ids.get(str(active_year)):
         raise RuntimeError(f"Fly has no active Sleeper league ID for {db_name}")
     renewal = _resolve_active_renewal(

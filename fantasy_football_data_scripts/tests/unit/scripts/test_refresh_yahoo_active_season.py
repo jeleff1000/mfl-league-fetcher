@@ -830,15 +830,17 @@ def test_finalized_provider_schedule_rows_are_not_restored_over_canonical_schedu
     class Local:
         class Connection:
             @staticmethod
-            def execute(_sql, _params):
-                return SimpleNamespace(fetchall=lambda: [(1,)])
+            def execute(_sql, _params=None):
+                if "information_schema.columns" in _sql:
+                    return SimpleNamespace(fetchall=lambda: [("team_key",)])
+                return SimpleNamespace(fetchall=lambda: [(1, "team-1")])
 
         def connect(self):
             return self.Connection()
 
     source = pd.DataFrame([
-        {"year": 2026, "week": 1, "manager_week": "Gray_2026_1"},
-        {"year": 2026, "week": 2, "manager_week": "Gray_2026_2"},
+        {"year": 2026, "week": 1, "team_key": "team-1", "manager_week": "Gray_2026_1"},
+        {"year": 2026, "week": 2, "team_key": "team-1", "manager_week": "Gray_2026_2"},
     ])
 
     remaining = _unresolved_provider_schedule_rows(
@@ -846,6 +848,54 @@ def test_finalized_provider_schedule_rows_are_not_restored_over_canonical_schedu
     )
 
     assert remaining["week"].tolist() == [2]
+
+
+@pytest.mark.parametrize("identity_column", ["team_key", "franchise_id"])
+def test_partial_final_week_retains_only_unresolved_team_schedule_rows(identity_column):
+    """The missing week-4 pair survives without duplicating 38 finalized rows."""
+    import duckdb
+    from refresh_yahoo_active_season import _unresolved_provider_schedule_rows
+
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute(f"CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, {identity_column} VARCHAR, team_points DOUBLE, opponent_points DOUBLE, is_bye_week BOOLEAN)")
+        finalized = [("league_a", 2026, week, f"team-{team}", 100.0, 90.0, False)
+            for week in range(1, 6) for team in range(1, 9)
+            if not (week == 4 and team in (7, 8))]
+        conn.executemany("INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?)", finalized)
+        conn.execute("INSERT INTO public.matchup VALUES ('unrelated', 2026, 4, 'team-7', 100, 90, false)")
+        source = pd.DataFrame([{"year": 2026, "week": week, identity_column: f"team-{team}", "manager_week": f"team-{team}_2026_{week}"}
+            for week in range(1, 16) for team in range(1, 9)])
+        remaining = _unresolved_provider_schedule_rows(source,
+            local_db=SimpleNamespace(connect=lambda: conn), db_name="league_a", active_year=2026)
+        assert len(remaining) == 82
+        assert remaining.loc[remaining["week"].eq(4), identity_column].tolist() == ["team-7", "team-8"]
+        assert not remaining["week"].isin([1, 2, 3, 5]).any()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("final_native,provider_native,expected", [
+    ("team-a", "team-b", ["team-b"]),
+    (None, "team-b", []),
+    ("team-a", None, []),
+])
+def test_schedule_native_team_identity_precedes_shared_franchise(final_native, provider_native, expected):
+    import duckdb
+    from refresh_yahoo_active_season import _unresolved_provider_schedule_rows
+
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, team_key VARCHAR, franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, is_bye_week BOOLEAN)")
+        conn.execute("INSERT INTO public.matchup VALUES ('league_a', 2026, 4, ?, 'shared', 100, 90, false)", [final_native])
+        source = pd.DataFrame([{"week": 4, "team_key": provider_native, "franchise_id": "shared"}])
+        remaining = _unresolved_provider_schedule_rows(source,
+            local_db=SimpleNamespace(connect=lambda: conn), db_name="league_a", active_year=2026)
+        assert remaining["team_key"].tolist() == expected
+    finally:
+        conn.close()
 
 
 def test_scheduled_demo_mode_is_limited_to_demo_with_kmffl_credentials():

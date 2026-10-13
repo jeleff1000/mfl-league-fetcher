@@ -2108,12 +2108,21 @@ def _unresolved_provider_schedule_rows(
     db_name: str,
     active_year: int,
 ) -> pd.DataFrame:
-    """Return provider schedule rows only for weeks not derived from final matchups."""
+    """Keep team-week rows not already derived from final matchups."""
     if provider_schedule is None or provider_schedule.empty or "week" not in provider_schedule:
         return provider_schedule.copy() if isinstance(provider_schedule, pd.DataFrame) else pd.DataFrame()
-    rows = local_db.connect().execute(
-        """
-        SELECT DISTINCT week
+    connection = local_db.connect()
+    columns = {row[0] for row in connection.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'matchup'"
+    ).fetchall()}
+    identity_columns = [column for column in ("team_key", "franchise_id")
+                        if column in columns and column in provider_schedule]
+    if not identity_columns:
+        raise RuntimeError("Provider schedule has no shared team identity with finalized matchups")
+    rows = connection.execute(
+        f"""
+        SELECT DISTINCT week, {', '.join(identity_columns)}
         FROM public.matchup
         WHERE db_name = ? AND year = ?
           AND team_points IS NOT NULL AND opponent_points IS NOT NULL
@@ -2121,9 +2130,32 @@ def _unresolved_provider_schedule_rows(
         """,
         [db_name, int(active_year)],
     ).fetchall()
-    finalized_weeks = {int(row[0]) for row in rows if row and row[0] is not None}
     weeks = pd.to_numeric(provider_schedule["week"], errors="coerce")
-    return provider_schedule.loc[~weeks.isin(finalized_weeks)].copy()
+    resolved = pd.Series(False, index=provider_schedule.index)
+    for index, column in enumerate(identity_columns, start=1):
+        finalized_keys = {(int(row[0]), str(row[index]).strip()) for row in rows
+                          if row[0] is not None and row[index] is not None
+                          and str(row[index]).strip()}
+        identities = provider_schedule[column].astype("string").str.strip()
+        if column == "franchise_id" and "team_key" in identity_columns:
+            # Distinct native teams can share a merged/stale franchise. Use
+            # franchise matching only when one side has no native team key.
+            native_index = identity_columns.index("team_key") + 1
+            fallback_keys = {(int(row[0]), str(row[index]).strip()) for row in rows
+                             if row[0] is not None and row[index] is not None
+                             and not str(row[native_index] or "").strip()}
+            native = provider_schedule["team_key"].astype("string").str.strip()
+        else:
+            fallback_keys = finalized_keys
+            native = pd.Series(pd.NA, index=provider_schedule.index)
+        resolved |= pd.Series(
+            [(int(week), str(identity)) in
+             (fallback_keys if pd.notna(team_key) and str(team_key) else finalized_keys)
+             if pd.notna(week) and pd.notna(identity) else False
+             for week, identity, team_key in zip(weeks, identities, native)],
+            index=provider_schedule.index,
+        )
+    return provider_schedule.loc[~resolved].copy()
 
 
 def _publish_generation(reader: Any, db_name: str) -> int:

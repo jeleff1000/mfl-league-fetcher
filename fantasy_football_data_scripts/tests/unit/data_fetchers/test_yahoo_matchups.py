@@ -182,6 +182,28 @@ def _scoreboard_xml(week: int) -> str:
     """
 
 
+@pytest.mark.parametrize("status,is_tied,expected", [
+    ("postevent", "1", True), ("inevent", "1", False), ("postevent", "0", False),
+])
+def test_weekly_matchups_keep_final_tie_metadata_out_of_canonical_columns(monkeypatch, tmp_path, status, is_tied, expected):
+    xml = _scoreboard_xml(4).replace("<week>4</week>",
+        f"<week>4</week><status>{status}</status><is_tied>{is_tied}</is_tied>")
+    oauth = SimpleNamespace(session=_FakeSession(xml))
+    league = SimpleNamespace(settings=lambda: {"start_week": 1, "end_week": 17})
+    monkeypatch.setattr(yahoo_matchups, "YFA_AVAILABLE", True)
+    monkeypatch.setattr(yahoo_matchups, "RUN_LOGGER_AVAILABLE", False)
+    monkeypatch.setattr(yahoo_matchups, "yfa", SimpleNamespace(Game=lambda *_: SimpleNamespace(to_league=lambda _: league)))
+    ctx = SimpleNamespace(league_id="124.l.644100", matchup_data_directory=tmp_path,
+        manager_name_overrides={}, get_oauth_session=lambda: oauth,
+        get_league_id_for_year=lambda _: "124.l.644100")
+    frame, failures = weekly_matchup_data(ctx=ctx, year=2026, week=4)
+    assert not failures
+    assert frame.attrs["final_tie_team_weeks"] == (
+        [(2026, 4, "124.l.644100.t.1"), (2026, 4, "124.l.644100.t.2")] if expected else [])
+    assert "provider_final_tie" not in frame.columns
+    assert "provider_final_tie" not in frame.attrs["schedule_df"].columns
+
+
 def test_weekly_matchup_data_falls_back_when_bulk_xml_is_empty(monkeypatch, tmp_path):
     empty_bulk = """
     <fantasy_content xmlns="http://fantasysports.yahooapis.com/fantasy/v2/base.rng">
@@ -267,3 +289,45 @@ def test_weekly_matchup_data_requests_only_the_selected_week(monkeypatch, tmp_pa
     assert len(session.urls) == 1
     assert "week=1" in session.urls[0]
     assert "week=1," not in session.urls[0]
+
+
+@pytest.mark.parametrize("failure_stage", ["league", "settings"])
+def test_transient_udb_failure_retries_without_refreshing_valid_oauth(monkeypatch, tmp_path, failure_stage):
+    session = _RoutingSession({"week=1": _scoreboard_xml(1)})
+    token_refreshes = []
+    waits = []
+    oauth = SimpleNamespace(session=session, refresh_access_token=lambda: token_refreshes.append(True))
+    calls = {"league": 0, "settings": 0}
+
+    class FakeLeague:
+        def settings(self):
+            calls["settings"] += 1
+            if failure_stage == "settings" and calls["settings"] < 3:
+                raise RuntimeError(b"UDB validation unavailable")
+            return {"start_week": 1, "end_week": 17}
+
+    class FakeGame:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def to_league(self, league_key):
+            assert league_key == "124.l.644100"
+            calls["league"] += 1
+            if failure_stage == "league" and calls["league"] < 3:
+                raise RuntimeError(b"UDB validation unavailable")
+            return FakeLeague()
+
+    monkeypatch.setattr(yahoo_matchups, "YFA_AVAILABLE", True)
+    monkeypatch.setattr(yahoo_matchups, "RUN_LOGGER_AVAILABLE", False)
+    monkeypatch.setattr(yahoo_matchups, "yfa", SimpleNamespace(Game=FakeGame))
+    monkeypatch.setattr(yahoo_matchups.time, "sleep", waits.append)
+    ctx = SimpleNamespace(league_id="124.l.644100", matchup_data_directory=tmp_path,
+        manager_name_overrides={}, get_oauth_session=lambda: oauth,
+        get_league_id_for_year=lambda year: "124.l.644100")
+    rows, failures = weekly_matchup_data(ctx=ctx, year=2005, week=1)
+    assert len(rows) == 2
+    assert failures == []
+    assert calls[failure_stage] == 3
+    assert len(waits) == 2
+    assert sum(waits) <= 6
+    assert token_refreshes == []

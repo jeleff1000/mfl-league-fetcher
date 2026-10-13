@@ -31,6 +31,48 @@ class ChainReader:
         raise AssertionError(f"unexpected Fly query: {sql}")
 
 
+@pytest.mark.parametrize("active_imported", [True, False])
+def test_standalone_current_season_requires_canonical_import_witness(tmp_path, monkeypatch, active_imported):
+    """An imported current leg is authoritative even without a predecessor link."""
+    from refresh_sleeper_active_season import _build_context
+    from multi_league.data_fetchers.sleeper import sleeper_api_client
+
+    leagues = {
+        "active": {"league_id": "active", "season": "2026", "previous_league_id": None, "name": "Saved Name"},
+        "old": {"league_id": "old", "season": "2025", "previous_league_id": None},
+    }
+
+    class Provider:
+        def get_league(self, league_id):
+            return leagues.get(league_id)
+
+        def get_league_users(self, league_id):
+            assert league_id == "active"
+            return [{"user_id": "u1", "display_name": "Owner", "metadata": {}}]
+
+        def get_league_rosters(self, league_id):
+            assert league_id == "active"
+            return [{"roster_id": 1, "owner_id": "u1", "players": [], "settings": {}}]
+
+    monkeypatch.setattr(sleeper_api_client, "SleeperAPIClient", Provider)
+    settings = [{"year": 2025, "platform": "sleeper", "league_key": "old"}]
+    if active_imported:
+        settings.append({"year": 2026, "platform": "sleeper", "league_key": "active"})
+    context = {"platform": "sleeper", "league_id": "active", "league_name": "Saved Name", "league_ids_json": '{"2025":"old","2026":"active"}'}
+    ctx, _, _, league = _build_context(
+        reader=ChainReader(context=context, settings=settings), db_name="mixed_league",
+        active_year=2026, work_dir=tmp_path,
+    )
+    if active_imported:
+        assert ctx is not None
+        assert ctx.league_id == "active"
+        assert ctx.league_ids == {"2025": "old", "2026": "active"}
+        assert league["league_id"] == "active"
+    else:
+        assert ctx is None
+        assert league is None
+
+
 def test_context_only_first_season_uses_saved_active_identity_without_history_discovery(tmp_path, monkeypatch):
     from refresh_sleeper_active_season import _build_context
     from multi_league.data_fetchers.sleeper import sleeper_api_client
@@ -203,9 +245,10 @@ def test_active_only_setting_does_not_reconstruct_a_missing_predecessor_chain(tm
         db_name='mixed_league', active_year=2026, work_dir=tmp_path,
     )
 
-    assert ctx is None
-    assert path == Path()
-    assert league is None
+    assert ctx.league_id == "active"
+    assert ctx.league_ids == {"2026": "active"}
+    assert path.is_file()
+    assert league["league_id"] == "active"
 
 
 def test_captured_active_identity_updates_without_importing_an_unowned_predecessor():

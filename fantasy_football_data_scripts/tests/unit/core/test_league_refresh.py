@@ -600,6 +600,21 @@ def test_finalized_matchup_filter_excludes_live_scoreboard_rows_without_a_winner
     assert actual["manager"].tolist() == ["Final winner", "Final loser"]
 
 
+def test_finalized_matchup_filter_keeps_only_provider_confirmed_final_tie():
+    from multi_league.core.league_refresh import filter_matchups_to_final_results
+
+    scoreboards = pd.DataFrame([
+        {"year": 2026, "week": 4, "team_key": "team-3", "winner_team_key": None},
+        {"year": 2026, "week": 4, "team_key": "team-8", "winner_team_key": None},
+        {"year": 2026, "week": 6, "team_key": "team-3", "winner_team_key": None},
+    ])
+    scoreboards.attrs["final_tie_team_weeks"] = [(2026, 4, "team-3"), (2026, 4, "team-8")]
+    result = filter_matchups_to_final_results(scoreboards)
+    assert result["team_key"].tolist() == ["team-3", "team-8"]
+    assert result["week"].tolist() == [4, 4]
+    assert result["winner_team_key"].isna().all()
+
+
 def test_finalized_matchup_filter_excludes_espn_undecided_matchups():
     """ESPN sends partial scoring periods as ``UNDECIDED`` outcomes."""
     from multi_league.core.league_refresh import filter_matchups_to_final_results

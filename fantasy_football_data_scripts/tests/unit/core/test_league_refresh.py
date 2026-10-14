@@ -2364,6 +2364,28 @@ def test_yahoo_refresh_reuses_complete_schedule_windows_for_transactions():
     ]
 
 
+@pytest.mark.parametrize("has_dated_matchup", [False, True])
+def test_yahoo_transaction_windows_do_not_count_undated_future_slots(has_dated_matchup):
+    from scripts.refresh_yahoo_active_season import _transaction_matchup_windows
+
+    class Local:
+        def read_table(self, table, year):
+            if table == "matchup" and has_dated_matchup:
+                return pd.DataFrame([{"year": 2026, "week": 2, "week_start": "2026-09-15", "week_end": "2026-09-21"}])
+            if table != "schedule": return pd.DataFrame()
+            return pd.DataFrame([
+                {"year": 2026, "week": 1, "week_start": "2026-09-08", "week_end": "2026-09-14"},
+                {"year": 2026, "week": 2, "week_start": None, "week_end": None},
+            ])
+    current = pd.DataFrame([{"year": 2026, "week": 3, "week_start": "2026-09-22", "week_end": "2026-09-28"}])
+    actual = _transaction_matchup_windows(Local(), year=2026, refresh_weeks=[3], current_schedule_frames=[current])
+    if has_dated_matchup:
+        assert actual.week.tolist() == [1, 2, 3]
+        assert actual.week_start.notna().all() and actual.week_end.notna().all()
+    else:
+        assert actual is None
+
+
 def test_yahoo_refresh_rebuilds_windows_when_retained_schedule_has_a_gap():
     """Do not remap old transactions using only a partial active-season calendar."""
     from scripts.refresh_yahoo_active_season import _transaction_matchup_windows

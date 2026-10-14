@@ -1553,6 +1553,13 @@ def resolve_active_schedule_franchise_ids(
             remaining["is_playoffs"] = False
             remaining["is_consolation"] = False
             remaining["is_bye_week"] = False
+            for date_column in ("week_start", "week_end"):
+                if date_column in weekly:
+                    dates = weekly[date_column].dropna().drop_duplicates()
+                    if len(dates) > 1:
+                        raise RefreshScopeError("future schedule has ambiguous provider week dates")
+                    if len(dates) == 1:
+                        remaining[date_column] = dates.iloc[0]
             future_frames.extend((known, remaining))
         retained = result.loc[~pd.to_numeric(result.get("week", pd.Series(dtype=float)), errors="coerce").isin(future_weeks)]
         result = pd.concat([retained, *future_frames], ignore_index=True, sort=False)

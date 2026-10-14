@@ -952,11 +952,14 @@ def _transaction_matchup_windows(
     A missing week falls back to the fetcher's established Yahoo calendar
     builder rather than guessing transaction dates.
     """
+    from multi_league.core.transaction_periods import dated_matchup_windows
+
     frames: list[pd.DataFrame] = []
-    try:
-        frames.append(local_db.read_table("schedule", year=year))
-    except Exception:
-        pass
+    for table_name in ("schedule", "matchup"):
+        try:
+            frames.append(local_db.read_table(table_name, year=year))
+        except Exception:
+            pass
     frames.extend(current_schedule_frames)
 
     usable: list[pd.DataFrame] = []
@@ -969,6 +972,7 @@ def _transaction_matchup_windows(
         candidate["week"] = pd.to_numeric(candidate["week"], errors="coerce")
         candidate = candidate.dropna(subset=["year", "week"])
         candidate = candidate[candidate["year"].astype(int) == int(year)]
+        candidate = dated_matchup_windows(candidate)
         if not candidate.empty:
             usable.append(candidate)
 
@@ -978,7 +982,7 @@ def _transaction_matchup_windows(
     windows = pd.concat(usable, ignore_index=True)
     windows["year"] = windows["year"].astype(int)
     windows["week"] = windows["week"].astype(int)
-    windows = windows.drop_duplicates(subset=["year", "week"], keep="last").sort_values("week")
+    windows = windows.drop_duplicates(subset=["year", "week", "week_start", "week_end"]).sort_values("week")
     required_weeks = set(range(1, max(int(week) for week in refresh_weeks) + 1)) if refresh_weeks else set()
     if not required_weeks.issubset(set(windows["week"].tolist())):
         return None

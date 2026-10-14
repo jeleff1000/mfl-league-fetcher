@@ -39,6 +39,17 @@ def test_redacted_future_pairing_uses_full_native_inventory_and_saved_aliases():
     assert result[["win", "loss", "team_points", "opponent_points"]].isna().all().all()
 
 
+def test_unknown_pairings_retain_the_provider_owned_week_dates():
+    frame = redacted()
+    frame["week_start"] = "2026-12-08"
+    frame["week_end"] = "2026-12-14"
+    result = resolve_active_schedule_franchise_ids(
+        LocalDB(), frame, active_year=2026, future_weeks=(14,), expected_team_keys=("1", "2"),
+    )
+    assert result.week_start.eq("2026-12-08").all()
+    assert result.week_end.eq("2026-12-14").all()
+
+
 def test_missing_sleeper_future_week_keeps_all_real_teams_without_guessing_pairs():
     frame = redacted().iloc[:0].copy()
     frame["platform"] = "sleeper"

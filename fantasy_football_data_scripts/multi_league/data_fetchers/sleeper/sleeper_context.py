@@ -698,7 +698,8 @@ def season_has_matchup_data(client: "SleeperAPIClient", league_id: str) -> bool:
 
 
 def discover_league_history(
-    client: "SleeperAPIClient", league_id: str, skip_empty_seasons: bool = True
+    client: "SleeperAPIClient", league_id: str, skip_empty_seasons: bool = True,
+    *, latest_only: bool = False,
 ) -> dict[str, str]:
     """
     Discover full league history by following previous_league_id chain.
@@ -708,6 +709,8 @@ def discover_league_history(
         league_id: Current league ID
         skip_empty_seasons: If True, exclude seasons with no matchup data
                            (e.g., 2026 league shell created but season not started)
+        latest_only: Validate only the supplied current league-year for quick
+                     imports. Full-history callers keep the default strict walk.
 
     Returns:
         Dict mapping year (str) to league_id for all seasons
@@ -743,7 +746,7 @@ def discover_league_history(
         newer_season = int(season)
         if season:
             # Check if season has actual data (skip empty future seasons)
-            if skip_empty_seasons:
+            if skip_empty_seasons and not latest_only:
                 if season_has_matchup_data(client, current_id):
                     league_ids[str(season)] = current_id
                 else:
@@ -751,6 +754,9 @@ def discover_league_history(
                     print(f"  [HISTORY] Skipping empty season {season} (league_id={current_id}) - no matchup data yet")
             else:
                 league_ids[str(season)] = current_id
+
+        if latest_only:
+            break
 
         # Follow the chain backwards
         previous_id = str(league.get("previous_league_id") or "").strip()

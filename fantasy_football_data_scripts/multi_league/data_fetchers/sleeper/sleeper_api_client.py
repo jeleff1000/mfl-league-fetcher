@@ -13,6 +13,7 @@ This client provides:
 - Type-safe response handling
 """
 
+import math
 import os
 import time
 import logging
@@ -116,6 +117,22 @@ class SleeperAPIClient:
         """
         self._rate_limiter.wait()
 
+    def _refresh_timeout(self, endpoint: str) -> tuple[float, bool]:
+        """Bound each refresh attempt while reserving 30s to finalize."""
+        try:
+            deadline = float(os.getenv("LEAGUE_UPDATE_DEADLINE_EPOCH", ""))
+        except ValueError:
+            return self.config.timeout, False
+        if not math.isfinite(deadline) or deadline <= 0:
+            return self.config.timeout, False
+        remaining = deadline - time.time() - 30
+        if remaining <= 0:
+            raise SleeperAPIError(
+                f"Sleeper refresh read budget exhausted for {endpoint} "
+                "(30s reserved for publication/finalization)"
+            )
+        return min(self.config.timeout, 10, remaining), True
+
     @retry_with_backoff(
         max_retries=3,
         retry_exceptions=(
@@ -137,19 +154,29 @@ class SleeperAPIClient:
         Raises:
             SleeperAPIError: If the request fails
         """
+        self._refresh_timeout(endpoint)
         self._rate_limit_wait()
+        timeout, refresh = self._refresh_timeout(endpoint)
 
         url = f"{self.config.base_url}{endpoint}"
 
         try:
-            response = self.session.get(url, timeout=self.config.timeout)
+            response = self.session.get(url, timeout=timeout)
 
             if response.status_code == 404:
                 # Not found is valid (e.g., user doesn't exist)
                 return None
 
             if response.status_code == 429:
-                # Rate limited - wait and retry
+                if refresh:
+                    retry_after = response.headers.get("Retry-After", "60")
+                    raise SleeperAPIError(
+                        f"Sleeper rate limited for {endpoint}; Retry-After={retry_after}. "
+                        "Defer refresh until the provider's rate limit clears.",
+                        status_code=429,
+                        response=response.text,
+                    )
+                # Imports retain the existing cooldown before surfacing 429.
                 retry_after = int(response.headers.get("Retry-After", 60))
                 logger.warning(f"Rate limited, waiting {retry_after}s")
                 time.sleep(retry_after)
@@ -168,6 +195,7 @@ class SleeperAPIClient:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Request failed for {endpoint}: {e}")
+            self._refresh_timeout(endpoint)
             raise
 
     # =========================================================================

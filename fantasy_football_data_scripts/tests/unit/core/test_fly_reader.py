@@ -14,9 +14,21 @@ import requests
 
 from multi_league.core.readers.fly_reader import (
     FlyReader,
+    FlyReaderError,
     FlyReaderNetworkError,
     FlyReaderTableNotFound,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_reader_environment(monkeypatch):
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+    monkeypatch.delenv("CORPUS_MODE", raising=False)
+
+    def reject_network(*args, **kwargs):
+        raise AssertionError("FlyReader unit tests must mock HTTP")
+
+    monkeypatch.setattr(requests.sessions.Session, "request", reject_network)
 
 
 def test_constructor_rejects_corpus_mode_even_with_credentials(monkeypatch):
@@ -39,6 +51,8 @@ def _resp(status_code, payload=None, text=""):
     r.status_code = status_code
     r.json.return_value = payload if payload is not None else []
     r.text = text
+    r.headers = {}
+    r.content = b""
     return r
 
 
@@ -307,3 +321,205 @@ def test_network_error_raises_typed(monkeypatch):
     with pytest.raises(FlyReaderNetworkError):
         FlyReader()._post("SELECT 1", "x")
     assert len(calls) == FlyReader.MAX_RETRIES
+
+
+@pytest.fixture
+def read_clock(monkeypatch):
+    clock = {"now": 1000.0, "sleeps": []}
+
+    def sleep(seconds):
+        clock["sleeps"].append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.time", lambda: clock["now"])
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.sleep", sleep)
+    return clock
+
+
+@pytest.fixture
+def refresh_clock(monkeypatch, read_clock):
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1120")
+    return read_clock
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+@pytest.mark.parametrize("failure", ["timeout", "503"])
+def test_refresh_outage_leaves_time_to_finalize(fly_env, refresh_clock, monkeypatch, method, failure):
+    """Catch the 6 x 75s outage that outlives the 120s refresh deadline."""
+    timeouts = []
+
+    def post(*args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        refresh_clock["now"] += kwargs["timeout"]
+        if failure == "timeout":
+            raise requests.Timeout("read stalled")
+        response = _resp(503, text="promotion in progress")
+        response.headers = {"Retry-After": "120"}
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    with pytest.raises(FlyReaderError) as error:
+        getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    assert timeouts == [10, 10]
+    assert refresh_clock["sleeps"] == [1]
+    assert refresh_clock["now"] == 1021
+    if failure == "timeout":
+        assert isinstance(error.value, FlyReaderNetworkError)
+        assert "2/2 attempts" in str(error.value)
+        assert "timeout=10s" in str(error.value)
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+def test_healthy_refresh_returns_without_sleep(fly_env, refresh_clock, monkeypatch, method):
+    import pandas as pd
+
+    payload = BytesIO()
+    pd.DataFrame([{"x": 1}]).to_parquet(payload, index=False)
+    response = _resp(200, [{"x": 1}])
+    response.content = payload.getvalue()
+    with patch("multi_league.core.readers.fly_reader.requests.post", return_value=response) as post:
+        result = getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    assert (result.to_dict("records") if method == "query_df_parquet" else result) == [{"x": 1}]
+    assert post.call_args.kwargs["timeout"] == 10
+    assert post.call_count == 1
+    assert refresh_clock["sleeps"] == []
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+@pytest.mark.parametrize("deadline", ["999", "1029", "1030"])
+def test_refresh_budget_expired_makes_no_http_attempt(
+    fly_env, read_clock, monkeypatch, method, deadline
+):
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", deadline)
+    with (
+        patch("multi_league.core.readers.fly_reader.requests.post") as post,
+        pytest.raises(FlyReaderNetworkError, match="refresh read budget exhausted"),
+    ):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    post.assert_not_called()
+    assert read_clock["sleeps"] == []
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+def test_refresh_timeout_uses_remaining_budget(fly_env, read_clock, monkeypatch, method):
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1035")
+    timeouts = []
+
+    def post(*args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        read_clock["now"] += kwargs["timeout"]
+        raise requests.Timeout("read stalled")
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    with pytest.raises(FlyReaderNetworkError, match="refresh read budget exhausted"):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    assert timeouts == [5]
+    assert read_clock["sleeps"] == []
+    assert read_clock["now"] == 1005
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+def test_refresh_rechecks_remaining_time_after_backoff(fly_env, read_clock, monkeypatch, method):
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1031.5")
+    timeouts = []
+
+    def post(*args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        if len(timeouts) == 1:
+            response = _resp(503, text="promotion in progress")
+            response.headers = {"Retry-After": "120"}
+            return response
+        read_clock["now"] += kwargs["timeout"]
+        raise requests.Timeout("read stalled")
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    with pytest.raises(FlyReaderNetworkError, match=r"timeout=0\.5s"):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    assert timeouts == [1.5, 0.5]
+    assert read_clock["sleeps"] == [1]
+    assert read_clock["now"] == 1001.5
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+def test_refresh_backoff_cannot_outlive_remaining_budget(fly_env, read_clock, monkeypatch, method):
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1030.25")
+    response = _resp(503, text="promotion in progress")
+    response.headers = {"Retry-After": "120"}
+    with (
+        patch("multi_league.core.readers.fly_reader.requests.post", return_value=response) as post,
+        pytest.raises(FlyReaderNetworkError, match="refresh read budget exhausted"),
+    ):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    assert post.call_count == 1
+    assert post.call_args.kwargs["timeout"] == 0.25
+    assert read_clock["sleeps"] == [0.25]
+    assert read_clock["now"] == 1000.25
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+@pytest.mark.parametrize("timeout,attempts,want_timeouts", [(4, 1, [4]), (4, 2, [4, 4]), (200, 8, [10, 10])])
+def test_refresh_never_expands_caller_limits(
+    fly_env, refresh_clock, monkeypatch, method, timeout, attempts, want_timeouts
+):
+    with (
+        patch(
+            "multi_league.core.readers.fly_reader.requests.post",
+            side_effect=requests.Timeout("read stalled"),
+        ) as post,
+        pytest.raises(FlyReaderNetworkError) as error,
+    ):
+        getattr(FlyReader(), method)(
+            "SELECT 1", database="___ops", timeout_seconds=timeout, max_retries=attempts
+        )
+
+    assert [call.kwargs["timeout"] for call in post.call_args_list] == want_timeouts
+    assert f"{len(want_timeouts)}/{len(want_timeouts)} attempts" in str(error.value)
+    assert f"timeout={want_timeouts[-1]}s" in str(error.value)
+    assert "database=___ops" in str(error.value)
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+@pytest.mark.parametrize("deadline", [None, "", "invalid", "nan", "inf", "-inf", "0", "-1"])
+def test_absent_or_invalid_deadline_retains_import_defaults(
+    fly_env, read_clock, monkeypatch, method, deadline
+):
+    if deadline is not None:
+        monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", deadline)
+    with (
+        patch(
+            "multi_league.core.readers.fly_reader.requests.post",
+            side_effect=requests.Timeout("read stalled"),
+        ) as post,
+        pytest.raises(FlyReaderNetworkError),
+    ):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops")
+
+    assert [call.kwargs["timeout"] for call in post.call_args_list] == [75] * 6
+    assert read_clock["sleeps"] == [1, 2, 4, 8, 15]
+
+
+@pytest.mark.parametrize("method", ["query", "query_df_parquet"])
+def test_timeout_reporting_uses_effective_caller_limits(fly_env, read_clock, method):
+    with (
+        patch(
+            "multi_league.core.readers.fly_reader.requests.post",
+            side_effect=requests.Timeout("read stalled"),
+        ) as post,
+        pytest.raises(FlyReaderNetworkError) as error,
+    ):
+        getattr(FlyReader(), method)(
+            "SELECT 1", database="___ops", timeout_seconds=2, max_retries=1
+        )
+
+    assert post.call_args.kwargs["timeout"] == 2
+    assert "1/1 attempts" in str(error.value)
+    assert "timeout=2s" in str(error.value)
+    assert "database=___ops" in str(error.value)
+    assert "sql=SELECT 1" in str(error.value)
+    assert read_clock["sleeps"] == []

@@ -74,6 +74,13 @@ def test_current_espn_period_comes_from_provider_not_requested_week_ceiling():
     assert _espn_current_matchup_period(league) == 3
 
 
+def test_espn_scoring_week_fallback_is_mapped_to_native_live_period():
+    from refresh_espn_active_season import _espn_current_matchup_period
+
+    league = SimpleNamespace(current_week=16, settings=SimpleNamespace(matchup_periods={15: [15, 16]}))
+    assert _espn_current_matchup_period(league) == 15
+
+
 def test_unknown_espn_period_fails_closed_even_with_winner_marker():
     from refresh_espn_active_season import _finalized_espn_matchup_weeks
 
@@ -153,6 +160,251 @@ def test_closed_espn_period_still_rejects_an_incomplete_team_graph():
         expected_team_ids=("1", "2", "3", "4"),
         current_matchup_period=2,
     ) == []
+
+
+def _two_week_schedule(*, period=15, winner="UNDECIDED"):
+    return [{
+        "matchupPeriodId": period,
+        "winner": winner,
+        "home": {"teamId": 1, "totalPoints": 180.0,
+                 "pointsByScoringPeriod": {"15": 120.0, "16": 60.0}},
+        "away": {"teamId": 2, "totalPoints": 170.0,
+                 "pointsByScoringPeriod": {"15": 90.0, "16": 80.0}},
+    }]
+
+
+def test_closed_two_week_espn_period_uses_native_filter_and_scoring_week_points():
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    calls = []
+    raw = _two_week_schedule()
+
+    def schedule(year, week, *, matchup_period=None):
+        calls.append((year, week, matchup_period))
+        return raw
+
+    schedules = {}
+    assert _finalized_espn_matchup_weeks(
+        SimpleNamespace(get_raw_schedule=schedule),
+        year=2026, weeks=[15, 16], expected_team_ids=("1", "2"),
+        current_matchup_period=16, matchup_periods={"15": ["15", "16"]},
+        schedule_out=schedules,
+    ) == [15, 16]
+    assert calls == [(2026, 15, None), (2026, 16, 15)]
+    assert schedules[15][0]["winner"] == "HOME"
+    assert schedules[16][0]["winner"] == "AWAY"
+    assert schedules[16][0]["matchupPeriodId"] == 15
+    assert raw[0]["winner"] == "UNDECIDED"
+
+    from multi_league.core.league_update_validation import validate_espn_final_matchup_frame
+
+    # The native period closes the graph, but score validation still uses week 16.
+    assert validate_espn_final_matchup_frame(
+        season=2026, week=16, expected_team_ids=("1", "2"), raw_schedule=schedules[16],
+        matchups=pd.DataFrame([
+            {"year": 2026, "week": 16, "team_key": "1", "matchup_id": "pair",
+             "is_bye_week": False, "team_points": 60.0, "opponent_points": 80.0},
+            {"year": 2026, "week": 16, "team_key": "2", "matchup_id": "pair",
+             "is_bye_week": False, "team_points": 80.0, "opponent_points": 60.0},
+        ]),
+    ) == 2
+
+
+@pytest.mark.parametrize("winner", ["UNDECIDED", "HOME", "TIE"])
+def test_current_two_week_espn_period_holds_both_scoring_weeks(winner):
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    client = SimpleNamespace(get_raw_schedule=lambda *_args, **_kwargs: _two_week_schedule(winner=winner))
+    schedules = {}
+    assert _finalized_espn_matchup_weeks(
+        client, year=2026, weeks=[15, 16], expected_team_ids=("1", "2"),
+        current_matchup_period=15, matchup_periods={15: [15, 16]},
+        schedule_out=schedules,
+    ) == []
+    assert schedules == {}
+
+
+@pytest.mark.parametrize("periods", [{15: [15]}, {15: [15, 16], 16: [16, 17]}, {"bad": [16]}])
+def test_explicit_espn_period_map_requires_unique_requested_scoring_week(periods):
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    def unexpected_fetch(*_args, **_kwargs):
+        raise AssertionError("invalid explicit mapping must fail before requesting a schedule")
+
+    with pytest.raises(RefreshScopeError, match="scoring week 16"):
+        _finalized_espn_matchup_weeks(
+            SimpleNamespace(get_raw_schedule=unexpected_fetch), year=2026, weeks=[16],
+            expected_team_ids=("1", "2"), current_matchup_period=17,
+            matchup_periods=periods,
+        )
+
+
+@pytest.mark.parametrize("periods", [None, {}, {1: [1]}])
+def test_single_week_espn_mapping_keeps_legacy_client_signature(periods):
+    from refresh_espn_active_season import _finalized_espn_matchup_weeks
+
+    def schedule(year, week):
+        assert (year, week) == (2026, 1)
+        return [{"matchupPeriodId": 1, "winner": "HOME",
+                 "home": {"teamId": 1, "totalPoints": 12.0},
+                 "away": {"teamId": 2, "totalPoints": 10.0}}]
+
+    assert _finalized_espn_matchup_weeks(
+        SimpleNamespace(get_raw_schedule=schedule), year=2026, weeks=[1],
+        expected_team_ids=("1", "2"), current_matchup_period=2,
+        matchup_periods=periods,
+    ) == [1]
+
+
+@pytest.mark.parametrize("raw_period", [None, "bad", 0, 2, 3])
+def test_final_espn_winner_cannot_bypass_raw_period_graph(raw_period):
+    from refresh_espn_active_season import _closed_espn_schedule
+
+    assert _closed_espn_schedule(
+        _two_week_schedule(period=raw_period, winner="HOME"), requested_week=1,
+        current_matchup_period=3, expected_team_ids=("1", "2"),
+    ) is None
+
+
+@pytest.mark.parametrize("winner", ["HOME", "UNDECIDED"])
+@pytest.mark.parametrize("invalid_score", [float("nan"), float("inf"), float("-inf"), None])
+def test_closed_espn_period_requires_finite_scoring_week_scores(winner, invalid_score):
+    from refresh_espn_active_season import _closed_espn_schedule
+
+    raw = _two_week_schedule(winner=winner)
+    raw[0]["home"]["pointsByScoringPeriod"]["16"] = invalid_score
+    raw[0]["home"]["totalPoints"] = invalid_score
+    assert _closed_espn_schedule(
+        raw, requested_week=16, requested_matchup_period=15,
+        current_matchup_period=16, expected_team_ids=("1", "2"),
+    ) is None
+
+
+@pytest.mark.parametrize("bad_graph", ["missing", "duplicate", "mixed_period"])
+def test_closed_mapped_espn_period_requires_the_full_native_team_graph(bad_graph):
+    from refresh_espn_active_season import _closed_espn_schedule
+
+    raw = _two_week_schedule(winner="HOME")
+    if bad_graph != "missing":
+        extra = _two_week_schedule(period=14 if bad_graph == "mixed_period" else 15, winner="HOME")[0]
+        if bad_graph == "mixed_period":
+            extra["home"]["teamId"], extra["away"]["teamId"] = 3, 4
+        raw.append(extra)
+    assert _closed_espn_schedule(
+        raw, requested_week=16, requested_matchup_period=15,
+        current_matchup_period=16, expected_team_ids=("1", "2", "3", "4"),
+    ) is None
+
+
+def test_closed_espn_week_validation_maps_scoring_week_to_native_period():
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import assert_espn_closed_matchup_weeks
+
+    with pytest.raises(RefreshScopeError, match=r"prior requested weeks.*\[16\]"):
+        assert_espn_closed_matchup_weeks(
+            refresh_weeks=[16], finalized_matchup_weeks=[], current_matchup_period=16,
+            matchup_periods={15: [15, 16]},
+        )
+    assert_espn_closed_matchup_weeks(
+        refresh_weeks=[15, 16], finalized_matchup_weeks=[15, 16],
+        current_matchup_period=16, matchup_periods={15: [15, 16]},
+    )
+
+
+def test_current_native_espn_period_is_not_required_when_a_scoring_week_has_passed():
+    from refresh_espn_active_season import assert_espn_closed_matchup_weeks
+
+    assert_espn_closed_matchup_weeks(
+        refresh_weeks=[14, 15], finalized_matchup_weeks=[], current_matchup_period=15,
+        matchup_periods={15: [14, 15]},
+    )
+
+
+@pytest.mark.parametrize("periods", [{15: [15]}, {15: [15, 16], 16: [16]}])
+def test_closed_espn_week_validation_rejects_missing_or_ambiguous_mapping(periods):
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import assert_espn_closed_matchup_weeks
+
+    with pytest.raises(RefreshScopeError, match="scoring week 16"):
+        assert_espn_closed_matchup_weeks(
+            refresh_weeks=[16], finalized_matchup_weeks=[16], current_matchup_period=17,
+            matchup_periods=periods,
+        )
+
+
+@pytest.mark.parametrize("year", [2017, 2026])
+@pytest.mark.parametrize("matchup_period", [None, 15])
+def test_raw_espn_schedule_keeps_scoring_week_and_filters_native_period(monkeypatch, year, matchup_period):
+    import json
+    import requests
+    from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
+
+    calls = []
+
+    def request(_session, method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        response = requests.Response()
+        response.status_code = 200
+        response.url = url
+        payload = {"seasonId": year, "schedule": _two_week_schedule(winner="HOME")}
+        response._content = json.dumps([payload] if year < 2018 else payload).encode()
+        return response
+
+    monkeypatch.setattr(requests.sessions.Session, "request", request)
+    kwargs = {} if matchup_period is None else {"matchup_period": matchup_period}
+    raw = ESPNAPIClient(123).get_raw_schedule(year, 16, **kwargs)
+
+    assert raw[0]["matchupPeriodId"] == 15
+    assert len(calls) == 1
+    method, url, request_kwargs = calls[0]
+    assert method.lower() == "get"
+    assert ("/leagueHistory/" in url) is (year < 2018)
+    assert request_kwargs["params"]["scoringPeriodId"] == 16
+    assert json.loads(request_kwargs["headers"]["x-fantasy-filter"]) == {
+        "schedule": {"filterMatchupPeriodIds": {"value": [16 if matchup_period is None else 15]}}
+    }
+
+
+def test_full_espn_schedule_expands_native_periods_to_regular_scoring_weeks():
+    from refresh_espn_active_season import _full_espn_schedule_frame
+
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda team_id, _name, _year: f"Manager {team_id}",
+        get_manager_guid=lambda team_id, _year: f"guid-{team_id}",
+        get_franchise_id=lambda team_id, _year: f"fid-{team_id}",
+        get_team_name=lambda team_id, _year: f"Team {team_id}",
+    )
+    raw = [
+        {"matchupPeriodId": 1, "winner": "HOME",
+         "home": {"teamId": 1}, "away": {"teamId": 2}},
+        {"matchupPeriodId": 2, "winner": "UNDECIDED",
+         "home": {"teamId": 1}, "away": None},
+        {"matchupPeriodId": 2, "winner": "UNDECIDED",
+         "home": {"teamId": 2}, "away": None},
+    ]
+    frame = _full_espn_schedule_frame(
+        ctx=ctx, raw_schedule=raw, year=2026, regular_season_weeks=4,
+        expected_team_ids=("1", "2"), current_matchup_period=2,
+        matchup_periods={"1": [1, 2], "2": [3, 4]},
+    )
+
+    assert frame.groupby("week").size().to_dict() == {1: 2, 2: 2, 3: 2, 4: 2}
+    assert frame.loc[frame.week.isin([3, 4]), "opponent"].tolist() == ["TBD"] * 4
+    assert frame["manager_week"].nunique() == 8
+
+
+@pytest.mark.parametrize("periods", [{1: [1]}, {1: [1, 2], 2: [2]}])
+def test_full_espn_schedule_rejects_incomplete_or_ambiguous_explicit_map(periods):
+    from multi_league.core.league_refresh import RefreshScopeError
+    from refresh_espn_active_season import _full_espn_schedule_frame
+
+    with pytest.raises(RefreshScopeError, match="scoring week 2"):
+        _full_espn_schedule_frame(
+            ctx=SimpleNamespace(), raw_schedule=[], year=2026, regular_season_weeks=2,
+            expected_team_ids=("1", "2"), matchup_periods=periods,
+        )
 
 
 def test_zero_espn_schedule_scores_are_hydrated_from_started_lineups():

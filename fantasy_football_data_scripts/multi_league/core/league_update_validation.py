@@ -606,12 +606,12 @@ def assert_active_season_simulation_health(
     schedule_filter = ""
     if "is_playoffs" in schedule_columns:
         schedule_filter = " AND COALESCE(is_playoffs, FALSE) = FALSE"
-    # Provider-reported, not-yet-assigned ESPN opponents are simulation inputs,
+    # Explicit, not-yet-assigned opponents are simulation inputs,
     # not incomplete completed results. Team/week coverage remains mandatory.
     unassigned_count = "0"
     if {"platform", "opponent"} <= schedule_columns:
         unassigned_count = (
-            "COUNT(*) FILTER (WHERE platform = 'espn' AND opponent = 'TBD' "
+            "COUNT(*) FILTER (WHERE platform IN ('espn', 'yahoo', 'sleeper') AND opponent = 'TBD' "
             "AND opponent_franchise_id IS NULL "
             f"AND week > {int(latest_week or 0)})"
         )

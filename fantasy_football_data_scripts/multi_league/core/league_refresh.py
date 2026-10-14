@@ -1280,6 +1280,9 @@ def resolve_active_schedule_franchise_ids(
     *,
     active_year: int,
     allow_provider_guid_initialization: bool = False,
+    future_weeks: Iterable[int] = (),
+    expected_team_keys: tuple[str, ...] = (),
+    provider_identities: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Bind a provider's future schedule to the league's canonical franchises.
 
@@ -1289,8 +1292,11 @@ def resolve_active_schedule_franchise_ids(
     GUIDs are accepted only when they identify one franchise, which keeps
     multiple-team owners unambiguous and preserves cross-platform merges.
     """
-    if schedule is None or schedule.empty:
+    future_weeks = tuple(sorted({int(week) for week in future_weeks}))
+    if (schedule is None or schedule.empty) and not future_weeks:
         return schedule
+    if schedule is None:
+        schedule = pd.DataFrame()
 
     witnesses: list[pd.DataFrame] = []
     for identity_priority, table_name in enumerate(("matchup", "player_fantasy")):
@@ -1310,14 +1316,27 @@ def resolve_active_schedule_franchise_ids(
             witness = frame.loc[:, columns].copy()
             witness["_identity_priority"] = identity_priority
             witnesses.append(witness)
-    if not witnesses and allow_provider_guid_initialization:
+    identity_source = None
+    if not witnesses:
+        identity_source = provider_identities if provider_identities is not None else schedule
+    elif provider_identities is not None and "team_key" in provider_identities:
+        covered_keys = {
+            str(key).strip() for witness in witnesses if "team_key" in witness
+            for key in witness.loc[witness["franchise_id"].notna(), "team_key"].dropna()
+        }
+        missing_profiles = provider_identities.loc[
+            ~provider_identities["team_key"].astype("string").str.strip().isin(covered_keys)
+        ]
+        if not missing_profiles.empty:
+            identity_source = missing_profiles
+    if allow_provider_guid_initialization and identity_source is not None:
         required = {"team_key", "manager_guid"}
-        if not required.issubset(schedule.columns):
+        if not required.issubset(identity_source.columns):
             raise RefreshScopeError("canonical active-season schedule identity is unavailable")
-        seed = schedule.loc[:, [
+        seed = identity_source.loc[:, [
             column
-            for column in ("team_key", "manager_guid", "team_name", "manager")
-            if column in schedule.columns
+            for column in ("team_key", "manager_guid", "team_name", "manager", "franchise_id")
+            if column in identity_source.columns
         ]].drop_duplicates().copy()
         from multi_league.core.manager_identity import hidden_manager_guid_mask
 
@@ -1326,8 +1345,9 @@ def resolve_active_schedule_franchise_ids(
         invalid |= hidden_manager_guid_mask(manager_guids)
         if invalid.any():
             raise RefreshScopeError("canonical active-season schedule identity is unavailable")
-        seed["franchise_id"] = manager_guids
-        seed["_identity_priority"] = 0
+        if "franchise_id" not in seed:
+            seed["franchise_id"] = manager_guids
+        seed["_identity_priority"] = 2
         witnesses.append(seed)
     if not witnesses:
         raise RefreshScopeError("canonical active-season schedule identity is unavailable")
@@ -1483,11 +1503,59 @@ def resolve_active_schedule_franchise_ids(
         opponent_names = result["opponent"].astype("string").str.strip()
         opponent_ids = opponent_ids.fillna(opponent_names.map(by_manager).astype("string"))
     result["opponent_franchise_id"] = apply_active_registry(opponent_ids)
+    if future_weeks:
+        expected = {str(key).strip() for key in expected_team_keys}
+        if not expected or len(expected) != len(expected_team_keys) or expected != set(by_team_key):
+            raise RefreshScopeError("future schedule requires exact canonical native team inventory")
+        profiles = identity_rows.copy()
+        profiles["team_key"] = profiles["team_key"].astype("string").str.strip()
+        profiles = profiles.loc[profiles["team_key"].isin(expected)].copy()
+        profiles["franchise_id"] = profiles["team_key"].map(by_team_key).astype("string")
+        profiles["franchise_id"] = apply_active_registry(profiles["franchise_id"])
+        profiles = profiles.sort_values("_identity_priority", kind="stable").drop_duplicates("team_key")
+        if profiles["franchise_id"].nunique() != len(expected):
+            raise RefreshScopeError("future schedule native inventory has conflated franchises")
+        canonical_ids = set(profiles["franchise_id"])
+        future_frames = []
+        for week in future_weeks:
+            weekly = result.loc[pd.to_numeric(result.get("week", pd.Series(dtype=float)), errors="coerce").eq(week)].copy()
+            for native_column in ("team_key", "opponent_team_key"):
+                if native_column not in weekly:
+                    continue
+                explicit_keys = weekly[native_column].astype("string").str.strip().dropna()
+                explicit_keys = set(explicit_keys) - {"", "None", "nan", "<NA>"}
+                if explicit_keys - expected:
+                    raise RefreshScopeError("future schedule includes a team outside the native inventory")
+            # Preserve only reciprocal, uniquely identified provider pairings.
+            # Redacted/missing future slots remain TBD, never inferred by name.
+            pairs = list(zip(weekly["franchise_id"], weekly["opponent_franchise_id"]))
+            good = [
+                pd.notna(a) and pd.notna(b) and a != b and a in canonical_ids and b in canonical_ids
+                and pairs.count((a, b)) == 1 and pairs.count((b, a)) == 1
+                for a, b in pairs
+            ]
+            known = weekly.loc[good].copy()
+            if known["franchise_id"].duplicated().any():
+                raise RefreshScopeError("future schedule has conflicting native team pairings")
+            remaining = profiles.loc[~profiles["franchise_id"].isin(known["franchise_id"])].copy()
+            remaining = remaining.drop(columns="_identity_priority")
+            remaining["db_name"] = str(local_db.league_name)
+            remaining["year"] = int(active_year)
+            remaining["week"] = week
+            remaining["manager_week"] = remaining["team_key"].astype(str) + f"_{active_year}_{week}"
+            remaining["opponent"] = "TBD"
+            for column in ("opponent_guid", "opponent_team_key", "opponent_franchise_id", "team_points", "opponent_points", "win", "loss", "tie"):
+                remaining[column] = None
+            remaining["is_playoffs"] = False
+            remaining["is_consolation"] = False
+            remaining["is_bye_week"] = False
+            future_frames.extend((known, remaining))
+        retained = result.loc[~pd.to_numeric(result.get("week", pd.Series(dtype=float)), errors="coerce").isin(future_weeks)]
+        result = pd.concat([retained, *future_frames], ignore_index=True, sort=False)
     unassigned = pd.Series(False, index=result.index)
-    if {"platform", "opponent", "opponent_franchise_id"} <= set(schedule.columns):
+    if {"opponent", "opponent_franchise_id"} <= set(result.columns):
         unassigned = (
-            schedule["platform"].eq("espn") & schedule["opponent"].eq("TBD")
-            & schedule["opponent_franchise_id"].isna()
+            result["opponent"].eq("TBD") & result["opponent_franchise_id"].isna()
         )
         result.loc[unassigned, "opponent_franchise_id"] = pd.NA
     missing_team = int(result["franchise_id"].isna().sum())
@@ -1694,6 +1762,60 @@ def replace_active_season_draft(
         league_id=str(league_id),
     )
     return int(len(protected))
+
+
+def retained_draft_from_captured_revision(
+    local_db: Any, *, plan: Any, platform: str, year: int, league_id: str,
+    key_columns: tuple[str, ...],
+) -> pd.DataFrame | None:
+    """Reuse an already published draft only for the identical captured source.
+
+    No plan, changed chain/resource, missing picks or invalid identities use
+    the existing authoritative fetch. This is not a provider-error fallback.
+    """
+    from multi_league.core.league_update_plan import PersistedRefreshPlan, active_provider_league_id
+
+    if not isinstance(plan, PersistedRefreshPlan) or not plan.published_manifest_digest:
+        return None
+    observed, published = plan.observed_manifest, plan.published_manifest
+    if any(
+        source.database_name != str(local_db.league_name) or source.active_season != int(year)
+        for source in (observed, published)
+    ):
+        return None
+    if any(active_provider_league_id(source, provider=platform) != str(league_id) for source in (observed, published)):
+        return None
+    revisions = [
+        [row for row in source.provider_revisions if (row.provider, row.resource, row.scope) == (platform, "draft", str(year))]
+        for source in (observed, published)
+    ]
+    if any(len(rows) != 1 for rows in revisions):
+        return None
+    current, previous = revisions[0][0], revisions[1][0]
+    if current != previous or current.status != "ok" or not current.revision or current.observed_count is None:
+        return None
+    if not local_db.table_exists("draft"):
+        return None
+    draft = local_db.read_table("draft", year=year)
+    if draft is None or draft.empty or not {"year", *key_columns} <= set(draft.columns):
+        return None
+    if not pd.to_numeric(draft["year"], errors="coerce").eq(year).all():
+        return None
+    if "db_name" in draft and not draft["db_name"].eq(str(local_db.league_name)).all():
+        return None
+    if "platform" in draft and not draft["platform"].eq(platform).all():
+        return None
+    league_columns = [column for column in ("league_id", "league_key") if column in draft]
+    if not league_columns or any(not draft[column].map(_canonical_draft_key_value).eq(str(league_id)).all() for column in league_columns):
+        return None
+    if current.observed_count is not None and len(draft) != current.observed_count:
+        return None
+    try:
+        if not provider_draft_manifest_matches(draft, draft, key_columns=key_columns):
+            return None
+    except RefreshScopeError:
+        return None
+    return draft
 
 
 def needs_active_season_draft_fetch(

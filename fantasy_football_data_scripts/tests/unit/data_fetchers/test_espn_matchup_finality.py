@@ -55,7 +55,7 @@ def provider(monkeypatch):
             def get_league(self, _year):
                 return league
 
-            def get_raw_schedule(self, _year, week):
+            def get_raw_schedule(self, _year, week, *, matchup_period=None):
                 calls.append(week)
                 return deepcopy(schedules.get(week, []))
 
@@ -153,15 +153,48 @@ def test_missing_historical_winner_retains_existing_fallback(provider, archive):
 def test_multiweek_playoff_finality_preserves_existing_cumulative_deltas(provider):
     periods = {14: [14, 15]}
     live = {14: [schedule_row("UNDECIDED", period=14, scores=(120, 100), playoff=True)],
-            15: [schedule_row("UNDECIDED", period=15, scores=(145, 103), playoff=True)]}
+            15: [schedule_row("UNDECIDED", period=14, scores=(145, 103), playoff=True)]}
     ctx, _, _, _ = provider(live, current_period=14, scoring_period=15, periods=periods)
     assert espn_matchups.fetch_espn_matchups(ctx, 2026, weeks=[14, 15]) is None
     final = {14: [schedule_row(period=14, scores=(120, 100), playoff=True)],
-             15: [schedule_row(period=15, scores=(250, 180), playoff=True)]}
+             15: [schedule_row(period=14, scores=(250, 180), playoff=True)]}
     ctx, _, _, _ = provider(final, current_period=15, scoring_period=16, periods=periods)
     frame = espn_matchups.fetch_espn_matchups(ctx, 2026, weeks=[14, 15])
     assert frame.week.tolist() == [14, 14, 15, 15]
     assert frame.team_points.tolist() == [120, 100, 130, 80]
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_native_multiweek_period_reaches_canonical_matchups(provider, archive):
+    row = schedule_row(period=15, scores=(250, 210), playoff=True)
+    row["home"]["pointsByScoringPeriod"] = {"15": 120, "16": 130}
+    row["away"]["pointsByScoringPeriod"] = {"15": 100, "16": 110}
+    ctx, _, _, _ = provider({15: [row], 16: [row]}, archive=archive,
+                            current_period=16, scoring_period=17, periods={15: [15, 16]})
+    frame = espn_matchups.fetch_espn_matchups(ctx, 2026, weeks=[15, 16])
+    assert frame.week.tolist() == [15, 15, 16, 16]
+    assert frame.team_points.tolist() == [120, 100, 130, 110]
+
+
+def test_raw_period_guard_rejects_mixed_native_graphs():
+    assert espn_matchups._raw_schedule_matches_period([
+        schedule_row(period=15), schedule_row(period=16),
+    ], 16, matchup_periods={15: [15, 16]}) is False
+
+
+def test_mixed_weekly_and_cumulative_pairs_do_not_double_subtract(provider):
+    weekly_first = schedule_row(period=15, scores=(120, 100), playoff=True)
+    weekly_last = schedule_row(period=15, scores=(250, 210), playoff=True)
+    for row, h, a, week in [(weekly_first, 120, 100, 15), (weekly_last, 130, 110, 16)]:
+        row["home"]["pointsByScoringPeriod"] = {str(week): h}
+        row["away"]["pointsByScoringPeriod"] = {str(week): a}
+    schedules = {
+        15: [weekly_first, schedule_row(period=15, scores=(100, 80), home=3, away=4, playoff=True)],
+        16: [weekly_last, schedule_row(period=15, scores=(210, 170), home=3, away=4, playoff=True)],
+    }
+    ctx, _, _, _ = provider(schedules, current_period=16, scoring_period=17, periods={15: [15, 16]})
+    frame = espn_matchups.fetch_espn_matchups(ctx, 2026, weeks=[15, 16])
+    assert frame.loc[frame.week.eq(16), "team_points"].tolist() == [130, 110, 110, 90]
 
 
 @pytest.mark.parametrize("winner, final", [("HOME", True), ("UNDECIDED", False)])

@@ -71,7 +71,6 @@ from multi_league.core.year_filter_utils import (
     coerce_int,
     format_year_filter,
     resolve_history_years,
-    resolve_quick_import_years,
     unscored_current_shell_years,
 )
 
@@ -176,13 +175,9 @@ def _ctx_history_years(ctx: SleeperContext) -> list[int]:
 
 
 def _resolve_quick_import_years(ctx: SleeperContext, target_year: int, nfl_state: dict | None = None) -> list[int]:
-    """Return years to fetch for a Sleeper quick import.
-
-    Sleeper can renew leagues into the next season before any NFL games have
-    scores. In that state, the new shell contains useful draft/transaction
-    activity, while the previous season still contains matchup and roster data.
-    """
-    return resolve_quick_import_years(_ctx_history_years(ctx), target_year, nfl_state)
+    """Quick imports fetch only the latest configured provider league-year."""
+    years = _ctx_history_years(ctx)
+    return [max(years)] if years else [int(target_year)]
 
 
 def _format_year_filter(year_filter) -> str:
@@ -414,7 +409,10 @@ def main():
 
         # Discover full league history so get_league_id_for_year() works for all years
         log("[BOOTSTRAP] Discovering league history...")
-        history = discover_league_history(client, args.league_id)
+        history = discover_league_history(
+            client, args.league_id,
+            latest_only=args.import_mode == "quick",
+        )
         if history:
             ctx.league_ids = history
             discovered_years = sorted(int(y) for y in history.keys())
@@ -488,7 +486,7 @@ def main():
     log(f"League: {ctx.league_name} | League ID: {ctx.league_id}")
     log(
         f"Mode:   {args.import_mode.upper()} "
-        f"{'(latest season refresh; includes previous scored season for empty renewed shells)' if args.import_mode == 'quick' else '(preserves existing data)'}"
+        f"{'(latest season only)' if args.import_mode == 'quick' else '(preserves existing data)'}"
     )
     log(f"Years:  {ctx.start_year} - {ctx.end_year or 'current'}")
     log(f"Root:   {ctx.data_directory}")
@@ -628,7 +626,10 @@ def main():
         if not ctx.league_ids:
             log("[HISTORY] Discovering league history...")
             try:
-                league_ids = discover_league_history(client, ctx.league_id)
+                league_ids = discover_league_history(
+                    client, ctx.league_id,
+                    latest_only=is_quick_import,
+                )
                 if league_ids:
                     ctx.league_ids = league_ids
                     discovered_years = _sync_context_years_from_history(ctx, args.import_mode)
@@ -649,25 +650,15 @@ def main():
                 ctx.save(str(context_path))
                 log(f"[HISTORY] Processing years from league_ids: {discovered_years}")
 
-        # After discovering league IDs, update year_filter for quick imports.
-        # If Sleeper has already renewed an empty next-season shell, fetch both
-        # the new shell and the previous scored season.
+        # Quick imports use only the latest provider league-year, even when
+        # a renewed shell has draft/transaction data but no scored weeks yet.
         if is_quick_import and ctx.league_ids:
-            try:
-                nfl_state = client.get_nfl_state() or {}
-            except Exception as e:
-                log(f"[QUICK IMPORT] Could not fetch Sleeper NFL state for year selection: {e}")
-                nfl_state = {}
-
-            quick_years = _resolve_quick_import_years(ctx, end_year, nfl_state)
+            quick_years = _resolve_quick_import_years(ctx, end_year)
             new_year_filter = quick_years[0] if len(quick_years) == 1 else quick_years
             if new_year_filter != year_filter:
-                reason = ""
-                if len(quick_years) > 1:
-                    reason = " (current Sleeper season has no scores yet)"
                 log(
                     f"[QUICK IMPORT] Updating target years: "
-                    f"{_format_year_filter(year_filter)} -> {_format_year_filter(new_year_filter)}{reason}"
+                    f"{_format_year_filter(year_filter)} -> {_format_year_filter(new_year_filter)}"
                 )
             year_filter = new_year_filter
             ctx.start_year = min(quick_years)

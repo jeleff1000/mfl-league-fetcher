@@ -1035,3 +1035,11 @@ def test_normal_yahoo_refresh_is_not_a_scheduled_demo_bypass():
         database_name="demo_league",
         credential_database_name="kmffl",
     )
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [({"current_week": "6", "is_finished": "0"}, (6, 7, 8)),
+     ({"current_week": "6", "is_finished": "1"}, ()), ({}, ())],
+)
+def test_future_schedule_boundary_comes_from_yahoo_not_requested_ceiling(metadata, expected):
+    from refresh_yahoo_active_season import _yahoo_future_schedule_weeks
+    assert _yahoo_future_schedule_weeks({"metadata": metadata}, regular_season_end=8) == expected

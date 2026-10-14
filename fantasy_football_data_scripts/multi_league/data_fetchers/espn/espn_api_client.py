@@ -443,18 +443,23 @@ class ESPNAPIClient:
             logger.warning(f"Error fetching raw transactions for {year} week {scoring_period}: {e}")
             return []
 
-    def get_raw_schedule(self, year: int, scoring_period: int) -> list[dict]:
+    def get_raw_schedule(
+        self, year: int, scoring_period: int, *, matchup_period: int | None = None,
+    ) -> list[dict]:
         """
         Fetch raw matchup schedule for a specific scoring period.
 
         This preserves ESPN-only fields like commissioner adjustments and
         tiebreak values that the BoxScore abstraction drops.
+        ``matchup_period`` selects the native matchup graph independently of
+        the scoring week, defaulting to the same period for legacy callers.
         """
         params = self._build_league_params(year)
         params["view"] = ["mScoreboard", "mMatchupScore"]
         params["scoringPeriodId"] = scoring_period
+        native_period = scoring_period if matchup_period is None else matchup_period
         headers = {
-            "x-fantasy-filter": json.dumps({"schedule": {"filterMatchupPeriodIds": {"value": [scoring_period]}}})
+            "x-fantasy-filter": json.dumps({"schedule": {"filterMatchupPeriodIds": {"value": [native_period]}}})
         }
 
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from io import BytesIO
@@ -32,6 +33,11 @@ class FlyReader:
     RETRY_BASE_DELAY = 1
     RETRY_MAX_DELAY = 15
     TIMEOUT_SECONDS = 75
+    # Refresh workers need time after reads to publish and finalize.
+    REFRESH_TIMEOUT_SECONDS = 10
+    REFRESH_MAX_ATTEMPTS = 2
+    REFRESH_RETRY_MAX_DELAY = 1
+    REFRESH_FINALIZE_SECONDS = 30
     # 500 included: Fly's DuckDB occasionally returns 500 on transient
     # query-engine hiccups (e.g. concurrent ATTACH races). 502/503/504 are
     # the standard transient gateway errors. All retry on exponential backoff.
@@ -69,6 +75,52 @@ class FlyReader:
         preview = " ".join(str(sql).split())
         return preview if len(preview) <= 240 else preview[:237] + "..."
 
+    def _read_budget(
+        self, timeout_seconds: float | None, max_retries: int | None
+    ) -> tuple[float, int, float | None]:
+        timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        attempts = self.MAX_RETRIES if max_retries is None else max_retries
+        try:
+            deadline = float(os.environ.get("LEAGUE_UPDATE_DEADLINE_EPOCH", ""))
+        except ValueError:
+            return timeout, attempts, None
+        if not math.isfinite(deadline) or deadline <= 0:
+            return timeout, attempts, None
+        return (
+            min(timeout, self.REFRESH_TIMEOUT_SECONDS),
+            min(attempts, self.REFRESH_MAX_ATTEMPTS),
+            deadline - self.REFRESH_FINALIZE_SECONDS,
+        )
+
+    def _budget_timeout(
+        self, timeout: float, read_deadline: float | None, sql: str, database: str
+    ) -> float:
+        if read_deadline is None:
+            return timeout
+        remaining = read_deadline - time.time()
+        if remaining <= 0:
+            raise FlyReaderNetworkError(
+                f"Fly refresh read budget exhausted "
+                f"({self.REFRESH_FINALIZE_SECONDS}s reserved for publication/finalization) "
+                f"[database={database}; sql={self._sql_preview(sql)}]"
+            )
+        return min(timeout, remaining)
+
+    def _wait_for_retry(
+        self,
+        attempt: int,
+        resp: requests.Response | None,
+        read_deadline: float | None,
+        sql: str,
+        database: str,
+    ) -> None:
+        delay = self._retry_delay(attempt, resp)
+        if read_deadline is not None:
+            if not math.isfinite(delay):
+                delay = self.REFRESH_RETRY_MAX_DELAY
+            delay = max(0, min(delay, self.REFRESH_RETRY_MAX_DELAY))
+        time.sleep(self._budget_timeout(delay, read_deadline, sql, database))
+
     def _post(
         self,
         sql: str,
@@ -77,21 +129,21 @@ class FlyReader:
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
     ) -> list[dict]:
-        timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
-        attempts = self.MAX_RETRIES if max_retries is None else max_retries
+        timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
         last_error: str | None = None
         for attempt in range(attempts):
+            request_timeout = self._budget_timeout(timeout, read_deadline, sql, database)
             try:
                 resp = requests.post(
                     f"{self.url}/query",
                     json={"sql": sql, "database": database},
                     headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=timeout,
+                    timeout=request_timeout,
                 )
             except self.RETRY_EXCEPTIONS as e:
-                last_error = f"Network error: {e}"
+                last_error = f"Network error: {e} (timeout={request_timeout:g}s)"
                 if attempt < attempts - 1:
-                    time.sleep(self._retry_delay(attempt))
+                    self._wait_for_retry(attempt, None, read_deadline, sql, database)
                     continue
                 raise FlyReaderNetworkError(
                     f"{last_error} after {attempt + 1}/{attempts} attempts "
@@ -136,7 +188,7 @@ class FlyReader:
                 )
             ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
-                time.sleep(self._retry_delay(attempt, resp))
+                self._wait_for_retry(attempt, resp, read_deadline, sql, database)
                 continue
 
             if resp.status_code != 200:
@@ -218,24 +270,25 @@ class FlyReader:
         import pandas as pd
 
         database = self._require_db(database)
-        timeout = self.TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
-        attempts = self.MAX_RETRIES if max_retries is None else max_retries
+        timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
         last_error: str | None = None
         for attempt in range(attempts):
+            request_timeout = self._budget_timeout(timeout, read_deadline, sql, database)
             try:
                 resp = requests.post(
                     f"{self.url}/query-parquet",
                     json={"sql": sql, "database": database},
                     headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=timeout,
+                    timeout=request_timeout,
                 )
             except self.RETRY_EXCEPTIONS as exc:
-                last_error = f"Network error: {exc}"
+                last_error = f"Network error: {exc} (timeout={request_timeout:g}s)"
                 if attempt < attempts - 1:
-                    time.sleep(self._retry_delay(attempt))
+                    self._wait_for_retry(attempt, None, read_deadline, sql, database)
                     continue
                 raise FlyReaderNetworkError(
-                    f"{last_error} after {attempt + 1}/{self.MAX_RETRIES} attempts"
+                    f"{last_error} after {attempt + 1}/{attempts} attempts "
+                    f"[database={database}; sql={self._sql_preview(sql)}]"
                 ) from exc
             if (
                 resp.status_code in self.RETRY_STATUS
@@ -243,7 +296,7 @@ class FlyReader:
                 and not is_permanent_storage_error(resp.text)
             ):
                 last_error = f"Parquet query failed ({resp.status_code}): {resp.text}"
-                time.sleep(self._retry_delay(attempt, resp))
+                self._wait_for_retry(attempt, resp, read_deadline, sql, database)
                 continue
             if resp.status_code != 200:
                 raise FlyReaderError(

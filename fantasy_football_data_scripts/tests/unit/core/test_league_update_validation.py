@@ -549,10 +549,6 @@ def test_simulation_health_accepts_only_explicit_future_unassigned_slots(platfor
                      "('test',2026,1,'b','a','A',?,FALSE), "
                      "('test',2026,2,'a',NULL,'TBD',?,FALSE), "
                      "('test',2026,2,'b',NULL,'TBD',?,FALSE)", [platform]*4)
-        if platform != "espn":
-            with pytest.raises(IncompleteSourceError, match="schedule"):
-                assert_active_season_simulation_health(conn, db_name="test", year=2026)
-            return
         assert assert_active_season_simulation_health(conn, db_name="test", year=2026) == {
             "latest_finalized_week": 1, "latest_simulation_franchises": 2,
             "simulation_season_franchises": 2,

@@ -42,11 +42,24 @@ def _espn_current_matchup_period(league: Any) -> int | None:
         raw_value = getattr(league, attribute, None)
         try:
             value = int(raw_value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if value > 0:
+            if attribute == "current_week":
+                mapping = getattr(getattr(league, "settings", None), "matchup_periods", None)
+                return _espn_matchup_periods_for_weeks(mapping, [value])[value]
             return value
     return None
+
+
+def _espn_matchup_periods_for_weeks(
+    matchup_periods: Any,
+    weeks: list[int],
+) -> dict[int, int]:
+    """Resolve scoring weeks uniquely, retaining same-week legacy behavior."""
+    from multi_league.core.espn_playoff_settings import espn_matchup_periods_for_weeks
+
+    return espn_matchup_periods_for_weeks(matchup_periods, weeks)
 
 
 def _closed_espn_schedule(
@@ -55,13 +68,16 @@ def _closed_espn_schedule(
     requested_week: int,
     current_matchup_period: int | None,
     expected_team_ids: tuple[str, ...],
+    requested_matchup_period: int | None = None,
 ) -> list[dict[str, Any]] | None:
     """Return a validated final graph, deriving stale ESPN winner markers.
 
     Some active ESPN leagues leave a completed period's ``winner`` at
     ``UNDECIDED`` after advancing ``currentMatchupPeriod``.  The period
     boundary is authoritative for closure, but the full team graph and finite
-    scores are still required before deriving outcomes.  The current period
+    scores are still required before accepting outcomes. ``requested_week``
+    selects scores; ``requested_matchup_period`` selects the native graph.
+    The current period
     is never derived, so partial midweek scores remain unpublished.
     """
     from multi_league.core.league_refresh import espn_schedule_is_final
@@ -72,10 +88,9 @@ def _closed_espn_schedule(
     # syntactically final.
     if not current_matchup_period:
         return None
-    if int(requested_week) >= int(current_matchup_period):
+    native_period = int(requested_week if requested_matchup_period is None else requested_matchup_period)
+    if native_period < 1 or native_period >= int(current_matchup_period):
         return None
-    if espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids):
-        return schedule_rows
 
     normalized: list[dict[str, Any]] = []
     for source_row in schedule_rows:
@@ -85,14 +100,23 @@ def _closed_espn_schedule(
         raw_period = row.get("matchupPeriodId")
         try:
             matchup_period = int(raw_period)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
-        if matchup_period != int(requested_week) or matchup_period >= int(current_matchup_period):
+        if matchup_period != native_period:
             return None
 
         home = row.get("home")
         away = row.get("away")
-        if not isinstance(home, dict) or not isinstance(away, dict):
+        if not isinstance(home, dict):
+            return None
+        # Declared playoff byes have no opponent score; the final graph gate
+        # below still requires their identity and permits only UNDECIDED/final.
+        if away is None and str(row.get("playoffTierType") or "").strip().upper().endswith(
+            ("_BRACKET", "_LADDER")
+        ):
+            normalized.append(row)
+            continue
+        if not isinstance(away, dict):
             return None
 
         def score(side: dict[str, Any]) -> float | None:
@@ -106,7 +130,7 @@ def _closed_espn_schedule(
                 value = side.get("totalPoints")
             try:
                 number = float(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return None
             return number if math.isfinite(number) else None
 
@@ -114,11 +138,12 @@ def _closed_espn_schedule(
         away_score = score(away)
         if home_score is None or away_score is None:
             return None
-        row["winner"] = (
-            "HOME" if home_score > away_score
-            else "AWAY" if away_score > home_score
-            else "TIE"
-        )
+        if str(row.get("winner") or "").strip().upper() not in {"HOME", "AWAY", "TIE"}:
+            row["winner"] = (
+                "HOME" if home_score > away_score
+                else "AWAY" if away_score > home_score
+                else "TIE"
+            )
         normalized.append(row)
 
     if not espn_schedule_is_final(normalized, expected_team_ids=expected_team_ids):
@@ -134,24 +159,32 @@ def _finalized_espn_matchup_weeks(
     expected_team_ids: tuple[str, ...],
     current_matchup_period: int | None = None,
     schedule_out: dict[int, list[dict[str, Any]]] | None = None,
+    matchup_periods: Any = None,
 ) -> list[int]:
     """Return weeks for which ESPN has finalized every fantasy matchup."""
     finalized: list[int] = []
+    period_by_week = _espn_matchup_periods_for_weeks(matchup_periods, weeks)
     for week in weeks:
-        schedule_rows = client.get_raw_schedule(year, int(week))
+        native_period = period_by_week[int(week)]
+        schedule_rows = (
+            client.get_raw_schedule(year, int(week), matchup_period=native_period)
+            if native_period != int(week) else client.get_raw_schedule(year, int(week))
+        )
         final_schedule = _closed_espn_schedule(
             schedule_rows,
             requested_week=int(week),
             current_matchup_period=current_matchup_period,
             expected_team_ids=expected_team_ids,
+            requested_matchup_period=native_period,
         )
         if final_schedule is not None:
             finalized.append(int(week))
             if schedule_out is not None:
                 schedule_out[int(week)] = final_schedule
         else:
+            schedule_rows = [row for row in schedule_rows if isinstance(row, dict)]
             outcomes = sorted({str(row.get("winner") or "") for row in schedule_rows})
-            matchup_periods = sorted(
+            observed_matchup_periods = sorted(
                 {
                     row.get("matchupPeriodId")
                     for row in schedule_rows
@@ -170,7 +203,7 @@ def _finalized_espn_matchup_weeks(
             print(
                 f"[ESPN] {year} week {week}: fantasy outcomes are still live; "
                 f"holding matchup rows (outcomes={outcomes}, "
-                f"matchup_periods={matchup_periods}, teams={teams})",
+                f"matchup_periods={observed_matchup_periods}, teams={teams})",
                 flush=True,
             )
     return finalized
@@ -184,6 +217,7 @@ def _full_espn_schedule_frame(
     regular_season_weeks: int,
     expected_team_ids: tuple[str, ...],
     current_matchup_period: int | None = None,
+    matchup_periods: Any = None,
 ) -> pd.DataFrame:
     """Expand ESPN's one-call season schedule into canonical team-week rows."""
     from multi_league.core.league_update_validation import IncompleteSourceError
@@ -191,21 +225,28 @@ def _full_espn_schedule_frame(
     expected = {str(team_id) for team_id in expected_team_ids}
     rows: list[dict[str, Any]] = []
     teams_by_week: dict[int, list[str]] = {}
+    period_by_week = _espn_matchup_periods_for_weeks(
+        matchup_periods, list(range(1, int(regular_season_weeks) + 1))
+    )
+    expanded: list[tuple[int, int, dict[str, Any]]] = []
     for matchup in raw_schedule or []:
         if not isinstance(matchup, dict):
             continue
         try:
-            week = int(matchup.get("matchupPeriodId"))
+            native_period = int(matchup.get("matchupPeriodId"))
         except (TypeError, ValueError):
             continue
-        if week < 1 or week > int(regular_season_weeks):
-            continue
+        expanded.extend(
+            (week, native_period, matchup)
+            for week, period in period_by_week.items() if period == native_period
+        )
+    for week, native_period, matchup in expanded:
         home = matchup.get("home")
         away = matchup.get("away")
         unassigned = (
             isinstance(home, dict) and away is None
             and current_matchup_period is not None
-            and int(current_matchup_period) > 0 and week >= int(current_matchup_period)
+            and int(current_matchup_period) > 0 and native_period >= int(current_matchup_period)
             and str(matchup.get("winner") or "").strip().upper() == "UNDECIDED"
         )
         if not isinstance(home, dict) or (not isinstance(away, dict) and not unassigned):
@@ -348,12 +389,13 @@ def assert_espn_closed_matchup_weeks(
     refresh_weeks: list[int],
     finalized_matchup_weeks: list[int],
     current_matchup_period: int | None,
+    matchup_periods: Any = None,
 ) -> None:
     """Require completed fantasy outcomes for every provider-closed week.
 
     A refresh plan may include future repair weeks for schedule/simulation
-    materialization.  ESPN's current matchup period, not the largest requested
-    week, is the authoritative live boundary.
+    materialization. Compare their mapped native matchup periods to ESPN's
+    current matchup period, the authoritative live boundary.
     """
     from multi_league.core.league_refresh import RefreshScopeError
 
@@ -365,9 +407,10 @@ def assert_espn_closed_matchup_weeks(
         raise RefreshScopeError("ESPN omitted its current matchup period") from exc
     if live_boundary < 1:
         raise RefreshScopeError("ESPN returned an invalid current matchup period")
+    period_by_week = _espn_matchup_periods_for_weeks(matchup_periods, requested)
     missing = [
         week for week in requested
-        if week < live_boundary and week not in finalized
+        if period_by_week[week] < live_boundary and week not in finalized
     ]
     if missing:
         raise RefreshScopeError(
@@ -685,6 +728,7 @@ def _merge_active_payloads(
     active_year: int,
     refresh_weeks: list[int],
     finalized_ops: pd.DataFrame,
+    persisted_plan: Any = None,
 ) -> dict[str, Any]:
     """Fetch ESPN state without letting a provider adapter replace old weeks."""
     from multi_league.core.canonical_settings import flatten_settings
@@ -701,6 +745,7 @@ def _merge_active_payloads(
         refresh_authoritative_draft_partition,
         pending_provider_nfl_teams,
         start_background_refresh_call,
+        retained_draft_from_captured_revision,
     )
     from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
     from multi_league.data_fetchers.espn.espn_draft import fetch_espn_draft
@@ -729,6 +774,7 @@ def _merge_active_payloads(
     if regular_season_weeks < 1:
         raise RuntimeError(f"ESPN returned an invalid playoff start week for {active_year}")
     current_matchup_period = _espn_current_matchup_period(league)
+    matchup_periods = getattr(getattr(league, "settings", None), "matchup_periods", None)
 
     def fetch_secondary_payloads():
         secondary_client = ESPNAPIClient(ctx.league_id, ctx.espn_s2, ctx.swid)
@@ -742,6 +788,7 @@ def _merge_active_payloads(
             regular_season_weeks=regular_season_weeks,
             expected_team_ids=expected_team_ids,
             current_matchup_period=current_matchup_period,
+            matchup_periods=matchup_periods,
         )
         schedules: dict[int, list[dict[str, Any]]] = {}
         final_weeks = _finalized_espn_matchup_weeks(
@@ -751,6 +798,7 @@ def _merge_active_payloads(
             expected_team_ids=expected_team_ids,
             current_matchup_period=current_matchup_period,
             schedule_out=schedules,
+            matchup_periods=matchup_periods,
         )
         transaction_rows = fetch_espn_transactions(
             ctx,
@@ -835,6 +883,7 @@ def _merge_active_payloads(
         refresh_weeks=refresh_weeks,
         finalized_matchup_weeks=final_matchup_weeks,
         current_matchup_period=current_matchup_period,
+        matchup_periods=matchup_periods,
     )
     stale_matchup_rows_removed = prune_unfinalized_provider_matchups(
         local_db,
@@ -885,7 +934,14 @@ def _merge_active_payloads(
             league_id=league_id,
         )
     draft_rows = 0
-    draft_manifest, confirmed_no_draft = _espn_draft_manifest(client, league, active_year)
+    retained_draft = retained_draft_from_captured_revision(
+        local_db, plan=persisted_plan, platform="espn", year=active_year, league_id=league_id,
+        key_columns=("pick", "espn_player_id", "player"),
+    )
+    if retained_draft is not None:
+        draft_manifest, confirmed_no_draft = retained_draft, False
+    else:
+        draft_manifest, confirmed_no_draft = _espn_draft_manifest(client, league, active_year)
     placeholder_draft_rows_removed = (
         _discard_espn_placeholder_draft(
             local_db,
@@ -922,6 +978,7 @@ def _merge_active_payloads(
         "unassigned_schedule_weeks": sorted(full_schedule.loc[full_schedule["opponent"].eq("TBD"), "week"].unique().tolist()),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
+        "draft_status": "retained_verified" if retained_draft is not None else "refreshed",
         "placeholder_draft_rows_removed": placeholder_draft_rows_removed,
         "draft_validated": True,
         "pending_nfl_teams": sorted(pending_nfl_teams),
@@ -1202,6 +1259,7 @@ def main(argv: list[str] | None = None) -> int:
                         active_year=active_year,
                         refresh_weeks=refresh_weeks,
                         finalized_ops=finalized_ops,
+                        persisted_plan=persisted_plan,
                     )
                 except (RefreshScopeError, IncompleteSourceError) as exc:
                     receipt["status"] = "INCOMPLETE_SOURCE"

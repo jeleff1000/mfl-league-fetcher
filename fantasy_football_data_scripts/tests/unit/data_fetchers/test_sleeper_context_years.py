@@ -57,7 +57,7 @@ def test_resolve_years_to_fetch_accepts_multi_year_filter(tmp_path):
     assert resolve_years_to_fetch(ctx, [2025, "2026", 2025, "bad"]) == [2025, 2026]
 
 
-def test_quick_import_includes_previous_scored_season_for_empty_current_shell(tmp_path):
+def test_quick_import_keeps_only_latest_season_for_empty_current_shell(tmp_path):
     ctx = SleeperContext(
         league_id="2026",
         league_name="North Missouri Football League",
@@ -72,10 +72,10 @@ def test_quick_import_includes_previous_scored_season_for_empty_current_shell(tm
         ctx,
         2026,
         {"season": "2026", "previous_season": "2025", "season_has_scores": False},
-    ) == [2025, 2026]
+    ) == [2026]
 
 
-def test_quick_import_includes_previous_scored_season_for_offseason_shell(tmp_path):
+def test_quick_import_keeps_only_latest_season_for_offseason_shell(tmp_path):
     ctx = SleeperContext(
         league_id="2026",
         league_name="Seattle Dynasty Boys",
@@ -98,7 +98,7 @@ def test_quick_import_includes_previous_scored_season_for_offseason_shell(tmp_pa
             "leg": 0,
             "display_week": 0,
         },
-    ) == [2025, 2026]
+    ) == [2026]
 
 
 def test_quick_import_uses_only_current_season_once_scores_exist(tmp_path):
@@ -166,3 +166,27 @@ def test_full_import_fails_closed_when_native_history_discovery_errors():
 
     assert "raise RuntimeError" in error_handler
     assert "ctx.league_ids = {str(ctx.start_year): ctx.league_id}" not in error_handler
+
+
+def test_latest_quick_discovery_does_not_read_any_predecessor():
+    calls = []
+    class Client:
+        def get_league(self, league_id):
+            calls.append(league_id)
+            year = int(league_id)
+            if year == 2021:
+                return None
+            return {"league_id": league_id, "season": str(year), "sport": "nfl",
+                    "previous_league_id": str(year - 1)}
+    assert discover_league_history(Client(), "2026", latest_only=True) == {"2026": "2026"}
+    assert calls == ["2026"]
+    with pytest.raises(ValueError, match="missing or mismatched"):
+        discover_league_history(Client(), "2026", skip_empty_seasons=False)
+
+
+def test_latest_quick_discovery_still_rejects_missing_requested_head():
+    class Client:
+        def get_league(self, league_id):
+            return None
+    with pytest.raises(ValueError, match="missing or mismatched"):
+        discover_league_history(Client(), "2026", latest_only=True)

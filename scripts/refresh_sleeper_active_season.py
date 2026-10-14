@@ -375,6 +375,14 @@ def _build_context(
     return ctx, context_path, client, renewal
 
 
+def _sleeper_future_schedule_weeks(active_league: dict[str, Any], *, regular_season_end: int) -> tuple[int, ...]:
+    try:
+        finalized = int((active_league.get("settings") or {}).get("last_scored_leg"))
+    except (TypeError, ValueError):
+        return ()
+    return tuple(range(finalized + 1, int(regular_season_end) + 1)) if finalized >= 0 else ()
+
+
 def _merge_active_payloads(
     *,
     ctx: Any,
@@ -385,6 +393,7 @@ def _merge_active_payloads(
     refresh_weeks: list[int],
     finalized_ops: pd.DataFrame,
     player_cache: Any = None,
+    persisted_plan: Any = None,
 ) -> dict[str, int]:
     """Fetch narrow Sleeper state while preserving earlier active-season rows."""
     from multi_league.core.canonical_settings import flatten_settings
@@ -395,6 +404,7 @@ def _merge_active_payloads(
         pending_provider_nfl_teams,
         refresh_authoritative_draft_partition,
         resolve_active_schedule_franchise_ids,
+        retained_draft_from_captured_revision,
     )
     from multi_league.data_fetchers.sleeper.sleeper_draft import SleeperDraftFetcher
     from multi_league.data_fetchers.sleeper.sleeper_league_settings import fetch_sleeper_settings
@@ -430,16 +440,6 @@ def _merge_active_payloads(
     schedule = SleeperScheduleFetcher(ctx, client).fetch_schedule_for_year(
         active_year, weeks=full_schedule_weeks
     )
-    if not schedule.empty:
-        schedule = resolve_active_schedule_franchise_ids(
-            local_db,
-            schedule,
-            active_year=active_year,
-            allow_provider_guid_initialization=True,
-        )
-        merge_provider_refresh_table(
-            local_db, "schedule", schedule, platform="sleeper", league_id=league_id
-        )
     if final_matchup_weeks:
         matchups = SleeperMatchupFetcher(ctx, client).fetch_matchups_for_year(active_year, weeks=final_matchup_weeks)
         if not matchups.empty:
@@ -505,11 +505,18 @@ def _merge_active_payloads(
         )
     draft_rows = 0
     draft_fetcher = SleeperDraftFetcher(ctx, client, player_cache)
-    draft_manifest, draft_held_incomplete = _sleeper_draft_manifest_or_hold(
-        draft_fetcher,
-        active_year=active_year,
-        expected_primary_draft_id=str(active_league.get("draft_id") or "").strip(),
+    retained_draft = retained_draft_from_captured_revision(
+        local_db, plan=persisted_plan, platform="sleeper", year=active_year, league_id=league_id,
+        key_columns=("draft_id", "pick"),
     )
+    if retained_draft is not None:
+        draft_manifest, draft_held_incomplete = retained_draft, False
+    else:
+        draft_manifest, draft_held_incomplete = _sleeper_draft_manifest_or_hold(
+            draft_fetcher,
+            active_year=active_year,
+            expected_primary_draft_id=str(active_league.get("draft_id") or "").strip(),
+        )
     if draft_manifest is not None:
         draft_rows = refresh_authoritative_draft_partition(
             local_db,
@@ -535,6 +542,25 @@ def _merge_active_payloads(
         raise IncompleteSourceError(
             "Sleeper roster identity count disagrees with active league settings"
         )
+    schedule = resolve_active_schedule_franchise_ids(
+        local_db, schedule, active_year=active_year,
+        allow_provider_guid_initialization=True,
+        future_weeks=_sleeper_future_schedule_weeks(
+            active_league, regular_season_end=playoff_start_week - 1,
+        ),
+        expected_team_keys=expected_ids,
+        provider_identities=pd.DataFrame([
+            {"team_key": str(roster["roster_id"]),
+             "manager_guid": ctx.get_manager_guid(int(roster["roster_id"])),
+             "manager": ctx.get_manager_name(int(roster["roster_id"]))}
+            for roster in provider_rosters
+        ]),
+    )
+    if schedule is not None and not schedule.empty:
+        merge_provider_refresh_table(
+            local_db, "schedule", schedule, platform="sleeper", league_id=league_id,
+        )
+    schedule_rows = len(schedule) if schedule is not None else 0
     draft = local_db.read_table("draft", year=active_year) if local_db.table_exists("draft") else pd.DataFrame()
     if roster_weeks:
         validation = validate_tabular_active_scope(
@@ -569,8 +595,10 @@ def _merge_active_payloads(
         "schedule_rows": schedule_rows,
         "transaction_rows": int(len(transactions)),
         "draft_rows": draft_rows,
-        "draft_validated": True,
-        "draft_status": "held_incomplete" if draft_held_incomplete else "refreshed",
+        "draft_validated": not draft_held_incomplete,
+        "draft_status": "held_incomplete" if draft_held_incomplete else (
+            "retained_verified" if retained_draft is not None else "refreshed"
+        ),
         "pending_nfl_teams": sorted(pending_nfl_teams),
         "provider_validation": validation,
     }
@@ -842,6 +870,7 @@ def main(argv: list[str] | None = None) -> int:
                     refresh_weeks=refresh_weeks,
                     finalized_ops=finalized_ops,
                     player_cache=player_cache,
+                    persisted_plan=persisted_plan,
                 )
                 receipt["source_manifest_complete"] = sleeper_source_manifest_complete(
                     refresh_weeks=refresh_weeks,

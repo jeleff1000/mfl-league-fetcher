@@ -179,7 +179,9 @@ def _index_raw_schedule(
     return indexed
 
 
-def _raw_schedule_matches_period(schedule: list[dict] | None, scoring_period: int) -> bool | None:
+def _raw_schedule_matches_period(
+    schedule: list[dict] | None, scoring_period: int, *, matchup_periods=None,
+) -> bool | None:
     """Validate an ESPN response's period when the payload exposes it.
 
     ``None`` means the response has no period markers and therefore cannot be
@@ -195,7 +197,25 @@ def _raw_schedule_matches_period(schedule: list[dict] | None, scoring_period: in
     }
     if not periods:
         return None
-    return scoring_period in periods
+    from multi_league.core.espn_playoff_settings import espn_matchup_periods_for_weeks
+    from multi_league.core.league_refresh import RefreshScopeError
+
+    try:
+        native = espn_matchup_periods_for_weeks(matchup_periods, [scoring_period])[scoring_period]
+    except RefreshScopeError:
+        return False
+    return periods == {native}
+
+
+def _fetch_raw_scoring_week_schedule(client, league, year: int, week: int):
+    from multi_league.core.espn_playoff_settings import espn_matchup_periods_for_weeks
+
+    mapping = getattr(getattr(league, "settings", None), "matchup_periods", None)
+    native = espn_matchup_periods_for_weeks(mapping, [week])[week]
+    return (
+        client.get_raw_schedule(year, week, matchup_period=native)
+        if native != week else client.get_raw_schedule(year, week)
+    )
 
 
 def _matchup_period_is_final(schedule: list[dict]) -> bool:
@@ -398,13 +418,15 @@ def fetch_espn_matchups_modern(
         raw_schedule = (
             raw_schedules_by_week[int(week)]
             if raw_schedules_by_week is not None and int(week) in raw_schedules_by_week
-            else client.get_raw_schedule(year, week)
+            else _fetch_raw_scoring_week_schedule(client, league, year, week)
         )
         log(
             f"  [MATCHUPS] {year} week {week}: "
             f"box_scores={len(box_scores)}, raw_pairs={len(raw_schedule or [])}"
         )
-        period_matches = _raw_schedule_matches_period(raw_schedule, week)
+        period_matches = _raw_schedule_matches_period(
+            raw_schedule, week, matchup_periods=getattr(getattr(league, "settings", None), "matchup_periods", None),
+        )
         if period_matches is False:
             log(
                 f"  [MATCHUPS] {year}: ESPN returned a stale schedule for "
@@ -470,7 +492,11 @@ def fetch_espn_matchups_modern(
         # then subtract last week's scores to get per-week values.
         is_continuation = False
         delta_scores: dict[tuple, tuple[float, float]] = {}  # {(ht_id, at_id): (home_delta, away_delta)}
-        if playoff_matchup_len >= 2 and week >= playoff_start and prev_week_cumulative:
+        has_period_scores = bool(raw_schedule_lookup) and all(
+            meta.get("home_period_points") is not None and meta.get("away_period_points") is not None
+            for meta in raw_schedule_lookup.values()
+        )
+        if playoff_matchup_len >= 2 and week >= playoff_start and prev_week_cumulative and not has_period_scores:
             current_pairs: dict[tuple, tuple[float, float]] = {}
             for bs in box_scores:
                 ht = getattr(bs, "home_team", None)
@@ -485,8 +511,10 @@ def fetch_espn_matchups_modern(
             # scores >= last week's (cumulative pattern)
             if current_pairs and set(current_pairs.keys()) == set(prev_week_cumulative.keys()):
                 all_cumulative = all(
-                    current_pairs[k][0] >= prev_week_cumulative[k][0] - 0.01
-                    and current_pairs[k][1] >= prev_week_cumulative[k][1] - 0.01
+                    (raw_schedule_lookup.get(k, {}).get("home_period_points") is not None
+                     or current_pairs[k][0] >= prev_week_cumulative[k][0] - 0.01)
+                    and (raw_schedule_lookup.get(k, {}).get("away_period_points") is not None
+                         or current_pairs[k][1] >= prev_week_cumulative[k][1] - 0.01)
                     for k in current_pairs
                 )
                 if all_cumulative:
@@ -494,7 +522,11 @@ def fetch_espn_matchups_modern(
                     for k in current_pairs:
                         h_prev, a_prev = prev_week_cumulative[k]
                         h_curr, a_curr = current_pairs[k]
-                        delta_scores[k] = (round(h_curr - h_prev, 2), round(a_curr - a_prev, 2))
+                        meta = raw_schedule_lookup.get(k, {})
+                        delta_scores[k] = (
+                            h_curr if meta.get("home_period_points") is not None else round(h_curr - h_prev, 2),
+                            a_curr if meta.get("away_period_points") is not None else round(a_curr - a_prev, 2),
+                        )
                     log(f"  [MATCHUPS] {year}: week {week} is 2-week continuation — computing per-week deltas")
 
         # Track cumulative scores for next week's delta computation
@@ -505,7 +537,9 @@ def fetch_espn_matchups_modern(
                 at = getattr(bs, "away_team", None)
                 ht_id = getattr(ht, "team_id", None) if ht else None
                 at_id = getattr(at, "team_id", None) if at else None
-                hs, as_ = (round(score, 2) for score in _effective_box_scores(bs, raw_schedule_lookup))
+                meta = raw_schedule_lookup.get((ht_id, at_id), {})
+                hs = round(_raw_score(meta, "home", getattr(bs, "home_score", 0)), 2)
+                as_ = round(_raw_score(meta, "away", getattr(bs, "away_score", 0)), 2)
                 if ht_id is not None and at_id is not None:
                     prev_week_cumulative[(ht_id, at_id)] = (hs, as_)
             if is_continuation:
@@ -723,8 +757,10 @@ def fetch_espn_matchups_legacy(
         # Collect week scores for median
         week_scores = []
         matchup_data = []
-        raw_schedule = client.get_raw_schedule(year, week)
-        period_matches = _raw_schedule_matches_period(raw_schedule, week)
+        raw_schedule = _fetch_raw_scoring_week_schedule(client, league, year, week)
+        period_matches = _raw_schedule_matches_period(
+            raw_schedule, week, matchup_periods=getattr(getattr(league, "settings", None), "matchup_periods", None),
+        )
         if period_matches is False:
             log(
                 f"  [MATCHUPS] {year}: ESPN returned a stale schedule for "
@@ -746,8 +782,17 @@ def fetch_espn_matchups_legacy(
                 ),
                 {},
             )
-            home_score = _raw_score(raw_meta, "home", getattr(matchup, "home_score", 0))
-            away_score = _raw_score(raw_meta, "away", getattr(matchup, "away_score", 0))
+            from multi_league.core.espn_playoff_settings import normalize_espn_matchup_periods
+
+            native_periods = normalize_espn_matchup_periods(
+                getattr(getattr(league, "settings", None), "matchup_periods", None)
+            )
+            if any(week in scoring_weeks and len(scoring_weeks) > 1 for scoring_weeks in native_periods.values()):
+                home_score, away_score = _effective_box_scores(matchup, raw_schedule_lookup)
+            else:
+                # Single-week archived totals include commissioner/bonus adjustments.
+                home_score = _raw_score(raw_meta, "home", getattr(matchup, "home_score", 0))
+                away_score = _raw_score(raw_meta, "away", getattr(matchup, "away_score", 0))
 
             # Read matchup_type from Matchup object (available even for pre-2019)
             matchup_type = raw_meta.get("matchup_type") or getattr(matchup, "matchup_type", None)

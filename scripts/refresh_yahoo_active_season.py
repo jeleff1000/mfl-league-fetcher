@@ -1576,6 +1576,17 @@ def _yahoo_finalized_roster_weeks(
     )
 
 
+def _yahoo_future_schedule_weeks(raw_settings: dict[str, Any], *, regular_season_end: int) -> tuple[int, ...]:
+    metadata = raw_settings.get("metadata") or {}
+    if str(metadata.get("is_finished") or "").lower() in {"1", "true"}:
+        return ()
+    try:
+        current = int(metadata.get("current_week"))
+    except (TypeError, ValueError):
+        return ()
+    return tuple(range(current, int(regular_season_end) + 1)) if current > 0 else ()
+
+
 def _merge_refresh_payloads(
     *,
     ctx: Any,
@@ -1585,6 +1596,7 @@ def _merge_refresh_payloads(
     refresh_weeks: list[int],
     finalized_ops: pd.DataFrame,
     raw_settings: dict[str, Any] | None = None,
+    persisted_plan: Any = None,
 ) -> dict[str, int]:
     """Fetch provider state and merge only safe active-season rows locally."""
     from multi_league.core.canonical_settings import flatten_settings
@@ -1604,6 +1616,7 @@ def _merge_refresh_payloads(
         pending_provider_nfl_teams,
         provider_draft_manifest_matches,
         replace_active_season_draft,
+        retained_draft_from_captured_revision,
         resolve_active_schedule_franchise_ids,
     )
     from multi_league.core.yahoo_league_settings import fetch_league_settings
@@ -1714,10 +1727,14 @@ def _merge_refresh_payloads(
 
         current_schedule_frames.append(raw_schedule)
     schedule = fetch_schedule_for_year(ctx, year, local_db=local_db)
-    if schedule is None or schedule.empty:
+    future_schedule_weeks = _yahoo_future_schedule_weeks(
+        raw_settings, regular_season_end=int(playoff_start_week or 1) - 1,
+    )
+    if (schedule is None or schedule.empty) and not future_schedule_weeks:
         raise YahooIncompleteSourceError(f"Yahoo returned no full schedule for {year}")
     schedule = resolve_active_schedule_franchise_ids(
         local_db, schedule, active_year=year,
+        future_weeks=future_schedule_weeks, expected_team_keys=expected_team_keys,
     )
     merge_provider_refresh_table(
         local_db,
@@ -1757,7 +1774,14 @@ def _merge_refresh_payloads(
     has_hydrated_draft = local_db.table_exists("draft") and int(local_db.row_count("draft") or 0) > 0
     # One bulk pick manifest is the independent witness for both a hydrated
     # draft and the first weekly publication of a newly renewed league.
-    identity_rows = _fetch_yahoo_draft_identities(oauth=oauth, league_key=league_key, year=year)
+    retained_draft = retained_draft_from_captured_revision(
+        local_db, plan=persisted_plan, platform="yahoo", year=year, league_id=league_key,
+        key_columns=(*_YAHOO_DRAFT_IDENTITY_KEYS, "yahoo_player_id"),
+    )
+    identity_rows = (
+        retained_draft if retained_draft is not None else
+        _fetch_yahoo_draft_identities(oauth=oauth, league_key=league_key, year=year)
+    )
     missing_provider_keys: set[tuple[str, ...]] = set()
     provider_manifest_matches = True
     fetched_authoritative_draft = False
@@ -1841,6 +1865,7 @@ def _merge_refresh_payloads(
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
         "draft_validated": True,
+        "draft_status": "retained_verified" if retained_draft is not None else "refreshed",
     }
 
 
@@ -2599,6 +2624,7 @@ def main(argv: list[str] | None = None) -> int:
                         refresh_weeks=refresh_weeks,
                         finalized_ops=finalized_ops,
                         raw_settings=active_raw_settings,
+                        persisted_plan=persisted_plan,
                     )
                 except YahooIncompleteSourceError as exc:
                     receipt["status"] = "INCOMPLETE_SOURCE"

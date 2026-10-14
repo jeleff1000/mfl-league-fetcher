@@ -45,6 +45,26 @@ def normalize_espn_matchup_periods(matchup_periods: Any) -> dict[int, list[int]]
     return normalized
 
 
+def espn_matchup_periods_for_weeks(matchup_periods: Any, weeks: list[int]) -> dict[int, int]:
+    """Resolve scoring weeks uniquely against ESPN's native matchup map."""
+    from multi_league.core.league_refresh import RefreshScopeError
+
+    requested = sorted({int(week) for week in weeks})
+    if not matchup_periods:
+        return {week: week for week in requested}
+    normalized = normalize_espn_matchup_periods(matchup_periods)
+    resolved: dict[int, int] = {}
+    for week in requested:
+        periods = [period for period, scoring_weeks in normalized.items() if week in scoring_weeks]
+        if len(periods) != 1 or periods[0] < 1:
+            raise RefreshScopeError(
+                f"ESPN scoring week {week} lacks a unique native matchup period "
+                f"in its explicit map (periods={periods})"
+            )
+        resolved[week] = periods[0]
+    return resolved
+
+
 def _playoff_round_type(round_lengths: list[int]) -> int:
     """Canonical round type: 0 single-week, 1 all multi-week, 2 championship-only."""
     if not round_lengths or max(round_lengths) <= 1:

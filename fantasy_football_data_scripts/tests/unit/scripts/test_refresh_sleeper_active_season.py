@@ -481,3 +481,11 @@ def test_unrelated_sleeper_draft_error_still_fails_closed():
             active_year=2026,
             expected_primary_draft_id="draft-2026",
         )
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [({"last_scored_leg": 5}, (6, 7, 8)), ({"last_scored_leg": 0}, tuple(range(1, 9))),
+     ({"last_scored_leg": 18}, ()), ({}, ())],
+)
+def test_future_schedule_boundary_comes_from_sleeper_not_requested_ceiling(settings, expected):
+    from refresh_sleeper_active_season import _sleeper_future_schedule_weeks
+    assert _sleeper_future_schedule_weeks({"settings": settings}, regular_season_end=8) == expected

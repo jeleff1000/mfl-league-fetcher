@@ -1580,6 +1580,14 @@ def _yahoo_finalized_roster_weeks(
     )
 
 
+def _yahoo_live_calendar_week(raw_settings: dict[str, Any], refresh_weeks: list[int]) -> int | None:
+    try:
+        current = int((raw_settings.get("metadata") or {}).get("current_week"))
+    except (TypeError, ValueError):
+        return None
+    return current if current > 0 and current not in refresh_weeks else None
+
+
 def _yahoo_future_schedule_weeks(raw_settings: dict[str, Any], *, regular_season_end: int) -> tuple[int, ...]:
     metadata = raw_settings.get("metadata") or {}
     if str(metadata.get("is_finished") or "").lower() in {"1", "true"}:
@@ -1748,6 +1756,15 @@ def _merge_refresh_payloads(
         league_id=league_key,
     )
     schedule_rows = len(schedule)
+
+    calendar_week = _yahoo_live_calendar_week(raw_settings, refresh_weeks)
+    if calendar_week is not None:
+        # Transactions can arrive in the live week before its first finalized
+        # NFL game. Fetch its native dates, not partial matchup outcomes.
+        calendar_payload, failures = weekly_matchup_data(ctx=ctx, year=year, week=calendar_week)
+        if failures:
+            raise YahooIncompleteSourceError(f"Yahoo live calendar fetch failed for week {calendar_week}")
+        current_schedule_frames.append(calendar_payload.attrs.get("schedule_df"))
 
     transaction_windows = _transaction_matchup_windows(
         local_db,

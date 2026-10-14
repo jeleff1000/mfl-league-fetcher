@@ -1043,3 +1043,9 @@ def test_normal_yahoo_refresh_is_not_a_scheduled_demo_bypass():
 def test_future_schedule_boundary_comes_from_yahoo_not_requested_ceiling(metadata, expected):
     from refresh_yahoo_active_season import _yahoo_future_schedule_weeks
     assert _yahoo_future_schedule_weeks({"metadata": metadata}, regular_season_end=8) == expected
+
+
+@pytest.mark.parametrize(("current_week", "requested", "expected"), [(6, [5], 6), (6, [5, 6], None), (None, [5], None)])
+def test_transactions_get_the_live_calendar_without_finalizing_live_matchups(current_week, requested, expected):
+    from refresh_yahoo_active_season import _yahoo_live_calendar_week
+    assert _yahoo_live_calendar_week({"metadata": {"current_week": current_week}}, requested) == expected

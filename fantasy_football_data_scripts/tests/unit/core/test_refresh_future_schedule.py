@@ -81,6 +81,8 @@ def test_known_future_pairings_are_preserved():
         LocalDB(), frame, active_year=2026, future_weeks=(14,), expected_team_keys=("1", "2"),
     )
     assert result.opponent_franchise_id.tolist() == ["saved-b", "saved-a"]
+    from multi_league.core.league_refresh import _bind_provider_db_name
+    assert _bind_provider_db_name(LocalDB(), "schedule", result).db_name.eq("league_a").all()
 
 
 def test_explicit_alien_opponent_key_cannot_be_overturned_by_display_name():

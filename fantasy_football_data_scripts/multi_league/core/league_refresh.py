@@ -1399,6 +1399,10 @@ def resolve_active_schedule_franchise_ids(
     # deliberately unresolved rather than being guessed.
     by_manager = unique_map("manager")
     result = schedule.copy()
+    if future_weeks:
+        # Introducing future slots must not create null db_name values on
+        # otherwise valid original rows. Validate the incoming scope first.
+        result = _bind_provider_db_name(local_db, "schedule", result)
 
     active_registry_map: dict[str, str] = {}
     if local_db.table_exists("franchise_identity_registry"):

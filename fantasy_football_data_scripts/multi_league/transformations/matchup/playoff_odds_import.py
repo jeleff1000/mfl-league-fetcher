@@ -465,9 +465,56 @@ def future_regular_from_schedule(df_sched, season, current_week):
         if "opponent_franchise_id" not in _out_cols:
             _out_cols.append("opponent_franchise_id")
 
-    s = canonicalize(s.rename(columns={"Opponent Week": "opponent_week", "OpponentYear": "opponent_year"}))
+    # Keep every explicitly unassigned team slot. canonicalize() intentionally
+    # drops rows with no opposing franchise; these slots need per-trial pairings.
+    unassigned = s["opponent"].eq("TBD") & s["opponent_franchise_id"].isna()
+    pending = s.loc[unassigned].copy()
+    s = canonicalize(s.loc[~unassigned].rename(columns={"Opponent Week": "opponent_week", "OpponentYear": "opponent_year"}))
+    s = pd.concat([s, pending], ignore_index=True)
     keep = [c for c in _out_cols if c in s.columns]
     return s[keep].drop_duplicates()
+
+
+def _future_schedule_indices(future, *, manager_to_index, rng, n_sims):
+    """Keep known pairs fixed; integrate unknown opponents inside each trial.
+
+    Trial pairings are never persisted as provider matchups. The usual fully
+    assigned schedule keeps its one-dimensional, vectorized fast path.
+    """
+    manager_col = get_manager_col(future)
+    opponent_col = "opponent_franchise_id" if manager_col == "franchise_id" else "opponent"
+    unassigned = future["opponent"].eq("TBD") & future[opponent_col].isna()
+    known = future.loc[~unassigned]
+    a = known[manager_col].map(manager_to_index)
+    b = known[opponent_col].map(manager_to_index)
+    valid = a.notna() & b.notna()
+    if not valid.all():
+        logger.warning(f" Filtering out {int((~valid).sum())} future games with unmapped managers")
+    a = a.loc[valid].to_numpy(dtype=int)
+    b = b.loc[valid].to_numpy(dtype=int)
+    weeks = known.loc[valid, "week"].to_numpy(dtype=int)
+    if not unassigned.any():
+        return a, b, weeks
+
+    trial_a = [np.broadcast_to(a, (n_sims, len(a)))]
+    trial_b = [np.broadcast_to(b, (n_sims, len(b)))]
+    trial_weeks = [weeks]
+    for week, slots in future.loc[unassigned].groupby("week", sort=True):
+        indices = slots[manager_col].map(manager_to_index)
+        if indices.isna().any() or indices.duplicated().any() or len(indices) % 2:
+            raise ValueError(f"Unassigned schedule week {week} has incomplete team identities")
+        indices = np.sort(indices.to_numpy(dtype=int))
+        assigned = set(a[weeks == week]) | set(b[weeks == week])
+        if assigned.intersection(indices):
+            raise ValueError(f"Unassigned schedule week {week} repeats an assigned team")
+        shuffled = rng.permuted(np.broadcast_to(indices, (n_sims, len(indices))), axis=1)
+        trial_a.append(shuffled[:, ::2])
+        trial_b.append(shuffled[:, 1::2])
+        trial_weeks.append(np.full(len(indices) // 2, int(week)))
+    logger.info("[PLAYOFF_ODDS] Sampling unassigned future opponents for weeks %s",
+                sorted(future.loc[unassigned, "week"].unique().tolist()))
+    return (np.concatenate(trial_a, axis=1), np.concatenate(trial_b, axis=1),
+            np.concatenate(trial_weeks))
 
 
 # -------------------------
@@ -579,35 +626,25 @@ def _vectorized_regular_and_bracket(
         PF_all = np.tile(PFTD, (N_SIMS, 1))
         W_all = np.tile(WTD, (N_SIMS, 1))
     else:
-        A = future_canon[_fc_mgr].map(mgr2idx).to_numpy()
-        B = future_canon[_fc_opp].map(mgr2idx).to_numpy()
-
-        # Safety check: Filter out any rows where manager or opponent couldn't be mapped
-        # This handles edge cases where schedule has managers not in the matchup data
-        valid_mask = ~(np.isnan(A.astype(float)) | np.isnan(B.astype(float)))
-        if not valid_mask.all():
-            unmapped_count = (~valid_mask).sum()
-            logger.warning(f" Filtering out {unmapped_count} future games with unmapped managers")
-            A = A[valid_mask].astype(int)
-            B = B[valid_mask].astype(int)
-        else:
-            A = A.astype(int)
-            B = B.astype(int)
-
-        G = A.size
+        A, B, future_weeks = _future_schedule_indices(
+            future_canon, manager_to_index=mgr2idx, rng=rng, n_sims=N_SIMS,
+        )
+        G = A.shape[-1]
 
         if G == 0:
             # No valid future games - treat as if no future schedule
             PF_all = np.tile(PFTD, (N_SIMS, 1))
             W_all = np.tile(WTD, (N_SIMS, 1))
         else:
-            SA = rng.normal(mu_arr[A][None, :], sd_arr[A][None, :], size=(N_SIMS, G))
-            SB = rng.normal(mu_arr[B][None, :], sd_arr[B][None, :], size=(N_SIMS, G))
+            A_indices = A[None, :] if A.ndim == 1 else A
+            B_indices = B[None, :] if B.ndim == 1 else B
+            SA = rng.normal(mu_arr[A_indices], sd_arr[A_indices], size=(N_SIMS, G))
+            SB = rng.normal(mu_arr[B_indices], sd_arr[B_indices], size=(N_SIMS, G))
 
             PF_add = np.zeros((N_SIMS, n), dtype=float)
             rows = np.arange(N_SIMS)[:, None]
-            np.add.at(PF_add, (rows, A[None, :]), SA)
-            np.add.at(PF_add, (rows, B[None, :]), SB)
+            np.add.at(PF_add, (rows, A_indices), SA)
+            np.add.at(PF_add, (rows, B_indices), SB)
             PF_all = PF_add + PFTD
 
             a_wins = (SA > SB).astype(float)
@@ -618,12 +655,11 @@ def _vectorized_regular_and_bracket(
             b_wins = 1.0 - a_wins
 
             W_add = np.zeros((N_SIMS, n), dtype=float)
-            np.add.at(W_add, (rows, A[None, :]), a_wins)
-            np.add.at(W_add, (rows, B[None, :]), b_wins)
+            np.add.at(W_add, (rows, A_indices), a_wins)
+            np.add.at(W_add, (rows, B_indices), b_wins)
 
             # H2H+Median: add median wins per simulated week
             if use_median:
-                future_weeks = future_canon["week"].to_numpy()
                 unique_weeks = np.unique(future_weeks)
                 # Build a per-team score matrix for median calculation
                 # For each future week, collect all simulated scores and compute median
@@ -631,8 +667,8 @@ def _vectorized_regular_and_bracket(
                     week_game_mask = future_weeks == fw
                     week_SA = SA[:, week_game_mask]  # (N_SIMS, games_in_week)
                     week_SB = SB[:, week_game_mask]
-                    week_A = A[week_game_mask]
-                    week_B = B[week_game_mask]
+                    week_A = A_indices[:, week_game_mask]
+                    week_B = B_indices[:, week_game_mask]
                     # Collect all scores for this week into a (N_SIMS, n_teams_playing) array
                     all_scores = np.concatenate([week_SA, week_SB], axis=1)
                     # Median per sim
@@ -640,8 +676,8 @@ def _vectorized_regular_and_bracket(
                     # Check each team's score against median
                     a_above = (week_SA > week_median).astype(float)
                     b_above = (week_SB > week_median).astype(float)
-                    np.add.at(W_add, (rows, week_A[None, :]), a_above)
-                    np.add.at(W_add, (rows, week_B[None, :]), b_above)
+                    np.add.at(W_add, (rows, week_A), a_above)
+                    np.add.at(W_add, (rows, week_B), b_above)
 
             W_all = W_add + WTD
 

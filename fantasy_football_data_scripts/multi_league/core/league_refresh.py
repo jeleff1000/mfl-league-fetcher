@@ -1483,8 +1483,15 @@ def resolve_active_schedule_franchise_ids(
         opponent_names = result["opponent"].astype("string").str.strip()
         opponent_ids = opponent_ids.fillna(opponent_names.map(by_manager).astype("string"))
     result["opponent_franchise_id"] = apply_active_registry(opponent_ids)
+    unassigned = pd.Series(False, index=result.index)
+    if {"platform", "opponent", "opponent_franchise_id"} <= set(schedule.columns):
+        unassigned = (
+            schedule["platform"].eq("espn") & schedule["opponent"].eq("TBD")
+            & schedule["opponent_franchise_id"].isna()
+        )
+        result.loc[unassigned, "opponent_franchise_id"] = pd.NA
     missing_team = int(result["franchise_id"].isna().sum())
-    missing_opponent = int(result["opponent_franchise_id"].isna().sum())
+    missing_opponent = int((result["opponent_franchise_id"].isna() & ~unassigned).sum())
     if missing_team or missing_opponent:
         raise RefreshScopeError(
             "unresolved canonical schedule identities "

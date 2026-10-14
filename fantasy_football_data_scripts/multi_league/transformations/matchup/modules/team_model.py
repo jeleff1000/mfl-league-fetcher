@@ -288,7 +288,7 @@ def ensure_params_for_future(mu_hat, sigma_hat, samples_by_team, df_future, leag
         return
     _id_col = get_manager_col(df_future)
     _opp_col = get_opponent_col(df_future)
-    future_mgrs = set(df_future[_id_col]).union(set(df_future[_opp_col]))
+    future_mgrs = set(df_future[_id_col].dropna()).union(set(df_future[_opp_col].dropna()))
     for m in future_mgrs:
         mu_hat.setdefault(m, league_mu)
         sigma_hat.setdefault(m, sigma_floor)

@@ -183,6 +183,7 @@ def _full_espn_schedule_frame(
     year: int,
     regular_season_weeks: int,
     expected_team_ids: tuple[str, ...],
+    current_matchup_period: int | None = None,
 ) -> pd.DataFrame:
     """Expand ESPN's one-call season schedule into canonical team-week rows."""
     from multi_league.core.league_update_validation import IncompleteSourceError
@@ -201,25 +202,31 @@ def _full_espn_schedule_frame(
             continue
         home = matchup.get("home")
         away = matchup.get("away")
-        if not isinstance(home, dict) or not isinstance(away, dict):
+        unassigned = (
+            isinstance(home, dict) and away is None
+            and current_matchup_period is not None
+            and int(current_matchup_period) > 0 and week >= int(current_matchup_period)
+            and str(matchup.get("winner") or "").strip().upper() == "UNDECIDED"
+        )
+        if not isinstance(home, dict) or (not isinstance(away, dict) and not unassigned):
             raise IncompleteSourceError(f"ESPN schedule week {week} has a missing matchup side")
         try:
             home_id = int(home.get("teamId"))
-            away_id = int(away.get("teamId"))
+            away_id = None if unassigned else int(away.get("teamId"))
         except (TypeError, ValueError) as exc:
             raise IncompleteSourceError(f"ESPN schedule week {week} has an invalid team identity") from exc
         tier = str(matchup.get("playoffTierType") or "NONE").strip().upper()
         is_playoffs = int(tier == "WINNERS_BRACKET")
         is_consolation = int(tier != "NONE" and not is_playoffs)
         winner = str(matchup.get("winner") or "").strip().upper()
-        for side_name, team_id, opponent_id in (
-            ("home", home_id, away_id),
-            ("away", away_id, home_id),
-        ):
+        sides = [("home", home_id, away_id)]
+        if away_id is not None:
+            sides.append(("away", away_id, home_id))
+        for side_name, team_id, opponent_id in sides:
             team_name = ctx.get_team_name(team_id, year)
-            opponent_team_name = ctx.get_team_name(opponent_id, year)
+            opponent_team_name = None if opponent_id is None else ctx.get_team_name(opponent_id, year)
             franchise_id = ctx.get_franchise_id(team_id, year)
-            opponent_franchise_id = ctx.get_franchise_id(opponent_id, year)
+            opponent_franchise_id = None if opponent_id is None else ctx.get_franchise_id(opponent_id, year)
             result = None
             if winner in {"HOME", "AWAY"}:
                 result = winner.lower() == side_name
@@ -233,8 +240,8 @@ def _full_espn_schedule_frame(
                 "franchise_id": franchise_id,
                 "team_name": team_name,
                 "manager_week": f"{franchise_id}_{int(year)}_{week}",
-                "opponent": ctx.get_manager_name(opponent_id, opponent_team_name, year),
-                "opponent_guid": ctx.get_manager_guid(opponent_id, year),
+                "opponent": "TBD" if opponent_id is None else ctx.get_manager_name(opponent_id, opponent_team_name, year),
+                "opponent_guid": None if opponent_id is None else ctx.get_manager_guid(opponent_id, year),
                 "opponent_franchise_id": opponent_franchise_id,
                 "win": int(result is True) if result is not None else None,
                 "loss": int(result is False) if result is not None else None,
@@ -734,6 +741,7 @@ def _merge_active_payloads(
             year=active_year,
             regular_season_weeks=regular_season_weeks,
             expected_team_ids=expected_team_ids,
+            current_matchup_period=current_matchup_period,
         )
         schedules: dict[int, list[dict[str, Any]]] = {}
         final_weeks = _finalized_espn_matchup_weeks(
@@ -911,6 +919,7 @@ def _merge_active_payloads(
         "final_matchup_weeks": len(final_matchup_weeks),
         "schedule_rows": int(len(full_schedule)),
         "schedule_weeks": int(regular_season_weeks),
+        "unassigned_schedule_weeks": sorted(full_schedule.loc[full_schedule["opponent"].eq("TBD"), "week"].unique().tolist()),
         "transaction_rows": int(len(transactions) if transactions is not None else 0),
         "draft_rows": draft_rows,
         "placeholder_draft_rows_removed": placeholder_draft_rows_removed,

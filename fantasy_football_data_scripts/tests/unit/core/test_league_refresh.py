@@ -8,6 +8,37 @@ import pandas as pd
 import pytest
 
 
+def test_unassigned_schedule_resolves_saved_team_identity_without_inventing_opponent():
+    from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
+
+    class LocalDB:
+        league_name = "league_a"
+
+        @staticmethod
+        def table_exists(name):
+            return name == "matchup"
+
+        @staticmethod
+        def read_table(_name, year=None):
+            return pd.DataFrame({
+                "db_name": ["league_a", "league_a"], "year": [2026, 2026],
+                "week": [1, 1], "team_key": ["1", "2"],
+                "manager_guid": ["guid-a", "guid-b"],
+                "franchise_id": ["saved-a", "saved-b"],
+            })
+
+    future = pd.DataFrame({
+        "year": [2026, 2026], "week": [14, 14], "platform": ["espn", "espn"],
+        "manager_guid": ["guid-a", "guid-b"], "franchise_id": ["raw-a", "raw-b"],
+        "manager": ["Preferred A", "Preferred B"], "opponent": ["TBD", "TBD"],
+        "opponent_guid": [None, None], "opponent_franchise_id": [None, None],
+    })
+    result = resolve_active_schedule_franchise_ids(LocalDB(), future, active_year=2026)
+    assert result.franchise_id.tolist() == ["saved-a", "saved-b"]
+    assert result.opponent_franchise_id.isna().all()
+    assert result.manager.tolist() == ["Preferred A", "Preferred B"]
+
+
 def test_future_schedule_uses_existing_canonical_team_identity():
     from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
 

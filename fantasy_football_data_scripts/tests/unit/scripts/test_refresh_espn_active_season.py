@@ -238,6 +238,70 @@ def test_full_espn_schedule_expands_every_regular_week_with_stable_identities():
     ]
 
 
+@pytest.mark.parametrize("current_period", [2, 3])
+def test_full_espn_schedule_preserves_unassigned_current_or_future_slots(current_period):
+    from refresh_espn_active_season import _full_espn_schedule_frame
+
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda team_id, _name, _year: f"Manager {team_id}",
+        get_manager_guid=lambda team_id, _year: f"guid-{team_id}",
+        get_franchise_id=lambda team_id, _year: f"fid-{team_id}",
+        get_team_name=lambda team_id, _year: f"Team {team_id}",
+    )
+    raw = [
+        {"matchupPeriodId": week, "playoffTierType": "NONE", "winner": "UNDECIDED",
+         "home": {"teamId": 1}, "away": {"teamId": 2}}
+        for week in (1, 2)
+    ] + [
+        {"matchupPeriodId": 3, "playoffTierType": "NONE", "winner": "UNDECIDED",
+         "home": {"teamId": team_id}, "away": None}
+        for team_id in (1, 2)
+    ]
+    result = _full_espn_schedule_frame(
+        ctx=ctx, raw_schedule=raw, year=2026, regular_season_weeks=3,
+        expected_team_ids=("1", "2"), current_matchup_period=current_period,
+    )
+    assert len(result) == 6
+    future = result.loc[result.week.eq(3)]
+    assert future.franchise_id.tolist() == ["fid-1", "fid-2"]
+    assert future.opponent.tolist() == ["TBD", "TBD"]
+    assert future[["opponent_guid", "opponent_franchise_id", "win", "loss"]].isna().all().all()
+
+
+@pytest.mark.parametrize("current_period,winner,team_ids", [
+    (4, "UNDECIDED", [1, 2]),
+    (2, "HOME", [1, 2]),
+    (2, "UNDECIDED", [1]),
+    (2, "UNDECIDED", [1, 1]),
+])
+def test_full_espn_schedule_rejects_bad_unassigned_slots(current_period, winner, team_ids):
+    from refresh_espn_active_season import _full_espn_schedule_frame
+    from multi_league.core.league_update_validation import IncompleteSourceError
+
+    ctx = SimpleNamespace(
+        get_league_id_for_year=lambda _year: 123,
+        get_manager_name=lambda team_id, _name, _year: f"Manager {team_id}",
+        get_manager_guid=lambda team_id, _year: f"guid-{team_id}",
+        get_franchise_id=lambda team_id, _year: f"fid-{team_id}",
+        get_team_name=lambda team_id, _year: f"Team {team_id}",
+    )
+    raw = [
+        {"matchupPeriodId": week, "playoffTierType": "NONE", "winner": "UNDECIDED",
+         "home": {"teamId": 1}, "away": {"teamId": 2}}
+        for week in (1, 2)
+    ] + [
+        {"matchupPeriodId": 3, "playoffTierType": "NONE", "winner": winner,
+         "home": {"teamId": team_id}, "away": None}
+        for team_id in team_ids
+    ]
+    with pytest.raises(IncompleteSourceError):
+        _full_espn_schedule_frame(
+            ctx=ctx, raw_schedule=raw, year=2026, regular_season_weeks=3,
+            expected_team_ids=("1", "2"), current_matchup_period=current_period,
+        )
+
+
 def test_full_espn_schedule_rejects_a_truncated_regular_season():
     from multi_league.core.league_update_validation import IncompleteSourceError
     from refresh_espn_active_season import _full_espn_schedule_frame

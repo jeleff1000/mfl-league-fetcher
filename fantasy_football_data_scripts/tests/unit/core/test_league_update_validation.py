@@ -523,6 +523,49 @@ def test_playoff_simulation_rejects_a_truncated_future_schedule():
         assert_active_season_simulation_health(conn, db_name="afi_data", year=2026)
 
 
+@pytest.mark.parametrize("platform", ["espn", "yahoo", "sleeper"])
+def test_simulation_health_accepts_only_explicit_future_unassigned_slots(platform):
+    import duckdb
+    from multi_league.core.league_update_validation import (
+        IncompleteSourceError, assert_active_season_simulation_health,
+    )
+
+    with duckdb.connect() as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute("CREATE TABLE public.matchup (db_name VARCHAR, year INTEGER, week INTEGER, "
+                     "franchise_id VARCHAR, team_points DOUBLE, opponent_points DOUBLE, "
+                     "p_playoffs DOUBLE, p_champ DOUBLE)")
+        conn.execute("INSERT INTO public.matchup VALUES ('test',2026,1,'a',110,90,60,60), "
+                     "('test',2026,1,'b',90,110,40,40)")
+        conn.execute("CREATE TABLE public.matchup_season AS SELECT db_name,year,franchise_id, "
+                     "p_playoffs,p_champ FROM public.matchup")
+        conn.execute("CREATE TABLE public.league_settings (db_name VARCHAR,year INTEGER, "
+                     "num_teams INTEGER,playoff_start_week INTEGER)")
+        conn.execute("INSERT INTO public.league_settings VALUES ('test',2026,2,3)")
+        conn.execute("CREATE TABLE public.schedule (db_name VARCHAR,year INTEGER,week INTEGER, "
+                     "franchise_id VARCHAR,opponent_franchise_id VARCHAR,opponent VARCHAR, "
+                     "platform VARCHAR,is_playoffs BOOLEAN)")
+        conn.execute("INSERT INTO public.schedule VALUES ('test',2026,1,'a','b','B',?,FALSE), "
+                     "('test',2026,1,'b','a','A',?,FALSE), "
+                     "('test',2026,2,'a',NULL,'TBD',?,FALSE), "
+                     "('test',2026,2,'b',NULL,'TBD',?,FALSE)", [platform]*4)
+        if platform != "espn":
+            with pytest.raises(IncompleteSourceError, match="schedule"):
+                assert_active_season_simulation_health(conn, db_name="test", year=2026)
+            return
+        assert assert_active_season_simulation_health(conn, db_name="test", year=2026) == {
+            "latest_finalized_week": 1, "latest_simulation_franchises": 2,
+            "simulation_season_franchises": 2,
+        }
+        conn.execute("UPDATE public.schedule SET opponent=NULL WHERE week=2")
+        with pytest.raises(IncompleteSourceError, match="schedule"):
+            assert_active_season_simulation_health(conn, db_name="test", year=2026)
+        conn.execute("UPDATE public.schedule SET opponent='TBD' WHERE week=2")
+        conn.execute("UPDATE public.schedule SET opponent='TBD',opponent_franchise_id=NULL WHERE week=1")
+        with pytest.raises(IncompleteSourceError, match="schedule"):
+            assert_active_season_simulation_health(conn, db_name="test", year=2026)
+
+
 def test_simulation_gate_checks_schedule_before_the_first_final_matchup():
     import duckdb
 

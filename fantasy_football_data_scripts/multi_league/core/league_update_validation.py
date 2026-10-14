@@ -606,10 +606,20 @@ def assert_active_season_simulation_health(
     schedule_filter = ""
     if "is_playoffs" in schedule_columns:
         schedule_filter = " AND COALESCE(is_playoffs, FALSE) = FALSE"
+    # Provider-reported, not-yet-assigned ESPN opponents are simulation inputs,
+    # not incomplete completed results. Team/week coverage remains mandatory.
+    unassigned_count = "0"
+    if {"platform", "opponent"} <= schedule_columns:
+        unassigned_count = (
+            "COUNT(*) FILTER (WHERE platform = 'espn' AND opponent = 'TBD' "
+            "AND opponent_franchise_id IS NULL "
+            f"AND week > {int(latest_week or 0)})"
+        )
     schedule_rows = conn.execute(
         "SELECT CAST(week AS INTEGER), COUNT(*), "
         "COUNT(DISTINCT NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '')), "
-        "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) "
+        "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) + "
+        + unassigned_count + " "
         "FROM public.schedule WHERE db_name = ? AND year = ? "
         "AND week BETWEEN 1 AND ?" + schedule_filter + " GROUP BY week ORDER BY week",
         [str(db_name), int(year), regular_season_end],

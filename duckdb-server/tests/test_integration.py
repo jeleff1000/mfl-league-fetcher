@@ -842,7 +842,7 @@ def test_pooled_ops_query_waits_for_short_ops_write(client, monkeypatch):
 
     monkeypatch.setattr(main_mod, "_ops_read_uses_pool", lambda _sql: True)
     monkeypatch.setattr(main_mod, "_wait_for_ops_write_to_finish", finish_write)
-    monkeypatch.setattr(main_mod, "_execute_ops_query", lambda _sql: [{"ok": 1}])
+    monkeypatch.setattr(main_mod, "_execute_ops_query", lambda _sql, **_kwargs: [{"ok": 1}])
     main_mod._state["status"] = "ops_writing"
     try:
         resp = client.post(

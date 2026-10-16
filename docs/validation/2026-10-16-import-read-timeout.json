@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-16",
+  "scope": "Existing shared import OPS-cache admission and Fly reads; server source staged only",
+  "worker_commit": "f45ce56",
+  "incident": {
+    "league": "nerf_herders",
+    "failed_run": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/38957418439",
+    "recovery_run": "https://github.com/jeleff1000/mfl-league-fetcher/actions/runs/38960206578",
+    "recovery_revision": "e15e39a28f1a6c57ea883aee04ecb3dc952003ce",
+    "observed_failure": "Three bounded OPS week-read timeouts; underlying transient stall not established"
+  },
+  "changes": [
+    "Reuse shared OPS revisions to skip unchanged imports and detect older active-season rank corrections",
+    "Include consumed metadata, fantasy-point aliases and the existing PPG variant registry in revisions",
+    "Reuse bounded JSON/Parquet retry paths with correlated attempt diagnostics and caller deadline metadata",
+    "Stage server read admission, lock-wait and native-query deadline propagation; retain ownership through cancellation cleanup"
+  ],
+  "verification": {
+    "reader_and_import_helpers": {"passed": 69, "seconds": 3.95},
+    "existing_sleeper_and_espn_worker_regressions": {"passed": 101, "seconds": 9.74},
+    "targeted_yahoo_alias_lineage_calendar_regressions": {"passed": 7, "seconds": 6.37},
+    "staged_server_deadline_tests_duckdb_1_5_5": {"passed": 12, "seconds": 6.74},
+    "ppg_registry_and_ppg_only_corrections": {"passed": 3, "seconds": 8.91},
+    "final_metadata_and_scoring_alias_corrections": {"passed": 4, "seconds": 12.53},
+    "final_timeout_disconnect_exhaustion_incomplete_response_matrix": {"passed": 4, "seconds": 11.73},
+    "final_rank_only_noop_and_reduced_weekly_cache_regressions": {"passed": 6, "seconds": 13.66},
+    "final_legacy_cache_and_preseason_regressions": {"passed": 15, "seconds": 13.53},
+    "final_cache_total": {"passed": 32, "note": "All cases passed across disjoint batches under individual forty-second process caps"},
+    "final_skinny_live_revision_pilot": {"rows": 5729, "columns": 5, "seconds": 6.047, "wide_downloads": 0, "fly_writes": 0},
+    "two_record_live_cache_pilot": {"seconds": 27.328, "source_alltime_ranks_preserved": [3, 6], "wide_downloads_first_pass": 1, "wide_downloads_second_pass": 0, "fly_writes": 0},
+    "rejected_all_column_hash_pilot": "Timed out at the existing eight-second socket budget; not retained",
+    "fly_health": "serving, storage healthy, zero active queries/writes and zero WAL bytes at verification"
+  },
+  "limits": [
+    "No server deployment or process/machine restart authorized or performed; server cancellation fix is not live",
+    "No database rebuild/replacement, capacity change, full NFL download or production data mutation in this patch validation",
+    "Broader local test attempts were stopped/terminated without complete results; no whole-suite pass claimed",
+    "Two existing test_query.py OPS attachment expectations also fail on unchanged HEAD; outside this patch",
+    "Server-Timing measures connection wait and execution, not preceding async admission wait; caller deadline includes both"
+  ]
+}

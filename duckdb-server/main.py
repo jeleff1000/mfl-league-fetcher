@@ -21,6 +21,7 @@ from typing import Any
 
 import duckdb as _duckdb
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Header
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
@@ -883,13 +884,18 @@ async def _startup_db_background(data_dir: Path) -> None:
     )
 
 
-async def _acquire_query_slot(database: str) -> None:
+async def _acquire_query_slot(database: str, *, deadline: float | None = None) -> None:
     if _query_semaphore is None:
         track_event("query_rejected", {"database": database, "reason": "not_ready"})
         raise HTTPException(status_code=503, detail="Query service not ready", headers={"Retry-After": "2"})
+    timeout = QUERY_QUEUE_TIMEOUT_SECONDS
+    if deadline is not None:
+        timeout = max(0.0, min(timeout, deadline - time.monotonic()))
     try:
-        await asyncio.wait_for(_query_semaphore.acquire(), timeout=QUERY_QUEUE_TIMEOUT_SECONDS)
+        await asyncio.wait_for(_query_semaphore.acquire(), timeout=timeout)
     except TimeoutError as e:
+        if deadline is not None and timeout < QUERY_QUEUE_TIMEOUT_SECONDS:
+            raise HTTPException(status_code=504, detail="Read admission deadline exceeded") from e
         track_event("query_rejected", {"database": database, "reason": "queue_timeout"})
         raise HTTPException(status_code=429, detail="Query server busy", headers={"Retry-After": "2"}) from e
 
@@ -1303,6 +1309,73 @@ class QueryRequest(BaseModel):
     timeout_seconds: float | None = None
 
 
+def _remaining_read(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Read request deadline exceeded")
+    return remaining
+
+
+def _ops_read_deadline(req: QueryRequest) -> float:
+    budget = req.timeout_seconds
+    if budget is not None and (not math.isfinite(budget) or budget <= 0):
+        raise HTTPException(status_code=400, detail="timeout_seconds must be finite and positive")
+    budget = min(budget, PUBLIC_QUERY_TIMEOUT) if budget is not None else PUBLIC_QUERY_TIMEOUT
+    return time.monotonic() + budget
+
+
+async def _read_admission(function, deadline, *args):
+    try:
+        timeout = _remaining_read(deadline)
+        return await asyncio.wait_for(function(*args), timeout=timeout)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Read admission deadline exceeded") from exc
+
+
+async def _run_ops_read(req: QueryRequest, request: Request, *, parquet: bool = False, deadline=None):
+    """Honor a shorter worker budget and retain admission until its SQL thread exits."""
+    deadline = deadline if deadline is not None else _ops_read_deadline(req)
+    request_id = request.headers.get("X-Request-ID", "")
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", request_id):
+        request_id = hashlib.sha256(os.urandom(16)).hexdigest()[:32]
+    timings = {}
+    def response_headers():
+        return {"X-Request-ID": request_id,
+                "Server-Timing": f"queue;dur={timings.get('queue_ms', 0):.3f}, "
+                                 f"execute;dur={timings.get('execute_ms', 0):.3f}"}
+    execute = _execute_ops_query_parquet if parquet else _execute_ops_query
+    started = time.monotonic()
+    worker = asyncio.create_task(asyncio.to_thread(
+        execute, req.sql, deadline=deadline, timings=timings,
+    ))
+    outcome = "failed"
+    try:
+        result = await asyncio.shield(worker)
+        outcome = "success"
+        return result, response_headers()
+    except TimeoutError as exc:
+        outcome = "timeout"
+        raise HTTPException(status_code=504, detail="Query timed out", headers=response_headers()) from exc
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        # Cancelling to_thread does not stop DuckDB. Its bounded interrupt must
+        # complete before the endpoint releases admission/connection ownership.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
+    finally:
+        logger.info("public_read request_id=%s database=___ops queue_ms=%.3f execute_ms=%.3f "
+                    "elapsed_ms=%.3f outcome=%s", request_id, timings.get("queue_ms", 0),
+                    timings.get("execute_ms", 0), (time.monotonic() - started) * 1000, outcome)
+
+
 @app.post("/query")
 async def query_endpoint(req: QueryRequest, request: Request):
     try:
@@ -1320,24 +1393,22 @@ async def query_endpoint(req: QueryRequest, request: Request):
     # ___ops-only queries use a dedicated connection — no pool contention.
     # These work even during draining since they don't touch ___leagues.
     if req.database == "___ops" and not re.search(r"\b___leagues\b", req.sql, re.IGNORECASE):
+        deadline = _ops_read_deadline(req)
         pooled = _ops_read_uses_pool(req.sql)
         if _state["status"] == "checkpointing":
             return _query_busy_response(reason="checkpointing")
         if pooled and _state["status"] == "ops_writing" \
-                and not await _wait_for_ops_write_to_finish():
+                and not await _read_admission(_wait_for_ops_write_to_finish, deadline):
             return _query_busy_response(reason=_state["status"])
         if pooled and _state["status"] not in {"serving", "ops_snapshotting"}:
             return _query_busy_response(reason=_state["status"])
         if pooled:
-            await _acquire_query_slot(req.database)
+            await _acquire_query_slot(req.database, deadline=deadline)
         else:
             _begin_ops_read()
         t0 = time.perf_counter()
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_execute_ops_query, req.sql),
-                timeout=PUBLIC_QUERY_TIMEOUT + 5,
-            )
+            result, read_headers = await _run_ops_read(req, request, deadline=deadline)
             elapsed = time.perf_counter() - t0
             if elapsed > _POSTHOG_SLOW_QUERY_THRESHOLD_SECONDS:
                 logger.warning("Slow ___ops query (%.1fs): %s", elapsed, req.sql[:500])
@@ -1347,7 +1418,9 @@ async def query_endpoint(req: QueryRequest, request: Request):
                 {"database": "___ops", "elapsed_seconds": round(elapsed, 2)},
                 sample_rate=_POSTHOG_QUERY_SAMPLE_RATE,
             )
-            return result
+            return JSONResponse(content=jsonable_encoder(result), headers=read_headers)
+        except HTTPException:
+            raise
         except TimeoutError as e:
             logger.error("___ops query timeout (30s): %s", req.sql[:500])
             track_event("query_timed_out", {"database": "___ops", "timeout_seconds": PUBLIC_QUERY_TIMEOUT})
@@ -1431,6 +1504,7 @@ async def query_parquet_endpoint(req: QueryRequest, request: Request):
         raise HTTPException(status_code=400, detail="Parquet query transport is limited to ___ops")
     if not is_read_only_sql(req.sql):
         raise HTTPException(status_code=403, detail="Write operations not allowed")
+    deadline = _ops_read_deadline(req)
     if _state["status"] == "starting":
         return _query_busy_response(reason="starting")
     pooled = _ops_read_uses_pool(req.sql)
@@ -1439,19 +1513,18 @@ async def query_parquet_endpoint(req: QueryRequest, request: Request):
     if pooled and _state["status"] not in {"serving", "ops_snapshotting"}:
         return _query_busy_response(reason=_state["status"])
     if pooled:
-        await _acquire_query_slot(req.database)
+        await _acquire_query_slot(req.database, deadline=deadline)
     else:
         _begin_ops_read()
     try:
-        payload = await asyncio.wait_for(
-            asyncio.to_thread(_execute_ops_query_parquet, req.sql),
-            timeout=PUBLIC_QUERY_TIMEOUT + 5,
-        )
+        payload, read_headers = await _run_ops_read(req, request, parquet=True, deadline=deadline)
         return Response(
             content=payload,
             media_type="application/vnd.apache.parquet",
-            headers={"Content-Encoding": "identity"},
+            headers={"Content-Encoding": "identity", **read_headers},
         )
+    except HTTPException:
+        raise
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Query timed out") from exc
     except _duckdb.CatalogException as exc:
@@ -1577,6 +1650,7 @@ def _execute_with_timeout(conn, sql: str, timeout_seconds: float) -> list[dict]:
         raise
     finally:
         timer.cancel()
+        timer.join()  # A late interrupt must not hit the next user of this connection.
 
 
 def _split_sql_statements(sql: str) -> list[str]:
@@ -1774,39 +1848,65 @@ def _ops_read_uses_pool(sql: str) -> bool:
 
 
 @contextmanager
-def _ops_read_connection(sql: str):
+def _ops_read_connection(sql: str, *, deadline: float | None = None, timings: dict | None = None):
     """Own the connection until native execution/serialization actually finishes."""
     # Match every OPS writer and OPS-backed fleet merge's lock order. Without
     # this outer gate, a metadata read can take ``_ops_lock`` after a fleet
     # merge has taken ``_ops_rebuild_lock`` but before it registers the shared
     # read-only attachment. The merge then times out after two seconds even
     # though both operations are individually healthy.
-    with _ops_rebuild_lock:
-        with db._ops_lock:
+    started = time.monotonic()
+    if not _ops_rebuild_lock.acquire(timeout=_remaining_read(deadline) if deadline is not None else -1):
+        if timings is not None:
+            timings["queue_ms"] = (time.monotonic() - started) * 1000
+        raise TimeoutError("Read deadline exceeded waiting for OPS publication")
+    try:
+        if not db._ops_lock.acquire(timeout=_remaining_read(deadline) if deadline is not None else -1):
+            if timings is not None:
+                timings["queue_ms"] = (time.monotonic() - started) * 1000
+            raise TimeoutError("Read deadline exceeded waiting for OPS writer")
+        try:
             conn = db.get_ops_connection() or db.reopen_ops_connection()
             if conn is None:
                 raise RuntimeError("___ops connection is unavailable")
+            if timings is not None:
+                timings["queue_ms"] = (time.monotonic() - started) * 1000
             yield conn
+        finally:
+            db._ops_lock.release()
+    finally:
+        _ops_rebuild_lock.release()
 
 
-def _execute_ops_query(sql: str) -> list[dict]:
+def _execute_ops_query(sql: str, *, deadline: float | None = None, timings: dict | None = None) -> list[dict]:
     """Metadata stays dedicated; NFL reads reuse the existing admitted pool."""
-    with _ops_read_connection(sql) as conn:
-        return _execute_with_timeout(conn, sql, PUBLIC_QUERY_TIMEOUT)
+    deadline = deadline if deadline is not None else time.monotonic() + PUBLIC_QUERY_TIMEOUT
+    with _ops_read_connection(sql, deadline=deadline, timings=timings) as conn:
+        started = time.monotonic()
+        try:
+            result = _execute_with_timeout(conn, sql, _remaining_read(deadline))
+            _remaining_read(deadline)
+            return result
+        finally:
+            if timings is not None:
+                timings["execute_ms"] = (time.monotonic() - started) * 1000
 
 
-def _execute_ops_query_parquet(sql: str) -> bytes:
+def _execute_ops_query_parquet(sql: str, *, deadline: float | None = None, timings: dict | None = None) -> bytes:
     """Execute one ___ops query and serialize it in Arrow/Parquet, not Python rows."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    with _ops_read_connection(sql) as conn:
-        timer = threading.Timer(PUBLIC_QUERY_TIMEOUT, conn.interrupt)
+    deadline = deadline if deadline is not None else time.monotonic() + PUBLIC_QUERY_TIMEOUT
+    with _ops_read_connection(sql, deadline=deadline, timings=timings) as conn:
+        started = time.monotonic()
+        timer = threading.Timer(_remaining_read(deadline), conn.interrupt)
         timer.start()
         try:
             table = conn.execute(sql).to_arrow_table()
             sink = pa.BufferOutputStream()
             pq.write_table(table, sink, compression="zstd")
+            _remaining_read(deadline)
             return sink.getvalue().to_pybytes()
         except _duckdb.InterruptException as exc:
             raise TimeoutError(f"Query exceeded {PUBLIC_QUERY_TIMEOUT}s wall-clock limit") from exc
@@ -1815,6 +1915,9 @@ def _execute_ops_query_parquet(sql: str) -> bytes:
             raise
         finally:
             timer.cancel()
+            timer.join()
+            if timings is not None:
+                timings["execute_ms"] = (time.monotonic() - started) * 1000
 
 
 def _sql_requests_checkpoint(sql: str) -> bool:

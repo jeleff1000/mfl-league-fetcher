@@ -32,8 +32,26 @@ _OPS_REFRESH_EXCLUDED_COLUMNS = frozenset({"recon_correction_log"})
 
 
 def _ops_revision_columns(schema_columns: Iterable[str]) -> tuple[str, ...]:
-    """Use the same scoring/rank contract for source and local revision hashes."""
-    return (*_OPS_KEY_COLUMNS, *resolve_nfl_scoring_input_columns(schema_columns))
+    """Reuse scoring/rank inputs and include the cache's join/display aliases.
+
+    Do not hash unrelated wide NFL analytics or audit blobs on each admission.
+    Reduced caches still compare only their own columns in the delta helper.
+    """
+    from multi_league.transformations.player.modules.ppg_precompute import (
+        PPG_VARIANTS, get_ppg_columns_for_scoring,
+    )
+
+    available = set(schema_columns)
+    metadata = {"player_week", "player", "position", "nfl_position", "game_date", "headshot_url"}
+    ppg_metrics = {column.rsplit("_", 2)[0] for column in get_ppg_columns_for_scoring().values()}
+    ppg_columns = {f"{metric}_{td}_{ppr}" for metric in ppg_metrics for td, ppr in PPG_VARIANTS}
+    return tuple(sorted(
+        set(_OPS_KEY_COLUMNS)
+        | set(resolve_nfl_scoring_input_columns(available))
+        | (available & metadata)
+        | (available & ppg_columns)
+        | {column for column in available if column.startswith("fpts_")}
+    ))
 
 
 def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.DataFrame:

@@ -5,6 +5,9 @@ from __future__ import annotations
 import math
 import os
 import time
+import hashlib
+import json
+import uuid
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -121,6 +124,43 @@ class FlyReader:
             delay = max(0, min(delay, self.REFRESH_RETRY_MAX_DELAY))
         time.sleep(self._budget_timeout(delay, read_deadline, sql, database))
 
+    def _read_attempt(self, sql, database, *, parquet, timeout, attempt, read_id, bounded):
+        """One transport attempt, shared by JSON and Parquet; never log SQL or credentials."""
+        request_id = f"{read_id}-{attempt + 1}"
+        payload = {"sql": sql, "database": database}
+        if bounded:
+            # Give the server time to interrupt/clean up before our socket closes.
+            # Older servers accept this field but ignore it on read endpoints.
+            payload["timeout_seconds"] = timeout * 0.75
+        started = time.monotonic()
+        response = None
+        outcome = "error"
+        try:
+            response = requests.post(
+                f"{self.url}/{'query-parquet' if parquet else 'query'}",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.token}", "X-Request-ID": request_id},
+                timeout=timeout,
+            )
+            outcome = "success" if response.status_code == 200 else f"http_{response.status_code}"
+            return response
+        except self.RETRY_EXCEPTIONS as exc:
+            outcome = type(exc).__name__
+            raise
+        finally:
+            if bounded:
+                event = {
+                    "request_id": request_id, "attempt": attempt + 1, "database": database,
+                    "transport": "parquet" if parquet else "json",
+                    "sql_hash": hashlib.sha256(sql.encode()).hexdigest()[:16],
+                    "elapsed_seconds": round(time.monotonic() - started, 3), "outcome": outcome,
+                    "server_timing": response.headers.get("Server-Timing", "") if response is not None else "",
+                }
+                try:
+                    print("[fly-read] " + json.dumps(event), flush=True)
+                except (OSError, ValueError, TypeError):
+                    pass  # A closed diagnostic sink must not turn a completed read into a failure.
+
     def _post(
         self,
         sql: str,
@@ -130,15 +170,14 @@ class FlyReader:
         max_retries: int | None = None,
     ) -> list[dict]:
         timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
+        read_id = uuid.uuid4().hex
         last_error: str | None = None
         for attempt in range(attempts):
             request_timeout = self._budget_timeout(timeout, read_deadline, sql, database)
             try:
-                resp = requests.post(
-                    f"{self.url}/query",
-                    json={"sql": sql, "database": database},
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=request_timeout,
+                resp = self._read_attempt(
+                    sql, database, parquet=False, timeout=request_timeout, attempt=attempt,
+                    read_id=read_id, bounded=timeout_seconds is not None or read_deadline is not None,
                 )
             except self.RETRY_EXCEPTIONS as e:
                 last_error = f"Network error: {e} (timeout={request_timeout:g}s)"
@@ -271,15 +310,14 @@ class FlyReader:
 
         database = self._require_db(database)
         timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
+        read_id = uuid.uuid4().hex
         last_error: str | None = None
         for attempt in range(attempts):
             request_timeout = self._budget_timeout(timeout, read_deadline, sql, database)
             try:
-                resp = requests.post(
-                    f"{self.url}/query-parquet",
-                    json={"sql": sql, "database": database},
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=request_timeout,
+                resp = self._read_attempt(
+                    sql, database, parquet=True, timeout=request_timeout, attempt=attempt,
+                    read_id=read_id, bounded=timeout_seconds is not None or read_deadline is not None,
                 )
             except self.RETRY_EXCEPTIONS as exc:
                 last_error = f"Network error: {exc} (timeout={request_timeout:g}s)"

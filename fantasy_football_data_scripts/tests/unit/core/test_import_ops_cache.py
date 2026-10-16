@@ -102,6 +102,135 @@ def test_import_ops_cache_reads_use_the_short_ui_retry_budget(ops_sources):
     ), reader.read_kwargs
 
 
+def test_import_current_rank_revisions_do_not_download_wide_rows(ops_sources):
+    cache_path, live, reader = ops_sources
+    current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all").fetchdf()
+    with duckdb.connect(str(cache_path)) as cache:
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+    reader.queries.clear()
+
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+
+    assert not any('NULL AS "recon_correction_log"' in sql for sql in reader.queries)
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT year, week, rank_alltime_qb_4pt FROM "
+                             "nfl_historical.nfl_player_stats_all ORDER BY year, week").fetchall() == [
+            (2025, 1, 222), (2026, 1, 216), (2026, 2, 216),
+        ]
+
+
+def test_import_detects_rank_only_correction_in_an_older_week(ops_sources):
+    cache_path, live, reader = ops_sources
+    current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all").fetchdf()
+    with duckdb.connect(str(cache_path)) as cache:
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+    live.execute("UPDATE nfl_historical.nfl_player_stats_all SET rank_alltime_qb_4pt=213 WHERE week=1")
+    reader.queries.clear()
+
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+
+    downloads = [sql for sql in reader.queries if 'NULL AS "recon_correction_log"' in sql]
+    assert len(downloads) == 1
+    assert "week = 1" in downloads[0]
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT year, week, rank_alltime_qb_4pt FROM "
+                             "nfl_historical.nfl_player_stats_all ORDER BY year, week").fetchall() == [
+            (2025, 1, 222), (2026, 1, 213), (2026, 2, 216),
+        ]
+
+
+@pytest.mark.parametrize("column,kind,old,new", [
+    ("player_week", "VARCHAR", "caleb_2026_1", "corrected-player-week"),
+    ("position", "VARCHAR", "QB", "RB"),
+    ("nfl_position", "VARCHAR", "QB", "RB"),
+    ("fpts_ppr", "DOUBLE", 10.0, 24.0),
+    ("ppg_season_4pt_ppr", "DOUBLE", 10.0, 24.0),
+    ("ppg_alltime_4pt_ppr", "DOUBLE", 10.0, 24.0),
+])
+def test_import_revision_covers_every_copied_enrichment_input(ops_sources, column, kind, old, new):
+    cache_path, live, reader = ops_sources
+    with duckdb.connect(str(cache_path)) as cache:
+        if column not in {"player_week", "position"}:
+            cache.execute(f'ALTER TABLE nfl_historical.nfl_player_stats_all ADD COLUMN "{column}" {kind}')
+            live.execute(f'ALTER TABLE nfl_historical.nfl_player_stats_all ADD COLUMN "{column}" {kind}')
+        live.execute(f'UPDATE nfl_historical.nfl_player_stats_all SET "{column}"=? WHERE week=1', [old])
+        current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all").fetchdf()
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+    live.execute(f'UPDATE nfl_historical.nfl_player_stats_all SET "{column}"=? WHERE week=1', [new])
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute(f'SELECT "{column}" FROM nfl_historical.nfl_player_stats_all '
+                             'WHERE year=2026 AND week=1').fetchone() == (new,)
+
+
+def test_cache_revision_covers_the_existing_precomputed_ppg_registry():
+    from multi_league.transformations.player.modules.ppg_precompute import (
+        PPG_VARIANTS, get_ppg_columns_for_scoring,
+    )
+
+    metrics = {column.rsplit("_", 2)[0] for column in get_ppg_columns_for_scoring().values()}
+    columns = {f"{metric}_{td}_{ppr}" for metric in metrics for td, ppr in PPG_VARIANTS}
+    assert columns <= set(ops_cache._ops_revision_columns(columns))
+    assert "recon_correction_log" not in ops_cache._ops_revision_columns(["recon_correction_log"])
+
+
+@pytest.mark.parametrize("fault", ["timeout", "disconnect", "exhausted", "incomplete"])
+def test_shared_import_http_faults_preserve_history_and_authoritative_ranks(ops_sources, monkeypatch, fault):
+    """Exercise the real reader/retries, DuckDB patch and ranking consumer together."""
+    from io import BytesIO
+    import requests
+    from multi_league.core.readers.fly_reader import FlyReader
+
+    cache_path, live, _reader = ops_sources
+    monkeypatch.setenv("DATABASE_SERVER_URL", "https://fly.test")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "read-token")
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+    monkeypatch.setattr(db_reader, "get_reader", FlyReader)
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.sleep", lambda _seconds: None)
+    attempts = []
+
+    def post(url, *, json, **kwargs):
+        frame = live.execute(json["sql"]).fetchdf()
+        response = requests.Response()
+        response.status_code = 200
+        if url.endswith("/query-parquet"):
+            attempts.append(json["sql"])
+            if fault == "exhausted" or (len(attempts) == 1 and fault == "timeout"):
+                raise requests.exceptions.ReadTimeout("injected timeout")
+            if len(attempts) == 1 and fault == "disconnect":
+                raise requests.exceptions.ChunkedEncodingError("injected connection loss")
+            if fault == "incomplete":
+                frame = frame.iloc[:0]
+            payload = BytesIO()
+            frame.to_parquet(payload, index=False)
+            response._content = payload.getvalue()
+        else:
+            response._content = frame.to_json(orient="records").encode()
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    if fault in {"exhausted", "incomplete"}:
+        with pytest.raises(RuntimeError, match="2026"):
+            import_utils.run_track_1_verify(2025, 2026)
+    else:
+        assert import_utils.run_track_1_verify(2025, 2026) is True
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT rank_alltime_qb_4pt, recon_correction_log FROM "
+                             "nfl_historical.nfl_player_stats_all WHERE year=2025").fetchone() == (222, "historical")
+        current = cache.execute("SELECT position, rank_qb_4pt, rank_alltime_qb_4pt FROM "
+                                "nfl_historical.nfl_player_stats_all WHERE year=2026 ORDER BY week").fetchdf()
+    if fault in {"exhausted", "incomplete"}:
+        assert current.empty
+    else:
+        assert calculate_nfl_rankings(pl.from_pandas(current))["position_alltime_rank"].to_list() == [216, 216]
+        assert len(attempts) == 3  # one failed attempt, then each of the two admitted weeks
+    if fault == "exhausted":
+        assert len(attempts) == 3
+
+
 def test_existing_latest_week_receives_corrected_ranks_with_identical_keys(ops_sources):
     cache_path, live, reader = ops_sources
     live.execute("DELETE FROM nfl_historical.nfl_player_stats_all WHERE week=2")
@@ -121,17 +250,16 @@ def test_existing_latest_week_receives_corrected_ranks_with_identical_keys(ops_s
     downloads = [sql for sql in reader.queries if "IN (VALUES" in sql]
     assert len(downloads) == 1
     assert "year = 2026 AND week = 1" in downloads[0]
-    assert all("hash(" not in sql.lower() for sql in reader.queries)
 
 
-def test_existing_cache_refreshes_only_latest_played_week(ops_sources):
+def test_existing_cache_refreshes_only_changed_rank_rows(ops_sources):
     cache_path, live, reader = ops_sources
     current = live.execute("""
         SELECT NFL_player_id, year, week, season_type, nfl_team, opponent_nfl_team,
                player_week, position, rank_qb_4pt, rank_alltime_qb_4pt, recon_correction_log
         FROM nfl_historical.nfl_player_stats_all
     """).fetchdf()
-    current["rank_alltime_qb_4pt"] = 1
+    current.loc[current["week"] == 2, "rank_alltime_qb_4pt"] = 1
     with duckdb.connect(str(cache_path)) as cache:
         cache.register("current_rows", current)
         cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
@@ -145,7 +273,7 @@ def test_existing_cache_refreshes_only_latest_played_week(ops_sources):
         assert cache.execute("""
             SELECT week, rank_alltime_qb_4pt FROM nfl_historical.nfl_player_stats_all
             WHERE year=2026 ORDER BY week
-        """).fetchall() == [(1, 1), (2, 216)]
+        """).fetchall() == [(1, 216), (2, 216)]
 
 
 @pytest.mark.parametrize("unavailable", ["offline", "empty"])

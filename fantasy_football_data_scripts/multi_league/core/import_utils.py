@@ -75,18 +75,17 @@ def upload_league_settings_to_database(
 
 
 def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
-    """Hydrate missing weeks and refresh the latest played week in the import cache.
+    """Hydrate only changed active-season rows using shared scoring/rank revisions.
 
-    Only a skinny admission query and those weeks' cache-column projection are
-    read from Fly. Always refresh the latest week: identical keys (and even
-    scoring atoms) do not imply unchanged derived ranks after an OPS correction.
+    Only skinny revisions and changed cache-column projections are read from
+    Fly. Identical keys (and even scoring atoms) do not imply unchanged ranks.
     Rank values are copied, never recalculated here. Return False only for a
     verified unplayed season, where an empty import shell is valid.
     """
     import duckdb
 
     from multi_league.core.db_reader import get_reader
-    from multi_league.core.ops_cache import _patch_research_ops_cache_from_fly
+    from multi_league.core.ops_cache import _finalized_ops, _patch_research_ops_cache_from_fly
 
     keys = ["week", "NFL_player_id", "nfl_team", "opponent_nfl_team"]
     projection = ", ".join(keys)
@@ -96,10 +95,8 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
         "AND opponent_nfl_team IS NOT NULL"
     )
     query = f"SELECT {projection} FROM nfl_historical.nfl_player_stats_all WHERE {predicate}"
-    from multi_league.core.ops_cache import OPS_REFRESH_READ_KWARGS
-
     reader = get_reader()
-    expected = reader.query_df(query, database="___ops", **OPS_REFRESH_READ_KWARGS)
+    expected = _finalized_ops(reader, year=year, through_week=None)
 
     def local_keys() -> set[tuple]:
         with duckdb.connect(str(path), read_only=True) as cache:
@@ -130,8 +127,8 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
     def differing_weeks() -> list[int]:
         return sorted({int(row[0]) for row in expected_keys.symmetric_difference(local_keys())})
 
-    weeks = sorted(set(differing_weeks()) | {int(expected["week"].max())})
-    log(f"[TRACK 1] Refreshing latest/mismatched finalized OPS weeks for {year}: {weeks}")
+    weeks = sorted(set(differing_weeks()) | {int(week) for week in expected["week"]})
+    log(f"[TRACK 1] Checking finalized OPS revisions for {year} weeks {weeks}; downloading changed rows only")
     _patch_research_ops_cache_from_fly(
         reader, expected, base=path, year=year, weeks=weeks,
         work_dir=path.parent, in_place=True, authoritative_weeks=True,

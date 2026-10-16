@@ -102,6 +102,42 @@ def test_query_df_parquet_honors_caller_retry_budget(fly_env):
     assert [call.kwargs["timeout"] for call in post.call_args_list] == [4, 4]
 
 
+@pytest.mark.parametrize("transport", ["json", "parquet"])
+def test_short_read_recovers_timeout_with_server_budget_and_correlated_events(fly_env, transport, capsys):
+    import json
+    import pandas as pd
+
+    payload = BytesIO()
+    pd.DataFrame([{"rank_alltime_qb_4pt": 216}]).to_parquet(payload, index=False)
+    response = _resp(200, [{"rank_alltime_qb_4pt": 216}])
+    response.content = payload.getvalue()
+    response.headers = {"Server-Timing": "queue;dur=2, execute;dur=10"}
+    calls = []
+
+    def http_post(url, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise requests.exceptions.ReadTimeout("injected transport timeout")
+        return response
+
+    reader = FlyReader()
+    with patch("multi_league.core.readers.fly_reader.requests.post", side_effect=http_post), \
+            patch("multi_league.core.readers.fly_reader.time.sleep"):
+        method = reader.query_df_parquet if transport == "parquet" else reader.query_df
+        result = method("SELECT 216 AS rank_alltime_qb_4pt", database="___ops", timeout_seconds=8, max_retries=3)
+
+    assert result.to_dict("records") == [{"rank_alltime_qb_4pt": 216}]
+    assert len(calls) == 2
+    assert all(0 < c["json"].get("timeout_seconds", 0) < c["timeout"] <= 8 for c in calls)
+    assert calls[0]["headers"]["X-Request-ID"] != calls[1]["headers"]["X-Request-ID"]
+    events = [json.loads(line.split("[fly-read] ", 1)[1]) for line in capsys.readouterr().out.splitlines()
+              if "[fly-read] " in line]
+    assert [e["outcome"] for e in events] == ["ReadTimeout", "success"]
+    assert events[1]["server_timing"] == "queue;dur=2, execute;dur=10"
+    assert "read-token" not in str(events)
+    assert "SELECT" not in str(events)
+
+
 def test_query_honors_caller_retry_budget(fly_env):
     """Schema probes must share the UI refresh's bounded OPS read budget."""
     reader = FlyReader()

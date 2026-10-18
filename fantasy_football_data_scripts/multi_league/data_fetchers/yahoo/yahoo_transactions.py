@@ -770,6 +770,11 @@ def fetch_transactions_for_year(
 
             # Parse transactions
             for tr in tx_elements:
+                players_in_tx = tr.findall("players/player")
+                # Commissioner audit events can occur after the season. They
+                # emit no player rows and do not need a fantasy-week assignment.
+                if not players_in_tx:
+                    continue
                 tx_type = (tr.findtext("type") or "").strip()
                 status = (tr.findtext("status") or "").strip()
                 ts = tr.findtext("timestamp") or "0"
@@ -792,8 +797,6 @@ def fetch_transactions_for_year(
                 # Reconstruct from league_key so all years use the same format.
                 if transaction_key and ".tr." not in transaction_key:
                     transaction_key = f"{league_key}.tr.{transaction_key}"
-
-                players_in_tx = tr.findall("players/player")
 
                 # Parse players in transaction
                 for player in players_in_tx:
@@ -972,6 +975,9 @@ def fetch_transactions_for_year(
                     break
 
                 for tr in tx_elements:
+                    players_in_tx = tr.findall("players/player")
+                    if not players_in_tx:
+                        continue
                     tx_type = (tr.findtext("type") or "").strip()
                     status = (tr.findtext("status") or "").strip()
                     ts = tr.findtext("timestamp") or "0"
@@ -991,7 +997,7 @@ def fetch_transactions_for_year(
                     if transaction_key and ".tr." not in transaction_key:
                         transaction_key = f"{league_key}.tr.{transaction_key}"
 
-                    for player in tr.findall("players/player"):
+                    for player in players_in_tx:
                         player_key = (player.findtext("player_key") or "").strip()
                         name = player.findtext("name/full") or ""
                         # Normalize DEF names at the source: "Bears" → "Bears DST"

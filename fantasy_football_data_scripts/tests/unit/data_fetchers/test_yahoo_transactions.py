@@ -13,6 +13,74 @@ from multi_league.data_fetchers.yahoo.yahoo_transactions import (
 )
 
 
+@pytest.mark.parametrize("retry", [False, True])
+def test_playerless_audit_entries_do_not_block_real_moves(monkeypatch, retry):
+    from datetime import UTC, datetime
+    from xml.etree import ElementTree as ET
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+
+    last_day = str(int(datetime(2025, 12, 29, 12, tzinfo=UTC).timestamp()))
+    audit_day = str(int(datetime(2025, 12, 30, 12, tzinfo=UTC).timestamp()))
+    empty = (f"<transaction><transaction_key>273</transaction_key><type>commish</type>"
+             f"<status>successful</status><timestamp>{audit_day}</timestamp></transaction>"
+             f"<transaction><type>trade</type><timestamp>{audit_day}</timestamp><players count='0'/></transaction>")
+    moves = "".join(
+        f"<transaction><transaction_key>{index}</transaction_key><type>{kind}</type>"
+        f"<status>successful</status><timestamp>{last_day}</timestamp><players count='1'><player>"
+        f"<player_key>461.p.{index}</player_key><name><full>Player {index}</full></name>"
+        f"<transaction_data><type>{kind}</type><source_type>freeagents</source_type>"
+        "<destination_type>team</destination_type><destination_team_key>461.l.236822.t.1</destination_team_key>"
+        "</transaction_data></player></players></transaction>"
+        for index, kind in enumerate(("add", "drop", "trade", "commish"), 1)
+    )
+    calls = []
+
+    def response(url, oauth):
+        calls.append(url)
+        if retry and len(calls) == 1:
+            raise fetcher.RecoverableAPIError("injected transport failure")
+        return ET.fromstring(f"<fantasy_content><transactions>{empty}{moves}</transactions></fantasy_content>")
+
+    monkeypatch.setattr(fetcher, "fetch_url", response)
+    monkeypatch.setattr(fetcher.time, "sleep", lambda _seconds: None)
+    windows = pd.DataFrame([{"year": 2025, "week": 17, "week_start": "2025-12-23",
+                             "week_end": "2025-12-29", "cumulative_week": 202517}])
+    result = fetcher.fetch_transactions_for_year(None, "461.l.236822", 2025,
+        {"461.l.236822.t.1": "Manager"}, {"461.l.236822.t.1": "guid"},
+        {"461.l.236822.t.1": "Team"}, windows)
+
+    assert [(row.transaction_type, row.week, row.cumulative_week) for row in result] == [
+        ("add", 17, 202517), ("drop", 17, 202517), ("trade", 17, 202517), ("commish", 17, 202517)]
+    assert [row.player_key for row in result] == ["461.p.1", "461.p.2", "461.p.3", "461.p.4"]
+    assert len(calls) == (2 if retry else 1)
+
+
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("kind", ["add", "drop", "trade", "commish"])
+def test_player_moves_still_require_verified_dates(monkeypatch, retry, kind):
+    from datetime import UTC, datetime
+    from xml.etree import ElementTree as ET
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+    from multi_league.core.transaction_periods import TransactionWeekError
+
+    stamp = int(datetime(2025, 12, 30, 12, tzinfo=UTC).timestamp())
+    calls = []
+
+    def response(url, oauth):
+        calls.append(url)
+        if retry and len(calls) == 1:
+            raise fetcher.RecoverableAPIError("injected transport failure")
+        return ET.fromstring(f"<fantasy_content><transactions><transaction><type>{kind}</type>"
+            f"<timestamp>{stamp}</timestamp><players><player><player_key>461.p.1</player_key>"
+            "</player></players></transaction></transactions></fantasy_content>")
+
+    monkeypatch.setattr(fetcher, "fetch_url", response)
+    monkeypatch.setattr(fetcher.time, "sleep", lambda _seconds: None)
+    windows = pd.DataFrame([{"year": 2025, "week": 17, "week_start": "2025-12-23", "week_end": "2025-12-29"}])
+    with pytest.raises(TransactionWeekError, match="transaction week"):
+        fetcher.fetch_transactions_for_year(None, "461.l.236822", 2025, {}, {}, {}, windows)
+
+
 def test_matchup_windows_prefer_dated_rows_over_null_duplicates(tmp_path):
     class LocalDB:
         def read_table(self, table, year):

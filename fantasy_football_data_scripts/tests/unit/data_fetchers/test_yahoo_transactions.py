@@ -23,12 +23,13 @@ def test_playerless_audit_entries_do_not_block_real_moves(monkeypatch, retry):
     audit_day = str(int(datetime(2025, 12, 30, 12, tzinfo=UTC).timestamp()))
     empty = (f"<transaction><transaction_key>273</transaction_key><type>commish</type>"
              f"<status>successful</status><timestamp>{audit_day}</timestamp></transaction>"
-             f"<transaction><type>trade</type><timestamp>{audit_day}</timestamp><players count='0'/></transaction>")
+             f"<transaction><type>trade</type><status>pending</status><timestamp>{audit_day}</timestamp><players count='0'/></transaction>")
     moves = "".join(
         f"<transaction><transaction_key>{index}</transaction_key><type>{kind}</type>"
         f"<status>successful</status><timestamp>{last_day}</timestamp><players count='1'><player>"
         f"<player_key>461.p.{index}</player_key><name><full>Player {index}</full></name>"
         f"<transaction_data><type>{kind}</type><source_type>freeagents</source_type>"
+        "<source_team_key>461.l.236822.t.2</source_team_key>"
         "<destination_type>team</destination_type><destination_team_key>461.l.236822.t.1</destination_team_key>"
         "</transaction_data></player></players></transaction>"
         for index, kind in enumerate(("add", "drop", "trade", "commish"), 1)
@@ -71,7 +72,8 @@ def test_player_moves_still_require_verified_dates(monkeypatch, retry, kind):
         if retry and len(calls) == 1:
             raise fetcher.RecoverableAPIError("injected transport failure")
         return ET.fromstring(f"<fantasy_content><transactions><transaction><type>{kind}</type>"
-            f"<timestamp>{stamp}</timestamp><players><player><player_key>461.p.1</player_key>"
+            f"<timestamp>{stamp}</timestamp><trader_team_key>461.l.236822.t.1</trader_team_key>"
+            "<tradee_team_key>461.l.236822.t.2</tradee_team_key><players><player><player_key>461.p.1</player_key>"
             "</player></players></transaction></transactions></fantasy_content>")
 
     monkeypatch.setattr(fetcher, "fetch_url", response)

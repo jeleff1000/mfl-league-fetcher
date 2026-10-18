@@ -1,6 +1,7 @@
 """Small, shared transaction-period checks; no provider requests or remote reads."""
 
 from decimal import Decimal, InvalidOperation
+import logging
 
 
 class TransactionWeekError(ValueError):
@@ -8,6 +9,35 @@ class TransactionWeekError(ValueError):
 
 
 YAHOO_TRANSACTION_WINDOWS = "__yahoo_transaction_windows"
+
+
+def transaction_has_publishable_assets(*, platform: str, transaction_id,
+                                      transaction_type, status, has_assets: bool,
+                                      administrative: bool = False) -> bool:
+    """Filter known non-moves before period checks; never hide incomplete moves.
+
+    Provider parsers determine their native asset shape. Inherit the existing
+    fail-closed import/refresh handling via TransactionWeekError, without adding
+    requests, retries, or a separate publication path.
+    """
+    state = str(status or "").strip().lower()
+    reason = None
+    if state in {"failed", "pending", "cancelled", "canceled", "rejected", "vetoed", "unsuccessful"}:
+        reason = f"inactive status={state}"
+    elif not has_assets and administrative:
+        reason = "administrative event without roster moves"
+    elif not has_assets:
+        raise TransactionWeekError(
+            f"Incomplete {platform} transaction payload for {transaction_id} "
+            f"(type={transaction_type}, status={state or 'unknown'}): missing player or draft-pick assets"
+        )
+    if reason:
+        logging.getLogger(__name__).info(
+            "[TRANSACTIONS] Skip %s event id=%s type=%s: %s",
+            platform, transaction_id, transaction_type, reason,
+        )
+        return False
+    return True
 
 
 def retain_yahoo_transaction_windows(conn, *, db_name: str, year: int, windows) -> None:

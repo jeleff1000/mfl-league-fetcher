@@ -46,7 +46,7 @@ from .sleeper_player_cache import SleeperPlayerCache
 from .sleeper_context import SleeperContext, YearFilter, resolve_years_to_fetch
 from .sleeper_roster_identity import build_year_roster_map
 from multi_league.core.date_utils import get_current_nfl_season_year
-from multi_league.core.transaction_periods import native_transaction_week
+from multi_league.core.transaction_periods import native_transaction_week, transaction_has_publishable_assets
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,23 @@ def map_source_type(sleeper_type: str) -> str:
         return "trade"
     else:
         return sleeper_type
+
+
+def _validated_trade_picks(txn):
+    """Do not invent seasons, rounds, or ownership for completed pick trades."""
+    picks = txn.get("draft_picks") or []
+    if not picks:
+        return []
+    required = ("season", "round", "roster_id", "owner_id", "previous_owner_id")
+    valid = all(isinstance(pick, dict) and all(
+        str(pick.get(key) or "").isdigit() and int(pick[key]) > 0 for key in required
+    ) for pick in picks)
+    if not transaction_has_publishable_assets(
+        platform="sleeper", transaction_id=txn.get("transaction_id"), transaction_type="trade_pick",
+        status=txn.get("status"), has_assets=valid,
+    ):
+        return []
+    return picks
 
 
 class SleeperTransactionFetcher:
@@ -294,11 +311,21 @@ class SleeperTransactionFetcher:
         txn_type = txn.get("type", "unknown")
         status = txn.get("status", "unknown")
         created_ts = txn.get("created", 0)  # Milliseconds
-        leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
-
         # Get adds and drops
         adds = txn.get("adds") or {}  # player_id -> roster_id
         drops = txn.get("drops") or {}  # player_id -> roster_id
+        picks = _validated_trade_picks(txn) if txn_type == "trade" else []
+        has_assets = (bool(adds) or (bool(drops) and txn_type not in ("trade", "commissioner")) or bool(picks))
+        valid_players = all(str(pid or "").strip() for pid in (*adds, *drops))
+        if txn_type == "trade":
+            valid_players = valid_players and all(adds[pid] and drops.get(pid) for pid in adds)
+        if not transaction_has_publishable_assets(
+            platform="sleeper", transaction_id=txn_id, transaction_type=txn_type, status=status,
+            has_assets=has_assets and valid_players,
+            administrative=txn_type == "commissioner" and not (adds or drops or picks),
+        ):
+            return rows
+        leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
 
         # Get FAAB info if present
         waiver_budget = txn.get("waiver_budget", []) or []
@@ -455,7 +482,7 @@ class SleeperTransactionFetcher:
             List of transaction rows (one per draft pick traded)
         """
         rows = []
-        draft_picks = txn.get("draft_picks") or []
+        draft_picks = _validated_trade_picks(txn)
 
         if not draft_picks:
             return rows
@@ -469,8 +496,8 @@ class SleeperTransactionFetcher:
         timestamp = str(created_ts // 1000) if created_ts else ""
 
         for pick in draft_picks:
-            pick_season = pick.get("season", str(year + 1))
-            pick_round = pick.get("round", 1)
+            pick_season = pick["season"]
+            pick_round = int(pick["round"])
             # Sleeper API field meanings:
             # - roster_id: The ORIGINAL draft slot owner (whose pick it is)
             # - owner_id: Who CURRENTLY owns the pick (after the trade)
@@ -621,6 +648,8 @@ class SleeperTransactionFetcher:
 
         # Create DataFrame
         df = pd.DataFrame(parsed_transactions)
+        if df.empty:
+            return df
 
         # CRITICAL: Ensure sleeper_player_id is clean string without .0 suffix
         # Float-to-string conversion adds .0 suffix (e.g., 10790962.0 -> "10790962.0")

@@ -16,7 +16,9 @@ Output columns match CanonicalTransactionColumns for pipeline compatibility.
 import logging
 
 import pandas as pd
-from multi_league.core.transaction_periods import TransactionWeekError, native_transaction_week
+from multi_league.core.transaction_periods import (
+    TransactionWeekError, native_transaction_week, transaction_has_publishable_assets,
+)
 
 import sys
 
@@ -125,10 +127,17 @@ def fetch_espn_transactions_modern(
         for txn in raw_waivers:
             txn_id = txn.get("id")
             txn_type_raw = txn.get("type", "unknown")
+            items = txn.get("items") or []
+            if not transaction_has_publishable_assets(
+                platform="espn", transaction_id=txn_id, transaction_type=txn_type_raw,
+                status=txn.get("status"), has_assets=bool(items) and all(
+                    item.get("playerId") is not None for item in items
+                ),
+            ):
+                continue
             scoring_period = native_transaction_week(
                 txn.get("scoringPeriodId"), platform="espn", transaction_id=txn_id
             )
-            items = txn.get("items", [])
             txn_date = txn.get("processDate") or txn.get("proposalDate")
             faab_bid = txn.get("bidAmount", 0) or 0
 
@@ -212,10 +221,18 @@ def fetch_espn_transactions_modern(
             trades = client.get_raw_trades(year, max_weeks=max_weeks)
         for trade in trades:
             trade_id = trade.get("id")
+            items = trade.get("items") or []
+            if not transaction_has_publishable_assets(
+                platform="espn", transaction_id=trade_id, transaction_type="trade",
+                status=trade.get("status"), has_assets=bool(items) and all(
+                    item.get("playerId") is not None and item.get("fromTeamId") and item.get("toTeamId")
+                    for item in items
+                ),
+            ):
+                continue
             scoring_period = native_transaction_week(
                 trade.get("scoringPeriodId"), platform="espn", transaction_id=trade_id
             )
-            items = trade.get("items", [])
             accept_date = trade.get("acceptDate")
 
             for item in items:

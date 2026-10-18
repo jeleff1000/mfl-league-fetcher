@@ -73,6 +73,7 @@ setup_module_path()
 from multi_league.core.date_utils import get_current_nfl_season_year
 from multi_league.core.transaction_periods import (
     TransactionWeekError, dated_matchup_windows, local_yahoo_transaction_windows, native_transaction_week,
+    transaction_has_publishable_assets,
 )
 
 import pandas as pd
@@ -307,6 +308,7 @@ class Transaction:
     week_start: pd.Timestamp | None = None
     week_end: pd.Timestamp | None = None
     cumulative_week: int | None = None
+    pick_metadata: dict | None = None
 
 
 # =============================================================================
@@ -725,6 +727,66 @@ def fetch_team_mappings(
     return team_id_to_manager, team_id_to_guid, team_id_to_team_name
 
 
+def _transaction_players(tr):
+    """Adapt native assets to the existing row parser in both pagination paths."""
+    players = tr.findall("players/player")
+    kind = (tr.findtext("type") or "").strip()
+    picks = tr.findall("picks/pick") if kind == "trade" else []
+    if not transaction_has_publishable_assets(
+        platform="yahoo", transaction_id=tr.findtext("transaction_key") or tr.findtext("transaction_id"),
+        transaction_type=kind, status=tr.findtext("status"),
+        has_assets=bool(players or picks) and all((player.findtext("player_key") or "").strip() for player in players),
+        administrative=kind == "commish" and not (players or picks),
+    ):
+        return []
+    if kind == "trade":
+        parent_keys = {key: _first_non_empty(tr.findtext(key)) for key in (
+            "source_team_key", "destination_team_key", "trader_team_key", "tradee_team_key", "waiver_team_key",
+        )}
+        for player in players:
+            _, source, destination = _resolve_transaction_team_keys(
+                transaction_type="trade", destination="team",
+                player_source_key=player.findtext("transaction_data/source_team_key"),
+                player_destination_key=player.findtext("transaction_data/destination_team_key"),
+                transaction_team_keys=parent_keys,
+            )
+            transaction_has_publishable_assets(
+                platform="yahoo", transaction_id=tr.findtext("transaction_key"),
+                transaction_type="trade", status=tr.findtext("status"), has_assets=bool(source and destination),
+            )
+    for pick in picks:
+        fields = {key: (pick.findtext(key) or "").strip() for key in (
+            "source_team_key", "destination_team_key", "original_team_key", "round",
+        )}
+        valid = all(fields.values()) and fields["round"].isdigit() and int(fields["round"]) > 0
+        transaction_has_publishable_assets(
+            platform="yahoo", transaction_id=tr.findtext("transaction_key"),
+            transaction_type="trade_pick", status=tr.findtext("status"), has_assets=valid,
+        )
+        # Yahoo omits the draft season. Keep the native asset identity, never
+        # guess a conveyance year from the date when the trade was processed.
+        asset_id = f"PICK_yahoo_{fields['original_team_key']}_{fields['round']}"
+        owner = pick.findtext("original_team_name") or fields["original_team_key"]
+        player = ET.Element("player", {"pick_id": asset_id, "pick_round": fields["round"], "pick_owner": owner})
+        ET.SubElement(player, "player_key").text = asset_id
+        ET.SubElement(ET.SubElement(player, "name"), "full").text = f"Round {fields['round']} pick (from {owner})"
+        data = ET.SubElement(player, "transaction_data")
+        for key, value in {"type": "trade_pick", "source_type": "team", "destination_type": "team",
+                           "source_team_key": fields["source_team_key"],
+                           "destination_team_key": fields["destination_team_key"]}.items():
+            ET.SubElement(data, key).text = value
+        players.append(player)
+    return players
+
+
+def _transaction_pick_metadata(player):
+    if "pick_id" not in player.attrib:
+        return None
+    return {"NFL_player_id": player.attrib["pick_id"], "position": "PICK",
+            "traded_pick_round": int(player.attrib["pick_round"]), "traded_pick_season": None,
+            "traded_pick_original_owner": player.attrib["pick_owner"]}
+
+
 def fetch_transactions_for_year(
     oauth,
     league_key: str,
@@ -770,9 +832,7 @@ def fetch_transactions_for_year(
 
             # Parse transactions
             for tr in tx_elements:
-                players_in_tx = tr.findall("players/player")
-                # Commissioner audit events can occur after the season. They
-                # emit no player rows and do not need a fantasy-week assignment.
+                players_in_tx = _transaction_players(tr)
                 if not players_in_tx:
                     continue
                 tx_type = (tr.findtext("type") or "").strip()
@@ -851,7 +911,7 @@ def fetch_transactions_for_year(
                     dst_manager_guid = None
                     dst_team_name = None
                     dst_franchise_id = None
-                    if ptype == "trade":
+                    if ptype in {"trade", "trade_pick"}:
                         src_key = source_team_key
                         dst_key = destination_team_key
                         # Partner is the other side: if player goes TO manager, partner is source
@@ -937,6 +997,7 @@ def fetch_transactions_for_year(
                         week_start=week_start if pd.notna(week_start) else None,
                         week_end=week_end if pd.notna(week_end) else None,
                         cumulative_week=cumulative_week,
+                        pick_metadata=_transaction_pick_metadata(player),
                     )
 
                     all_transactions.append(transaction)
@@ -975,7 +1036,7 @@ def fetch_transactions_for_year(
                     break
 
                 for tr in tx_elements:
-                    players_in_tx = tr.findall("players/player")
+                    players_in_tx = _transaction_players(tr)
                     if not players_in_tx:
                         continue
                     tx_type = (tr.findtext("type") or "").strip()
@@ -1047,7 +1108,7 @@ def fetch_transactions_for_year(
                         dst_manager_guid = None
                         dst_team_name = None
                         dst_franchise_id = None
-                        if ptype == "trade":
+                        if ptype in {"trade", "trade_pick"}:
                             src_key = source_team_key
                             dst_key = destination_team_key
                             partner_key = src_key if destination == "team" else dst_key
@@ -1124,6 +1185,7 @@ def fetch_transactions_for_year(
                             week_start=week_start if pd.notna(week_start) else None,
                             week_end=week_end if pd.notna(week_end) else None,
                             cumulative_week=cumulative_week,
+                            pick_metadata=_transaction_pick_metadata(player),
                         )
                         all_transactions.append(transaction)
 
@@ -1222,6 +1284,7 @@ def transactions_to_dataframe(transactions: list[Transaction]) -> pd.DataFrame:
                 # Timestamps
                 "timestamp": tx.timestamp,
                 "human_readable_timestamp": human_ts,
+                **(tx.pick_metadata or {}),
             }
         )
 
@@ -1310,7 +1373,9 @@ def transactions_to_dataframe(transactions: list[Transaction]) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = pd.NA
 
-    return df[column_order]
+    pick_columns = [col for col in ("NFL_player_id", "position", "traded_pick_season",
+                                    "traded_pick_round", "traded_pick_original_owner") if col in df.columns]
+    return df[column_order + pick_columns]
 
 
 # =============================================================================

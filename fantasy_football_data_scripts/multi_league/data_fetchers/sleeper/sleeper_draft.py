@@ -229,14 +229,15 @@ class SleeperDraftFetcher:
                     raise ValueError(f"Sleeper primary draft {draft_id} is not complete")
                 try:
                     rounds = int((draft.get("settings") or {})["rounds"])
-                    participants = len(draft["draft_order"])
-                    configured_teams = int((draft.get("settings") or {}).get("teams", participants))
+                    # User draft order is nullable; native team count defines the board.
+                    teams = (draft.get("settings") or {}).get("teams")
+                    participants = int(teams) if teams is not None else len(draft.get("draft_order") or {})
                     actual = [int(pick["pick_no"]) for pick in picks]
                 except (KeyError, TypeError, ValueError) as exc:
                     raise ValueError(f"Sleeper primary draft {draft_id} lacks a complete pick witness") from exc
                 expected = rounds * participants
                 if (
-                    rounds < 1 or participants < 1 or configured_teams != participants
+                    rounds < 1 or participants < 1
                     or sorted(actual) != list(range(1, expected + 1))
                 ):
                     raise ValueError(f"Sleeper primary draft {draft_id} has incomplete picks")

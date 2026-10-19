@@ -332,6 +332,7 @@ def _derived_refresh_gaps(
         "OR s.key_hash IS DISTINCT FROM t.key_hash), "
         "config AS ("
         "SELECT MAX(TRY_CAST(num_teams AS INTEGER)) AS num_teams, "
+        "COALESCE(MAX(TRY_CAST(start_week AS INTEGER)), 1) AS regular_season_start, "
         "MAX(TRY_CAST(playoff_start_week AS INTEGER)) - 1 AS regular_season_end "
         "FROM public.league_settings "
         f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)}), "
@@ -344,14 +345,15 @@ def _derived_refresh_gaps(
         "AND COALESCE(is_playoffs, FALSE) = FALSE GROUP BY 1), "
         "complete AS ("
         "SELECT COUNT(*) AS complete_weeks FROM coverage c CROSS JOIN config f "
-        "WHERE c.week BETWEEN 1 AND f.regular_season_end "
+        "WHERE c.week BETWEEN f.regular_season_start AND f.regular_season_end "
         "AND c.row_count = f.num_teams AND c.franchise_count = f.num_teams "
         "AND c.opponent_count = f.num_teams) "
         "SELECT (SELECT string_agg(CAST(year AS VARCHAR), ',' ORDER BY year) "
         "FROM aggregate_gaps) AS missing_derived_years, "
         "CASE WHEN f.num_teams IS NULL OR f.regular_season_end IS NULL "
-        "OR f.num_teams < 1 OR f.regular_season_end < 1 "
-        "OR c.complete_weeks <> f.regular_season_end THEN TRUE ELSE FALSE END "
+        "OR f.num_teams < 1 OR f.regular_season_start < 1 "
+        "OR f.regular_season_end < f.regular_season_start "
+        "OR c.complete_weeks <> f.regular_season_end - f.regular_season_start + 1 THEN TRUE ELSE FALSE END "
         "AS incomplete_simulation_schedule FROM config f CROSS JOIN complete c",
         database="___leagues",
     )

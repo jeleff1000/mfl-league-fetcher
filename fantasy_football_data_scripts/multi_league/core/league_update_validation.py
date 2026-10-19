@@ -576,17 +576,19 @@ def assert_active_season_simulation_health(
     }
     if not {"db_name", "year", "num_teams", "playoff_start_week"} <= settings_columns:
         raise IncompleteSourceError("league settings cannot prove the active regular-season schedule")
+    start_week_sql = "COALESCE(CAST(start_week AS INTEGER), 1)" if "start_week" in settings_columns else "1"
     settings_row = conn.execute(
-        "SELECT CAST(num_teams AS INTEGER), CAST(playoff_start_week AS INTEGER) "
+        "SELECT CAST(num_teams AS INTEGER), CAST(playoff_start_week AS INTEGER), " + start_week_sql + " "
         "FROM public.league_settings WHERE db_name = ? AND year = ? LIMIT 1",
         [str(db_name), int(year)],
     ).fetchone()
     if (
         not settings_row or settings_row[0] is None or settings_row[1] is None
-        or int(settings_row[0]) < 1 or int(settings_row[1]) < 2
+        or int(settings_row[0]) < 1 or not 1 <= int(settings_row[2]) < int(settings_row[1])
     ):
         raise IncompleteSourceError("league settings have no valid active-season schedule boundary")
     expected_teams = int(settings_row[0])
+    regular_season_start = int(settings_row[2])
     regular_season_end = int(settings_row[1]) - 1
 
     schedule_columns = {
@@ -621,8 +623,8 @@ def assert_active_season_simulation_health(
         "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) + "
         + unassigned_count + " "
         "FROM public.schedule WHERE db_name = ? AND year = ? "
-        "AND week BETWEEN 1 AND ?" + schedule_filter + " GROUP BY week ORDER BY week",
-        [str(db_name), int(year), regular_season_end],
+        "AND week BETWEEN ? AND ?" + schedule_filter + " GROUP BY week ORDER BY week",
+        [str(db_name), int(year), regular_season_start, regular_season_end],
     ).fetchall()
     complete_weeks = {
         int(week) for week, row_count, franchise_count, opponent_count in schedule_rows
@@ -630,7 +632,7 @@ def assert_active_season_simulation_health(
         and int(franchise_count or 0) == expected_teams
         and int(opponent_count or 0) == expected_teams
     }
-    missing_schedule_weeks = sorted(set(range(1, regular_season_end + 1)) - complete_weeks)
+    missing_schedule_weeks = sorted(set(range(regular_season_start, regular_season_end + 1)) - complete_weeks)
     if missing_schedule_weeks:
         raise IncompleteSourceError(
             f"schedule must cover every team through regular-season week {regular_season_end}; "

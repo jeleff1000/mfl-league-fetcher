@@ -218,9 +218,50 @@ def test_sleeper_season_with_only_noops_returns_empty_without_sort_failure(monke
     assert fetcher.fetch_transactions_for_year(2024, max_week=1 if active else None).empty
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_real_sleeper_commissioner_drop_is_retained(monkeypatch, active):
+    from multi_league.data_fetchers.sleeper import sleeper_transactions as module
+    # Native payload from Tortures Fantasy Department's failed quick import.
+    txn = {"status": "complete", "type": "commissioner", "metadata": None,
+           "created": 1792336046150, "settings": None, "leg": 6, "draft_picks": [],
+           "creator": "870870993638477824", "transaction_id": "1417563757499990016",
+           "adds": None, "drops": {"9753": 10}, "consenter_ids": None, "roster_ids": [10],
+           "status_updated": 1792336046150, "waiver_budget": []}
+    class Client:
+        def get_league_transactions(self, league_id, week):
+            return [txn] if week == 6 else []
+    # Keep native period paging live, including history imports' five-empty-week stop.
+    client = Client()
+    original = client.get_league_transactions
+    client.get_league_transactions = lambda lid, week: [event("sleeper", kind="admin", assets=False)] if week == 1 else original(lid, week)
+    monkeypatch.setattr(module, "build_year_roster_map", lambda *args, **kw: {10: ROSTERS[2]})
+    ctx = SimpleNamespace(get_league_id_for_year=lambda year: "1393635131826118656")
+    fetcher = module.SleeperTransactionFetcher(ctx, client=client, player_cache=PlayerCache())
+    frame = fetcher.fetch_transactions_for_year(2026, max_week=6 if active else None)
+    assert frame[["transaction_id", "transaction_type", "sleeper_player_id", "week", "manager_guid", "destination"]].values.tolist() == [
+        ["1417563757499990016", "drop", "9753", 6, "maxx-id", "waivers"]]
+
+
+@pytest.mark.parametrize("kind", ["drop", "transfer", "mixed"])
+def test_sleeper_commissioner_moves_do_not_duplicate_transferred_players(monkeypatch, kind):
+    txn = event("sleeper", kind="admin", assets=False)
+    txn["drops"] = {"1": 1}
+    if kind != "drop":
+        txn["adds"] = {"1": 2}
+    if kind == "mixed":
+        txn["drops"]["2"] = 1
+    frame = parse_events("sleeper", [txn], monkeypatch)
+    actual = frame[["sleeper_player_id", "manager_guid", "destination", "transaction_type"]].values.tolist()
+    expected = [["1", "scott-id", "waivers", "drop"]] if kind == "drop" else [["1", "maxx-id", "team", "commish"]]
+    if kind == "mixed":
+        expected.append(["2", "scott-id", "waivers", "drop"])
+    assert actual == expected
+
+
 @pytest.mark.parametrize("lane", ["quick", "full", "refresh"])
 @pytest.mark.parametrize("platform", PLATFORMS)
-def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch, platform, lane):
+@pytest.mark.parametrize("asset", ["trade", "drop"])
+def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch, platform, lane, asset):
     """Parse -> canonicalize -> stage -> export: verify both actual trade parties."""
     import tarfile
     import duckdb
@@ -235,6 +276,16 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
     elif platform == "sleeper":
         txn["draft_picks"] = [{"season": "2025", "round": 1, "roster_id": 1,
                                "owner_id": 2, "previous_owner_id": 1}]
+    if asset == "drop":
+        if platform == "yahoo":
+            txn = event("yahoo", kind="drop").replace("<destination_type>team</destination_type>",
+                                                       "<destination_type>waivers</destination_type>")
+        elif platform == "espn":
+            txn = event("espn")
+            txn["items"][0]["type"] = "DROP"
+        else:
+            txn = event("sleeper", kind="admin", assets=False)
+            txn["drops"] = {"1": 1}
     frame = parse_events(platform, [event(platform, status="failed", assets=False, week=False), txn],
                          monkeypatch, active=lane == "refresh")
     frame = normalize_transaction_df(frame, platform=platform, league_id="1")
@@ -262,6 +313,8 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
         if platform != "espn":
             expected += [("Maxx", "maxx-id", "received", "trade_pick"),
                          ("Scott", "scott-id", "sent", "trade_pick")]
+        if asset == "drop":
+            expected = [("Scott", "scott-id", None, "drop")]
         assert actual == expected
         assert conn.execute("SELECT COUNT(*) FROM read_parquet(?) WHERE db_name <> 'qa' OR "
                             "week <> 6 OR cumulative_week <> 202406", [str(published)]).fetchone()[0] == 0

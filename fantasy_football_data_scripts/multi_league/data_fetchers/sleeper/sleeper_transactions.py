@@ -315,7 +315,7 @@ class SleeperTransactionFetcher:
         adds = txn.get("adds") or {}  # player_id -> roster_id
         drops = txn.get("drops") or {}  # player_id -> roster_id
         picks = _validated_trade_picks(txn) if txn_type == "trade" else []
-        has_assets = (bool(adds) or (bool(drops) and txn_type not in ("trade", "commissioner")) or bool(picks))
+        has_assets = (bool(adds) or (bool(drops) and txn_type != "trade") or bool(picks))
         valid_players = all(str(pid or "").strip() for pid in (*adds, *drops))
         if txn_type == "trade":
             valid_players = valid_players and all(adds[pid] and drops.get(pid) for pid in adds)
@@ -409,12 +409,14 @@ class SleeperTransactionFetcher:
                 }
             )
 
-        # Process drops - but skip for trades and commissioner transactions
+        # Trades are represented by adds; commissioner transfers also have an
+        # add for the same player. Retain standalone commissioner drops.
         # For trades, the adds dict already shows who received each player
         # Processing drops for trades would create duplicate rows with the OLD owner
-        # Commissioner transactions also have drops that duplicate the adds with NULL identity fields
-        if txn_type not in ("trade", "commissioner"):
+        if txn_type != "trade":
             for player_id, roster_id in drops.items():
+                if txn_type == "commissioner" and player_id in adds:
+                    continue
                 manager_info = self._fallback_manager_info(roster_map, roster_id)
 
                 player_name = self.player_cache.get_player_name(str(player_id))
@@ -425,7 +427,9 @@ class SleeperTransactionFetcher:
                 player_name, nfl_team = self._normalize_def_player(player_id, player_name, nfl_team)
 
                 # For add/drop transactions, we already have the add - check if this is a paired drop
-                is_paired = player_id in adds or any(d_pid in adds for d_pid in drops.keys())
+                is_paired = txn_type != "commissioner" and (
+                    player_id in adds or any(d_pid in adds for d_pid in drops.keys())
+                )
 
                 rows.append(
                     {

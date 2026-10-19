@@ -225,7 +225,8 @@ def fetch_espn_transactions_modern(
             if not transaction_has_publishable_assets(
                 platform="espn", transaction_id=trade_id, transaction_type="trade",
                 status=trade.get("status"), has_assets=bool(items) and all(
-                    item.get("playerId") is not None and item.get("fromTeamId") and item.get("toTeamId")
+                    item.get("playerId") is not None and item.get("fromTeamId")
+                    and (item.get("toTeamId") or item.get("type") == "DROP")
                     for item in items
                 ),
             ):
@@ -238,11 +239,14 @@ def fetch_espn_transactions_modern(
             for item in items:
                 player_id = item.get("playerId")
                 # Resolve player name: try raw API fields first, then lookup table
-                player_name = item.get("playerName", item.get("player", {}).get("fullName", None))
+                player_name = item.get("playerName") or (item.get("player") or {}).get("fullName")
                 if not player_name or player_name == "Unknown":
                     player_name = player_lookup.get(player_id, "Unknown")
                 from_team = item.get("fromTeamId")
                 to_team = item.get("toTeamId")
+                is_drop = item.get("type") == "DROP"
+                if is_drop:
+                    to_team = from_team
 
                 # One row per traded player with source/destination fields.
                 # duplicate_trade_rows() in the normalizer will split into
@@ -258,18 +262,18 @@ def fetch_espn_transactions_modern(
                             "source_manager": ctx.get_manager_name(
                                 from_team, team_name=ctx.get_team_name(from_team, year), year=year
                             )
-                            if from_team
+                            if from_team and not is_drop
                             else None,
-                            "source_manager_guid": ctx.get_manager_guid(from_team, year=year) if from_team else None,
-                            "source_team_name": ctx.get_team_name(from_team, year) if from_team else None,
-                            "source_franchise_id": ctx.get_franchise_id(from_team, year=year) if from_team else None,
+                            "source_manager_guid": ctx.get_manager_guid(from_team, year=year) if not is_drop else None,
+                            "source_team_name": ctx.get_team_name(from_team, year) if not is_drop else None,
+                            "source_franchise_id": ctx.get_franchise_id(from_team, year=year) if not is_drop else None,
                             # Destination = who received the player (to_team)
                             "destination_manager": ctx.get_manager_name(
                                 to_team, team_name=ctx.get_team_name(to_team, year), year=year
-                            ),
-                            "destination_manager_guid": ctx.get_manager_guid(to_team, year=year),
-                            "destination_team_name": ctx.get_team_name(to_team, year),
-                            "destination_franchise_id": ctx.get_franchise_id(to_team, year=year),
+                            ) if not is_drop else None,
+                            "destination_manager_guid": ctx.get_manager_guid(to_team, year=year) if not is_drop else None,
+                            "destination_team_name": ctx.get_team_name(to_team, year) if not is_drop else None,
+                            "destination_franchise_id": ctx.get_franchise_id(to_team, year=year) if not is_drop else None,
                             # Keep manager for backward compat (gets overwritten by duplicate_trade_rows)
                             "manager": ctx.get_manager_name(
                                 to_team, team_name=ctx.get_team_name(to_team, year), year=year
@@ -283,10 +287,10 @@ def fetch_espn_transactions_modern(
                             "espn_player_id": player_id,
                             "position": item.get("position"),
                             "nfl_team": item.get("proTeam"),
-                            "transaction_type": "trade",
+                            "transaction_type": "drop" if is_drop else "trade",
                             "faab_bid": 0,
-                            "source_type": "trade",
-                            "destination": "team",
+                            "source_type": "team" if is_drop else "trade",
+                            "destination": "waivers" if is_drop else "team",
                             "is_estimated": False,
                             "platform": "espn",
                             "league_id": str(ctx.get_league_id_for_year(year)),

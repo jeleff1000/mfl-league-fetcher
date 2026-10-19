@@ -70,11 +70,19 @@ def duplicate_trade_rows(df: pd.DataFrame) -> pd.DataFrame:
     mgr = expanded["manager"].fillna("").astype(str).str.strip()
     expanded = expanded[src != mgr].copy()
 
-    # 3. Dedup: if the same (transaction_id, player, manager, trade_direction)
-    #    appears more than once, keep only the first row.
+    # 3. Dedup by actual asset identity. Missing/shared display names must not
+    #    collapse distinct players (or picks/currency) in the same trade.
     dedup_cols = ["transaction_id", "player", "manager", "trade_direction"]
     if all(c in expanded.columns for c in dedup_cols):
-        expanded = expanded.drop_duplicates(subset=dedup_cols, keep="first")
+        asset = pd.Series(pd.NA, index=expanded.index, dtype="string")
+        for column in ("NFL_player_id", "sleeper_player_id", "espn_player_id", "yahoo_player_id",
+                       "fleaflicker_player_id", "player"):
+            if column in expanded.columns:
+                value = expanded[column].astype("string").str.strip().replace({"": pd.NA, "None": pd.NA, "nan": pd.NA})
+                asset = asset.fillna(column + ":" + value)
+        expanded = expanded.assign(_trade_asset_id=asset).drop_duplicates(
+            subset=["transaction_id", "_trade_asset_id", "manager", "trade_direction"], keep="first",
+        ).drop(columns="_trade_asset_id")
 
     _fill_non_trade_manager_context(non_trades)
     return pd.concat([expanded, non_trades], ignore_index=True)

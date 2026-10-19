@@ -19,6 +19,7 @@ import traceback
 from typing import Any
 
 import requests
+from multi_league.core.transaction_periods import transaction_has_publishable_assets
 
 import sys
 
@@ -483,11 +484,10 @@ class ESPNAPIClient:
         """
         Fetch all trade transactions for a year via raw ESPN API.
 
-        Strategy:
-        1. Collect all TRADE_PROPOSAL (has items) and TRADE_ACCEPT (stub) records
-        2. Try to join accept → proposal via relatedTransactionId
-        3. If that fails (ESPN purges old proposals), fall back to matching
-           by team pair — find any proposal involving the same teams
+        Resolve native relatedTransactionId links after collecting all periods.
+        Accept acknowledgements can precede proposals and processed records;
+        they can also contain collateral drops rather than traded players.
+        Never borrow an unrelated proposal merely because a team matches.
 
         Args:
             year: NFL season year
@@ -496,63 +496,57 @@ class ESPNAPIClient:
         Returns:
             List of trade dicts with full player movement details
         """
-        all_transactions = []
-        proposals_by_id = {}  # proposal_id -> proposal record
-        proposals_by_teams = {}  # frozenset(team_ids) -> [proposals]
-        seen_accept_ids = set()
-
+        proposals_by_id = {}
+        accepts = {}
         for period in range(1, max_weeks + 1):
-            txns = self.get_raw_transactions(year, period, strict=strict)
-
-            for txn in txns:
+            for txn in self.get_raw_transactions(year, period, strict=strict):
                 txn_type = txn.get("type")
-
                 if txn_type == "TRADE_PROPOSAL":
-                    txn_id = txn.get("id")
-                    items = txn.get("items", [])
-                    if txn_id:
-                        proposals_by_id[txn_id] = txn
-                    # Index by team pair for fallback matching
-                    if items:
-                        teams = frozenset({i.get("fromTeamId") for i in items} | {i.get("toTeamId") for i in items})
-                        proposals_by_teams.setdefault(teams, []).append(txn)
-
+                    if txn.get("id"):
+                        proposals_by_id[txn["id"]] = txn
                 elif txn_type == "TRADE_ACCEPT":
-                    accept_id = txn.get("id")
-                    if accept_id in seen_accept_ids:
-                        continue
-                    seen_accept_ids.add(accept_id)
-
-                    # Try 1: match via relatedTransactionId
-                    related_id = txn.get("relatedTransactionId")
-                    proposal = proposals_by_id.get(related_id, {})
-                    items = proposal.get("items", txn.get("items", []))
-
-                    # Try 2: if no items, match by team pair
-                    if not items:
-                        accept_team = txn.get("teamId")
-                        for teams, props in proposals_by_teams.items():
-                            if accept_team in teams and props:
-                                # Use the latest proposal for these teams, then consume it
-                                proposal = props.pop()
-                                items = proposal.get("items", [])
-                                break
-
-                    trade = {
-                        "id": txn.get("id"),
-                        "scoringPeriodId": txn.get("scoringPeriodId"),
-                        "bidAmount": txn.get("bidAmount", 0),
-                        "executionType": txn.get("executionType"),
-                        "proposalDate": proposal.get("proposalDate") if proposal else None,
-                        "acceptDate": txn.get("processDate") or txn.get("proposalDate"),
-                        "items": items,
-                        "teamId": txn.get("teamId"),
-                        "memberId": txn.get("memberId"),
-                    }
-                    all_transactions.append(trade)
-
+                    if transaction_has_publishable_assets(
+                        platform="espn", transaction_id=txn.get("id"), transaction_type=txn_type,
+                        status=txn.get("status"), has_assets=True,
+                    ):
+                        key = txn.get("relatedTransactionId") or txn.get("id")
+                        accepts.setdefault(key, {})[txn.get("id")] = txn
             time.sleep(0.05)
 
+        all_transactions = []
+        for related_id, records in accepts.items():
+            # Prefer the actual processed movement over the acknowledgement.
+            txn = max(records.values(), key=lambda row: (
+                row.get("executionType") == "PROCESS", row.get("status") == "EXECUTED",
+                any(item.get("type") == "TRADE" for item in (row.get("items") or [])),
+            ))
+            proposal = proposals_by_id.get(related_id) or {}
+            items = list(txn.get("items") or [])
+            if not any(item.get("type") == "TRADE" for item in items):
+                items += proposal.get("items") or []
+            # Keep collateral drops once even when also present on the final record.
+            for record in records.values():
+                for item in record.get("items") or []:
+                    if item.get("type") == "DROP":
+                        items.append(item)
+            seen = set()
+            unique_items = []
+            for item in items:
+                key = tuple(item.get(field) for field in ("type", "playerId", "fromTeamId", "toTeamId"))
+                if key not in seen:
+                    seen.add(key)
+                    unique_items.append(item)
+            items = unique_items
+            if not items and txn.get("executionType") == "EXECUTE" and not txn.get("status"):
+                logger.warning("[TRANSACTIONS] ESPN acknowledgement %s has no linked asset payload; "
+                               "not inventing a trade from another proposal", txn.get("id"))
+                continue
+            all_transactions.append({
+                **txn, "items": items,
+                "proposalDate": proposal.get("proposedDate") or proposal.get("proposalDate"),
+                "acceptDate": txn.get("processDate") or txn.get("acceptedDate")
+                    or txn.get("proposedDate") or txn.get("proposalDate"),
+            })
         return all_transactions
 
     def get_raw_trades_strict(self, year: int, *, max_weeks: int) -> list[dict]:

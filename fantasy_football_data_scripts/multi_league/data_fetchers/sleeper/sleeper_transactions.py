@@ -32,6 +32,7 @@ Usage:
 """
 
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,24 @@ def _validated_trade_picks(txn):
     ):
         return []
     return picks
+
+
+def _validated_trade_budget(txn):
+    """FAAB is a native trade asset, not a waiver bid or a player."""
+    budget = txn.get("waiver_budget") or []
+    valid = isinstance(budget, list) and all(
+        isinstance(move, dict)
+        and all(str(move.get(key) or "").isdigit() and int(move[key]) > 0 for key in ("sender", "receiver"))
+        and isinstance(move.get("amount"), (int, float))
+        and math.isfinite(move["amount"]) and move["amount"] >= 0
+        for move in budget
+    )
+    if not transaction_has_publishable_assets(
+        platform="sleeper", transaction_id=txn.get("transaction_id"), transaction_type="trade_faab",
+        status=txn.get("status"), has_assets=valid,
+    ):
+        return []
+    return [move for move in budget if move["amount"] > 0]
 
 
 class SleeperTransactionFetcher:
@@ -315,7 +334,11 @@ class SleeperTransactionFetcher:
         adds = txn.get("adds") or {}  # player_id -> roster_id
         drops = txn.get("drops") or {}  # player_id -> roster_id
         picks = _validated_trade_picks(txn) if txn_type == "trade" else []
-        has_assets = (bool(adds) or (bool(drops) and txn_type != "trade") or bool(picks))
+        budget = _validated_trade_budget(txn) if txn_type == "trade" else []
+        # A validated, zero-dollar-only transfer makes no roster/currency move.
+        if txn_type == "trade" and txn.get("waiver_budget") and not (adds or drops or picks or budget):
+            return rows
+        has_assets = (bool(adds) or (bool(drops) and txn_type != "trade") or bool(picks) or bool(budget))
         valid_players = all(str(pid or "").strip() for pid in (*adds, *drops))
         if txn_type == "trade":
             valid_players = valid_players and all(adds[pid] and drops.get(pid) for pid in adds)
@@ -327,12 +350,7 @@ class SleeperTransactionFetcher:
             return rows
         leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
 
-        # Get FAAB info if present
-        waiver_budget = txn.get("waiver_budget", []) or []
-        faab_bid = 0
-        if waiver_budget:
-            # Sum of all FAAB spent in this transaction
-            faab_bid = sum(abs(wb.get("amount", 0)) for wb in waiver_budget)
+        faab_bid = (txn.get("settings") or {}).get("waiver_bid") or 0
 
         # Get roster IDs involved
         roster_ids = txn.get("roster_ids", []) or []
@@ -465,6 +483,25 @@ class SleeperTransactionFetcher:
         if txn_type == "trade":
             draft_pick_rows = self._parse_trade_picks(txn, year, roster_map)
             rows.extend(draft_pick_rows)
+            for move in budget:
+                sender = self._fallback_manager_info(roster_map, move["sender"])
+                receiver = self._fallback_manager_info(roster_map, move["receiver"])
+                asset_id = f"FAAB_{txn_id}_{move['sender']}_{move['receiver']}"
+                rows.append({
+                    "transaction_id": txn_id, "year": year, "week": leg,
+                    "timestamp": timestamp, "human_readable_timestamp": human_ts, "status": status,
+                    "transaction_type": "trade", "position": "FAAB", "NFL_player_id": asset_id,
+                    "sleeper_player_id": asset_id,
+                    "player": f"{move['amount']:g} FAAB ({sender.get('manager_name')} → {receiver.get('manager_name')})",
+                    "manager": receiver.get("manager_name"), "manager_guid": receiver.get("manager_guid"),
+                    "team_name": receiver.get("team_name"), "nfl_team": None,
+                    "faab_bid": 0, "faab_traded": move["amount"], "source_type": "trade", "destination": "team",
+                    "source_manager": sender.get("manager_name"), "source_manager_guid": sender.get("manager_guid"),
+                    "source_team_name": sender.get("team_name"), "source_franchise_id": _franchise_id(sender),
+                    "destination_manager": receiver.get("manager_name"),
+                    "destination_manager_guid": receiver.get("manager_guid"),
+                    "destination_team_name": receiver.get("team_name"), "destination_franchise_id": _franchise_id(receiver),
+                })
 
         return rows
 

@@ -258,9 +258,150 @@ def test_sleeper_commissioner_moves_do_not_duplicate_transferred_players(monkeyp
     assert actual == expected
 
 
-@pytest.mark.parametrize("lane", ["quick", "full", "refresh"])
+@pytest.mark.parametrize("with_player", [False, True])
+def test_sleeper_faab_trade_retains_currency_once_per_party(monkeypatch, with_player):
+    from multi_league.core.canonical_transaction import normalize_transaction_df
+    txn = event("sleeper", kind="trade", assets=with_player)
+    txn["waiver_budget"] = [{"sender": 1, "receiver": 2, "amount": 55}]
+    raw = parse_events("sleeper", [txn], monkeypatch)
+    frame = normalize_transaction_df(raw, platform="sleeper", league_id="1")
+    cash = frame.loc[frame["position"] == "FAAB"]
+    assert sorted(cash[["manager_guid", "trade_direction", "faab_traded"]].values.tolist()) == [
+        ["maxx-id", "received", 55], ["scott-id", "sent", 55]]
+    assert len(frame) == (4 if with_player else 2)
+    assert cash["NFL_player_id"].tolist() == ["FAAB_7_1_2", "FAAB_7_1_2"]
+    assert cash["faab_bid"].tolist() == [0, 0]
+
+
+def test_zero_faab_only_trade_is_a_noop_without_a_period(monkeypatch):
+    txn = event("sleeper", kind="trade", assets=False, week=False)
+    txn["waiver_budget"] = [{"sender": 1, "receiver": 2, "amount": 0}]
+    frame = parse_events("sleeper", [txn, event("sleeper", kind="trade")], monkeypatch)
+    assert len(frame) == 1
+    assert frame.iloc[0]["sleeper_player_id"] == "1"
+
+
+@pytest.mark.parametrize("settings,expected", [(None, 0), ({"waiver_bid": None}, 0),
+                                               ({"waiver_bid": 44}, 44)])
+def test_sleeper_optional_settings_preserve_actual_waiver_bid(monkeypatch, settings, expected):
+    txn = event("sleeper")
+    txn.update(type="waiver", settings=settings)
+    frame = parse_events("sleeper", [txn], monkeypatch)
+    assert frame.iloc[0]["faab_bid"] == expected
+
+
+@pytest.mark.parametrize("budget", [[{"sender": 1, "receiver": 2}],
+    [{"sender": None, "receiver": 2, "amount": 5}],
+    [{"sender": 1, "receiver": 2, "amount": -5}],
+    [{"sender": 1, "receiver": 2, "amount": float("nan")}],
+    [{"sender": 1, "receiver": 2, "amount": float("inf")}], [None]])
+def test_sleeper_incomplete_real_currency_transfer_is_rejected(monkeypatch, budget):
+    txn = event("sleeper", kind="trade")
+    txn["waiver_budget"] = budget
+    with pytest.raises(TransactionWeekError, match="Incomplete sleeper"):
+        parse_events("sleeper", [txn], monkeypatch)
+
+
+def parse_native_espn(events, monkeypatch):
+    """Stub only HTTP; retain native relationship resolution and parsing."""
+    from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
+    client = ESPNAPIClient(1)
+    monkeypatch.setattr(client, "get_raw_transactions", lambda year, period, **kw: events if period == 6 else [])
+    monkeypatch.setattr("multi_league.data_fetchers.espn.espn_api_client.time.sleep", lambda _: None)
+    from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
+    ctx = SimpleNamespace(get_league_id_for_year=lambda year: 1,
+        get_manager_name=lambda rid, **kw: ROSTERS[rid]["manager_name"],
+        get_manager_guid=lambda rid, **kw: ROSTERS[rid]["manager_guid"],
+        get_franchise_id=lambda rid, **kw: ROSTERS[rid]["manager_guid"],
+        get_team_name=lambda rid, year: ROSTERS[rid]["team_name"])
+    return fetch_espn_transactions_modern(ctx, 2024, max_week=6, client=client, league=SimpleNamespace(teams=[]))
+
+
+@pytest.mark.parametrize("processed", [False, True])
+def test_espn_native_trade_order_and_collateral_drop_preserve_all_moves(monkeypatch, processed):
+    from multi_league.core.canonical_transaction import normalize_transaction_df
+    proposal = event("espn", kind="trade")
+    proposal.update(id="proposal", type="TRADE_PROPOSAL", status="PENDING")
+    proposal["items"][0].update(type="TRADE", player=None)
+    ack = event("espn", kind="trade")
+    ack.update(id="ack", relatedTransactionId="proposal", status=None, executionType="EXECUTE",
+               proposedDate=1728520236000, processDate=None, acceptDate=None,
+               items=[{"playerId": 2, "type": "DROP", "fromTeamId": 2, "toTeamId": 0}])
+    events = [ack, proposal]
+    if processed:
+        final = dict(proposal, id="processed", type="TRADE_ACCEPT", relatedTransactionId="proposal",
+                     status="EXECUTED", executionType="PROCESS", isPending=True)
+        final["items"] = proposal["items"] + [dict(ack["items"][0], player=None)]
+        events.insert(0, final)
+    raw = parse_native_espn(events, monkeypatch)
+    frame = normalize_transaction_df(raw, platform="espn", league_id="1")
+    assert sorted(frame[["espn_player_id", "manager_guid", "transaction_type"]].values.tolist()) == [
+        ["1", "maxx-id", "trade"], ["1", "scott-id", "trade"], ["2", "maxx-id", "drop"]]
+    assert set(frame["week"]) == {6}
+    assert frame["timestamp"].notna().all()
+
+
+def test_espn_purged_proposal_still_retains_collateral_drop(monkeypatch):
+    ack = event("espn", kind="trade")
+    ack.update(id="ack", relatedTransactionId="purged", status=None, executionType="EXECUTE",
+               proposedDate=1728520236000, items=[{"playerId": 2, "type": "DROP", "fromTeamId": 1, "toTeamId": 0}])
+    raw = parse_native_espn([ack], monkeypatch)
+    assert raw[["espn_player_id", "manager_guid", "transaction_type"]].values.tolist() == [[2, "scott-id", "drop"]]
+
+
+def test_espn_acknowledgement_never_borrows_an_unrelated_proposal(monkeypatch):
+    proposal = event("espn", kind="trade")
+    proposal.update(id="unrelated", type="TRADE_PROPOSAL", status="CANCELED")
+    ack = event("espn", kind="trade", assets=False)
+    ack.update(relatedTransactionId="purged", status=None, executionType="EXECUTE", teamId=1)
+    raw = parse_native_espn([proposal, ack, event("espn")], monkeypatch)
+    assert raw["transaction_type"].tolist() == ["add"]
+
+
+def test_espn_processed_trade_missing_real_assets_remains_an_error(monkeypatch):
+    final = event("espn", kind="trade", assets=False)
+    final.update(executionType="PROCESS", status="EXECUTED")
+    with pytest.raises(TransactionWeekError, match="Incomplete espn"):
+        parse_native_espn([final], monkeypatch)
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
-@pytest.mark.parametrize("asset", ["trade", "drop"])
+def test_missing_player_names_never_collapse_distinct_traded_players(monkeypatch, platform):
+    from multi_league.core.canonical_transaction import normalize_transaction_df
+    txn = event(platform, kind="trade")
+    if platform == "yahoo":
+        xml = ET.fromstring(txn)
+        player = ET.fromstring(ET.tostring(xml.find("players/player")))
+        player.find("player_key").text = "461.p.2"
+        xml.find("players").append(player)
+        txn = ET.tostring(xml, encoding="unicode")
+    elif platform == "espn":
+        txn["items"].append(dict(txn["items"][0], playerId=2))
+    else:
+        txn["adds"]["2"] = 2
+        txn["drops"]["2"] = 1
+    raw = parse_events(platform, [txn], monkeypatch)
+    frame = normalize_transaction_df(raw, platform=platform, league_id="1")
+    assert len(frame) == 4
+    assert frame.groupby("manager_guid").size().to_dict() == {"maxx-id": 2, "scott-id": 2}
+    again = normalize_transaction_df(frame, platform=platform, league_id="1")
+    assert len(again) == 4
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_null_optional_metadata_does_not_block_native_moves(monkeypatch, platform):
+    txn = event(platform)
+    if platform != "yahoo":
+        txn.update(metadata=None, settings=None)
+    if platform == "espn":
+        txn.update(bidAmount=None, proposalDate=None)
+    frame = parse_events(platform, [txn], monkeypatch)
+    assert len(frame) == 1
+    assert frame.iloc[0]["week"] == 6
+
+
+@pytest.mark.parametrize("lane", ["quick", "full", "refresh"])
+@pytest.mark.parametrize("platform,asset", [(p, a) for p in PLATFORMS for a in ("trade", "drop")] + [("sleeper", "faab")])
 def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch, platform, lane, asset):
     """Parse -> canonicalize -> stage -> export: verify both actual trade parties."""
     import tarfile
@@ -286,6 +427,9 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
         else:
             txn = event("sleeper", kind="admin", assets=False)
             txn["drops"] = {"1": 1}
+    elif asset == "faab":
+        txn = event("sleeper", kind="trade", assets=False)
+        txn["waiver_budget"] = [{"sender": 1, "receiver": 2, "amount": 55}]
     frame = parse_events(platform, [event(platform, status="failed", assets=False, week=False), txn],
                          monkeypatch, active=lane == "refresh")
     frame = normalize_transaction_df(frame, platform=platform, league_id="1")
@@ -315,6 +459,10 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
                          ("Scott", "scott-id", "sent", "trade_pick")]
         if asset == "drop":
             expected = [("Scott", "scott-id", None, "drop")]
+        elif asset == "faab":
+            expected = [("Maxx", "maxx-id", "received", "trade"), ("Scott", "scott-id", "sent", "trade")]
         assert actual == expected
+        if asset == "faab":
+            assert conn.execute("SELECT faab_traded FROM read_parquet(?) ORDER BY manager", [str(published)]).fetchall() == [(55,), (55,)]
         assert conn.execute("SELECT COUNT(*) FROM read_parquet(?) WHERE db_name <> 'qa' OR "
                             "week <> 6 OR cumulative_week <> 202406", [str(published)]).fetchone()[0] == 0

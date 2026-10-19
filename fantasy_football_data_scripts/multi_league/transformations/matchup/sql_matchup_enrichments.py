@@ -7080,12 +7080,21 @@ class MatchupEnrichmentsMixin:
     def build_schedule_from_matchup(self) -> int:
         """Derive the schedule table from matchup data.
 
-        Projects matchup columns into the canonical schedule schema.
-        Replaces separate schedule fetchers on all platforms — schedule
-        is always a subset of matchup data.
+        Refresh played fixtures from matchup and retain the provider's future
+        weeks. Finalized facts are not the full simulation schedule.
         """
         m = self._qualified_name("matchup")
         target = self._qualified_name("schedule")
+        future_rows = ""
+        if self._table_exists("schedule"):
+            future_rows = f"""
+                UNION ALL BY NAME
+                SELECT s.* FROM {target} s
+                WHERE s.db_name = '{self.db_name}' AND NOT EXISTS (
+                    SELECT 1 FROM {m} m WHERE m.db_name = s.db_name
+                    AND m.year = s.year AND m.week >= s.week
+                )
+            """
         sql = f"""
             CREATE OR REPLACE TABLE {target} AS
             SELECT
@@ -7127,8 +7136,9 @@ class MatchupEnrichmentsMixin:
                 champion,
                 sacko,
                 placement_rank
-            FROM {m}
+            FROM {m} m
             WHERE {self._db_filter("m")}
+            {future_rows}
             ORDER BY year, week, manager
         """
         return self._execute(sql, "build_schedule_from_matchup: derive schedule table from matchup")

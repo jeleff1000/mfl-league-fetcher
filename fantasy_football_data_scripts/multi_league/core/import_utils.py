@@ -585,6 +585,7 @@ def upload_league_tables(
         db.upload_to_fly(
             db_name,
             platform=upload_platform,
+            import_mode=getattr(ctx, "import_mode", None),
             merge_source_ctx=ctx
             if (getattr(ctx, "merge_source", None) or getattr(ctx, "merge_sources", None))
             else None,

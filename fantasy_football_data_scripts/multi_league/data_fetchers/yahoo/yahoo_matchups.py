@@ -820,6 +820,13 @@ def weekly_matchup_data(
 
         # Determine weeks to fetch
         weeks = get_weeks_to_fetch(league, year, week, settings)
+        fetch_weeks = weeks
+        if not week:
+            # Keep facts at their existing finalized-week scope, but include
+            # future regular-season fixtures in the same bulk response.
+            structure = derive_playoff_structure(settings)
+            last_regular = min(structure["end_week"], structure["playoff_start_week"] - 1)
+            fetch_weeks = sorted(set(weeks) | set(range(structure["start_week"], last_regular + 1)))
 
         # Fetch matchups for each week
         if logger:
@@ -834,7 +841,7 @@ def weekly_matchup_data(
         # ignored an explicit ``week`` argument, so a targeted refresh could
         # accidentally stage future scheduled matchups as its active state.
         # Yahoo silently ignores non-existent weeks (no errors, no nulls).
-        all_weeks_param = ",".join(str(w) for w in weeks)
+        all_weeks_param = ",".join(str(w) for w in fetch_weeks)
         try:
             rows = parse_matchups_for_week(oauth, yearid, year, all_weeks_param, manager_overrides, debug_xml)
             all_rows.extend(rows)
@@ -845,7 +852,7 @@ def weekly_matchup_data(
             print(f"[matchups] Bulk fetch failed ({e}), falling back to per-week")
 
         if not all_rows:
-            for w in weeks:
+            for w in fetch_weeks:
                 try:
                     rows = parse_matchups_for_week(oauth, yearid, year, w, manager_overrides, debug_xml)
                     all_rows.extend(rows)
@@ -901,6 +908,7 @@ def weekly_matchup_data(
         # ALL games (played + unplayed) → schedule table.
         # A game is "played" if either team has non-zero points.
         played_mask = (all_df["team_points"].fillna(0) != 0) | (all_df["opponent_points"].fillna(0) != 0) | final_tie_mask
+        played_mask &= pd.to_numeric(all_df["week"], errors="coerce").isin(weeks)
         df = all_df[played_mask].copy()
         schedule_df = all_df.copy()  # schedule gets everything
 

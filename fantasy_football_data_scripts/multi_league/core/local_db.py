@@ -1004,6 +1004,31 @@ class LocalLeagueDB:
         resolved_mode = (import_mode or _infer_fly_import_mode() or "unknown").strip().lower()
         quick_publish = resolved_mode == "quick"
         publish_format = "delta" if quick_publish else os.environ.get("FLY_PUBLISH_FORMAT", "duckdb").strip().lower()
+        manifest_path = self.data_dir / "delta_publish_manifest.json"
+
+        def record_commit(manifest: dict, *, bundle_id: str | None, finalized: bool, transport: str) -> None:
+            # The existing local manifest also carries the confirmed commit.
+            # Save it before inventory, merge-source cleanup, or cache work.
+            manifest["publication"] = {
+                "status": "COMMITTED", "executed": True, "bundle_id": bundle_id,
+                "transport": transport,
+                "finalization_status": "complete" if finalized else "pending",
+            }
+            try:
+                pending = manifest_path.with_suffix(".json.pending")
+                pending.write_text(json.dumps(manifest, sort_keys=True, indent=2, default=str), encoding="utf-8")
+                pending.replace(manifest_path)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning("[UPLOAD-FLY] Data committed; local receipt reporting failed (%s)", type(exc).__name__)
+            output = os.environ.get("GITHUB_OUTPUT")
+            if output:
+                try:
+                    with Path(output).open("a", encoding="utf-8") as handle:
+                        handle.write("data_committed=true\n")
+                        handle.write(f"publication_manifest={manifest_path.resolve().as_posix()}\n")
+                except OSError as exc:
+                    logger.warning("[UPLOAD-FLY] Data committed; Actions output reporting failed (%s)", type(exc).__name__)
+
         if publish_format == "delta":
             from multi_league.core.delta_publish import build_delta_bundle
 
@@ -1024,6 +1049,7 @@ class LocalLeagueDB:
                     raise RuntimeError("Invalid pre-fetch Fly publication generation")
 
             bundle = None
+            committed = False
             try:
                 bundle_start = time.perf_counter()
                 bundle = build_delta_bundle(
@@ -1069,6 +1095,10 @@ class LocalLeagueDB:
                     )
                     logger.info("[UPLOAD-FLY] %s stale bundle skipped: %s", db_name, result)
                     return
+                if not isinstance(result, dict) or result.get("status") != "COMMITTED":
+                    raise RuntimeError("Delta publication lacks a COMMITTED receipt")
+                committed = True
+                record_commit(bundle.manifest, bundle_id=bundle.bundle_id, finalized=False, transport="delta")
                 timing_bits = []
                 if isinstance(result, dict):
                     if result.get("lock_wait_seconds") is not None:
@@ -1081,9 +1111,15 @@ class LocalLeagueDB:
                 endpoint = "merge-fleet-partition" if quick_publish else "merge-league-delta"
                 print(f"[UPLOAD-FLY] {endpoint} completed in {elapsed:.1f}s{suffix}")
                 finalize_inventory_and_merge_source(target)
+                record_commit(bundle.manifest, bundle_id=bundle.bundle_id, finalized=True, transport="delta")
                 logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
                 return
             except Exception as exc:
+                if committed:
+                    raise RuntimeError(
+                        "Fly data committed; finalization pending. Resume finalization; "
+                        "do not repeat the data upload."
+                    ) from exc
                 if not quick_publish and delta_fallback_allowed(exc):
                     logger.warning(
                         "[UPLOAD-FLY] Delta publish failed on a fallback-allowed endpoint/network error; "
@@ -1133,6 +1169,7 @@ class LocalLeagueDB:
         staging_start = time.perf_counter()
         staged_tables = 0
         staged_rows = 0
+        staged_manifest = []
         upload_alias = "_upload"
         attached_upload = False
         try:
@@ -1173,6 +1210,7 @@ class LocalLeagueDB:
                 )
                 staged_tables += 1
                 staged_rows += local_count
+                staged_manifest.append({"table": table, "row_count": local_count, "included": True})
                 logger.info("[UPLOAD-FLY] Staged %s: %d rows", table, local_count)
         finally:
             if attached_upload:
@@ -1194,8 +1232,20 @@ class LocalLeagueDB:
             target = FlyTarget()
             merge_start = time.perf_counter()
             result = target.merge_league(db_name, upload_path)
-            print(f"[UPLOAD-FLY] merge-league completed in {time.perf_counter() - merge_start:.1f}s")
-            finalize_inventory_and_merge_source(target)
+            if not isinstance(result, dict) or str(result.get("status", "")).upper() not in {"MERGED", "COMMITTED"}:
+                raise RuntimeError("League publication lacks a confirmed merge receipt")
+            manifest = {"db_name": db_name, "platform": platform or _infer_fly_platform(),
+                        "import_mode": resolved_mode, "tables": staged_manifest}
+            try:
+                record_commit(manifest, bundle_id=None, finalized=False, transport="duckdb")
+                print(f"[UPLOAD-FLY] merge-league completed in {time.perf_counter() - merge_start:.1f}s")
+                finalize_inventory_and_merge_source(target)
+                record_commit(manifest, bundle_id=None, finalized=True, transport="duckdb")
+            except Exception as exc:
+                raise RuntimeError(
+                    "Fly data committed; finalization pending. Resume finalization; "
+                    "do not repeat the data upload."
+                ) from exc
             logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
         finally:
             upload_path.unlink(missing_ok=True)

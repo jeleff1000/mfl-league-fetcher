@@ -230,6 +230,31 @@ class SQLEnrichments(
         total_enrichments = len(enrichments)
         run_started_at = time.perf_counter()
 
+        # No-input features are complete with zero rows, not failed enrichments.
+        # Do not skip player scoring, ranks, keeper configuration, or pick
+        # conveyances merely because there is no draft. Real applicable errors
+        # still reach the existing required-enrichment gate before publication.
+        empty_feature_steps = {
+            "draft": {
+                "draft_to_player", "populate_max_keepers", "backfill_draft_positions",
+                "backfill_draft_managers", "player_to_draft", "draft_manager_aggregates",
+                "draft_cost_buckets", "draft_value_zscore", "draft_age_zscore",
+                "draft_bench_insurance", "draft_starter_designation", "draft_failure_rates",
+                "draft_bench_value_by_rank",
+            },
+            "transactions": {
+                "transaction_weeks_from_matchup", "transactions_to_player", "fix_unknown_managers",
+                "draft_pick_conveyances", "player_to_transactions", "transaction_lamar_ros",
+                "transaction_score", "transaction_engagement_metrics",
+            },
+        }
+        no_input = {}
+        for table, names in empty_feature_steps.items():
+            if self._table_exists(table) and self._get_connection().execute(
+                f"SELECT 1 FROM {self._qualified_name(table)} WHERE {self._db_filter()} LIMIT 1"
+            ).fetchone() is None:
+                no_input.update({name: table for name in names})
+
         for index, (name, func) in enumerate(enrichments, start=1):
             if name in skip:
                 logger.info(f"[ENRICHMENT {index}/{total_enrichments}] SKIP {name} (in skip list)")
@@ -241,6 +266,11 @@ class SQLEnrichments(
                     f"[ENRICHMENT {index}/{total_enrichments}] SKIP {name} (upstream critical dependency failed)"
                 )
                 results[name] = ("error", "skipped: upstream critical dependency failed")
+                continue
+
+            if name in no_input:
+                logger.info(f"[ENRICHMENT {index}/{total_enrichments}] NO INPUT {name}: {no_input[name]} is empty")
+                results[name] = 0
                 continue
 
             step_started_at = time.perf_counter()

@@ -34,6 +34,10 @@ concurrency:
 
 jobs:
   quick-import:
+    outputs:
+      data_committed: ${{ steps.publication.outputs.data_committed }}
+      cache_verified: ${{ steps.cache_publish.outputs.cache_verified }}
+      completion_status: ${{ steps.cache_publish.outputs.completion_status }}
     runs-on: ubuntu-latest
     timeout-minutes: 60  # Quick imports should be fast
 
@@ -448,6 +452,7 @@ jobs:
 
       # ==================== UPLOAD LEAGUE DATA ====================
       - name: Upload league data
+        id: publication
         if: steps.import.outputs.exit_code == '0'
         run: |
           cd fantasy_football_data_scripts
@@ -469,7 +474,8 @@ jobs:
 
       # ==================== REVALIDATE + WARM VERCEL CACHE ====================
       - name: Revalidate and warm Vercel cache
-        if: steps.import.outputs.exit_code == '0'
+        id: cache_publish
+        if: ${{ !cancelled() && steps.publication.outputs.data_committed == 'true' }}
         env:
           REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
           DB_NAME: ${{ env.DB_NAME }}

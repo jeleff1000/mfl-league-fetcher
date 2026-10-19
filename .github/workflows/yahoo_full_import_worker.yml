@@ -39,6 +39,10 @@ concurrency:
 
 jobs:
   import-league-data:
+    outputs:
+      data_committed: ${{ steps.publication.outputs.data_committed }}
+      cache_verified: ${{ steps.cache_publish.outputs.cache_verified }}
+      completion_status: ${{ steps.cache_publish.outputs.completion_status }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -657,6 +661,7 @@ jobs:
       # Upload all local tables (core + aggregation + sims) to the database.
       # This replaces the quick import data with the full historical dataset.
       - name: Upload league data
+        id: publication
         if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
         run: |
           echo "========================================"
@@ -687,7 +692,8 @@ jobs:
 
       # ==================== REVALIDATE + WARM VERCEL CACHE ====================
       - name: Revalidate and warm Vercel cache
-        if: steps.import.outputs.exit_code == '0' && env.VERIFY_ONLY != 'true'
+        id: cache_publish
+        if: ${{ !cancelled() && steps.publication.outputs.data_committed == 'true' }}
         env:
           REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
           DB_NAME: ${{ env.DB_NAME }}

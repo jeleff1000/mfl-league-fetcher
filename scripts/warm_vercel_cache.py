@@ -243,6 +243,12 @@ def warm_one(url: str, timeout: int, attempts: int = 3) -> WarmResult:
     return WarmResult(url, 0, ms, "", 0, str(last_exc))
 
 
+def _manifest_matches_league(payload: dict, db: str) -> bool:
+    return payload.get("db_name") == db or (
+        payload.get("db_name") == "___fleet" and payload.get("db_names") == [db]
+    )
+
+
 def _discover_manifest_path(db: str) -> str | None:
     candidates = sorted(Path.cwd().glob("fantasy_football_data/**/delta_publish_manifest.json"))
     for candidate in candidates:
@@ -250,7 +256,7 @@ def _discover_manifest_path(db: str) -> str | None:
             payload = json.loads(candidate.read_text(encoding="utf-8"))
         except Exception:
             continue
-        if payload.get("db_name") == db:
+        if _manifest_matches_league(payload, db):
             return str(candidate)
     return None
 
@@ -366,7 +372,7 @@ def verify_fly_commit_visible(manifest_path: str | None, db: str, timeout: int) 
     if not manifest_path:
         return
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    if manifest.get("db_name") != db:
+    if not _manifest_matches_league(manifest, db):
         raise RuntimeError(f"Manifest db_name {manifest.get('db_name')!r} does not match {db!r}")
 
     safe_db = db.replace("'", "''")
@@ -390,13 +396,21 @@ def verify_fly_commit_visible(manifest_path: str | None, db: str, timeout: int) 
             raise RuntimeError(f"Fly delta state is not committed yet: {state_rows[0]}")
 
     allow_post_upload_growth = _has_post_upload_merge_source(manifest_path)
-    for entry in manifest.get("tables", [])[:3]:
+    # Initialization-only user configuration is preserved by the server. Its
+    # existing row count is not an equality witness for the incoming payload.
+    replaced = [entry for entry in manifest.get("tables", []) if entry.get("merge_mode") != "initialize_missing"]
+    for entry in replaced[:3]:
         table = str(entry.get("table") or "")
         if not TABLE_RE.fullmatch(table):
             raise RuntimeError(f"Unsafe table name in manifest: {table!r}")
         expected = int(entry.get("row_count") or 0)
+        scope = entry.get("scope") or {}
+        years = scope.get("years") or ([scope["year"]] if "year" in scope else [])
+        if any(type(year) is not int or not 1900 <= year <= 2200 for year in years):
+            raise RuntimeError(f"Invalid publication year scope for {table}")
+        year_filter = " AND year IN (" + ",".join(str(year) for year in years) + ")" if years else ""
         rows = _fly_query(
-            f"SELECT COUNT(*) AS cnt FROM public.\"{table}\" WHERE db_name = '{safe_db}'",
+            f"SELECT COUNT(*) AS cnt FROM public.\"{table}\" WHERE db_name = '{safe_db}'" + year_filter,
             timeout,
         )
         actual = int(rows[0].get("cnt") or 0) if rows else 0
@@ -571,17 +585,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def _run_warmer(args) -> tuple[int, bool]:
     db = args.db.strip()
     if not DB_NAME_RE.match(db):
         print(f"Invalid db name: {db}", file=sys.stderr)
-        return 2
+        return 2, False
 
     secret = normalize_secret(args.secret)
     if not secret:
         print("REVALIDATION_SECRET is not set; cannot revalidate Vercel cache", file=sys.stderr)
-        return 1 if args.strict else 0
+        return (1 if args.strict else 0), False
 
     if args.jitter_seconds > 0:
         delay = random.randint(0, args.jitter_seconds)
@@ -596,21 +609,21 @@ def main() -> int:
             print("Fly committed bundle is visible to read path")
         except Exception as exc:
             print(f"Fly commit visibility check failed: {exc}", file=sys.stderr)
-            return 1 if args.strict else 0
+            return (1 if args.strict else 0), False
 
     print(f"Revalidating {db} on {site_url} with strategy={args.strategy}")
     try:
         revalidate(site_url, db, secret, args.strategy, args.timeout)
     except Exception as exc:  # noqa: BLE001 - cache warm-up is best-effort by default
         print(f"Revalidation failed: {exc}", file=sys.stderr)
-        return 1 if args.strict else 0
+        return (1 if args.strict else 0), False
 
     targets = list(iter_warm_targets(site_url, db, args.mode, args.manifest or None))
     if args.required_only:
         targets = [target for target in targets if target.cache_class == "cache_required"]
     if not targets:
         print("Warm mode is none; revalidation complete")
-        return 0
+        return 0, False
 
     print(f"Warming {len(targets)} URL(s) with concurrency={args.concurrency}")
     failures = 0
@@ -656,11 +669,65 @@ def main() -> int:
     if failures:
         print(f"Warm-up completed with {failures} failure(s)", file=sys.stderr)
         if args.soft_warm_failures:
-            print("Warm-up failures are warnings; committed import remains successful", file=sys.stderr)
-            return 0
-        return 1 if args.strict else 0
+            print("Data publication is unchanged; cache verification is pending", file=sys.stderr)
+            return 0, False
+        return (1 if args.strict else 0), False
     print("Warm-up complete")
-    return 0
+    return 0, bool(args.verify_hot)
+
+
+def _record_cache_result(args, verified: bool) -> None:
+    """Report cache completion separately from an already-confirmed data write."""
+    manifest_path = resolve_manifest_path(args.db.strip(), args.manifest or None)
+    manifest = None
+    if manifest_path:
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    publication = (manifest or {}).get("publication") or {}
+    committed = bool(
+        manifest and _manifest_matches_league(manifest, args.db.strip())
+        and publication.get("status") == "COMMITTED"
+        and publication.get("executed") is True
+        and publication.get("bundle_id") == manifest.get("bundle_id")
+    )
+    if manifest is not None and not committed:
+        verified = False
+    status = "cache_verified" if verified else "cache_pending"
+    if manifest is not None and not committed:
+        status = "publication_unconfirmed"
+    if committed:
+        status = "complete" if verified else "committed_cache_pending"
+        if publication.get("finalization_status") != "complete":
+            status = "committed_finalization_pending"
+        manifest["cache_verification"] = {"verified": verified, "status": "verified" if verified else "pending"}
+        path = Path(manifest_path)
+        pending = path.with_suffix(".json.pending")
+        pending.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
+        pending.replace(path)
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with Path(output).open("a", encoding="utf-8") as handle:
+            if manifest is not None:
+                handle.write(f"data_committed={str(committed).lower()}\n")
+            handle.write(f"cache_verified={str(verified).lower()}\n")
+            handle.write(f"completion_status={status}\n")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with Path(summary).open("a", encoding="utf-8") as handle:
+            recovery = " Data upload must not be repeated for cache-only recovery." if committed else ""
+            handle.write(f"\nPublication/cache status: `{status}`.{recovery}\n")
+
+
+def main() -> int:
+    args = parse_args()
+    verified = False
+    try:
+        code, verified = _run_warmer(args)
+        return code
+    finally:
+        try:
+            _record_cache_result(args, verified)
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"::warning::Cache reporting failed ({type(exc).__name__}); data publication is unchanged", file=sys.stderr)
 
 
 if __name__ == "__main__":

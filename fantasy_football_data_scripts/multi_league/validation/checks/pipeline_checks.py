@@ -70,13 +70,17 @@ def check_transform_output_non_empty(
     conn: duckdb.DuckDBPyConnection,
     tables: list[str],
 ) -> list[str]:
-    """Verify each canonical table has > 0 rows after transforms."""
+    """Require core facts, but permit leagues with no draft or transactions.
+
+    Optional tables must still exist with canonical schemas; provider errors
+    and malformed records remain the fetchers' responsibility, not row counts.
+    """
     errors = []
     for table in tables:
         table_ref = _resolve_table_ref(conn, table)
         try:
             count = conn.execute(f"SELECT COUNT(*) FROM {table_ref}").fetchone()[0]
-            if count == 0:
+            if count == 0 and table not in {"draft", "transactions"}:
                 errors.append(f"TRANSFORM_OUTPUT_NON_EMPTY: {table} has 0 rows after transforms")
         except duckdb.CatalogException:
             errors.append(f"TRANSFORM_OUTPUT_NON_EMPTY: {table} does not exist")

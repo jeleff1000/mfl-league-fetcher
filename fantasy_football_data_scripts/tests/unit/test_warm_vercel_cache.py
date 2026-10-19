@@ -251,8 +251,10 @@ def _run_main_with_fake_successful_setup(monkeypatch, warmer, args):
     return warmer.main()
 
 
-def test_soft_warm_failures_prevent_false_import_failure(monkeypatch, capsys):
+def test_soft_warm_failures_prevent_false_import_failure(monkeypatch, capsys, tmp_path):
     warmer = _load_warmer()
+    output = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     targets = [
         warmer.WarmTarget("https://example.test/ok", "/{db}", "cache_expected"),
         warmer.WarmTarget(
@@ -288,7 +290,8 @@ def test_soft_warm_failures_prevent_false_import_failure(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert code == 0
     assert "Warm-up completed with 1 failure(s)" in captured.err
-    assert "committed import remains successful" in captured.err
+    assert "cache_verified=false" in output.read_text()
+    assert "completion_status=cache_pending" in output.read_text()
 
 
 def test_strict_warm_failures_still_fail_without_soft_mode(monkeypatch):
@@ -342,8 +345,10 @@ def test_required_only_skips_optional_page_warms(monkeypatch):
     assert warmed == ["https://example.test/api/league/speed_test/overview"]
 
 
-def test_soft_warm_failures_cover_hot_verification_failures(monkeypatch, capsys):
+def test_soft_warm_failures_cover_hot_verification_failures(monkeypatch, capsys, tmp_path):
     warmer = _load_warmer()
+    output = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     target = warmer.WarmTarget(
         "https://example.test/api/league/speed_test/overview",
         "/api/league/{db}/overview",
@@ -380,7 +385,8 @@ def test_soft_warm_failures_cover_hot_verification_failures(monkeypatch, capsys)
     assert "Repeat warm had 1 failure(s)" in captured.err
     assert "Cache-required hot ratio 0.000 below target" in captured.err
     assert "Repeat warm p95 10000ms exceeds target" in captured.err
-    assert "committed import remains successful" in captured.err
+    assert "cache_verified=false" in output.read_text()
+    assert "completion_status=cache_pending" in output.read_text()
 
 
 @pytest.mark.parametrize(

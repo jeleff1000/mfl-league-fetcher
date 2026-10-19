@@ -4,6 +4,68 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+def test_empty_optional_sources_do_not_block_an_otherwise_played_import(platform):
+    import duckdb
+    from multi_league.validation.checks.pipeline_checks import check_transform_output_non_empty
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        tables = ["league_settings", "matchup", "player_fantasy", "draft", "transactions", "schedule"]
+        for table in tables:
+            conn.execute(f"CREATE TABLE public.{table} (platform VARCHAR)")
+            if table not in {"draft", "transactions"}:
+                conn.execute(f"INSERT INTO public.{table} VALUES (?)", [platform])
+        assert check_transform_output_non_empty(conn, tables) == []
+        conn.execute("DELETE FROM public.matchup")
+        assert check_transform_output_non_empty(conn, tables) == [
+            "TRANSFORM_OUTPUT_NON_EMPTY: matchup has 0 rows after transforms"]
+
+
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+@pytest.mark.parametrize("draft_present,transactions_present", [(False, False), (True, True), (False, True), (True, False)])
+def test_empty_feature_enrichments_are_inapplicable_but_real_failures_still_block(platform, draft_present, transactions_present):
+    import duckdb
+    from multi_league.transformations.sql_enrichments import SQLEnrichments
+    from multi_league.core.import_pipeline import require_sql_enrichment_success
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        for table, populated in (("draft", draft_present), ("transactions", transactions_present)):
+            conn.execute(f"CREATE TABLE public.{table} (db_name VARCHAR)")
+            if populated:
+                conn.execute(f"INSERT INTO public.{table} VALUES ('league')")
+        conn.execute("CREATE TABLE completed (step VARCHAR)")
+
+        class Runner:
+            db_name = "league"
+            roster_by_year = {}
+            def _get_connection(self): return conn
+            def _qualified_name(self, table): return "public." + table
+            def _db_filter(self): return "db_name = 'league'"
+            def _table_exists(self, table): return True
+            def __getattr__(self, name):
+                if name == "_format_result": return SQLEnrichments._format_result
+                def step(*args):
+                    if name in {"draft_value_zscore", "transaction_engagement_metrics"}:
+                        raise ValueError("feature SQL did not complete")
+                    conn.execute("INSERT INTO completed VALUES (?)", [name])
+                    return 0
+                return step
+
+        result = SQLEnrichments.run_all(Runner())
+        # Independent scoring/rank work must finish in either case.
+        assert conn.execute("SELECT COUNT(*) FROM completed WHERE step='populate_position_rank'").fetchone() == (1,)
+        if draft_present or transactions_present:
+            failed = "draft_value_zscore" if draft_present else "transaction_engagement_metrics"
+            with pytest.raises(RuntimeError, match=failed):
+                require_sql_enrichment_success(result)
+        else:
+            assert result["draft_value_zscore"] == 0
+            assert result["transaction_engagement_metrics"] == 0
+            require_sql_enrichment_success(result)
+        # Real draft-pick trades remain applicable even with no draft results.
+        assert conn.execute("SELECT COUNT(*) FROM completed WHERE step='draft_pick_conveyances'").fetchone() == (int(transactions_present),)
+
+
 def test_weekly_quick_graph_does_not_rewrite_saved_frontend_context(monkeypatch, tmp_path):
     from multi_league.core import import_pipeline, local_db
 

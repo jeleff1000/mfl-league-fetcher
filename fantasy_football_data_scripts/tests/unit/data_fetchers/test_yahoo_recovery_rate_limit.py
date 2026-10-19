@@ -28,14 +28,15 @@ from multi_league.core.transaction_periods import TransactionWeekError
 
 
 def test_transaction_recovery_api_propagates_invalid_week(monkeypatch):
+    import pandas as pd
     from multi_league.data_fetchers.yahoo import yahoo_recovery_api as api, yahoo_transactions as tx
-    monkeypatch.setattr(tx, "fetch_team_mappings", lambda *args: ({}, {}, {}))
-    monkeypatch.setattr(api, "_build_matchup_windows", lambda *args: None)
+    windows = pd.DataFrame([{"year": 2024, "week": 6, "week_start": "2024-10-08", "week_end": "2024-10-14"}])
+    monkeypatch.setattr(tx, "load_matchup_windows", lambda *args, **kwargs: windows)
     def invalid(*args, **kwargs):
         raise TransactionWeekError("Unverified transaction week")
-    monkeypatch.setattr(tx, "fetch_transactions_for_year", invalid)
+    monkeypatch.setattr(tx, "fetch_transactions", invalid)
     with pytest.raises(TransactionWeekError):
-        api.fetch_transactions_for_year_recovery(None, "449.l.1", 2024, None)
+        api.fetch_transactions_for_year_recovery(SimpleNamespace(), 2024, None)
 
 
 def test_transaction_recovery_dispatch_propagates_invalid_week(tmp_path, monkeypatch):

@@ -2165,7 +2165,7 @@ def _resolve_transaction_gap(gap: Gap, ctx, data_dir: Path, oauth=None, local_db
     if oauth is None:
         return False
 
-    df = fetch_transactions_for_year_recovery(oauth, league_key, gap.year, local_db=local_db)
+    df = fetch_transactions_for_year_recovery(ctx, gap.year, local_db=local_db)
     if df.empty:
         return "empty"
 

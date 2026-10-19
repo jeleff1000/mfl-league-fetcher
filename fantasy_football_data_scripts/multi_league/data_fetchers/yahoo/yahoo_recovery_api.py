@@ -150,62 +150,30 @@ def fetch_single_week_matchups(
 
 
 def fetch_transactions_for_year_recovery(
-    oauth,
-    league_key: str,
+    ctx,
     year: int,
     local_db,
 ) -> pd.DataFrame:
-    """Fetch ALL transactions for a year using the original fetcher logic."""
+    """Replay the normal transaction path, including its calendar and aliases."""
     try:
         from multi_league.data_fetchers.yahoo.yahoo_transactions import (
-            backfill_unknown_drop_managers,
-            fetch_team_mappings,
-            fetch_transactions_for_year as _orig_fetch,
-            process_transactions_chronologically,
-            transactions_to_dataframe,
+            fetch_transactions,
+            load_matchup_windows,
         )
 
-        # Build team mappings (team_key -> manager/guid/team_name)
-        team_mappings, guid_mappings, team_name_mappings = fetch_team_mappings(oauth, league_key)
-        if not team_mappings:
-            logger.warning("[RECOVERY API] No team mappings for %s - cannot resolve managers", league_key)
-            # Continue anyway - transactions will have "Unknown" manager but still valid
+        # Missing matchups need not mean missing dates: reuse the normal
+        # retained/calendar cache path before making one bulk Yahoo request.
+        windows = load_matchup_windows(ctx, year, local_db=local_db)
+        if windows.empty:
+            raise RecoveryDeferredError(f"Yahoo dated calendar unavailable for {year}; defer transaction recovery")
+        return fetch_transactions(ctx, year, matchup_windows=windows, local_db=local_db)
 
-        # Build matchup_windows from the current local import state.
-        matchup_windows = _build_matchup_windows(local_db, year)
-
-        # Call the original fetcher function.
-        transactions = _orig_fetch(
-            oauth=oauth,
-            league_key=league_key,
-            year=year,
-            team_mappings=team_mappings,
-            guid_mappings=guid_mappings,
-            team_name_mappings=team_name_mappings,
-            matchup_windows=matchup_windows,
-        )
-
-        if not transactions:
-            return pd.DataFrame()
-
-        # Match the normal fetcher path so recovery sees the same manager repair logic.
-        df = transactions_to_dataframe(transactions)
-        df = process_transactions_chronologically(df)
-        df = backfill_unknown_drop_managers(df)
-        logger.info(
-            "[RECOVERY API] Fetched %d transactions for %s year %d",
-            len(df),
-            league_key,
-            year,
-        )
-        return df
-
-    except TransactionWeekError:
+    except (TransactionWeekError, RecoveryDeferredError):
         raise
     except Exception as e:
         if is_recovery_deferred_error(e):
             raise RecoveryDeferredError(str(e)) from e
-        logger.warning("[RECOVERY API] Transaction recovery failed %s year %d: %s", league_key, year, e)
+        logger.warning("[RECOVERY API] Transaction recovery failed year %d: %s", year, e)
         return pd.DataFrame()
 
 

@@ -537,7 +537,7 @@ class ESPNAPIClient:
                     seen.add(key)
                     unique_items.append(item)
             items = unique_items
-            if not items and txn.get("executionType") == "EXECUTE" and not txn.get("status"):
+            if not items and txn.get("executionType") == "EXECUTE":
                 logger.warning("[TRANSACTIONS] ESPN acknowledgement %s has no linked asset payload; "
                                "not inventing a trade from another proposal", txn.get("id"))
                 continue

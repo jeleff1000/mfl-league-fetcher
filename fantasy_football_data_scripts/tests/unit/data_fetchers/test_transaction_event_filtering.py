@@ -318,13 +318,14 @@ def parse_native_espn(events, monkeypatch):
 
 
 @pytest.mark.parametrize("processed", [False, True])
-def test_espn_native_trade_order_and_collateral_drop_preserve_all_moves(monkeypatch, processed):
+@pytest.mark.parametrize("ack_status", [None, "EXECUTED"])
+def test_espn_native_trade_order_and_collateral_drop_preserve_all_moves(monkeypatch, processed, ack_status):
     from multi_league.core.canonical_transaction import normalize_transaction_df
     proposal = event("espn", kind="trade")
     proposal.update(id="proposal", type="TRADE_PROPOSAL", status="PENDING")
     proposal["items"][0].update(type="TRADE", player=None)
     ack = event("espn", kind="trade")
-    ack.update(id="ack", relatedTransactionId="proposal", status=None, executionType="EXECUTE",
+    ack.update(id="ack", relatedTransactionId="proposal", status=ack_status, executionType="EXECUTE",
                proposedDate=1728520236000, processDate=None, acceptDate=None,
                items=[{"playerId": 2, "type": "DROP", "fromTeamId": 2, "toTeamId": 0}])
     events = [ack, proposal]
@@ -341,21 +342,38 @@ def test_espn_native_trade_order_and_collateral_drop_preserve_all_moves(monkeypa
     assert frame["timestamp"].notna().all()
 
 
-def test_espn_purged_proposal_still_retains_collateral_drop(monkeypatch):
+@pytest.mark.parametrize("ack_status", [None, "EXECUTED"])
+def test_espn_purged_proposal_still_retains_collateral_drop(monkeypatch, ack_status):
     ack = event("espn", kind="trade")
-    ack.update(id="ack", relatedTransactionId="purged", status=None, executionType="EXECUTE",
+    ack.update(id="ack", relatedTransactionId="purged", status=ack_status, executionType="EXECUTE",
                proposedDate=1728520236000, items=[{"playerId": 2, "type": "DROP", "fromTeamId": 1, "toTeamId": 0}])
     raw = parse_native_espn([ack], monkeypatch)
     assert raw[["espn_player_id", "manager_guid", "transaction_type"]].values.tolist() == [[2, "scott-id", "drop"]]
 
 
-def test_espn_acknowledgement_never_borrows_an_unrelated_proposal(monkeypatch):
+@pytest.mark.parametrize("ack_status", [None, "EXECUTED"])
+def test_espn_acknowledgement_never_borrows_an_unrelated_proposal(monkeypatch, ack_status):
     proposal = event("espn", kind="trade")
     proposal.update(id="unrelated", type="TRADE_PROPOSAL", status="CANCELED")
     ack = event("espn", kind="trade", assets=False)
-    ack.update(relatedTransactionId="purged", status=None, executionType="EXECUTE", teamId=1)
+    ack.update(relatedTransactionId="purged", status=ack_status, executionType="EXECUTE", teamId=1)
     raw = parse_native_espn([proposal, ack, event("espn")], monkeypatch)
     assert raw["transaction_type"].tolist() == ["add"]
+
+
+def test_espn_awesomest_empty_executed_ack_does_not_block_real_moves(monkeypatch):
+    # Native record from failed production run 39261815823, not a processed trade.
+    ack = {"id": "d5e9fc5d-8e66-4e28-a799-629f50bbce1c",
+           "relatedTransactionId": "b8e74757-139b-4357-afd8-a4b916bc757c",
+           "type": "TRADE_ACCEPT", "executionType": "EXECUTE", "status": "EXECUTED",
+           "scoringPeriodId": 1, "processDate": None, "proposedDate": 1787536755335,
+           "isPending": False, "items": []}
+    trade = event("espn", kind="trade")
+    trade.update(id="actual-trade", executionType="PROCESS", status="EXECUTED")
+    trade["items"][0]["type"] = "TRADE"
+    raw = parse_native_espn([ack, trade, event("espn")], monkeypatch)
+    assert raw[["transaction_id", "transaction_type", "espn_player_id"]].values.tolist() == [
+        ["7", "add", 1], ["actual-trade", "trade", 1]]
 
 
 def test_espn_processed_trade_missing_real_assets_remains_an_error(monkeypatch):

@@ -98,7 +98,8 @@ def yahoo_trade_pipeline(monkeypatch, tmp_path):
 
     monkeypatch.setattr(transactions, "fetch_url", provider_response)
     names, guids, team_names = transactions.fetch_team_mappings(None, "461.l.1")
-    windows = pd.DataFrame(columns=["year", "week", "week_start", "week_end", "cumulative_week"])
+    windows = pd.DataFrame([dict(year=2025, week=1, week_start="2025-09-04",
+                                 week_end="2025-09-08", cumulative_week=202501)])
     fetched = transactions.fetch_transactions_for_year(None, "461.l.1", 2025, names, guids, team_names, windows)
     txn_df = normalize_transaction_df(transactions.transactions_to_dataframe(fetched), "yahoo", "461.l.1")
 

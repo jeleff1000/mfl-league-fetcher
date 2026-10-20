@@ -796,6 +796,7 @@ def fetch_transactions_for_year(
     team_name_mappings: dict[str, str],
     matchup_windows: pd.DataFrame,
     data_dir=None,
+    on_calendar_extended=None,
 ) -> list[Transaction]:
     """
     Fetch all transactions for a specific year.
@@ -818,10 +819,46 @@ def fetch_transactions_for_year(
     api_calls = 0
     failed_at_offset = None  # Track where pagination broke for retry
     unknown_team_keys: set[str] = set()  # Track team_keys that couldn't be resolved
+    calendar_extended = False
+
+    def transaction_week(timestamp):
+        nonlocal matchup_windows, calendar_extended
+        try:
+            return map_transaction_to_week(timestamp, year, matchup_windows)
+        except TransactionWeekError:
+            # Yahoo retains real roster moves after some leagues' championships.
+            # Consult the native NFL calendar only beyond the last dated window;
+            # never mask an interior gap, overlap, invalid timestamp or missing calendar.
+            dated = dated_matchup_windows(matchup_windows)
+            dated = dated[pd.to_numeric(dated['year'], errors='coerce') == int(year)]
+            stamp = pd.to_datetime(pd.to_numeric(timestamp, errors='coerce'), unit='s', errors='coerce', utc=True)
+            last_end = pd.to_datetime(dated['week_end'], utc=True).max()
+            if calendar_extended or dated.empty or pd.isna(stamp) or stamp < last_end + pd.Timedelta(days=1):
+                raise
+            game_key = league_key.split('.')[0]
+            root = fetch_url(f'https://fantasysports.yahooapis.com/fantasy/v2/game/{game_key}/game_weeks', oauth)
+            extra = pd.DataFrame([
+                {'year': int(year),
+                 'week': native_transaction_week(w.findtext('week'), platform='yahoo', transaction_id=league_key),
+                 'week_start': w.findtext('start'), 'week_end': w.findtext('end')}
+                for w in root.findall('.//game_week')
+            ], columns=['year', 'week', 'week_start', 'week_end'])
+            extra = dated_matchup_windows(extra)
+            extra = extra[(pd.to_datetime(extra['week_start'], utc=True) > last_end)
+                          & (pd.to_numeric(extra['week']) > pd.to_numeric(dated['week']).max())]
+            extra['cumulative_week'] = int(year) * 100 + pd.to_numeric(extra['week'])
+            extended_windows = pd.concat([matchup_windows, extra], ignore_index=True)
+            if on_calendar_extended is not None:
+                on_calendar_extended(extended_windows)
+            matchup_windows = extended_windows
+            calendar_extended = True
+            print(f'  [{year}] Extended transaction calendar with {len(extra)} native NFL week(s) after league final')
+            return map_transaction_to_week(timestamp, year, matchup_windows)
 
     while True:
         url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/transactions;start={start};count={count}"
         api_calls += 1
+        page_start_count = len(all_transactions)
 
         try:
             root = fetch_url(url, oauth)
@@ -847,7 +884,7 @@ def fetch_transactions_for_year(
                 }
 
                 # Resolve week via matchup windows (exactly how matchup file defines them)
-                week_val, week_start, week_end = map_transaction_to_week(ts, year, matchup_windows)
+                week_val, week_start, week_end = transaction_week(ts)
 
                 faab_bid = (tr.findtext("faab_bid") or "0").strip()
                 transaction_key = (tr.findtext("transaction_key") or "").strip()
@@ -1010,10 +1047,12 @@ def fetch_transactions_for_year(
         except TransactionWeekError:
             raise
         except (APITimeoutError, RecoverableAPIError) as e:
+            del all_transactions[page_start_count:]
             print(f"    ERROR: {e}")
             failed_at_offset = start
             break
         except Exception as e:
+            del all_transactions[page_start_count:]
             print(f"    ERROR: Unexpected error: {e}")
             failed_at_offset = start
             break
@@ -1029,6 +1068,7 @@ def fetch_transactions_for_year(
         for _retry in range(3):  # Up to 3 retry pages
             url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/transactions;start={resume_start};count={count}"
             api_calls += 1
+            page_start_count = len(all_transactions)
             try:
                 root = fetch_url(url, oauth)
                 tx_elements = root.findall(".//transaction")
@@ -1042,7 +1082,7 @@ def fetch_transactions_for_year(
                     tx_type = (tr.findtext("type") or "").strip()
                     status = (tr.findtext("status") or "").strip()
                     ts = tr.findtext("timestamp") or "0"
-                    week_val, week_start, week_end = map_transaction_to_week(ts, year, matchup_windows)
+                    week_val, week_start, week_end = transaction_week(ts)
                     transaction_team_keys = {
                         "destination_team_key": _first_non_empty(tr.findtext("destination_team_key")),
                         "source_team_key": _first_non_empty(tr.findtext("source_team_key")),
@@ -1200,6 +1240,7 @@ def fetch_transactions_for_year(
             except TransactionWeekError:
                 raise
             except Exception as e:
+                del all_transactions[page_start_count:]
                 print(f"  [{year}] Retry failed at offset {resume_start}: {e}")
                 break
 
@@ -1551,6 +1592,12 @@ def fetch_transactions(
             local_db.connect(), db_name=local_db.league_name, year=year, windows=matchup_windows,
         )
 
+    def retain_extended_calendar(windows):
+        if local_db is not None:
+            retain_yahoo_transaction_windows(
+                local_db.connect(), db_name=local_db.league_name, year=year, windows=windows,
+            )
+
     # Fetch team mappings (with manager name normalization including --hidden-- fallback)
     manager_overrides = ctx.manager_name_overrides if ctx else {}
     team_mappings, guid_mappings, team_name_mappings = fetch_team_mappings(
@@ -1567,6 +1614,7 @@ def fetch_transactions(
         team_name_mappings,
         matchup_windows,
         data_dir=ctx.data_directory if ctx else None,
+        on_calendar_extended=retain_extended_calendar,
     )
 
     # Convert to DataFrame

@@ -410,6 +410,34 @@ def _detect_gaps_from_audit_lightweight(data_dir: Path, league_settings: dict) -
     return gaps
 
 
+def _completed_week_limits(local_db, league_settings: dict, *, explicit_failures: bool = False) -> dict[int, int]:
+    """Use local results and the settings already fetched by the import."""
+    from multi_league.core.date_utils import completed_matchup_week
+
+    conn = local_db.connect()
+    ends, observed = {}, {}
+    for table, column, target in (('league_settings', 'end_week', ends), ('matchup', 'week', observed)):
+        try:
+            target.update(conn.execute(
+                f'SELECT year, MAX({column}) FROM public.{table} GROUP BY year'
+            ).fetchall())
+        except Exception:
+            pass  # A missing source table is still reported by the normal audit.
+    limits = {}
+    for raw_year, settings in league_settings.items():
+        year = int(raw_year)
+        metadata = settings.get('metadata', settings) if isinstance(settings, dict) else {}
+        try:
+            end = int(ends.get(year) or metadata.get('end_week') or 22)
+        except (TypeError, ValueError):
+            end = 22
+        # An observed max can bound an audit, but cannot disprove an explicit
+        # failure for a later week when provider state is unavailable.
+        limits[year] = completed_matchup_week(year=year, end_week=end, metadata=metadata,
+            observed_week=end if explicit_failures else int(observed.get(year) or 0))
+    return limits
+
+
 def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
     """Audit local DuckDB and emit the original Yahoo fetcher replay units.
 
@@ -422,6 +450,11 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
     """
     settings_years = sorted(int(y) for y in league_settings.keys())
     conn = local_db.connect()
+    completed = _completed_week_limits(local_db, league_settings)
+    bounds_sql = ' '.join(f'WHEN {year} THEN {week}' for year, week in sorted(completed.items()))
+
+    def _completed_sql(year, week):
+        return f'{week} <= CASE {year} {bounds_sql} ELSE 0 END' if bounds_sql else 'FALSE'
 
     def _table_exists(name: str) -> bool:
         return (
@@ -601,7 +634,7 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
     roster_week_managers: dict[tuple[int, int], set[str]] = {}
 
     for year in settings_years:
-        if not _has_rows("matchup", year):
+        if completed.get(year, 0) > 0 and not _has_rows("matchup", year):
             _mark_year(matchup_year_reasons, year, "missing matchup data")
 
     if matchup_exists and settings_exists:
@@ -642,6 +675,7 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
                      generate_series(s.start_week, s.playoff_start - 1) AS gs(week)
                 WHERE s.num_teams > 0
                   AND s.playoff_start > s.start_week
+                  AND {_completed_sql('s.year', 'gs.week')}
             )
             SELECT
                 e.year,
@@ -682,7 +716,7 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
               ON m.year = s.year
              AND m.week = s.week
              AND ({_stable_identity_match_sql('s', schedule_columns, 'm', matchup_columns)})
-            WHERE m.year IS NULL
+            WHERE m.year IS NULL AND {_completed_sql('s.year', 's.week')}
             ORDER BY s.year, s.week
             """
         ).fetchall()
@@ -695,17 +729,8 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
         for year in settings_years:
             _mark_year(transaction_year_reasons, year, "transactions table missing")
     else:
-        tx_counts = {
-            int(year): int(count)
-            for year, count in conn.execute("SELECT year, COUNT(*) FROM public.transactions GROUP BY year").fetchall()
-            if year is not None
-        }
-        has_any_tx = any(count > 0 for count in tx_counts.values())
-        if has_any_tx:
-            for year in settings_years:
-                if tx_counts.get(year, 0) == 0:
-                    _mark_year(transaction_year_reasons, year, "missing transactions")
-
+        # Zero moves can be valid. Transport failures remain explicit manifests;
+        # one season having transactions proves nothing about another season.
         tx_unknown_rows = conn.execute(
             """
             SELECT year, COUNT(DISTINCT transaction_id) AS tx_count
@@ -763,10 +788,10 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
     if not player_exists:
         if matchup_exists:
             matchup_weeks = conn.execute(
-                """
+                f"""
                 SELECT DISTINCT year, week
                 FROM public.matchup
-                WHERE opponent IS NOT NULL
+                WHERE opponent IS NOT NULL AND {_completed_sql('year', 'week')}
                 ORDER BY year, week
                 """
             ).fetchall()
@@ -781,6 +806,7 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
                 m.manager
             FROM public.matchup m
             WHERE m.opponent IS NOT NULL
+              AND {_completed_sql('m.year', 'm.week')}
               AND {_stable_identity_sql('m', matchup_columns)} IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1
@@ -825,6 +851,7 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
                 SELECT DISTINCT m.year, m.week
                 FROM public.matchup m
                 WHERE {_stable_identity_sql('m', matchup_columns)} IS NOT NULL
+                  AND {_completed_sql('m.year', 'm.week')}
                   AND NOT EXISTS (
                     SELECT 1
                     FROM public.schedule s
@@ -846,12 +873,16 @@ def _detect_gaps_from_local_db(local_db, league_settings: dict) -> list[Gap]:
 
     if not schedule_exists:
         for year in settings_years:
+            if completed.get(year, 0) == 0:
+                continue
             if matchup_exists and _has_rows("matchup", year):
                 _mark_year(schedule_year_reasons, year, "schedule table missing")
             else:
                 _mark_year(schedule_year_reasons, year, "missing schedule data")
     else:
         for year in settings_years:
+            if completed.get(year, 0) == 0:
+                continue
             if not _has_rows("schedule", year):
                 if matchup_exists and _has_rows("matchup", year):
                     _mark_year(schedule_year_reasons, year, "missing schedule data for observed matchup weeks")
@@ -1054,7 +1085,19 @@ def _collect_retryable_gaps(
     `exclude_years`: years to skip entirely (e.g., years populated from external
     staging data — their "gaps" aren't fetchable from Yahoo because the
     league_key is too old or was never API-accessible)."""
-    manifest_gaps = _canonicalize_gap_units(_detect_gaps_from_manifests(data_dir), local_db=local_db)
+    completed = _completed_week_limits(local_db, league_settings, explicit_failures=True)
+
+    def eligible_result_gap(gap):
+        if gap.fetcher in {'matchup', 'roster'}:
+            limit = completed.get(gap.year, 0)
+            match = _ROSTER_GAP_RE.fullmatch(gap.detail)
+            if limit == 0 or (match is not None and int(match.group(1)) > limit):
+                return False
+        return True
+
+    manifest_gaps = [gap for gap in _detect_gaps_from_manifests(data_dir) if eligible_result_gap(gap)]
+    manifest_gaps = [gap for gap in _canonicalize_gap_units(manifest_gaps, local_db=local_db)
+                     if eligible_result_gap(gap)]
     audit_gaps = _canonicalize_gap_units(_detect_gaps_from_local_db(local_db, league_settings), local_db=local_db)
     current_gaps = _canonicalize_gap_units(_merge_gaps(manifest_gaps, audit_gaps), local_db=local_db)
     if hard_missing_keys:

@@ -11,7 +11,7 @@ The NFL season year follows this pattern:
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -171,6 +171,36 @@ def get_nfl_season_year_for_date(date: datetime) -> int:
         The NFL season year for that date.
     """
     return _calculate_season_from_date(date)
+
+
+def completed_matchup_week(*, year: int, end_week: int, metadata: dict,
+                           observed_week: int = 0, reference_date: datetime | None = None) -> int:
+    """Bound result audits using already-fetched season state, without API calls.
+
+    Future schedules are not evidence of played games. Without provider state,
+    audit only the observed result boundary rather than guessing the whole year.
+    A clamped championship-week counter is not final until the season ends.
+    """
+    today = (reference_date or datetime.now(timezone.utc)).date()
+    active_year = _calculate_season_from_date(today)
+    if int(year) > active_year:
+        return 0
+    if int(year) < active_year:
+        return int(end_week)
+    finished = str(metadata.get('is_finished', '')).strip().lower() in {'1', 'true', 'yes'}
+    try:
+        ended = date.fromisoformat(str(metadata.get('end_date', ''))[:10]) < today
+    except ValueError:
+        ended = False
+    if finished or ended:
+        return int(end_week)
+    try:
+        current = int(metadata['current_week'])
+        if 0 <= current <= 23:
+            return max(0, min(int(end_week), current - 1))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        pass
+    return max(0, min(int(end_week), int(observed_week)))
 
 
 def is_nfl_regular_season(reference_date: datetime = None) -> bool:

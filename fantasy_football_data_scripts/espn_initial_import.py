@@ -767,7 +767,19 @@ def main():
                 rosters_df = fetcher_dfs["Rosters"]
                 log(f"  [LOCAL DB] player_fantasy: {len(rosters_df):,} rows (saved by fetcher)")
 
-            # Schedule: derived from matchup data by build_schedule_from_matchup SQL enrichment
+            # Played results are not the future schedule. Stage ESPN's native
+            # current-season graph once; the shared SQL enrichment retains it.
+            from multi_league.core.date_utils import get_current_nfl_season_year
+            from multi_league.data_fetchers.espn.espn_schedules import fetch_espn_schedule
+
+            for schedule_year in ctx.get_year_range():
+                if int(schedule_year) != get_current_nfl_season_year():
+                    continue
+                schedule_df = fetch_espn_schedule(ctx, schedule_year)
+                if schedule_df is not None and not schedule_df.empty:
+                    db.save_table("schedule", schedule_df, year=schedule_year,
+                                  platform="espn", league_id=str(ctx.get_league_id_for_year(schedule_year)))
+                    log(f"  [LOCAL DB] native schedule: {len(schedule_df):,} rows")
 
     # Keep the resolved quick range for transformations/enrichments.
     if is_quick_import:

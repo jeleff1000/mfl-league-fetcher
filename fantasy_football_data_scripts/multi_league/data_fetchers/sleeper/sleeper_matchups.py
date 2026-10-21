@@ -1316,6 +1316,45 @@ def fetch_sleeper_matchups(
     league_id = ctx.get_league_id_for_year(year) or ctx.league_id
     db.save_table("matchup", df, year=year, platform="sleeper", league_id=str(league_id))
     log(f"\n  [LocalDB] matchup year={year}: {len(df):,} rows")
+    # Completed results stop at last_scored_leg; the simulation schedule must
+    # continue through the native regular season. Explicit week recovery keeps
+    # its narrow scope and completed seasons need no extra provider reads.
+    if weeks is None:
+        league = fetcher.client.get_league(str(league_id))
+        if str((league or {}).get("status") or "").lower() == "in_season":
+            from .sleeper_schedules import SleeperScheduleFetcher
+
+            settings = (league or {}).get("settings") or {}
+            finalized = settings.get("last_scored_leg")
+            if finalized is not None:
+                end = fetcher._get_playoff_structure(str(league_id))["playoff_week_start"]
+                future_weeks = list(range(int(finalized) + 1, int(end)))
+                if future_weeks:
+                    from multi_league.core.league_refresh import resolve_active_schedule_franchise_ids
+                    from multi_league.transformations.sql_enrichments import SQLEnrichments
+
+                    # Resolve before schedule normalization drops native team
+                    # keys. Run the import's existing SQL identity pass on the
+                    # same local connection, not the legacy Python registry.
+                    identities = SQLEnrichments(
+                        db.league_name, conn=db.connect(), data_dir=str(ctx.data_directory),
+                        manager_name_overrides=getattr(ctx, "manager_name_overrides", None),
+                        franchise_merges=getattr(ctx, "franchise_merges", None),
+                    )
+                    identities.resolve_hidden_managers()
+                    schedule = SleeperScheduleFetcher(ctx, fetcher.client).fetch_schedule_for_year(
+                        year, weeks=future_weeks,
+                    )
+                    schedule = resolve_active_schedule_franchise_ids(
+                        db, schedule, active_year=year,
+                        future_weeks=tuple(future_weeks),
+                        expected_team_keys=tuple(str(roster["roster_id"]) for roster in fetcher.client.get_league_rosters(str(league_id))),
+                    )
+                    if not schedule.empty:
+                        for column in ("team_points", "opponent_points", "win", "loss"):
+                            schedule[column] = None
+                        db.save_table("schedule", schedule, year=year, platform="sleeper", league_id=str(league_id))
+                        log(f"  [LocalDB] native future schedule year={year}: {len(schedule):,} rows")
 
     return df
 

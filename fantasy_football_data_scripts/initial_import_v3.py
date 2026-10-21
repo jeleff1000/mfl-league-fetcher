@@ -565,7 +565,7 @@ def _infer_yahoo_season_from_league_key(league_key: str | None) -> int | None:
     return YAHOO_NFL_GAME_KEY_TO_SEASON.get(int(match.group(1)))
 
 
-def _allow_empty_quick_startup(ctx, db, unplayed_years: set[int]) -> bool:
+def _allow_empty_quick_startup(ctx, db, unplayed_years: set[int], *, league_settings: dict | None = None) -> bool:
     """Allow settings-only quick imports for a brand-new unplayed season shell."""
     if getattr(ctx, "import_mode", "") != "quick":
         return False
@@ -574,13 +574,27 @@ def _allow_empty_quick_startup(ctx, db, unplayed_years: set[int]) -> bool:
     if not quick_years or not quick_years.issubset(set(unplayed_years or set())):
         return False
 
-    for table_name in ("matchup", "player_fantasy", "schedule"):
+    for table_name in ("matchup", "player_fantasy"):
         try:
             if db.table_exists(table_name) and db.row_count(table_name) > 0:
                 return False
         except Exception:
             continue
 
+    # Future fixtures are not played facts. Zero Yahoo totals alone cannot
+    # prove this: require the native pre-draft or pre-start state too.
+    if db.table_exists("schedule") and db.row_count("schedule") > 0:
+        from multi_league.core.date_utils import completed_matchup_week
+
+        for year in quick_years:
+            raw = (league_settings or {}).get(year, {})
+            metadata = raw.get("metadata", raw)
+            predraft = str(metadata.get("draft_status") or "").lower() in {"predraft", "drafting"}
+            before_start = coerce_int(metadata.get("current_week")) is not None and completed_matchup_week(
+                year=year, end_week=coerce_int(metadata.get("end_week")) or 17, metadata=metadata,
+            ) < (coerce_int(metadata.get("start_week")) or 1)
+            if not (predraft or before_start) or not _local_schedule_year_has_no_played_rows(db, year):
+                return False
     return True
 
 
@@ -1444,6 +1458,7 @@ def main():
         "transformations": [],
     }
     extra_args = ["--dry-run"] if args.dry_run else []
+    fetched_settings: dict[int, dict] = {}
 
     # =========================================================================
     # PHASE 0: No early FRESH START delete against ___leagues. The final
@@ -1622,7 +1637,6 @@ def main():
         # flow through the same flatten → local DuckDB path as Yahoo-fetched settings
         from multi_league.core.settings_loader import load_settings_json_files
 
-        fetched_settings: dict[int, dict] = {}
         if external_settings_years and settings_dir.exists():
             external_raw = load_settings_json_files(settings_dir)
             for yr, raw in external_raw.items():
@@ -2350,6 +2364,7 @@ def main():
                 )
                 if (
                     spec["fetcher_name"] == "matchups"
+                    and not failures
                     and not _local_table_has_year_rows(db, "matchup", year)
                     and (
                         year >= current_nfl_year
@@ -2787,7 +2802,9 @@ def main():
             validation_conn = db.connect()
             validation_errors: list[str] = []
             required_tables = ["league_settings", "matchup", "player_fantasy", "draft", "transactions", "schedule"]
-            allow_empty_quick_startup = _allow_empty_quick_startup(ctx, db, unplayed_yahoo_years)
+            allow_empty_quick_startup = _allow_empty_quick_startup(
+                ctx, db, unplayed_yahoo_years, league_settings=fetched_settings,
+            )
             non_empty_tables = _pre_upload_non_empty_tables(
                 allow_empty_quick_startup=allow_empty_quick_startup,
                 allow_partial_history_source=args.allow_partial_history_source,

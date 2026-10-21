@@ -185,7 +185,7 @@ def _format_year_filter(year_filter) -> str:
 
 
 def _sleeper_has_verified_unplayed_shell(client, *, year: int, league_id: str) -> bool:
-    """Prove that a drafted Sleeper league legitimately has no played weeks."""
+    """Prove that a pre-draft or drafted league has no played weeks."""
     try:
         league_id = str(league_id)
         league = client.get_league(league_id)
@@ -197,16 +197,13 @@ def _sleeper_has_verified_unplayed_shell(client, *, year: int, league_id: str) -
             return False
 
         settings = league.get("settings")
-        nfl_state = client.get_nfl_state()
-        if not isinstance(settings, dict) or not isinstance(nfl_state, dict):
-            return False
-        if _to_int_or_none(nfl_state.get("season")) != year:
+        predraft = str(league.get("status") or "") in {"pre_draft", "drafting"}
+        if not isinstance(settings, dict):
             return False
 
         num_teams = _to_int_or_none(settings.get("num_teams"))
-        current_week = _to_int_or_none(nfl_state.get("week"))
         start_week = _to_int_or_none(settings.get("start_week")) or 1
-        if not num_teams or num_teams < 2 or current_week is None or current_week < 0:
+        if not num_teams or num_teams < 2:
             return False
 
         users = client.get_league_users(league_id)
@@ -218,7 +215,7 @@ def _sleeper_has_verified_unplayed_shell(client, *, year: int, league_id: str) -
             for user in users
             if isinstance(user, dict) and user.get("user_id") is not None
         }
-        if not user_ids:
+        if not user_ids and not predraft:
             return False
 
         roster_ids: set[int] = set()
@@ -232,16 +229,24 @@ def _sleeper_has_verified_unplayed_shell(client, *, year: int, league_id: str) -
             if (
                 roster_id is None
                 or roster_id in roster_ids
-                or owner_id is None
-                or str(owner_id) not in user_ids
-                or not isinstance(players, list)
-                or not players
+                or (not predraft and (owner_id is None or str(owner_id) not in user_ids))
+                or (not predraft and (not isinstance(players, list) or not players))
                 or not isinstance(record, dict)
             ):
                 return False
             if any((_to_int_or_none(record.get(key)) or 0) != 0 for key in ("wins", "losses", "ties", "fpts", "fpts_decimal")):
                 return False
             roster_ids.add(roster_id)
+
+        if predraft:
+            return (_to_int_or_none(settings.get("last_scored_leg")) or 0) == 0
+
+        nfl_state = client.get_nfl_state()
+        if not isinstance(nfl_state, dict) or _to_int_or_none(nfl_state.get("season")) != year:
+            return False
+        current_week = _to_int_or_none(nfl_state.get("week"))
+        if current_week is None or current_week < 0:
+            return False
 
         drafts = client.get_league_drafts(league_id)
         if not isinstance(drafts, list):
@@ -311,7 +316,7 @@ def _validate_sleeper_quick_source(ctx, client, db, years) -> bool:
 
     if row_count("matchup") > 0 and row_count("player_fantasy") > 0:
         return False
-    if row_count("league_settings") < 1 or row_count("draft") < 1:
+    if row_count("league_settings") < 1:
         raise RuntimeError("Quick import has no played data and is missing local settings or draft rows")
 
     normalized_years = sorted({_to_int_or_none(value) for value in years} - {None})
@@ -323,6 +328,8 @@ def _validate_sleeper_quick_source(ctx, client, db, years) -> bool:
         raise RuntimeError(
             f"Quick import could not verify an unplayed Sleeper league for {year}; refusing partial publication"
         )
+    if row_count("draft") < 1 and str(client.get_league(str(league_id)).get("status") or "") not in {"pre_draft", "drafting"}:
+        raise RuntimeError("Quick import has no played data and is missing local settings or draft rows")
     return True
 
 

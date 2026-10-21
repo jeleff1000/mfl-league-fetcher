@@ -156,7 +156,7 @@ def _discover_espn_import_years(ctx: ESPNContext) -> list[int]:
 
 
 def _espn_has_verified_unplayed_shell(client: ESPNAPIClient, *, year: int, league_id: int) -> bool:
-    """Prove that a drafted ESPN league has not played its first matchup yet."""
+    """Prove that a pre-draft or drafted league has no played matchups."""
     try:
         payload = client.get_raw_league(
             int(year),
@@ -179,9 +179,10 @@ def _espn_has_verified_unplayed_shell(client: ESPNAPIClient, *, year: int, leagu
         return False
     if coerce_int(status.get("currentMatchupPeriod")) is None:
         return False
-    if not isinstance(draft, dict) or draft.get("drafted") is not True:
+    if not isinstance(draft, dict) or not isinstance(draft.get("drafted"), bool):
         return False
-    if not isinstance(draft.get("picks"), list) or not draft["picks"]:
+    predraft = draft["drafted"] is False
+    if not predraft and (not isinstance(draft.get("picks"), list) or not draft["picks"]):
         return False
     if not isinstance(teams, list) or len(teams) < 2:
         return False
@@ -192,7 +193,7 @@ def _espn_has_verified_unplayed_shell(client: ESPNAPIClient, *, year: int, leagu
         if not isinstance(team, dict):
             return False
         entries = ((team.get("roster") or {}).get("entries"))
-        if not isinstance(entries, list) or not entries:
+        if not predraft and (not isinstance(entries, list) or not entries):
             return False
         overall = ((team.get("record") or {}).get("overall"))
         if not isinstance(overall, dict):

@@ -35,6 +35,7 @@ class FlyReader:
     MAX_RETRIES = 6
     RETRY_BASE_DELAY = 1
     RETRY_MAX_DELAY = 15
+    CHECKPOINT_RETRY_DELAY = 5
     TIMEOUT_SECONDS = 75
     # Refresh workers need time after reads to publish and finalize.
     REFRESH_TIMEOUT_SECONDS = 10
@@ -65,13 +66,30 @@ class FlyReader:
 
     @classmethod
     def _retry_delay(cls, attempt: int, resp: requests.Response | None = None) -> float:
+        delay = min(cls.RETRY_BASE_DELAY * (2**attempt), cls.RETRY_MAX_DELAY)
         retry_after = resp.headers.get("Retry-After") if resp is not None else None
         if retry_after:
             try:
-                return min(float(retry_after), cls.RETRY_MAX_DELAY)
+                requested = float(retry_after)
+                if math.isfinite(requested) and requested >= 0:
+                    delay = min(requested, cls.RETRY_MAX_DELAY)
             except (TypeError, ValueError):
                 pass
-        return min(cls.RETRY_BASE_DELAY * (2**attempt), cls.RETRY_MAX_DELAY)
+        # A checkpoint may outlast the server's generic one-second hint.
+        # Keep the existing attempt cap; give a rejected read time to recover.
+        if cls._is_checkpoint_response(resp):
+            delay = max(delay, cls.CHECKPOINT_RETRY_DELAY)
+        return delay
+
+    @staticmethod
+    def _is_checkpoint_response(resp: requests.Response | None) -> bool:
+        if resp is None or resp.status_code != 503:
+            return False
+        try:
+            body = json.loads(resp.text)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(body, dict) and body.get("reason") == "checkpointing"
 
     @staticmethod
     def _sql_preview(sql: str) -> str:
@@ -119,10 +137,20 @@ class FlyReader:
     ) -> None:
         delay = self._retry_delay(attempt, resp)
         if read_deadline is not None:
+            retry_cap = self.CHECKPOINT_RETRY_DELAY if self._is_checkpoint_response(resp) else self.REFRESH_RETRY_MAX_DELAY
             if not math.isfinite(delay):
-                delay = self.REFRESH_RETRY_MAX_DELAY
-            delay = max(0, min(delay, self.REFRESH_RETRY_MAX_DELAY))
-        time.sleep(self._budget_timeout(delay, read_deadline, sql, database))
+                delay = retry_cap
+            delay = max(0, min(delay, retry_cap))
+        delay = self._budget_timeout(delay, read_deadline, sql, database)
+        if self._is_checkpoint_response(resp):
+            try:
+                print("[fly-read-retry] " + json.dumps({
+                    "reason": "checkpointing", "database": database,
+                    "after_attempt": attempt + 1, "wait_seconds": delay,
+                }), flush=True)
+            except (OSError, ValueError, TypeError):
+                pass
+        time.sleep(delay)
 
     def _read_attempt(self, sql, database, *, parquet, timeout, attempt, read_id, bounded):
         """One transport attempt, shared by JSON and Parquet; never log SQL or credentials."""

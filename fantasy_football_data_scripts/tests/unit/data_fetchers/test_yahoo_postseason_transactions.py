@@ -72,7 +72,7 @@ def test_normal_moves_do_not_request_another_calendar(monkeypatch):
     assert [row.week for row in result] == [16, 16]
 
 
-def test_calendar_transport_retry_does_not_duplicate_parsed_page_prefix(monkeypatch):
+def test_calendar_transport_failure_keeps_every_move_without_page_retry(monkeypatch):
     page = transaction_xml("1418982393")
     page.find('.//transaction_key').text = '331.l.44173.tr.225'
     page.find('.//transactions').append(transaction_xml().find('.//transaction'))
@@ -90,10 +90,11 @@ def test_calendar_transport_retry_does_not_duplicate_parsed_page_prefix(monkeypa
         {'331.l.44173.t.1': 'Manager'}, {}, {}, league_calendar())
     assert [(r.transaction_id, r.player_key, r.week) for r in rows] == [
         ('331.l.44173.tr.225', '331.p.1', 16), ('331.l.44173.tr.225', '331.p.2', 16),
-        ('331.l.44173.tr.226', '331.p.1', 17), ('331.l.44173.tr.226', '331.p.2', 17)]
+        ('331.l.44173.tr.226', '331.p.1', None), ('331.l.44173.tr.226', '331.p.2', None)]
+    assert len(calendar_requests) == 1
 
 
-def test_calendar_retention_retries_before_rows_are_returned(monkeypatch):
+def test_calendar_retention_failure_does_not_discard_roster_moves(monkeypatch):
     attempts = []
     retained = []
     def retain(calendar):
@@ -106,18 +107,19 @@ def test_calendar_retention_retries_before_rows_are_returned(monkeypatch):
     monkeypatch.setattr(fetcher.time, 'sleep', lambda _: None)
     rows = fetcher.fetch_transactions_for_year(None, '331.l.44173', 2014,
         {'331.l.44173.t.1': 'Manager'}, {}, {}, league_calendar(), on_calendar_extended=retain)
-    assert [r.week for r in rows] == [17, 17]
-    assert len(attempts) == 2
-    assert len(retained) == 1 and retained[0]['week'].tolist() == [16, 17]
+    assert [r.week for r in rows] == [None, None]
+    assert len(attempts) == 1 and retained == []
+    assert all('timing unresolved' in r.notes for r in rows)
 
 
 @pytest.mark.parametrize("stamp", ["invalid", "0", "1419930393"])
-def test_missing_or_uncovered_dates_are_not_guessed(monkeypatch, stamp):
+def test_missing_or_uncovered_dates_keep_moves_without_guessing(monkeypatch, stamp):
     def get(url, oauth):
         return native_calendar() if url.endswith("game_weeks") else transaction_xml(stamp)
     monkeypatch.setattr(fetcher, "fetch_url", get)
-    with pytest.raises(TransactionWeekError, match="transaction week"):
-        fetcher.fetch_transactions_for_year(None, "331.l.44173", 2014, {}, {}, {}, league_calendar())
+    rows = fetcher.fetch_transactions_for_year(None, "331.l.44173", 2014, {}, {}, {}, league_calendar())
+    assert len(rows) == 2 and [r.week for r in rows] == [None, None]
+    assert [r.transaction_type for r in rows] == ['add', 'drop']
 
 
 def test_extended_independent_calendar_is_retained_for_publication(monkeypatch, tmp_path):

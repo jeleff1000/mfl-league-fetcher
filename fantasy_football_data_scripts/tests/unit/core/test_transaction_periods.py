@@ -22,7 +22,7 @@ def staged(platform, week, *, timestamp=1728520236, db_name="qa"):
 
 
 @pytest.mark.parametrize("lane", ["full", "quick", "fleet"])
-@pytest.mark.parametrize("platform,week", [("yahoo", 1), ("sleeper", None), ("espn", 1.5)])
+@pytest.mark.parametrize("platform,week", [("sleeper", None), ("espn", 1.5)])
 def test_every_bundle_lane_rejects_bad_period_before_artifact(tmp_path, lane, platform, week):
     with staged(platform, week) as conn:
         with pytest.raises(ValueError, match="transaction week"):
@@ -73,12 +73,14 @@ def test_validation_does_not_inspect_unrelated_league():
         validate_transaction_weeks(conn, ["qa"])
 
 
-def test_yahoo_cached_period_needs_real_dated_windows():
+def test_missing_yahoo_date_windows_warn_without_blocking(caplog):
     from multi_league.core.transaction_periods import validate_transaction_weeks
     with staged("yahoo", 6) as conn:
         conn.execute("DELETE FROM public.matchup")
-        with pytest.raises(ValueError, match="transaction week"):
-            validate_transaction_weeks(conn, ["qa"])
+        validate_transaction_weeks(conn, ["qa"])
+        assert "transaction timing" in caplog.text
+        assert conn.execute("SELECT COUNT(*) FROM public.transactions").fetchone()[0] == 1
+        assert conn.execute("SELECT week,cumulative_week FROM public.transactions").fetchall() == [(None,None)]
 
 
 def _ongoing_yahoo_calendar(conn):
@@ -113,7 +115,7 @@ def test_ongoing_yahoo_week_publishes_without_finalizing_matchup(tmp_path, lane)
 
 
 @pytest.mark.parametrize('bad', ['wrong_week', 'conflict', 'other_league', 'wrong_year'])
-def test_ongoing_calendar_does_not_bypass_yahoo_validation(tmp_path, bad):
+def test_yahoo_calendar_issues_warn_without_blocking_publication(tmp_path, bad, caplog):
     with staged('yahoo', 6) as conn:
         _ongoing_yahoo_calendar(conn)
         if bad == 'wrong_week':
@@ -124,10 +126,12 @@ def test_ongoing_calendar_does_not_bypass_yahoo_validation(tmp_path, bad):
             conn.execute("DELETE FROM public.__yahoo_transaction_windows WHERE db_name='qa'")
         else:
             conn.execute('UPDATE public.__yahoo_transaction_windows SET year=2023')
-        with pytest.raises(ValueError, match='transaction week'):
-            build_fleet_partition_bundle(conn, active_year=2024, league_generations={'qa':0},
-                tables=['matchup','transactions'], output_dir=tmp_path)
-        assert not list(tmp_path.iterdir())
+        bundle = build_fleet_partition_bundle(conn, active_year=2024, league_generations={'qa':0},
+            tables=['matchup','transactions'], output_dir=tmp_path)
+        assert bundle.path.is_file()
+        assert "transaction timing" in caplog.text
+        assert conn.execute("SELECT COUNT(*) FROM public.transactions").fetchone()[0] == 1
+        assert conn.execute("SELECT week,cumulative_week FROM public.transactions").fetchall() == [(None,None)]
 
 
 def test_legacy_upload_rejects_bad_period_before_remote_write(monkeypatch, tmp_path):
@@ -197,18 +201,38 @@ def test_import_orchestrator_does_not_swallow_bad_transaction_period(script, fet
 
 
 def test_fleet_validates_every_league_actually_exported(tmp_path):
-    with staged("yahoo", 1, db_name="other") as conn:
+    with staged("sleeper", None, db_name="other") as conn:
         with pytest.raises(ValueError, match="transaction week"):
             build_fleet_partition_bundle(conn, active_year=2024, league_generations={"qa":0},
                                          tables=["transactions"], output_dir=tmp_path)
 
 
 @pytest.mark.parametrize("lane", ["full", "quick"])
-def test_yahoo_hint_applies_to_blank_cached_platform(tmp_path, lane):
+def test_yahoo_hint_applies_to_blank_cached_platform(tmp_path, lane, caplog):
     with staged(None, 1) as conn:
-        with pytest.raises(ValueError, match="transaction week"):
-            build_delta_bundle(conn, db_name="qa", import_mode=lane, platform="yahoo",
-                               base_generation=0, output_dir=tmp_path)
+        bundle = build_delta_bundle(conn, db_name="qa", import_mode=lane, platform="yahoo",
+                                    base_generation=0, output_dir=tmp_path)
+        assert bundle.path.is_file()
+        assert "transaction timing" in caplog.text
+
+
+@pytest.mark.parametrize("lane", ["quick", "full", "fleet"])
+def test_undated_yahoo_trade_publishes_with_null_week(tmp_path, lane, caplog):
+    import tarfile
+    with staged("yahoo", None, timestamp=None) as conn:
+        if lane == "fleet":
+            bundle = build_fleet_partition_bundle(conn, active_year=2024,
+                league_generations={"qa":0}, tables=["transactions"], output_dir=tmp_path)
+        else:
+            bundle = build_delta_bundle(conn, db_name="qa", import_mode=lane, platform="yahoo",
+                base_generation=0, output_dir=tmp_path)
+        with tarfile.open(bundle.path) as archive:
+            payload = archive.extractfile("tables/transactions.parquet").read()
+        exported = tmp_path / "exported.parquet"
+        exported.write_bytes(payload)
+        assert conn.execute("SELECT transaction_id,week,cumulative_week FROM read_parquet(?)",
+                            [str(exported)]).fetchall() == [("trade",None,None)]
+        assert "transaction timing" in caplog.text
 
 
 def test_unresolved_transaction_provenance_is_rejected():

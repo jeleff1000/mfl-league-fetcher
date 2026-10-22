@@ -319,15 +319,19 @@ class TransactionEnrichmentsMixin:
         Epoch seconds are compared in UTC, matching the import's date contract.
         Sleeper/ESPN native period assignments are deliberately left intact.
         """
-        if not self._table_exists("transactions") or not self._table_exists("matchup"):
+        if not self._table_exists("transactions"):
             return 0
         required = {"year", "week", "week_start", "week_end"}
         trans_cols = self._get_table_columns("transactions")
-        if not (required | {"timestamp", "platform", "cumulative_week"}).issubset(trans_cols):
-            return 0
-        if not required.issubset(self._get_table_columns("matchup")):
-            return 0
-        return self._execute(self._transaction_week_mapping_sql(), "Resolve Yahoo transaction weeks from matchup dates")
+        rows = 0
+        if ((required | {"timestamp", "platform", "cumulative_week"}).issubset(trans_cols)
+                and self._table_exists("matchup")
+                and required.issubset(self._get_table_columns("matchup"))):
+            rows = self._execute(self._transaction_week_mapping_sql(), "Resolve Yahoo transaction weeks from matchup dates")
+        if "platform" in trans_cols:
+            from multi_league.core.transaction_periods import validate_transaction_weeks
+            validate_transaction_weeks(self._get_connection(), [self.db_name])
+        return rows
 
     def _transaction_week_mapping_sql(self) -> str:
         trans = self._qualified_name("transactions")
@@ -709,6 +713,7 @@ class TransactionEnrichmentsMixin:
                 WHERE t.{join_key} IS NOT NULL
                   AND {self._db_filter('t')}
                   AND {self._db_filter('p')}
+                  AND t.week IS NOT NULL
                 GROUP BY t.transaction_id, t.{join_key}
             )
             UPDATE {trans_table} t
@@ -851,6 +856,7 @@ class TransactionEnrichmentsMixin:
                     UPDATE {trans_table}
                     SET {', '.join(init_managed_cols)}
                     WHERE {self._db_filter()}
+                      AND cumulative_week IS NOT NULL
                       AND {add_like_predicate.replace('t.', '')}
                 """
                 rows += self._execute(sql_init_ros_managed, "player_to_transactions: init ROS managed to 0 for adds")
@@ -895,6 +901,7 @@ class TransactionEnrichmentsMixin:
                 UPDATE {trans_table}
                 SET {', '.join(drop_set)}
                 WHERE {self._db_filter()}
+                  AND cumulative_week IS NOT NULL
                   AND (
                       transaction_type = 'drop'
                       OR (transaction_type IN ('trade', 'trade_pick') AND trade_direction = 'sent')
@@ -994,6 +1001,7 @@ class TransactionEnrichmentsMixin:
                 UPDATE {trans_table}
                 SET {', '.join(init_ros_cols)}
                 WHERE {self._db_filter()}
+                  AND cumulative_week IS NOT NULL
                   AND {add_like_predicate.replace('t.', '')}
             """
             rows_updated += self._execute(
@@ -1065,6 +1073,7 @@ class TransactionEnrichmentsMixin:
             UPDATE {trans_table}
             SET manager_lamar_ros_managed = COALESCE(manager_lamar_ros_managed, 0)
             WHERE {self._db_filter()}
+              AND cumulative_week IS NOT NULL
               AND {add_like_predicate.replace('t.', '')}
         """
         rows_updated += self._execute(
@@ -1102,6 +1111,7 @@ class TransactionEnrichmentsMixin:
             UPDATE {trans_table}
             SET manager_lamar_ros_managed = 0
             WHERE {self._db_filter()}
+              AND cumulative_week IS NOT NULL
               AND (
                   transaction_type = 'drop'
                   OR (transaction_type IN ('trade', 'trade_pick') AND trade_direction = 'sent')
@@ -1172,9 +1182,11 @@ class TransactionEnrichmentsMixin:
         # Adds: manager_lamar_ros_managed (what the player contributed to your lineup)
         # Drops: -fa_lamar_ros (negated post-drop production = regret)
         # Trades: NULL here; trade packages are scored via dedicated trade_* columns
+        unresolved_timing = "WHEN t.cumulative_week IS NULL THEN NULL" if "cumulative_week" in trans_cols else ""
         sql_score = f"""
             UPDATE {trans_table} t
             SET transaction_score = CASE
+                    {unresolved_timing}
                     WHEN t.transaction_type IN ('trade', 'trade_pick') THEN NULL
                     WHEN t.transaction_type = 'drop' THEN -COALESCE(t.{regret_col}, 0)
                     WHEN t.transaction_type IN {_ADD_TRANSACTION_TYPES_SQL} THEN COALESCE(t.{managed_col}, 0)
@@ -1637,7 +1649,8 @@ class TransactionEnrichmentsMixin:
             return 0
 
         def scope_sql(alias: str) -> str:
-            return self._db_filter(alias)
+            timing = f" AND {alias}.cumulative_week IS NOT NULL" if "cumulative_week" in trans_cols else ""
+            return self._db_filter(alias) + timing
 
         rows_updated += self._execute(
             build_trade_counterparty_reconciliation_sql(trans_table, trans_cols, scope_sql),
@@ -1659,7 +1672,7 @@ class TransactionEnrichmentsMixin:
             UPDATE {trans_table} t
             SET trade_asset_lamar = COALESCE(t.{managed_trade_col}, 0)
             WHERE {trade_received_predicate}
-              AND {self._db_filter('t')}
+              AND {scope_sql('t')}
         """
         rows_updated += self._execute(sql_received, "trade_net_lamar: seed received-side trade asset values")
 
@@ -1817,6 +1830,7 @@ class TransactionEnrichmentsMixin:
                   AND {self._db_filter('t')}
                   AND (manager IS NULL
                        OR LOWER(TRIM(manager)) IN ('unknown', ''))
+                  AND {order_col} IS NOT NULL
                   -- A resolved franchise belongs to a real hidden/private
                   -- owner.  Nearest-player inference must only repair true
                   -- orphans, otherwise it can rewrite one leg of a trade to
@@ -1834,6 +1848,7 @@ class TransactionEnrichmentsMixin:
                   AND {self._db_filter('t')}
                   AND manager IS NOT NULL
                   AND LOWER(TRIM(manager)) NOT IN ('unknown', '')
+                  AND {order_col} IS NOT NULL
             ),
             nearest_match AS (
                 SELECT

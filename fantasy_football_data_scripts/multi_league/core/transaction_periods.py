@@ -152,12 +152,30 @@ def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | Non
     if "cumulative_week" in cols:
         bad = f"({bad} OR try_cast(t.cumulative_week AS BIGINT) IS DISTINCT FROM " \
               "try_cast(t.year AS BIGINT) * 100 + try_cast(t.week AS BIGINT))"
-    invalid = conn.execute(f"SELECT {id_expr} FROM public.transactions t WHERE {scope} AND {bad} LIMIT 5").fetchall()
+    # Yahoo derives periods from dates; unavailable timing must not block real
+    # moves. ESPN/Sleeper have native periods, independent of optional dates.
+    invalid = conn.execute(f"SELECT {id_expr} FROM public.transactions t WHERE {scope} AND {bad} "
+                           f"AND ({provider} != 'yahoo' OR try_cast(t.year AS INTEGER) IS NULL) LIMIT 5").fetchall()
     if invalid:
         raise TransactionWeekError(f"Unverified transaction week: invalid period/join key for {invalid}")
     yahoo_scope = f"{scope} AND {provider} = 'yahoo'"
     if not conn.execute(f"SELECT 1 FROM public.transactions t WHERE {yahoo_scope} LIMIT 1").fetchone():
         return
+
+    def retain_without_timing(invalid_rows=None):
+        # Worker-local rows only. Keep identities/assets; never publish guessed
+        # periods or stale metrics derived from them. No Fly/network writes.
+        from multi_league.core.canonical_transaction import SQL_COLUMNS
+        keep = {"NFL_player_id", "nfl_team", "pickup_type", "conveyed_player", "conveyed_lamar",
+                "conveyed_fantasy_points", "conveyed_year", "is_conveyed"}
+        fields = ({"week", "cumulative_week", "week_start", "week_end"} | (set(SQL_COLUMNS) - keep)) & cols
+        changes = [f'"{field}" = NULL' for field in sorted(fields)]
+        if "notes" in cols:
+            changes.append("notes = CASE WHEN strpos(coalesce(t.notes, ''), 'Transaction timing unresolved') = 0 "
+                           "THEN concat_ws('; ', nullif(t.notes, ''), 'Transaction timing unresolved') ELSE t.notes END")
+        where = f"t.rowid IN ({invalid_rows})" if invalid_rows else yahoo_scope
+        if changes:
+            conn.execute(f"UPDATE public.transactions t SET {', '.join(changes)} WHERE {where}")
     required = {"year", "week", "week_start", "week_end"}
     calendar_sql = []
     owned_name = literal(db_names[0]) if len(db_names) == 1 else "NULL"
@@ -169,11 +187,14 @@ def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | Non
                                 "try_cast(week_start AS DATE) AS ws, try_cast(week_end AS DATE) AS we "
                                 f"FROM public.{table}")
     if "timestamp" not in cols or not calendar_sql:
-        raise TransactionWeekError("Unverified Yahoo transaction week: missing timestamps or dated windows")
+        retain_without_timing()
+        logging.getLogger(__name__).warning(
+            "[TRANSACTIONS] Yahoo transaction timing unresolved: missing timestamps or dated windows; retaining moves")
+        return
     txn_db = f"coalesce(nullif(t.db_name, ''), {owned_name})" if "db_name" in cols else owned_name
-    invalid = conn.execute(f"""
+    invalid_sql = f"""
         WITH events AS (
-            SELECT DISTINCT {txn_db} AS db_name, {id_expr} AS transaction_id,
+            SELECT DISTINCT t.rowid AS rid, {txn_db} AS db_name, {id_expr} AS transaction_id,
                    t.year, t.week, try_cast(t.timestamp AS DOUBLE) AS stamp,
                    CASE WHEN try_cast(t.timestamp AS DOUBLE) BETWEEN 1 AND 32503680000
                         THEN cast(to_timestamp(try_cast(t.timestamp AS DOUBLE)) AT TIME ZONE 'UTC' AS DATE)
@@ -185,17 +206,22 @@ def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | Non
         ), starts AS (
             SELECT db_name, year, min(ws) AS first_start FROM windows GROUP BY db_name, year
         ), verified AS (
-            SELECT e.db_name, e.transaction_id, e.year, e.week, e.stamp,
+            SELECT e.rid, e.db_name, e.transaction_id, e.year, e.week, e.stamp,
                    count(w.week) AS matches, min(w.week) AS expected_week
             FROM events e
             LEFT JOIN starts s ON s.db_name IS NOT DISTINCT FROM e.db_name AND s.year = e.year
             LEFT JOIN windows w ON w.db_name IS NOT DISTINCT FROM e.db_name AND w.year = e.year
               AND ((e.event_date BETWEEN w.ws AND w.we)
                 OR (e.event_date < s.first_start AND w.ws = s.first_start))
-            GROUP BY e.db_name, e.transaction_id, e.year, e.week, e.stamp
+            GROUP BY e.rid, e.db_name, e.transaction_id, e.year, e.week, e.stamp
         )
-        SELECT transaction_id FROM verified
-        WHERE matches != 1 OR week IS DISTINCT FROM expected_week LIMIT 5
-    """).fetchall()
+        SELECT v.rid FROM verified v JOIN public.transactions t ON t.rowid = v.rid
+        WHERE matches != 1 OR v.week IS DISTINCT FROM expected_week OR {bad}
+    """
+    invalid = conn.execute(invalid_sql + " LIMIT 5").fetchall()
     if invalid:
-        raise TransactionWeekError(f"Unverified Yahoo transaction week: missing, ambiguous or mismatched windows for {invalid}")
+        retain_without_timing(invalid_sql)
+        logging.getLogger(__name__).warning(
+            "[TRANSACTIONS] Yahoo transaction timing unresolved: missing, ambiguous or mismatched windows for %s; retaining moves",
+            invalid,
+        )

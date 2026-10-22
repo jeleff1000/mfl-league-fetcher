@@ -58,7 +58,7 @@ def test_playerless_audit_entries_do_not_block_real_moves(monkeypatch, retry):
 
 @pytest.mark.parametrize("retry", [False, True])
 @pytest.mark.parametrize("kind", ["add", "drop", "trade", "commish"])
-def test_player_moves_still_require_verified_dates(monkeypatch, retry, kind):
+def test_uncovered_player_move_dates_do_not_block_import(monkeypatch, retry, kind):
     from datetime import UTC, datetime
     from xml.etree import ElementTree as ET
     from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
@@ -74,13 +74,16 @@ def test_player_moves_still_require_verified_dates(monkeypatch, retry, kind):
         return ET.fromstring(f"<fantasy_content><transactions><transaction><type>{kind}</type>"
             f"<timestamp>{stamp}</timestamp><trader_team_key>461.l.236822.t.1</trader_team_key>"
             "<tradee_team_key>461.l.236822.t.2</tradee_team_key><players><player><player_key>461.p.1</player_key>"
+            f"<transaction_data><type>{kind}</type></transaction_data>"
             "</player></players></transaction></transactions></fantasy_content>")
 
     monkeypatch.setattr(fetcher, "fetch_url", response)
     monkeypatch.setattr(fetcher.time, "sleep", lambda _seconds: None)
     windows = pd.DataFrame([{"year": 2025, "week": 17, "week_start": "2025-12-23", "week_end": "2025-12-29"}])
-    with pytest.raises(TransactionWeekError, match="transaction week"):
-        fetcher.fetch_transactions_for_year(None, "461.l.236822", 2025, {}, {}, {}, windows)
+    rows = fetcher.fetch_transactions_for_year(None, "461.l.236822", 2025, {}, {}, {}, windows)
+    assert len(rows) == 1 and rows[0].week is None
+    assert rows[0].transaction_type == kind
+    assert "timing unresolved" in rows[0].notes
 
 
 def test_matchup_windows_prefer_dated_rows_over_null_duplicates(tmp_path):
@@ -254,6 +257,8 @@ def test_fetch_retains_independent_live_week_calendar(tmp_path, monkeypatch, pro
     ([], '1728520236'),
     ([{'year':2024,'week':6,'week_start':None,'week_end':None}], '1728520236'),
     ([{'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'}], 'invalid'),
+    ([{'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'}], '2024-13-08T12:00:00'),
+    ([{'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'}], '2024-10-08'),
     ([{'year':2024,'week':5,'week_start':'2024-10-01','week_end':'2024-10-07'},
       {'year':2024,'week':7,'week_start':'2024-10-15','week_end':'2024-10-21'}], '1728520236'),
     ([{'year':2024,'week':6,'week_start':'2024-10-08','week_end':'2024-10-14'},
@@ -339,3 +344,115 @@ def test_backfill_unknown_drop_managers_uses_last_known_owner():
     assert repaired_drop["manager"] == "Alice"
     assert repaired_drop["manager_guid"] == "guid-a"
     assert repaired_drop["team_name"] == "Alpha"
+
+
+@pytest.mark.parametrize("stamp", ["2003-12-27T08:36:21", "2003-12-27T08:36:21Z",
+    "2003-12-27T00:36:21-08:00", "1072514181"])
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("after_final", [False, True])
+def test_archived_timestamp_keeps_all_moves_and_publishable_dates(monkeypatch, stamp, retry, after_final):
+    """The Man League's 2003 ISO date must not drop moves or bypass publication checks."""
+    from xml.etree import ElementTree as ET
+    import duckdb
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+    from multi_league.core.canonical_transaction import normalize_transaction_df
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+
+    moves = "".join(
+        f"<player><player_key>79.p.{i}</player_key><name><full>Player {i}</full></name>"
+        f"<transaction_data><type>{kind}</type><source_type>team</source_type>"
+        f"<destination_type>{dest}</destination_type><source_team_key>79.l.68377.t.1</source_team_key>"
+        "<destination_team_key>79.l.68377.t.2</destination_team_key></transaction_data></player>"
+        for i, kind, dest in [(1, "add", "team"), (2, "drop", "waivers"), (3, "trade", "team")]
+    )
+    page = ET.fromstring(f"<fantasy_content><transactions><transaction>"
+        "<transaction_key>79.l.68377.tr.1</transaction_key><type>trade</type><status>successful</status>"
+        f"<timestamp>{stamp}</timestamp><players>{moves}</players><picks><pick>"
+        "<source_team_key>79.l.68377.t.1</source_team_key>"
+        "<destination_team_key>79.l.68377.t.2</destination_team_key>"
+        "<original_team_key>79.l.68377.t.1</original_team_key><round>4</round>"
+        "</pick></picks></transaction></transactions></fantasy_content>")
+    requests = []
+    def response(url, oauth):
+        requests.append(url)
+        if retry and len(requests) == 1:
+            raise fetcher.RecoverableAPIError("transport interrupted")
+        if url.endswith("game/79/game_weeks"):
+            assert after_final
+            return ET.fromstring("<fantasy_content><game_weeks><game_week><week>17</week>"
+                "<start>2003-12-23</start><end>2003-12-29</end></game_week></game_weeks></fantasy_content>")
+        assert "/transactions;" in url, "Timestamp normalization must not add provider calls"
+        return page
+    monkeypatch.setattr(fetcher, "fetch_url", response)
+    monkeypatch.setattr(fetcher.time, "sleep", lambda _: None)
+    windows = pd.DataFrame([dict(year=2003, week=17, week_start="2003-12-23",
+        week_end="2003-12-29", cumulative_week=200317)])
+    if after_final:
+        windows = pd.DataFrame([dict(year=2003, week=16, week_start="2003-12-16",
+            week_end="2003-12-22", cumulative_week=200316)])
+    mappings = {"79.l.68377.t.1": "Scott", "79.l.68377.t.2": "Maxx"}
+    guids = {"79.l.68377.t.1": "scott-id", "79.l.68377.t.2": "maxx-id"}
+    retained = []
+    result = fetcher.fetch_transactions_for_year(None, "79.l.68377", 2003,
+        mappings, guids, mappings, windows, on_calendar_extended=retained.append)
+    frame = fetcher.transactions_to_dataframe(result)
+    assert frame["transaction_type"].tolist() == ["add", "drop", "trade", "trade_pick"]
+    assert frame["timestamp"].tolist() == ["1072514181"] * 4
+    ordered = fetcher.process_transactions_chronologically(frame)
+    assert ordered["transaction_datetime"].notna().all()
+    canonical = normalize_transaction_df(ordered, platform="yahoo", league_id="79.l.68377")
+    assert canonical.groupby("transaction_type").size().to_dict() == {
+        "add": 1, "drop": 1, "trade": 2, "trade_pick": 2}
+    with duckdb.connect(":memory:") as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.register("moves", canonical)
+        conn.register("calendar", retained[-1] if retained else windows)
+        conn.execute("CREATE TABLE public.transactions AS SELECT 'qa' AS db_name, * FROM moves")
+        conn.execute("CREATE TABLE public.matchup AS SELECT 'qa' AS db_name, * FROM calendar")
+        validate_transaction_weeks(conn, ["qa"])
+        assert conn.execute("SELECT DISTINCT week, cumulative_week FROM public.transactions").fetchall() == [(17, 200317)]
+    assert len(requests) == 1 + int(retry) + int(after_final)
+
+
+@pytest.mark.parametrize("stamp,week", [
+    ("2024-10-07T23:59:59Z", 5), ("2024-10-08T00:00:00Z", 6),
+    ("2024-10-07T17:00:00-07:00", 6), ("2024-10-08T01:00:00+02:00", 5)])
+def test_iso_transaction_week_respects_utc_boundary(stamp, week):
+    windows = pd.DataFrame([
+        dict(year=2024, week=5, week_start="2024-10-01", week_end="2024-10-07"),
+        dict(year=2024, week=6, week_start="2024-10-08", week_end="2024-10-14")])
+    assert map_transaction_to_week(stamp, 2024, windows)[0] == week
+
+
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("stamp", ["not-a-date", "0", "2003-13-27T08:36:21", "999999999999999999999999"])
+def test_bad_date_keeps_real_trade_without_inventing_timing(monkeypatch, caplog, retry, stamp):
+    from xml.etree import ElementTree as ET
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+    from multi_league.core.canonical_transaction import normalize_transaction_df
+    calls = []
+    def response(url, oauth):
+        calls.append(url)
+        assert "/transactions;" in url, "Invalid dates must not trigger a calendar scan"
+        if retry and len(calls) == 1:
+            raise fetcher.RecoverableAPIError("transport interrupted")
+        return ET.fromstring(f"<fantasy_content><transactions><transaction><transaction_key>79.l.1.tr.1</transaction_key>"
+            f"<type>trade</type><status>successful</status><timestamp>{stamp}</timestamp><players><player>"
+            "<player_key>79.p.1</player_key><name><full>Real Player</full></name>"
+            "<transaction_data><type>trade</type><source_type>team</source_type><destination_type>team</destination_type>"
+            "<source_team_key>79.l.1.t.1</source_team_key><destination_team_key>79.l.1.t.2</destination_team_key>"
+            "</transaction_data></player></players></transaction></transactions></fantasy_content>")
+    monkeypatch.setattr(fetcher, "fetch_url", response)
+    monkeypatch.setattr(fetcher.time, "sleep", lambda _: None)
+    windows = pd.DataFrame([dict(year=2003, week=17, week_start="2003-12-23", week_end="2003-12-29")])
+    rows = fetcher.fetch_transactions_for_year(None, "79.l.1", 2003,
+        {"79.l.1.t.1":"Scott", "79.l.1.t.2":"Maxx"},
+        {"79.l.1.t.1":"scott-id", "79.l.1.t.2":"maxx-id"}, {}, windows)
+    frame = normalize_transaction_df(fetcher.process_transactions_chronologically(
+        fetcher.transactions_to_dataframe(rows)), platform="yahoo", league_id="79.l.1")
+    assert len(frame) == 2
+    assert set(frame["manager_guid"]) == {"scott-id", "maxx-id"}
+    assert frame[["timestamp", "week", "cumulative_week", "week_start", "week_end"]].isna().all().all()
+    assert frame["notes"].str.contains(stamp, regex=False).all()
+    assert "timing unresolved" in caplog.text
+    assert len(calls) == 1 + int(retry)

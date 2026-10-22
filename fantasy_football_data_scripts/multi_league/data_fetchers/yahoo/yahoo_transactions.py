@@ -49,6 +49,7 @@ import sys
 
 _verbose = "--verbose" in sys.argv
 import argparse
+import logging
 import re
 import time
 from pathlib import Path
@@ -283,8 +284,8 @@ class Transaction:
 
     transaction_id: str
     year: int
-    week: int
-    timestamp: str
+    week: int | None
+    timestamp: str | None
     status: str
     transaction_type: str
     manager: str
@@ -308,6 +309,7 @@ class Transaction:
     week_start: pd.Timestamp | None = None
     week_end: pd.Timestamp | None = None
     cumulative_week: int | None = None
+    notes: str | None = None
     pick_metadata: dict | None = None
 
 
@@ -579,12 +581,36 @@ def extract_yahoo_player_id(player_key: str) -> str | None:
     return None
 
 
+def normalize_transaction_timestamp(ts: str, year: int) -> str | None:
+    """Keep epoch seconds canonical; old Yahoo archives also emit ISO datetimes.
+
+    Offset-free archive dates use the existing UTC transaction-calendar contract.
+    Normalize at XML ingestion so ordering and publication see the same instant.
+    """
+    try:
+        text = str(ts).strip()
+        if text.isdecimal():
+            stamp = int(text)
+        else:
+            if not re.match(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", text):
+                raise ValueError
+            date = datetime.fromisoformat(text)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=UTC)
+            stamp = int(date.timestamp())
+        if not 0 < stamp <= 32503680000:
+            raise ValueError
+        return str(stamp)
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
+
+
 def convert_timestamp(ts: str) -> str:
     """Convert Yahoo timestamp (seconds since epoch) to human readable format."""
     try:
         dt = datetime.fromtimestamp(int(ts))
         return dt.strftime("%b %d %Y %I:%M:%S %p").upper()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError, OSError):
         return "UNKNOWN"
 
 
@@ -599,9 +625,7 @@ def map_transaction_to_week(ts: str, year: int, matchup_windows: pd.DataFrame) -
         raise TransactionWeekError(f"Unverified Yahoo transaction week for {year}: missing dated windows")
     rows = matchup_windows[matchup_windows["year"] == year].drop_duplicates().copy()
     try:
-        if int(ts) <= 0:
-            raise ValueError
-        t_pd = pd.to_datetime(int(ts), unit="s", utc=True)
+        t_pd = pd.to_datetime(int(normalize_transaction_timestamp(ts, year)), unit="s", utc=True)
     except (ValueError, TypeError, OverflowError) as exc:
         raise TransactionWeekError(f"Unverified Yahoo transaction week for {year}: invalid timestamp") from exc
     comp = rows.copy()
@@ -821,10 +845,11 @@ def fetch_transactions_for_year(
     unknown_team_keys: set[str] = set()  # Track team_keys that couldn't be resolved
     calendar_extended = False
 
-    def transaction_week(timestamp):
+    def verified_transaction_week(timestamp):
         nonlocal matchup_windows, calendar_extended
         try:
             return map_transaction_to_week(timestamp, year, matchup_windows)
+
         except TransactionWeekError:
             # Yahoo retains real roster moves after some leagues' championships.
             # Consult the native NFL calendar only beyond the last dated window;
@@ -836,6 +861,7 @@ def fetch_transactions_for_year(
             if calendar_extended or dated.empty or pd.isna(stamp) or stamp < last_end + pd.Timedelta(days=1):
                 raise
             game_key = league_key.split('.')[0]
+            calendar_extended = True  # One bounded calendar attempt, not one per undated move.
             root = fetch_url(f'https://fantasysports.yahooapis.com/fantasy/v2/game/{game_key}/game_weeks', oauth)
             extra = pd.DataFrame([
                 {'year': int(year),
@@ -854,6 +880,18 @@ def fetch_transactions_for_year(
             calendar_extended = True
             print(f'  [{year}] Extended transaction calendar with {len(extra)} native NFL week(s) after league final')
             return map_transaction_to_week(timestamp, year, matchup_windows)
+
+    def transaction_week(timestamp):
+        try:
+            return verified_transaction_week(timestamp)
+        except Exception as exc:
+            # Timing is optional metadata, not a reason to discard real moves or
+            # abort a league import. Keep the provider value in the row's notes.
+            logging.getLogger(__name__).warning(
+                "[TRANSACTIONS] year=%s timing unresolved; retaining move with week=NULL (%s)",
+                year, type(exc).__name__,
+            )
+            return None, None, None
 
     while True:
         url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/transactions;start={start};count={count}"
@@ -874,7 +912,7 @@ def fetch_transactions_for_year(
                     continue
                 tx_type = (tr.findtext("type") or "").strip()
                 status = (tr.findtext("status") or "").strip()
-                ts = tr.findtext("timestamp") or "0"
+                ts = normalize_transaction_timestamp(tr.findtext("timestamp"), year)
                 transaction_team_keys = {
                     "destination_team_key": _first_non_empty(tr.findtext("destination_team_key")),
                     "source_team_key": _first_non_empty(tr.findtext("source_team_key")),
@@ -1010,6 +1048,8 @@ def fetch_transactions_for_year(
                         year=year,
                         week=week_val,
                         timestamp=ts,
+                        notes=(f"Transaction timing unresolved; provider timestamp={tr.findtext('timestamp')!r}"
+                               if week_val is None else None),
                         status=status,
                         transaction_type=ptype,
                         manager=nickname,
@@ -1081,7 +1121,7 @@ def fetch_transactions_for_year(
                         continue
                     tx_type = (tr.findtext("type") or "").strip()
                     status = (tr.findtext("status") or "").strip()
-                    ts = tr.findtext("timestamp") or "0"
+                    ts = normalize_transaction_timestamp(tr.findtext("timestamp"), year)
                     week_val, week_start, week_end = transaction_week(ts)
                     transaction_team_keys = {
                         "destination_team_key": _first_non_empty(tr.findtext("destination_team_key")),
@@ -1202,6 +1242,8 @@ def fetch_transactions_for_year(
                             year=year,
                             week=week_val,
                             timestamp=ts,
+                            notes=(f"Transaction timing unresolved; provider timestamp={tr.findtext('timestamp')!r}"
+                                   if week_val is None else None),
                             status=status,
                             transaction_type=ptype,
                             manager=nickname,
@@ -1312,6 +1354,7 @@ def transactions_to_dataframe(transactions: list[Transaction]) -> pd.DataFrame:
                 "source_type": tx.source_type,
                 "destination": tx.destination,
                 "status": tx.status,
+                "notes": tx.notes,
                 "faab_bid": tx.faab_bid,
                 # Trade source/destination
                 "source_manager": tx.source_manager,
@@ -1401,6 +1444,7 @@ def transactions_to_dataframe(transactions: list[Transaction]) -> pd.DataFrame:
         # Metadata
         "player_key",
         "timestamp",
+        "notes",
         "human_readable_timestamp",
         # Composite keys
         "manager_week",
@@ -1496,6 +1540,8 @@ def backfill_unknown_drop_managers(transactions_df: pd.DataFrame) -> pd.DataFram
     owner_state: dict[tuple[int | None, str], dict[str, str | None]] = {}
 
     for idx, row in df.iterrows():
+        if pd.isna(row.get("week")):
+            continue  # An undated move cannot establish chronological ownership.
         player_identity = _first_non_empty(
             row.get("yahoo_player_id"),
             row.get("player_key"),

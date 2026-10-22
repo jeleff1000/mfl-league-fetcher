@@ -1878,7 +1878,7 @@ def _get_recovery_roster_fetcher(ctx, year: int, roster_fetchers: dict | None = 
         from multi_league.data_fetchers.yahoo.yahoo_rosters import YahooRosterFetcher
 
         oauth_file = ctx.oauth_file_path if hasattr(ctx, "oauth_file_path") else getattr(ctx, "oauth_file", None)
-        if oauth_file is None and getattr(ctx, "oauth_credentials", None) and getattr(ctx, "data_directory", None):
+        if oauth is None and oauth_file is None and getattr(ctx, "oauth_credentials", None) and getattr(ctx, "data_directory", None):
             # Contexts without an oauth file (e.g., corpus one-year imports) carry
             # credentials inline; materialize them once inside the private task
             # directory so recovery can replay fetches like the main roster path.
@@ -1886,15 +1886,14 @@ def _get_recovery_roster_fetcher(ctx, year: int, roster_fetchers: dict | None = 
             if not materialized.exists():
                 materialized.write_text(json.dumps(ctx.oauth_credentials), encoding="utf-8")
             oauth_file = str(materialized)
-        if oauth_file is None:
+        if oauth_file is None and oauth is None:
             logger.warning("[RECOVERY] No oauth_file in context for roster recovery")
             return None
         fetcher = YahooRosterFetcher(
-            oauth_file=Path(oauth_file),
+            oauth_file=Path(oauth_file) if oauth_file is not None else None,
             league_id=league_key,
+            oauth_session=oauth,
         )
-        if oauth is not None and hasattr(fetcher, "oauth"):
-            fetcher.oauth = oauth
         if roster_fetchers is not None:
             roster_fetchers[league_key] = fetcher
         return fetcher
@@ -2099,10 +2098,14 @@ def _resolve_roster_gap(
     # signal, not sticky state across later recovery passes for the same league.
     if hasattr(roster_fetcher, "_access_denied_logged"):
         roster_fetcher._access_denied_logged = False
+    roster_fetcher._request_error = None
 
     cached_teams = (roster_teams or {}).get(gap.year, {}) if roster_teams is not None else {}
     if not cached_teams:
         cached_teams = roster_fetcher.fetch_teams()
+        request_error = getattr(roster_fetcher, "_request_error", None)
+        if not cached_teams and request_error is not None:
+            raise RecoveryDeferredError(str(request_error)) from request_error
         if not cached_teams and getattr(roster_fetcher, "_access_denied_logged", False):
             raise RecoveryDeferredError(f"Yahoo API access denied while fetching teams for {league_key}")
         if roster_teams is not None and cached_teams:
@@ -2147,6 +2150,9 @@ def _resolve_roster_gap(
         _write_recovery_rows(local_db, "roster", combined, league_id=league_key)
 
     if week_failures:
+        request_error = getattr(roster_fetcher, "_request_error", None)
+        if request_error is not None:
+            raise RecoveryDeferredError(str(request_error)) from request_error
         if getattr(roster_fetcher, "_access_denied_logged", False):
             raise RecoveryDeferredError(f"Yahoo API access denied while fetching roster week {week} for {league_key}")
         gap.last_error = f"Partial roster recovery for year {gap.year} week {week}: {len(week_failures)} team(s) failed"
@@ -2455,11 +2461,18 @@ def run_yahoo_recovery(
     def refresh_oauth():
         nonlocal oauth
         try:
+            retry_not_before = getattr(oauth, "_yahoo_retry_not_before", None)
             if hasattr(ctx, "get_oauth_session"):
                 oauth = ctx.get_oauth_session()
             elif oauth is not None and hasattr(oauth, "refresh_access_token"):
                 oauth.refresh_access_token()
             if oauth is not None:
+                try:
+                    oauth._yahoo_recovery_deadline = deadline
+                    if isinstance(retry_not_before, (int, float)):
+                        oauth._yahoo_retry_not_before = retry_not_before
+                except (AttributeError, TypeError):
+                    pass
                 for fetcher in roster_fetchers.values():
                     if hasattr(fetcher, "oauth"):
                         fetcher.oauth = oauth

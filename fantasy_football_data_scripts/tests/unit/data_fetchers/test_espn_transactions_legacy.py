@@ -63,7 +63,7 @@ def _make_mock_ctx(teams_info):
 
 @pytest.mark.parametrize('max_week', [None, 1])
 @pytest.mark.parametrize('kind', ['waiver', 'trade'])
-def test_espn_missing_native_period_is_not_swallowed(kind, max_week):
+def test_espn_missing_native_period_retains_move(kind, max_week):
     from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
 
     transaction = {'id':'bad-period','items':[{'playerId':1,'fromTeamId':1,'toTeamId':2,'type':'ADD'}]}
@@ -72,8 +72,11 @@ def test_espn_missing_native_period_is_not_swallowed(kind, max_week):
             return [transaction] if kind == 'waiver' else []
         def get_raw_trades(self, year, **kwargs):
             return [transaction] if kind == 'trade' else []
-    with pytest.raises(ValueError, match='transaction week'):
-        fetch_espn_transactions_modern(_make_mock_ctx({}),2026,max_week=max_week,client=Client(),league=SimpleNamespace(teams=[]))
+    frame = fetch_espn_transactions_modern(_make_mock_ctx({}),2026,max_week=max_week,client=Client(),league=SimpleNamespace(teams=[]))
+    assert len(frame) == 1
+    assert frame['week'].isna().all()
+    assert 'native period=None' in frame.iloc[0]['notes']
+    assert frame.iloc[0]['espn_player_id'] == 1
 
 
 def _run_legacy(ctx, draft, teams, year=2018):

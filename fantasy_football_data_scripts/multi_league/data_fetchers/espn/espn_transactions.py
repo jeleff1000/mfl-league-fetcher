@@ -17,7 +17,7 @@ import logging
 
 import pandas as pd
 from multi_league.core.transaction_periods import (
-    TransactionWeekError, native_transaction_week, transaction_has_publishable_assets,
+    TransactionWeekError, native_transaction_week, native_transaction_timing_note, transaction_has_publishable_assets,
 )
 
 import sys
@@ -171,6 +171,7 @@ def fetch_espn_transactions_modern(
                     "transaction_id": str(txn_id) if txn_id else None,
                     "year": year,
                     "week": scoring_period,
+                    "notes": native_transaction_timing_note(txn.get("scoringPeriodId"), platform="espn", week=scoring_period),
                     "timestamp": txn_date,
                     # Source/destination fields (None for non-trade rows)
                     "source_manager": None,
@@ -257,6 +258,7 @@ def fetch_espn_transactions_modern(
                             "transaction_id": str(trade_id) if trade_id else None,
                             "year": year,
                             "week": scoring_period,
+                            "notes": native_transaction_timing_note(trade.get("scoringPeriodId"), platform="espn", week=scoring_period),
                             "timestamp": accept_date,
                             # Source = who sent the player (from_team)
                             "source_manager": ctx.get_manager_name(

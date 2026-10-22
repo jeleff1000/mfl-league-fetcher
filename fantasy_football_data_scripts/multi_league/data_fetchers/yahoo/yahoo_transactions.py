@@ -411,156 +411,16 @@ def _resolve_transaction_team_keys(
     return manager_key, source_key, destination_key
 
 
-def _refresh_oauth_token(oauth, reason: str) -> bool:
-    """Refresh Yahoo OAuth credentials when the API reports an auth failure."""
-    if not hasattr(oauth, "refresh_access_token"):
-        print(f"    [AUTH] {reason}; OAuth session cannot refresh access tokens")
-        return False
+def fetch_url(url: str, oauth, max_retries: int = 6, backoff: float = 0.5) -> ET.Element:
+    """Use the common Yahoo transport; preserve transaction exception contracts."""
+    from multi_league.data_fetchers.yahoo import yahoo_draft as http
 
     try:
-        print(f"    [AUTH] {reason}; refreshing Yahoo access token...")
-        oauth.refresh_access_token()
-        print("    [AUTH] Token refreshed successfully")
-        return True
-    except Exception as exc:  # noqa: BLE001
-        print(f"    [AUTH] Token refresh failed: {exc}")
-        return False
-
-
-def _is_auth_issue(status_code: int | None, body_text: str, error_text: str) -> bool:
-    combined = f"{body_text}\n{error_text}".lower()
-    return (
-        status_code == 401
-        or "unauthorized" in combined
-        or "invalid cookie" in combined
-        or "please log in again" in combined
-        or "must be logged in" in combined
-        or "token expired" in combined
-    )
-
-
-def _is_rate_limit_issue(status_code: int | None, body_text: str, error_text: str) -> bool:
-    combined = f"{body_text}\n{error_text}".lower()
-    return (
-        status_code == 429
-        or "rate limit" in combined
-        or "limit exceeded" in combined
-        or "too many requests" in combined
-    )
-
-
-def _is_access_denied_issue(status_code: int | None, body_text: str, error_text: str) -> bool:
-    combined = f"{body_text}\n{error_text}".lower()
-    return (
-        status_code == 403
-        or "request denied" in combined
-        or "forbidden access" in combined
-        or "permission error" in combined
-        or "permission denied" in combined
-    )
-
-
-def fetch_url(url: str, oauth, max_retries: int = 6, backoff: float = 0.5) -> ET.Element:
-    """
-    Fetch URL with retry logic and exponential backoff.
-
-    Args:
-        url: URL to fetch
-        oauth: OAuth2 session
-        max_retries: Maximum retry attempts
-        backoff: Initial backoff time in seconds
-
-    Returns:
-        ET.Element: Parsed XML root element
-
-    Raises:
-        APITimeoutError: If timeout occurs after retries
-        RecoverableAPIError: If recoverable error occurs after retries
-    """
-    last_exc = None
-    auth_refreshes = 0
-    max_auth_refreshes = 2
-    for attempt in range(max_retries):
-        try:
-            r = oauth.session.get(url, timeout=30)
-            status_code = getattr(r, "status_code", None)
-            text = (r.text or "").strip()
-
-            if _is_auth_issue(status_code, text, ""):
-                if auth_refreshes < max_auth_refreshes and _refresh_oauth_token(
-                    oauth, f"Yahoo API auth failure while fetching {url} (status {status_code})"
-                ):
-                    auth_refreshes += 1
-                    time.sleep(min(2.0, backoff * (2**attempt)))
-                    continue
-                raise RuntimeError(f"Yahoo API authentication failed on {url} (HTTP {status_code})")
-
-            if _is_rate_limit_issue(status_code, text, ""):
-                if attempt == max_retries - 1:
-                    raise RecoverableAPIError(f"Yahoo API rate limit on {url}")
-                time.sleep(backoff * (2**attempt))
-                continue
-
-            if _is_access_denied_issue(status_code, text, ""):
-                if attempt == max_retries - 1:
-                    raise RecoverableAPIError(f"Yahoo API access denied on {url}")
-                time.sleep(backoff * (2**attempt))
-                continue
-
-            try:
-                r.raise_for_status()
-            except requests.HTTPError as he:
-                code = getattr(he.response, "status_code", None)
-                if code in (502, 503, 504):
-                    if attempt == max_retries - 1:
-                        raise RecoverableAPIError(f"HTTP {code} on {url}") from he
-                    time.sleep(backoff * (2**attempt))
-                    continue
-                raise
-
-            if not text:
-                if attempt == max_retries - 1:
-                    raise RecoverableAPIError(f"Empty response from {url}")
-                time.sleep(backoff * (2**attempt))
-                continue
-
-            if _is_rate_limit_issue(None, text, ""):
-                if attempt == max_retries - 1:
-                    raise RecoverableAPIError(f"Yahoo API rate limit on {url}")
-                time.sleep(backoff * (2**attempt))
-                continue
-
-            if _is_access_denied_issue(None, text, ""):
-                if attempt == max_retries - 1:
-                    raise RecoverableAPIError(f"Yahoo API access denied on {url}")
-                time.sleep(backoff * (2**attempt))
-                continue
-
-            xmlstring = _XML_NS_RE.sub("", text, count=1)
-            return ET.fromstring(xmlstring)
-
-        except requests.exceptions.Timeout as e:
-            last_exc = e
-            if attempt == max_retries - 1:
-                raise APITimeoutError(f"Timeout fetching {url}") from e
-            time.sleep(backoff * (2**attempt))
-
-        except (requests.RequestException, ET.ParseError, ValueError) as e:
-            last_exc = e
-            if _is_auth_issue(None, "", str(e)):
-                if auth_refreshes < max_auth_refreshes and _refresh_oauth_token(
-                    oauth, f"Yahoo API auth failure while fetching {url}"
-                ):
-                    auth_refreshes += 1
-                    time.sleep(min(2.0, backoff * (2**attempt)))
-                    continue
-                raise RecoverableAPIError(f"Yahoo API authentication failed on {url}: {e}") from e
-            if attempt == max_retries - 1:
-                raise RecoverableAPIError(f"API error on {url}: {e}") from e
-            time.sleep(backoff * (2**attempt))
-
-    raise RecoverableAPIError(f"Failed after {max_retries} retries") from last_exc
-
+        return http.fetch_url(url, oauth, max_retries=max_retries, backoff=backoff)
+    except http.RecoverableAPIError as exc:
+        raise RecoverableAPIError(str(exc)) from exc
+    except http.APITimeoutError as exc:
+        raise APITimeoutError(str(exc)) from exc
 
 # =============================================================================
 # Utility Functions
@@ -694,7 +554,20 @@ def fetch_team_mappings(
     for lk in keys_to_fetch:
         teams_url = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{lk}/teams"
         try:
-            root = fetch_url(teams_url, oauth)
+            # Retain raw successful snapshots, so overrides/identity resolution
+            # still run normally and a failed request can never poison the cache.
+            snapshots = getattr(oauth, "_yahoo_team_snapshots", {})
+            if not isinstance(snapshots, dict):
+                snapshots = {}
+            root = snapshots.get(lk)
+            if root is None:
+                root = fetch_url(teams_url, oauth)
+                if root.findall(".//team"):
+                    snapshots[lk] = root
+                    try:
+                        oauth._yahoo_team_snapshots = snapshots
+                    except (AttributeError, TypeError):
+                        pass
             identity_rows = []
 
             for team_elem in root.findall(".//team"):

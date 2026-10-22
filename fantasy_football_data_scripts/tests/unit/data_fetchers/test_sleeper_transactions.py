@@ -168,17 +168,24 @@ def test_sleeper_does_not_default_invalid_legs_to_week_one(tmp_path, bad_leg):
     client = _FakeClient()
     client.transactions[('2022-league',1)][0]['leg'] = bad_leg
     fetcher = SleeperTransactionFetcher(_make_ctx(tmp_path), client=client, player_cache=_FakePlayerCache())
-    with pytest.raises(ValueError, match='transaction week'):
-        fetcher.fetch_transactions_for_year(2022)
+    frame = fetcher.fetch_transactions_for_year(2022)
+    unresolved = frame.loc[frame['transaction_id'] == 'tx-commish']
+    assert len(unresolved) == 1
+    assert unresolved[['week','manager_week','player_week']].isna().all().all()
+    assert f'native period={bad_leg!r}' in unresolved.iloc[0]['notes']
+    assert frame.loc[frame['transaction_id'] != 'tx-commish', 'week'].notna().all()
 
 
-def test_sleeper_pick_trade_requires_its_native_leg(tmp_path):
+def test_sleeper_pick_trade_without_native_leg_retains_owners(tmp_path):
     client = _FakeClient()
     fetcher = SleeperTransactionFetcher(_make_ctx(tmp_path), client=client, player_cache=_FakePlayerCache())
     trade = dict(client.transactions[('2022-league',1)][2])
     del trade['leg']
-    with pytest.raises(ValueError, match='transaction week'):
-        fetcher._parse_trade_picks(trade, 2022, {})
+    rows = fetcher._parse_trade_picks(trade, 2022, {})
+    assert len(rows) == 1
+    assert rows[0]['week'] is None
+    assert 'native period=None' in rows[0]['notes']
+    assert rows[0]['source_manager_guid'] and rows[0]['destination_manager_guid']
 
 
 def test_fetch_transactions_for_year_can_stop_at_active_refresh_week(tmp_path):

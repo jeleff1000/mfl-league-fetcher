@@ -92,7 +92,7 @@ def local_yahoo_transaction_windows(local_db, year: int):
     return windows.reset_index(drop=True)
 
 
-def native_transaction_week(value, *, platform: str, transaction_id) -> int:
+def native_transaction_week(value, *, platform: str, transaction_id) -> int | None:
     """Keep explicit provider periods, including preseason zero; never default."""
     try:
         if value is None or isinstance(value, bool):
@@ -102,9 +102,22 @@ def native_transaction_week(value, *, platform: str, transaction_id) -> int:
             raise ValueError
         return int(number)
     except (InvalidOperation, ValueError, TypeError) as exc:
+        if platform in {"espn", "sleeper"}:
+            logging.getLogger(__name__).warning(
+                "[TRANSACTIONS] %s transaction timing unresolved for %s: native period=%r; retaining move",
+                platform, transaction_id, value,
+            )
+            return None
         raise TransactionWeekError(
             f"Unverified {platform} transaction week for {transaction_id}: missing or invalid native period"
         ) from exc
+
+
+def native_transaction_timing_note(value, *, platform: str, week: int | None) -> str | None:
+    """Keep the unmodified native period alongside a retained, undated move."""
+    if week is None:
+        return f"Transaction timing unresolved ({platform} native period={value!r})"
+    return None
 
 
 def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | None = None) -> None:
@@ -145,37 +158,59 @@ def validate_transaction_weeks(conn, db_names: list[str], *, platform: str | Non
         return
     if not {"year", "week"}.issubset(cols):
         raise TransactionWeekError("Unverified transaction week: missing year/week columns")
-    bad = "(try_cast(t.week AS DOUBLE) IS NULL OR NOT isfinite(try_cast(t.week AS DOUBLE)) " \
+    bad_week = "(try_cast(t.week AS DOUBLE) IS NULL OR NOT isfinite(try_cast(t.week AS DOUBLE)) " \
           "OR try_cast(t.week AS DOUBLE) != trunc(try_cast(t.week AS DOUBLE)) " \
-          "OR try_cast(t.week AS DOUBLE) NOT BETWEEN 0 AND 22 " \
-          "OR try_cast(t.year AS INTEGER) IS NULL)"
+          "OR try_cast(t.week AS DOUBLE) NOT BETWEEN 0 AND 22)"
+    bad = f"({bad_week} OR try_cast(t.year AS INTEGER) IS NULL)"
     if "cumulative_week" in cols:
         bad = f"({bad} OR try_cast(t.cumulative_week AS BIGINT) IS DISTINCT FROM " \
               "try_cast(t.year AS BIGINT) * 100 + try_cast(t.week AS BIGINT))"
     # Yahoo derives periods from dates; unavailable timing must not block real
     # moves. ESPN/Sleeper have native periods, independent of optional dates.
-    invalid = conn.execute(f"SELECT {id_expr} FROM public.transactions t WHERE {scope} AND {bad} "
-                           f"AND ({provider} != 'yahoo' OR try_cast(t.year AS INTEGER) IS NULL) LIMIT 5").fetchall()
+    invalid = conn.execute(f"SELECT {id_expr} FROM public.transactions t WHERE {scope} "
+                           f"AND try_cast(t.year AS INTEGER) IS NULL LIMIT 5").fetchall()
     if invalid:
         raise TransactionWeekError(f"Unverified transaction week: invalid period/join key for {invalid}")
     yahoo_scope = f"{scope} AND {provider} = 'yahoo'"
-    if not conn.execute(f"SELECT 1 FROM public.transactions t WHERE {yahoo_scope} LIMIT 1").fetchone():
-        return
 
-    def retain_without_timing(invalid_rows=None):
+    def retain_without_timing(invalid_rows=None, *, native=False):
         # Worker-local rows only. Keep identities/assets; never publish guessed
         # periods or stale metrics derived from them. No Fly/network writes.
         from multi_league.core.canonical_transaction import SQL_COLUMNS
         keep = {"NFL_player_id", "nfl_team", "pickup_type", "conveyed_player", "conveyed_lamar",
                 "conveyed_fantasy_points", "conveyed_year", "is_conveyed"}
         fields = ({"week", "cumulative_week", "week_start", "week_end"} | (set(SQL_COLUMNS) - keep)) & cols
+        if native:
+            fields |= {"manager_week", "player_week"} & cols
+            if "notes" not in cols:
+                conn.execute("ALTER TABLE public.transactions ADD COLUMN notes VARCHAR")
+                cols.add("notes")
         changes = [f'"{field}" = NULL' for field in sorted(fields)]
-        if "notes" in cols:
+        if native:
+            raw_cw = "coalesce(cast(t.cumulative_week AS VARCHAR), 'NULL')" if "cumulative_week" in cols else "'NULL'"
+            changes.append("notes = CASE WHEN strpos(coalesce(t.notes, ''), 'native period=') = 0 "
+                           "THEN concat_ws('; ', nullif(t.notes, ''), 'Transaction timing unresolved (' || "
+                           f"{provider} || ' native period=' || coalesce(cast(t.week AS VARCHAR), 'NULL') || "
+                           f"', cumulative_week=' || {raw_cw} || ')') ELSE t.notes END")
+        elif "notes" in cols:
             changes.append("notes = CASE WHEN strpos(coalesce(t.notes, ''), 'Transaction timing unresolved') = 0 "
                            "THEN concat_ws('; ', nullif(t.notes, ''), 'Transaction timing unresolved') ELSE t.notes END")
         where = f"t.rowid IN ({invalid_rows})" if invalid_rows else yahoo_scope
         if changes:
             conn.execute(f"UPDATE public.transactions t SET {', '.join(changes)} WHERE {where}")
+    native_scope = f"{scope} AND {provider} IN ('espn', 'sleeper')"
+    if "cumulative_week" in cols:
+        expected_cw = "try_cast(t.year AS BIGINT) * 100 + try_cast(t.week AS BIGINT)"
+        conn.execute(f"UPDATE public.transactions t SET cumulative_week = {expected_cw} "
+                     f"WHERE {native_scope} AND NOT {bad_week} "
+                     f"AND try_cast(t.cumulative_week AS BIGINT) IS DISTINCT FROM {expected_cw}")
+    native_invalid = f"SELECT t.rowid FROM public.transactions t WHERE {native_scope} AND {bad_week}"
+    if conn.execute(native_invalid + " LIMIT 1").fetchone():
+        retain_without_timing(native_invalid, native=True)
+        logging.getLogger(__name__).warning(
+            "[TRANSACTIONS] Native transaction timing unresolved: retaining moves without timing metrics")
+    if not conn.execute(f"SELECT 1 FROM public.transactions t WHERE {yahoo_scope} LIMIT 1").fetchone():
+        return
     required = {"year", "week", "week_start", "week_end"}
     calendar_sql = []
     owned_name = literal(db_names[0]) if len(db_names) == 1 else "NULL"

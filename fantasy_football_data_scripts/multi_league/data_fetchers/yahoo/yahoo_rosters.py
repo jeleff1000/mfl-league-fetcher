@@ -185,168 +185,22 @@ class YahooRosterFetcher:
 
             self.last_request_time = time.time()
 
-    def _refresh_access_token(self, reason: str) -> bool:
-        """Refresh Yahoo OAuth credentials after an auth failure."""
-        if not hasattr(self.oauth, "refresh_access_token"):
-            log(f"[AUTH] {reason}; OAuth session cannot refresh access tokens")
-            return False
+    def _fetch_url_xml(self, url: str) -> ET.Element:
+        """Share Yahoo credential repair and retry policy with the other fetchers."""
+        from multi_league.data_fetchers.yahoo.yahoo_draft import fetch_url
 
         try:
-            log(f"[AUTH] {reason}; refreshing Yahoo access token...")
-            self.oauth.refresh_access_token()
-            log("[AUTH] Token refreshed successfully")
-            return True
-        except Exception as exc:  # noqa: BLE001
-            log(f"[AUTH] Token refresh failed: {exc}")
-            return False
-
-    def _classify_request_failure(
-        self,
-        *,
-        response: Any | None = None,
-        error: Exception | None = None,
-        body_text: str | None = None,
-    ) -> str:
-        """Classify Yahoo failures so logs reflect auth vs throttling vs denial."""
-        status_code = getattr(response, "status_code", None)
-        combined = " ".join(part for part in [body_text or "", str(error or "")]).lower()
-
-        if (
-            status_code == 401
-            or "unauthorized" in combined
-            or "invalid cookie" in combined
-            or "please log in again" in combined
-            or "must be logged in" in combined
-            or "token expired" in combined
-        ):
-            return "auth"
-
-        if (
-            status_code == 429
-            or "rate limit" in combined
-            or "limit exceeded" in combined
-            or "too many requests" in combined
-        ):
-            return "rate_limit"
-
-        if (
-            status_code == 403
-            or "request denied" in combined
-            or "access denied" in combined
-            or "forbidden access" in combined
-            or "permission error" in combined
-            or "permission denied" in combined
-        ):
-            return "access_denied"
-
-        return "other"
-
-    def _fetch_url_xml(self, url: str) -> ET.Element:
-        """Fetch XML from Yahoo API with retries."""
-        last_error = None
-        backoff = 0.5
-        rate_limit_retries = 0
-        auth_refresh_retries = 0
-        MAX_AUTH_REFRESH_RETRIES = 2
-        MAX_RATE_LIMIT_RETRIES = 2  # Two retries with cooldown — give rate limit window time to recover
-
-        for attempt in range(self.max_retries):
-            try:
-                self._rate_limit_wait()
-
-                response = self.oauth.session.get(url, timeout=30)
-                text = response.text or ""
-                failure_kind = self._classify_request_failure(response=response, body_text=text)
-
-                if failure_kind == "auth":
-                    if auth_refresh_retries < MAX_AUTH_REFRESH_RETRIES and self._refresh_access_token(
-                        f"Yahoo API auth failure while fetching {url} (status {response.status_code})"
-                    ):
-                        auth_refresh_retries += 1
-                        time.sleep(min(2.0, backoff * (2**attempt)))
-                        continue
-                    raise RuntimeError(f"Yahoo API authentication failed for {url} (status {response.status_code})")
-
-                if failure_kind == "rate_limit":
-                    raise RuntimeError("Yahoo API rate limit exceeded")
-
-                if failure_kind == "access_denied":
-                    raise RuntimeError("Yahoo API access denied")
-
-                response.raise_for_status()
-
-                self.request_count += 1
-
-                failure_kind = self._classify_request_failure(body_text=text)
-                if failure_kind == "rate_limit":
-                    raise RuntimeError("Yahoo API rate limit exceeded")
-                if failure_kind == "access_denied":
-                    raise RuntimeError("Yahoo API access denied")
-
-                # Remove XML namespace for easier parsing
-                text = pd.Series(text).str.replace(r' xmlns="[^"]+"', "", n=1, regex=True).iloc[0]
-
-                return ET.fromstring(text)
-
-            except Exception as e:
-                last_error = e
-                failure_kind = self._classify_request_failure(error=e)
-
-                if failure_kind == "auth":
-                    if auth_refresh_retries < MAX_AUTH_REFRESH_RETRIES and self._refresh_access_token(
-                        f"Yahoo API auth failure while fetching {url}"
-                    ):
-                        auth_refresh_retries += 1
-                        time.sleep(min(2.0, backoff * (2**attempt)))
-                        continue
-                    log(f"[AUTH] Authentication retries exhausted for {url}: {e}")
-                    break
-
-                if failure_kind == "access_denied":
-                    if not getattr(self, "_access_denied_logged", False):
-                        log("[ACCESS DENIED] Yahoo API rate limited — skipping remaining requests until cooldown")
-                        self._access_denied_logged = True
-                    break
-
-                if failure_kind == "rate_limit":
-                    rate_limit_retries += 1
-                    if rate_limit_retries > MAX_RATE_LIMIT_RETRIES:
-                        log(f"[RATE-LIMIT] Exhausted {MAX_RATE_LIMIT_RETRIES} retries for {url}; giving up")
-                        break
-                    cooldown = 120
-                    log(f"[RATE LIMIT] Retry {rate_limit_retries}/{MAX_RATE_LIMIT_RETRIES}: {e}")
-                    log(f"Cooling down for {cooldown // 60}m...")
-                    time.sleep(cooldown)
-                    log("Resuming after cooldown")
-                    continue
-
-                error_msg = str(e).lower()
-
-                # Legacy fallback for uncategorized throttling-only failures.
-                is_rate_limit = (
-                    "rate limit" in error_msg or "limit exceeded" in error_msg or "too many requests" in error_msg
-                )
-                if is_rate_limit:
-                    rate_limit_retries += 1
-                    if rate_limit_retries > MAX_RATE_LIMIT_RETRIES:
-                        log(f"Rate limit: exhausted {MAX_RATE_LIMIT_RETRIES} retries, giving up on this URL")
-                        break
-                    # 2-minute cooldown per retry — enough to let Yahoo's rate window partially recover
-                    cooldown = 120
-                    log(f"Rate limit detected (retry {rate_limit_retries}/{MAX_RATE_LIMIT_RETRIES}): {e}")
-                    log(f"Cooling down for {cooldown // 60}m...")
-                    time.sleep(cooldown)
-                    log("Resuming after cooldown")
-                    continue
-
-                log(f"Attempt {attempt + 1}/{self.max_retries} failed: {e}")
-
-                if attempt < self.max_retries - 1:
-                    sleep_time = backoff * (2**attempt)
-                    log(f"Retrying in {sleep_time:.1f}s...")
-                    time.sleep(sleep_time)
-
-        raise RuntimeError(f"Failed to fetch URL after retries: {last_error}")
+            root = fetch_url(url, self.oauth, max_retries=self.max_retries,
+                             rate_limit_wait=self._rate_limit_wait)
+            self.request_count += 1
+            return root
+        except Exception as exc:
+            # Weekly workers return failures separately from available rows.
+            # Retain transport failures so recovery cannot call them hard missing.
+            self._request_error = exc
+            if "denied" in str(exc).lower():
+                self._access_denied_logged = True
+            raise
 
     def fetch_teams(self) -> dict[str, dict[str, str]]:
         """

@@ -84,9 +84,13 @@ def parse_events(platform, events, monkeypatch, *, retry=False, active=False):
             get_team_name=lambda rid, year: ROSTERS[rid]["team_name"])
         return fetch_espn_transactions_modern(ctx, 2024, max_week=6 if active else None,
                                                client=Client(), league=SimpleNamespace(teams=[]))
-    from multi_league.data_fetchers.sleeper.sleeper_transactions import SleeperTransactionFetcher
-    fetcher = SleeperTransactionFetcher(SimpleNamespace(), client=object(), player_cache=PlayerCache())
-    return pd.DataFrame([row for e in events for row in fetcher._parse_transaction(e, 2024, ROSTERS)])
+    from multi_league.data_fetchers.sleeper import sleeper_transactions as module
+    class Client:
+        def get_league_transactions(self, league_id, week): return events if week == 1 else []
+    monkeypatch.setattr(module, "build_year_roster_map", lambda *a, **kw: ROSTERS)
+    fetcher = module.SleeperTransactionFetcher(SimpleNamespace(get_league_id_for_year=lambda year: '1'),
+                                              client=Client(), player_cache=PlayerCache())
+    return fetcher.fetch_transactions_for_year(2024, max_week=6 if active else None)
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)
@@ -179,14 +183,11 @@ def test_sleeper_pick_only_trade_keeps_native_owners_and_week(monkeypatch, valid
     txn = event("sleeper", kind="trade", assets=False, week=valid_leg)
     txn["draft_picks"] = [{"season": "2025", "round": 1, "roster_id": 1,
                            "owner_id": 2, "previous_owner_id": 1}]
-    if not valid_leg:
-        with pytest.raises(TransactionWeekError, match="transaction week"):
-            parse_events("sleeper", [txn], monkeypatch)
-        return
     frame = parse_events("sleeper", [txn], monkeypatch)
     row = frame.iloc[0]
     assert len(frame) == 1
-    assert (row["transaction_type"], row["sleeper_player_id"], row["week"]) == ("trade_pick", "pick_2025_1_1", 6)
+    assert (row["transaction_type"], row["sleeper_player_id"]) == ("trade_pick", "pick_2025_1_1")
+    assert row['week'] == 6 if valid_leg else pd.isna(row['week'])
     assert (row["source_manager_guid"], row["destination_manager_guid"]) == ("scott-id", "maxx-id")
 
 
@@ -419,12 +420,14 @@ def test_null_optional_metadata_does_not_block_native_moves(monkeypatch, platfor
 
 
 @pytest.mark.parametrize("lane", ["quick", "full", "refresh"])
-@pytest.mark.parametrize("platform,asset", [(p, a) for p in PLATFORMS for a in ("trade", "drop")] + [("sleeper", "faab")])
-def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch, platform, lane, asset):
+@pytest.mark.parametrize("unresolved", [False, True])
+@pytest.mark.parametrize("platform,asset", [(p, a) for p in PLATFORMS for a in ("trade", "drop", "add")] +
+                         [("sleeper", "faab"), ("sleeper", "pick")])
+def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch, platform, lane, asset, unresolved):
     """Parse -> canonicalize -> stage -> export: verify both actual trade parties."""
     import tarfile
     import duckdb
-    from multi_league.core.canonical_transaction import normalize_transaction_df
+    from multi_league.core.canonical_transaction import normalize_transaction_df, TRANSACTION_SCHEMA
     from multi_league.core.delta_publish import build_delta_bundle
     from multi_league.core.fleet_publish import build_fleet_partition_bundle
     from multi_league.core.league_refresh import stage_refresh_partitions
@@ -448,6 +451,15 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
     elif asset == "faab":
         txn = event("sleeper", kind="trade", assets=False)
         txn["waiver_budget"] = [{"sender": 1, "receiver": 2, "amount": 55}]
+    elif asset == "pick":
+        txn['adds'] = txn['drops'] = None
+    elif asset == 'add':
+        txn = event(platform)
+    if unresolved:
+        if platform == 'yahoo':
+            txn = txn.replace('1728520236', '1767096000')
+        else:
+            txn['leg' if platform == 'sleeper' else 'scoringPeriodId'] = 'unavailable'
     frame = parse_events(platform, [event(platform, status="failed", assets=False, week=False), txn],
                          monkeypatch, active=lane == "refresh")
     frame = normalize_transaction_df(frame, platform=platform, league_id="1")
@@ -455,9 +467,19 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
     with duckdb.connect(":memory:") as conn:
         conn.execute("CREATE SCHEMA public")
         conn.register("parsed_transactions", frame)
-        conn.execute("CREATE TABLE public.transactions AS SELECT * FROM parsed_transactions")
+        conn.execute('CREATE TABLE public.transactions (' + ','.join(
+            f'"{name}" {dtype}' for name,dtype,_ in TRANSACTION_SCHEMA) + ')')
+        conn.execute('INSERT INTO public.transactions BY NAME SELECT * FROM parsed_transactions')
         conn.execute("CREATE TABLE public.matchup AS SELECT 'qa' AS db_name, 2024 AS year, 6 AS week, "
                      "'2024-10-08' AS week_start, '2024-10-14' AS week_end, 'qa_2024_6' AS manager_week")
+        from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
+        from multi_league.transformations.transaction.sql_transaction_enrichments import TransactionEnrichmentsMixin
+        class Runner(TransactionEnrichmentsMixin, SQLEnrichmentsBase): pass
+        runner = Runner('qa', conn=conn)
+        runner._qualified_name = lambda table: f'public.{table}'
+        runner.transaction_weeks_from_matchup()
+        runner.transaction_score()
+        runner._compute_trade_net_lamar()
         if lane == "refresh":
             with stage_refresh_partitions(conn, db_name="qa", active_year=2024, tables=["transactions", "matchup"]) as stage:
                 bundle = build_fleet_partition_bundle(stage, active_year=2024, league_generations={"qa": 0},
@@ -477,10 +499,46 @@ def test_native_trade_assets_survive_each_publication_lane(tmp_path, monkeypatch
                          ("Scott", "scott-id", "sent", "trade_pick")]
         if asset == "drop":
             expected = [("Scott", "scott-id", None, "drop")]
+        elif asset == 'add':
+            expected = [("Maxx", "maxx-id", None, "add")]
+        elif asset == 'pick':
+            expected = [("Maxx", "maxx-id", "received", "trade_pick"), ("Scott", "scott-id", "sent", "trade_pick")]
         elif asset == "faab":
             expected = [("Maxx", "maxx-id", "received", "trade"), ("Scott", "scott-id", "sent", "trade")]
         assert actual == expected
         if asset == "faab":
             assert conn.execute("SELECT faab_traded FROM read_parquet(?) ORDER BY manager", [str(published)]).fetchall() == [(55,), (55,)]
-        assert conn.execute("SELECT COUNT(*) FROM read_parquet(?) WHERE db_name <> 'qa' OR "
-                            "week <> 6 OR cumulative_week <> 202406", [str(published)]).fetchone()[0] == 0
+        timing = conn.execute("SELECT week,cumulative_week,transaction_score,trade_asset_lamar,trade_net_lamar "
+                              "FROM read_parquet(?)", [str(published)]).fetchall()
+        if unresolved:
+            assert timing == [(None,) * 5] * len(expected)
+            notes = conn.execute('SELECT notes FROM read_parquet(?)', [str(published)]).fetchall()
+            if platform != 'yahoo':
+                assert all("native period='unavailable'" in note for (note,) in notes)
+        else:
+            assert all(row[:2] == (6,202406) for row in timing)
+
+
+@pytest.mark.parametrize('period', [None, 'unavailable', 1.5, 23])
+def test_native_espn_api_does_not_replace_unknown_period_with_request_week(monkeypatch, period):
+    txn = event('espn', kind='trade')
+    txn.update(scoringPeriodId=period, executionType='PROCESS', status='EXECUTED')
+    raw = parse_native_espn([txn], monkeypatch)
+    assert len(raw) == 1
+    assert raw['week'].isna().all()
+    assert f'native period={period!r}' in raw.iloc[0]['notes']
+    assert (raw.iloc[0]['source_manager_guid'],raw.iloc[0]['destination_manager_guid']) == ('scott-id','maxx-id')
+
+
+@pytest.mark.parametrize('created', [None, 1e30, float('inf'), 'invalid'])
+def test_sleeper_unusable_optional_timestamp_retains_period_and_trade_assets(monkeypatch, created):
+    from multi_league.core.canonical_transaction import normalize_transaction_df
+    txn = event('sleeper', kind='trade')
+    txn['created'] = created
+    txn['draft_picks'] = [{'season':'2025','round':1,'roster_id':1,'owner_id':2,'previous_owner_id':1}]
+    frame = normalize_transaction_df(parse_events('sleeper', [txn], monkeypatch), platform='sleeper', league_id='1')
+    assert len(frame) == 4
+    assert frame['timestamp'].isna().all()
+    assert frame['week'].tolist() == [6] * 4
+    assert frame['cumulative_week'].tolist() == [202406] * 4
+    assert sorted(frame['trade_direction'].tolist()) == ['received','received','sent','sent']

@@ -222,92 +222,120 @@ def _rate_limit_wait(oauth, rate_limit: float = DEFAULT_RATE_LIMIT):
         time.sleep(wait_time)
 
 
+def _retry_after_seconds(response) -> float | None:
+    """Use only a valid non-negative Retry-After delta or HTTP date."""
+    from email.utils import parsedate_to_datetime
+    import math
+
+    raw = getattr(response, "headers", {}).get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw) if str(raw).strip().isdigit() else (
+            parsedate_to_datetime(raw).timestamp() - time.time()
+        )
+        return seconds if math.isfinite(seconds) and seconds >= 0 else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 def fetch_url(
-    url: str, oauth, max_retries: int = 6, backoff: float = 0.5, timeout: int = DEFAULT_TIMEOUT
+    url: str, oauth, max_retries: int = 6, backoff: float = 0.5,
+    timeout: int = DEFAULT_TIMEOUT, *, rate_limit_wait=None,
 ) -> ET.Element:
-    """
-    Fetch URL with retry logic and exponential backoff.
+    """Common Yahoo XML transport: repair credentials once, never retry denial blindly."""
+    from multi_league.data_fetchers.yahoo.yahoo_runtime import prepare_yahoo_session
 
-    Args:
-        url: URL to fetch
-        oauth: OAuth2 session
-        max_retries: Maximum retry attempts
-        backoff: Initial backoff time in seconds
-        timeout: Request timeout in seconds
-
-    Returns:
-        ET.Element: Parsed XML root element
-
-    Raises:
-        APITimeoutError: If timeout occurs after retries
-        RecoverableAPIError: If recoverable error occurs after retries
-    """
+    refreshed = False
     last_exc = None
+    retry_deadline = time.time() + timeout
+    recovery_deadline = getattr(oauth, "_yahoo_recovery_deadline", None)
+    if isinstance(recovery_deadline, (int, float)):
+        retry_deadline = min(retry_deadline, recovery_deadline)
     for attempt in range(max_retries):
         try:
-            # Proactive rate limiting - wait before request if needed.
-            # State lives on the oauth object so it doesn't leak across
-            # leagues when the same Python process imports several in a row.
-            _rate_limit_wait(oauth)
-
-            r = oauth.session.get(url, timeout=timeout)
+            not_before = getattr(oauth, "_yahoo_retry_not_before", 0)
+            if isinstance(not_before, (int, float)) and not_before > time.time():
+                raise RecoverableAPIError("Yahoo API rate limit: Retry-After pending")
+            session = prepare_yahoo_session(oauth)
+            if rate_limit_wait is None:
+                _rate_limit_wait(oauth)
+            else:
+                rate_limit_wait()
+            request_token = getattr(session, "access_token", None)
+            r = session.get(url, timeout=timeout)
             try:
                 setattr(oauth, _LAST_REQ_ATTR, time.time())
-            except Exception:
-                # Some oauth implementations forbid attribute mutation; the
-                # rate limiter degrades to no-op for that session, which is
-                # safe — Yahoo's server-side limiter is the actual gate.
-                pass
-
-            try:
-                r.raise_for_status()
-            except requests.HTTPError as he:
-                code = getattr(he.response, "status_code", None)
-                if code in (429, 403, 502, 503, 504):
-                    if attempt == max_retries - 1:
-                        raise RecoverableAPIError(f"HTTP {code} on {url}") from he
-
-                    # Special handling for 429 rate limit - use 10 minute cooldown
-                    if code == 429:
-                        log("[RATE LIMIT] Yahoo API rate limit hit; signaling wrapper to retry...")
-                        raise RecoverableAPIError("rate_limited")
-
-                    else:
-                        # Normal exponential backoff for other transient errors
-                        wait_time = backoff * (2**attempt)
-                        log(
-                            f"[RETRY] HTTP {code} error. Waiting {wait_time:.1f} seconds before retry {attempt + 1}/{max_retries}..."
-                        )
-                        time.sleep(wait_time)
-                    continue
-                raise
-
+            except (AttributeError, TypeError):
+                pass  # Some legitimate OAuth adapters forbid optional state.
             text = (r.text or "").strip()
-            if not text or "Request denied" in text:
-                if attempt == max_retries - 1:
-                    raise RecoverableAPIError(f"Empty or denied response from {url}")
+            # Provider errors may arrive with HTTP 200. Read their envelopes,
+            # not arbitrary team/player names in otherwise successful XML.
+            root = None
+            try:
+                root = ET.fromstring(_XML_NS_RE.sub("", text, count=1))
+            except ET.ParseError:
+                pass
+            errors = [] if root is None else [
+                node for node in root.iter() if node.tag.rsplit('}', 1)[-1].lower() == 'error'
+            ]
+            lower = (" ".join(" ".join(node.itertext()) for node in errors) if errors
+                     else text if root is None else "").lower()
+            code = getattr(r, "status_code", None)
+            throttled = code == 429 or any(marker in lower for marker in (
+                "rate limit", "limit exceeded", "too many requests",
+            ))
+            permission_denied = any(marker in lower for marker in (
+                "permission denied", "permission error", "not authorized to view",
+                "not allowed to view", "not a member", "forbidden access",
+            ))
+            auth_error = code == 401 or any(marker in lower for marker in (
+                "unauthorized", "invalid cookie", "please log in again",
+                "must be logged in", "token expired",
+            ))
+            denied = code == 403 or "request denied" in lower or "access denied" in lower
+            if permission_denied:
+                raise RecoverableAPIError(f"Yahoo API permission denied (HTTP {code})")
+            if throttled:
+                delay = _retry_after_seconds(r)
+                # Without a server deadline, let the recovery queue own cooldown.
+                if delay is None or attempt == max_retries - 1:
+                    raise RecoverableAPIError(f"Yahoo API rate limit (HTTP {code})")
+                if delay >= retry_deadline - time.time():
+                    try:
+                        oauth._yahoo_retry_not_before = time.time() + delay
+                    except (AttributeError, TypeError):
+                        pass
+                    raise RecoverableAPIError("Yahoo API rate limit: Retry-After exceeds remaining budget")
+                time.sleep(delay)
+                continue
+            if auth_error or denied:
+                if not refreshed and attempt < max_retries - 1 and hasattr(oauth, "refresh_access_token"):
+                    refreshed = True
+                    prepare_yahoo_session(oauth, refresh=True, failed_token=request_token)
+                    log(f"[YAHOO AUTH] Retrying request after session repair (HTTP {code})")
+                    continue
+                kind = "authentication failed" if auth_error else "access denied"
+                raise RecoverableAPIError(f"Yahoo API {kind} (HTTP {code})")
+
+            r.raise_for_status()
+            if errors:
+                raise RecoverableAPIError("Yahoo API error envelope")
+            if not text:
+                raise ValueError("Empty Yahoo response")
+            return root if root is not None else ET.fromstring(_XML_NS_RE.sub("", text, count=1))
+        except (requests.RequestException, ET.ParseError, ValueError) as exc:
+            last_exc = exc
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            if code is not None and code < 500:
+                raise RecoverableAPIError(f"Yahoo API HTTP {code}") from exc
+            if attempt < max_retries - 1:
                 time.sleep(backoff * (2**attempt))
                 continue
-
-            xmlstring = _XML_NS_RE.sub("", text, count=1)
-            return ET.fromstring(xmlstring)
-
-        except requests.exceptions.Timeout as e:
-            last_exc = e
-            if attempt == max_retries - 1:
-                raise APITimeoutError(f"Timeout fetching {url}") from e
-            time.sleep(backoff * (2**attempt))
-
-        except (requests.RequestException, ET.ParseError, ValueError) as e:
-            last_exc = e
-            if attempt == max_retries - 1:
-                raise RecoverableAPIError(f"Transient error fetching {url}: {e}") from e
-            time.sleep(backoff * (2**attempt))
-
-    if isinstance(last_exc, requests.exceptions.Timeout):
-        raise APITimeoutError(f"Timeout fetching {url}") from last_exc
-    raise RecoverableAPIError(f"Unknown fetch_url failure for {url}: {last_exc}")
-
+            if isinstance(exc, requests.exceptions.Timeout):
+                raise APITimeoutError(f"Timeout fetching {url}") from exc
+            raise RecoverableAPIError(f"Transient error fetching {url}") from exc
+    raise RecoverableAPIError(f"Failed to fetch Yahoo XML: {last_exc}")
 
 # --- REMOVED: league settings are now fetched in PHASE 0 of initial_import_v2.py ---
 # draft_data_v2.py now READS from saved settings files instead of making API calls

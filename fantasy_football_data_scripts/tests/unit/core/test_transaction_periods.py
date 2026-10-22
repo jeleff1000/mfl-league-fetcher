@@ -23,16 +23,18 @@ def staged(platform, week, *, timestamp=1728520236, db_name="qa"):
 
 @pytest.mark.parametrize("lane", ["full", "quick", "fleet"])
 @pytest.mark.parametrize("platform,week", [("sleeper", None), ("espn", 1.5)])
-def test_every_bundle_lane_rejects_bad_period_before_artifact(tmp_path, lane, platform, week):
+def test_every_bundle_lane_retains_unknown_native_period(tmp_path, lane, platform, week):
     with staged(platform, week) as conn:
-        with pytest.raises(ValueError, match="transaction week"):
-            if lane == "fleet":
-                build_fleet_partition_bundle(conn, active_year=2024, league_generations={"qa": 0},
-                                             tables=["transactions"], output_dir=tmp_path)
-            else:
-                build_delta_bundle(conn, db_name="qa", import_mode=lane, platform=platform,
-                                   base_generation=0, output_dir=tmp_path)
-        assert not list(tmp_path.iterdir())
+        if lane == "fleet":
+            bundle = build_fleet_partition_bundle(conn, active_year=2024, league_generations={"qa": 0},
+                                                  tables=["transactions"], output_dir=tmp_path)
+        else:
+            bundle = build_delta_bundle(conn, db_name="qa", import_mode=lane, platform=platform,
+                                        base_generation=0, output_dir=tmp_path)
+        assert bundle.path.is_file()
+        assert conn.execute("SELECT transaction_id,week,cumulative_week FROM public.transactions").fetchall() == [
+            ("trade", None, None)]
+        assert "native period=" in conn.execute("SELECT notes FROM public.transactions").fetchone()[0]
 
 
 @pytest.mark.parametrize("platform,week,timestamp", [("sleeper", 0, None), ("sleeper", 1, 1700000000),
@@ -134,7 +136,7 @@ def test_yahoo_calendar_issues_warn_without_blocking_publication(tmp_path, bad, 
         assert conn.execute("SELECT week,cumulative_week FROM public.transactions").fetchall() == [(None,None)]
 
 
-def test_legacy_upload_rejects_bad_period_before_remote_write(monkeypatch, tmp_path):
+def test_legacy_upload_rejects_bad_year_before_remote_write(monkeypatch, tmp_path):
     from multi_league.core.local_db import LocalLeagueDB
     from multi_league.core.targets import fly_target
     class NoWriteTarget:
@@ -146,7 +148,7 @@ def test_legacy_upload_rejects_bad_period_before_remote_write(monkeypatch, tmp_p
     try:
         conn = db.connect()
         conn.execute("CREATE TABLE public.transactions (year INTEGER, week INTEGER, platform VARCHAR)")
-        conn.execute("INSERT INTO public.transactions VALUES (2024, NULL, 'espn')")
+        conn.execute("INSERT INTO public.transactions VALUES (NULL, NULL, 'espn')")
         with pytest.raises(ValueError, match="transaction week"):
             db.upload_to_fly("qa", import_mode="full", platform="espn", finalize_merge_source=False)
     finally:
@@ -202,6 +204,7 @@ def test_import_orchestrator_does_not_swallow_bad_transaction_period(script, fet
 
 def test_fleet_validates_every_league_actually_exported(tmp_path):
     with staged("sleeper", None, db_name="other") as conn:
+        conn.execute("UPDATE public.transactions SET year=NULL")
         with pytest.raises(ValueError, match="transaction week"):
             build_fleet_partition_bundle(conn, active_year=2024, league_generations={"qa":0},
                                          tables=["transactions"], output_dir=tmp_path)
@@ -246,6 +249,69 @@ def test_period_guard_does_not_change_other_provider_import_contracts():
     from multi_league.core.transaction_periods import validate_transaction_weeks
     with staged("mfl", None) as conn:
         validate_transaction_weeks(conn,["qa"])
+
+
+@pytest.mark.parametrize("platform", ["espn", "sleeper"])
+@pytest.mark.parametrize("week,cw", [(None, 202406), (1.5, 202401), (-1, 202399),
+    (23, 202423), (float("nan"), None), (float("inf"), None)])
+def test_cached_native_timing_retains_raw_evidence_and_clears_only_dependent_metrics(platform, week, cw):
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged(platform, 6) as conn:
+        conn.execute("ALTER TABLE public.transactions ADD COLUMN notes VARCHAR DEFAULT 'original evidence'")
+        conn.execute("ALTER TABLE public.transactions ADD COLUMN NFL_player_id VARCHAR DEFAULT 'P'")
+        conn.execute("ALTER TABLE public.transactions ADD COLUMN transaction_score DOUBLE DEFAULT 99")
+        conn.execute("ALTER TABLE public.transactions ADD COLUMN conveyed_player VARCHAR DEFAULT 'Pick result'")
+        conn.execute("UPDATE public.transactions SET week=?,cumulative_week=?,week_start='stale'", [week,cw])
+        validate_transaction_weeks(conn, ["qa"])
+        assert conn.execute("SELECT transaction_id,NFL_player_id,conveyed_player,week,cumulative_week,"
+                            "week_start,transaction_score FROM public.transactions").fetchone() == (
+                                'trade','P','Pick result',None,None,None,None)
+        note = conn.execute("SELECT notes FROM public.transactions").fetchone()[0]
+        assert 'original evidence' in note and 'native period=' in note
+        assert f'cumulative_week={cw if cw is not None else "NULL"}' in note
+        validate_transaction_weeks(conn, ["qa"])
+        assert conn.execute("SELECT notes FROM public.transactions").fetchone()[0] == note
+
+
+@pytest.mark.parametrize('platform', ['espn', 'sleeper'])
+@pytest.mark.parametrize('cw', [None, 0, 202405])
+def test_known_native_period_repairs_only_derived_key(platform, cw):
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged(platform, 6) as conn:
+        conn.execute("ALTER TABLE public.transactions ADD COLUMN transaction_score DOUBLE DEFAULT 99")
+        conn.execute("UPDATE public.transactions SET cumulative_week=?,week_start='2024-10-08'", [cw])
+        validate_transaction_weeks(conn, ['qa'])
+        assert conn.execute('SELECT week,cumulative_week,week_start,transaction_score FROM public.transactions').fetchone() == (
+            6,202406,'2024-10-08',99)
+
+
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+def test_unknown_period_does_not_excuse_invalid_year(platform):
+    from multi_league.core.transaction_periods import validate_transaction_weeks
+    with staged(platform, None) as conn:
+        conn.execute("UPDATE public.transactions SET year=NULL")
+        with pytest.raises(ValueError, match="transaction week"):
+            validate_transaction_weeks(conn, ["qa"])
+
+
+@pytest.mark.parametrize("platform", ["espn", "sleeper"])
+@pytest.mark.parametrize("period", [None, '', 'unknown', -1, 1.5, True, 23, float('nan'), float('inf')])
+def test_native_unknown_period_is_nullable(platform, period):
+    from multi_league.core.transaction_periods import native_transaction_week
+    assert native_transaction_week(period, platform=platform, transaction_id='real') is None
+
+
+@pytest.mark.parametrize("period,want", [(0,0), ('6',6), ('22',22)])
+@pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
+def test_native_explicit_period_is_never_guessed(platform, period, want):
+    from multi_league.core.transaction_periods import native_transaction_week
+    assert native_transaction_week(period, platform=platform, transaction_id='real') == want
+
+
+def test_yahoo_native_calendar_validation_still_raises():
+    from multi_league.core.transaction_periods import native_transaction_week
+    with pytest.raises(ValueError, match="transaction week"):
+        native_transaction_week(None, platform='yahoo', transaction_id='calendar')
 
 
 def test_yahoo_import_wrapper_propagates_invalid_period():

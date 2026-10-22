@@ -9,11 +9,41 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import logging
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
 
 from multi_league.core.date_utils import get_current_nfl_season_year
+
+_SESSION_LOCK = threading.RLock()
+_logger = logging.getLogger(__name__)
+
+
+def prepare_yahoo_session(oauth, *, refresh: bool = False, failed_token=None):
+    """Keep rauth's bearer in sync with yahoo_oauth, including external refreshes.
+
+    yahoo_oauth.refresh_access_token changes oauth.access_token, but does not
+    update oauth.session.access_token. Keep the existing transport/pool and
+    serialize refreshes shared by the parallel roster workers.
+    """
+    with _SESSION_LOCK:
+        session = oauth.session
+        token = getattr(oauth, "access_token", None)
+        bearer = getattr(session, "access_token", None)
+        stale = isinstance(token, str) and isinstance(bearer, str) and token != bearer
+        expired = hasattr(oauth, "token_is_valid") and not oauth.token_is_valid()
+        # Another roster worker may already have repaired this rejected bearer.
+        needs_refresh = refresh and not stale and (failed_token is None or token == failed_token)
+        if expired or needs_refresh:
+            oauth.refresh_access_token()
+            token = getattr(oauth, "access_token", None)
+            _logger.info("[YAHOO AUTH] Refreshed access token")
+        if isinstance(token, str) and isinstance(bearer, str) and token != bearer:
+            session.access_token = token
+            _logger.info("[YAHOO AUTH] Synchronized HTTP session bearer")
+        return session
 
 
 def _ctx_value(ctx, attr: str, default=None):

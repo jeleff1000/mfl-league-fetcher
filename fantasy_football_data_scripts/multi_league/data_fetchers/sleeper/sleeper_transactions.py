@@ -47,7 +47,9 @@ from .sleeper_player_cache import SleeperPlayerCache
 from .sleeper_context import SleeperContext, YearFilter, resolve_years_to_fetch
 from .sleeper_roster_identity import build_year_roster_map
 from multi_league.core.date_utils import get_current_nfl_season_year
-from multi_league.core.transaction_periods import native_transaction_week, transaction_has_publishable_assets
+from multi_league.core.transaction_periods import (
+    native_transaction_week, native_transaction_timing_note, transaction_has_publishable_assets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,7 @@ def convert_timestamp(ts_millis: int) -> str:
     try:
         dt = datetime.fromtimestamp(ts_millis / 1000)
         return dt.strftime("%b %d %Y %I:%M:%S %p").upper()
-    except (ValueError, TypeError, OSError):
+    except (ValueError, TypeError, OSError, OverflowError):
         return "UNKNOWN"
 
 
@@ -349,6 +351,7 @@ class SleeperTransactionFetcher:
         ):
             return rows
         leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
+        timing_note = native_transaction_timing_note(txn.get("leg"), platform="sleeper", week=leg)
 
         faab_bid = (txn.get("settings") or {}).get("waiver_bid") or 0
 
@@ -361,7 +364,7 @@ class SleeperTransactionFetcher:
 
         # Convert timestamp
         human_ts = convert_timestamp(created_ts)
-        timestamp = str(created_ts // 1000) if created_ts else ""
+        timestamp = str(created_ts // 1000) if created_ts and human_ts != "UNKNOWN" else None
 
         # Process adds
         for player_id, roster_id in adds.items():
@@ -402,6 +405,7 @@ class SleeperTransactionFetcher:
                     "transaction_id": txn_id,
                     "year": year,
                     "week": leg,
+                    "notes": timing_note,
                     "timestamp": timestamp,
                     "human_readable_timestamp": human_ts,
                     "status": status,
@@ -454,6 +458,7 @@ class SleeperTransactionFetcher:
                         "transaction_id": txn_id,
                         "year": year,
                         "week": leg,
+                        "notes": timing_note,
                         "timestamp": timestamp,
                         "human_readable_timestamp": human_ts,
                         "status": status,
@@ -489,6 +494,7 @@ class SleeperTransactionFetcher:
                 asset_id = f"FAAB_{txn_id}_{move['sender']}_{move['receiver']}"
                 rows.append({
                     "transaction_id": txn_id, "year": year, "week": leg,
+                    "notes": timing_note,
                     "timestamp": timestamp, "human_readable_timestamp": human_ts, "status": status,
                     "transaction_type": "trade", "position": "FAAB", "NFL_player_id": asset_id,
                     "sleeper_player_id": asset_id,
@@ -531,10 +537,11 @@ class SleeperTransactionFetcher:
         txn_id = txn.get("transaction_id", "")
         created_ts = txn.get("created", 0)
         leg = native_transaction_week(txn.get("leg"), platform="sleeper", transaction_id=txn_id)
+        timing_note = native_transaction_timing_note(txn.get("leg"), platform="sleeper", week=leg)
 
         # Convert timestamp
         human_ts = convert_timestamp(created_ts)
-        timestamp = str(created_ts // 1000) if created_ts else ""
+        timestamp = str(created_ts // 1000) if created_ts and human_ts != "UNKNOWN" else None
 
         for pick in draft_picks:
             pick_season = pick["season"]
@@ -564,6 +571,7 @@ class SleeperTransactionFetcher:
                     "transaction_id": txn_id,
                     "year": year,
                     "week": leg,
+                    "notes": timing_note,
                     "timestamp": timestamp,
                     "human_readable_timestamp": human_ts,
                     "status": "complete",
@@ -703,8 +711,9 @@ class SleeperTransactionFetcher:
         # Add composite keys for downstream compatibility
         df["player_year"] = df["sleeper_player_id"] + "_" + df["year"].astype(str)
         df["manager_year"] = df["manager"] + "_" + df["year"].astype(str)
-        df["manager_week"] = df["manager"] + "_" + df["year"].astype(str) + "_" + df["week"].astype(str)
-        df["player_week"] = df["sleeper_player_id"] + "_" + df["year"].astype(str) + "_" + df["week"].astype(str)
+        native_week = df["week"].astype("Int64").astype("string")
+        df["manager_week"] = df["manager"] + "_" + df["year"].astype(str) + "_" + native_week
+        df["player_week"] = df["sleeper_player_id"] + "_" + df["year"].astype(str) + "_" + native_week
 
         log(f"[OK] {year}: {len(df)} transactions")
         if _verbose:

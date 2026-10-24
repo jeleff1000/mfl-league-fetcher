@@ -24,6 +24,8 @@ import sys
 import time
 
 import json
+import math
+from http.client import HTTPException
 import urllib.error
 import urllib.request
 
@@ -73,6 +75,7 @@ class FlyConnection:
     MAX_RETRIES = int(os.environ.get("VALIDATION_FLY_MAX_RETRIES", "10"))
     RETRY_BASE_DELAY = 1
     RETRY_MAX_DELAY = int(os.environ.get("VALIDATION_FLY_RETRY_MAX_DELAY", "30"))
+    CHECKPOINT_RETRY_DELAY = 5
     RETRY_STATUS = {429, 500, 502, 503, 504}
 
     def __init__(self, server_url: str, read_token: str, admin_token: str | None = None):
@@ -82,14 +85,17 @@ class FlyConnection:
         self.description = None
 
     @classmethod
-    def _retry_delay(cls, attempt: int, headers=None) -> float:
+    def _retry_delay(cls, attempt: int, headers=None, *, checkpointing: bool = False) -> float:
+        delay = min(cls.RETRY_BASE_DELAY * (2**attempt), cls.RETRY_MAX_DELAY)
         retry_after = headers.get("Retry-After") if headers is not None else None
         if retry_after:
             try:
-                return min(float(retry_after), cls.RETRY_MAX_DELAY)
+                requested = float(retry_after)
+                if math.isfinite(requested) and requested >= 0:
+                    delay = min(requested, cls.RETRY_MAX_DELAY)
             except (TypeError, ValueError):
                 pass
-        return min(cls.RETRY_BASE_DELAY * (2**attempt), cls.RETRY_MAX_DELAY)
+        return max(delay, cls.CHECKPOINT_RETRY_DELAY) if checkpointing else delay
 
     def _open_json(self, req: urllib.request.Request, *, timeout: int) -> list[dict]:
         last_error: Exception | None = None
@@ -101,7 +107,18 @@ class FlyConnection:
                 if e.code not in self.RETRY_STATUS or attempt >= self.MAX_RETRIES - 1:
                     raise
                 last_error = e
-                time.sleep(self._retry_delay(attempt, e.headers))
+                checkpointing = False
+                if e.code == 503:
+                    try:
+                        body = json.loads(e.read())
+                        checkpointing = isinstance(body, dict) and body.get("reason") == "checkpointing"
+                    except (OSError, HTTPException, TypeError, ValueError):
+                        pass
+                delay = self._retry_delay(attempt, e.headers, checkpointing=checkpointing)
+                e.close()
+                if checkpointing:
+                    print(f"  Fly checkpoint in progress; retrying validation read in {delay:g}s", flush=True)
+                time.sleep(delay)
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
                 if attempt >= self.MAX_RETRIES - 1:
                     raise
@@ -563,7 +580,7 @@ def main(args: list[str] | None = None) -> int:
     # Pass 1: Settings + Manifest
     print("  Loading manifest...")
     try:
-        manifest = load_manifest(conn, table_prefix=table_prefix)
+        manifest = load_manifest(conn, table_prefix=table_prefix, db_names=parsed.db)
     except Exception as e:
         print(f"ERROR: Could not load manifest: {e}", file=sys.stderr)
         return 1

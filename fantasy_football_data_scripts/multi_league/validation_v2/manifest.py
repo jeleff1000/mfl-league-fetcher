@@ -12,6 +12,7 @@ from collections import defaultdict
 import duckdb
 
 from multi_league.validation_v2.models import Manifest
+from multi_league.validation_v2.executor import _build_league_list_sql
 from multi_league.validation_v2.scope_sql import published_league_scope_sql
 
 # Default table prefix for MotherDuck centralized DB
@@ -181,6 +182,8 @@ def _settings_select_sql(conn: duckdb.DuckDBPyConnection, table_prefix: str) -> 
 def load_manifest(
     conn: duckdb.DuckDBPyConnection,
     table_prefix: str = DEFAULT_TABLE_PREFIX,
+    *,
+    db_names: list[str] | None = None,
 ) -> Manifest:
     """Load a Manifest from SQL queries against the centralized DB.
 
@@ -190,12 +193,19 @@ def load_manifest(
     Args:
         conn: DuckDB connection (local or MotherDuck).
         table_prefix: SQL prefix for table references (default: ___leagues.public.).
+        db_names: Limit every discovery read to these leagues; None keeps fleet scope.
 
     Returns:
         Fully populated Manifest including sim_leagues and full_import_leagues.
     """
-    # Load league_settings
+    league_list = _build_league_list_sql(db_names) if db_names is not None else None
+    if league_list == "":
+        return Manifest()
+    scope = f" AND db_name IN ({league_list})" if league_list is not None else ""
+    # Load league_settings within the requested scope, not the whole fleet.
     settings_sql = _settings_select_sql(conn, table_prefix)
+    if league_list is not None:
+        settings_sql += f" WHERE db_name IN ({league_list})"
     settings_rows_raw = conn.execute(settings_sql).fetchall()
     settings_cols = [desc[0] for desc in conn.description]
     settings_rows = [dict(zip(settings_cols, row)) for row in settings_rows_raw]
@@ -203,7 +213,7 @@ def load_manifest(
     # Also need scoring_rec for reference (not in build_manifest but documented in spec)
     # Load league_inventory
     # league_inventory lives in ___ops.accounts, not ___leagues
-    inventory_sql = published_league_scope_sql(table_prefix=table_prefix, league_list=None)
+    inventory_sql = published_league_scope_sql(table_prefix=table_prefix, league_list=league_list)
     inventory_rows = conn.execute(inventory_sql).fetchall()
     inventory = [row[0] for row in inventory_rows]
     inventory_set = set(inventory)
@@ -217,7 +227,7 @@ def load_manifest(
         sim_sql = f"""
             SELECT DISTINCT db_name
             FROM {table_prefix}matchup
-            WHERE x0_win IS NOT NULL
+            WHERE x0_win IS NOT NULL{scope}
         """
         sim_rows = conn.execute(sim_sql).fetchall()
         manifest.sim_leagues = sorted(row[0] for row in sim_rows)
@@ -230,7 +240,7 @@ def load_manifest(
         keeper_sql = f"""
             SELECT DISTINCT db_name
             FROM {table_prefix}draft
-            WHERE is_keeper IS NOT NULL AND is_keeper = 1
+            WHERE is_keeper IS NOT NULL AND is_keeper = 1{scope}
         """
         keeper_rows = conn.execute(keeper_sql).fetchall()
         data_keeper_leagues = {row[0] for row in keeper_rows}
@@ -244,7 +254,7 @@ def load_manifest(
         consolation_sql = f"""
             SELECT DISTINCT db_name
             FROM {table_prefix}matchup
-            WHERE is_consolation = 1
+            WHERE is_consolation = 1{scope}
         """
         consolation_rows = conn.execute(consolation_sql).fetchall()
         data_consolation_leagues = {row[0] for row in consolation_rows}
@@ -257,7 +267,7 @@ def load_manifest(
         full_import_sql = f"""
             SELECT DISTINCT db_name
             FROM {table_prefix}player_fantasy
-            WHERE manager = 'Unrostered' OR LOWER(TRIM(manager)) = 'unrostered'
+            WHERE (manager = 'Unrostered' OR LOWER(TRIM(manager)) = 'unrostered'){scope}
         """
         full_import_rows = conn.execute(full_import_sql).fetchall()
         manifest.full_import_leagues = sorted(row[0] for row in full_import_rows)

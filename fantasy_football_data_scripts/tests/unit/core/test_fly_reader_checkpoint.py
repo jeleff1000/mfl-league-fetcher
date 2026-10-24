@@ -79,7 +79,7 @@ def test_checkpoint_wait_respects_publication_reserve(clock, monkeypatch, method
 
 
 @pytest.mark.parametrize("method", ["query_df", "query_df_parquet"])
-@pytest.mark.parametrize("refresh,attempts,sleeps", [(False,3,[5,5]),(True,2,[5])])
+@pytest.mark.parametrize("refresh,attempts,sleeps", [(False,3,[5,5]),(True,3,[5,5])])
 def test_checkpoint_outage_does_not_expand_attempt_limit(clock, monkeypatch, method, refresh, attempts, sleeps):
     if refresh:
         monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1120")

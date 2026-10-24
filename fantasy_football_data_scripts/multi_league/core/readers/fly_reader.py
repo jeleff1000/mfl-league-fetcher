@@ -39,7 +39,8 @@ class FlyReader:
     TIMEOUT_SECONDS = 75
     # Refresh workers need time after reads to publish and finalize.
     REFRESH_TIMEOUT_SECONDS = 10
-    REFRESH_MAX_ATTEMPTS = 2
+    REFRESH_DEFAULT_ATTEMPTS = 2
+    REFRESH_MAX_ATTEMPTS = 3
     REFRESH_RETRY_MAX_DELAY = 1
     REFRESH_FINALIZE_SECONDS = 30
     # 500 included: Fly's DuckDB occasionally returns 500 on transient
@@ -107,9 +108,13 @@ class FlyReader:
             return timeout, attempts, None
         if not math.isfinite(deadline) or deadline <= 0:
             return timeout, attempts, None
+        # Honor explicit short recovery budgets without widening default reads.
+        attempt_cap = (
+            self.REFRESH_DEFAULT_ATTEMPTS if max_retries is None else self.REFRESH_MAX_ATTEMPTS
+        )
         return (
             min(timeout, self.REFRESH_TIMEOUT_SECONDS),
-            min(attempts, self.REFRESH_MAX_ATTEMPTS),
+            min(attempts, attempt_cap),
             deadline - self.REFRESH_FINALIZE_SECONDS,
         )
 

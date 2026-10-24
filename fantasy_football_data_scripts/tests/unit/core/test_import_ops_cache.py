@@ -120,6 +120,55 @@ def test_import_current_rank_revisions_do_not_download_wide_rows(ops_sources):
         ]
 
 
+def test_refresh_rank_inputs_recover_two_timeouts_without_losing_history(
+    ops_sources, monkeypatch
+):
+    """Replay the shared NFL-read failure before patching only admitted rows."""
+    import time
+    import requests
+    from multi_league.core.readers.fly_reader import FlyReader
+
+    cache_path, live, _reader = ops_sources
+    monkeypatch.setenv("DATABASE_SERVER_URL", "https://fly.test")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "read-token")
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", str(time.time() + 120))
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.sleep", lambda _seconds: None)
+    revision_attempts = []
+
+    def post(_url, *, json, **kwargs):
+        from io import BytesIO
+
+        if json["sql"].startswith("SELECT week,"):
+            revision_attempts.append(kwargs["timeout"])
+            if len(revision_attempts) < 3:
+                raise requests.exceptions.ReadTimeout("transient NFL revision read stall")
+        frame = live.execute(json["sql"]).fetchdf()
+        response = requests.Response()
+        response.status_code = 200
+        if _url.endswith("/query-parquet"):
+            payload = BytesIO()
+            frame.to_parquet(payload, index=False)
+            response._content = payload.getvalue()
+        else:
+            response._content = frame.to_json(orient="records").encode()
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    reader = FlyReader()
+    finalized = ops_cache._finalized_ops(reader, year=2026, through_week=1)
+    ops_cache._patch_research_ops_cache_from_fly(
+        reader, finalized, base=cache_path, year=2026, weeks=[1],
+        work_dir=cache_path.parent, in_place=True,
+    )
+
+    assert revision_attempts == [8, 8, 8]
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute(
+            "SELECT year, week, rank_alltime_qb_4pt FROM "
+            "nfl_historical.nfl_player_stats_all ORDER BY year, week"
+        ).fetchall() == [(2025, 1, 222), (2026, 1, 216)]
+
+
 def test_import_detects_rank_only_correction_in_an_older_week(ops_sources):
     cache_path, live, reader = ops_sources
     current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all").fetchdf()

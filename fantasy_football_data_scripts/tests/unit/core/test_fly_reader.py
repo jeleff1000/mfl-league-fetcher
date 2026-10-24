@@ -378,6 +378,62 @@ def refresh_clock(monkeypatch, read_clock):
     return read_clock
 
 
+@pytest.mark.parametrize("method", ["query_df", "query_df_parquet"])
+def test_refresh_explicit_third_read_recovers_two_timeouts(
+    fly_env, refresh_clock, monkeypatch, method
+):
+    """An admitted third short read must not be silently cut off after two."""
+    import pandas as pd
+
+    frame = pd.DataFrame([{"rank_alltime_qb_4pt": 216, "rank_qb_4pt": 7}])
+    payload = BytesIO()
+    frame.to_parquet(payload, index=False)
+    response = _resp(200, frame.to_dict("records"))
+    response.content = payload.getvalue()
+    calls = []
+
+    def post(_url, **kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            refresh_clock["now"] += kwargs["timeout"]
+            raise requests.exceptions.ReadTimeout("transient NFL input read stall")
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    result = getattr(FlyReader(), method)(
+        "SELECT rank_alltime_qb_4pt, rank_qb_4pt", database="___ops",
+        timeout_seconds=8, max_retries=3,
+    )
+
+    assert result.to_dict("records") == frame.to_dict("records")
+    assert [call["timeout"] for call in calls] == [8, 8, 8]
+    assert refresh_clock["sleeps"] == [1, 1]
+    assert refresh_clock["now"] == 1018
+
+
+@pytest.mark.parametrize("method", ["query_df", "query_df_parquet"])
+def test_explicit_third_read_cannot_consume_publication_reserve(
+    fly_env, read_clock, monkeypatch, method
+):
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1047")
+    calls = []
+
+    def post(_url, **kwargs):
+        calls.append(kwargs)
+        read_clock["now"] += kwargs["timeout"]
+        raise requests.exceptions.ReadTimeout("read stalled")
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    with pytest.raises(FlyReaderNetworkError, match="refresh read budget exhausted"):
+        getattr(FlyReader(), method)(
+            "SELECT 1", database="___ops", timeout_seconds=8, max_retries=3,
+        )
+
+    assert [call["timeout"] for call in calls] == [8, 8]
+    assert read_clock["sleeps"] == [1]
+    assert read_clock["now"] == 1017
+
+
 @pytest.mark.parametrize("method", ["query", "query_df_parquet"])
 @pytest.mark.parametrize("failure", ["timeout", "503"])
 def test_refresh_outage_leaves_time_to_finalize(fly_env, refresh_clock, monkeypatch, method, failure):
@@ -499,7 +555,9 @@ def test_refresh_backoff_cannot_outlive_remaining_budget(fly_env, read_clock, mo
 
 
 @pytest.mark.parametrize("method", ["query", "query_df_parquet"])
-@pytest.mark.parametrize("timeout,attempts,want_timeouts", [(4, 1, [4]), (4, 2, [4, 4]), (200, 8, [10, 10])])
+@pytest.mark.parametrize("timeout,attempts,want_timeouts", [
+    (4, 1, [4]), (4, 2, [4, 4]), (8, 3, [8, 8, 8]), (200, 8, [10, 10, 10]),
+])
 def test_refresh_never_expands_caller_limits(
     fly_env, refresh_clock, monkeypatch, method, timeout, attempts, want_timeouts
 ):

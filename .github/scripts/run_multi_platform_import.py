@@ -922,7 +922,7 @@ from multi_league.core.local_db import LocalLeagueDB
 db = LocalLeagueDB(r"{str(data_dir)}", "{db_name}")
 db.connect()
 try:
-    db.upload_to_fly("{db_name}", platform="{platform}", finalize_merge_source={finalize_merge_source_literal})
+    db.upload_to_fly("{db_name}", platform="{platform}", finalize_merge_source={finalize_merge_source_literal}, validate_after_publication=True)
 finally:
     db.close()
 print("Upload to Fly complete")
@@ -1704,40 +1704,43 @@ def postprocess_and_upload_target(
         log_file=LOG_DIR / "target_upload.log",
     )
 
-    run_logged(
-        "VALIDATE MERGED TARGET",
-        ["python", "-m", "multi_league.validation_v2", "--db", db_name, "-v", "--ci"],
-        cwd=FANTASY_DIR,
-        log_file=LOG_DIR / "validation.log",
-    )
+    finalize_published_target(segment, data_dir)
 
-    secret = os.environ.get("REVALIDATION_SECRET")
-    if secret:
+
+def finalize_published_target(segment: dict[str, Any], data_dir: Path) -> None:
+    """Finish only post-publication work; never re-enter imports or aggregations."""
+    worker_root = Path(__file__).resolve().parents[2]
+    if str(worker_root) not in sys.path:
+        sys.path.insert(0, str(worker_root))
+    from scripts.warm_vercel_cache import read_committed_manifest, _record_cache_result
+    from types import SimpleNamespace
+
+    db_name = segment["database_name"]
+    manifest_path = data_dir / "delta_publish_manifest.json"
+    if read_committed_manifest(str(manifest_path), db_name) is None:
+        raise RuntimeError("Merged target publication has no confirmed receipt")
+    try:
         run_logged(
             "REVALIDATE AND WARM VERCEL CACHE",
             [
-                "python",
-                "scripts/warm_vercel_cache.py",
-                "--db",
-                db_name,
-                "--secret",
-                secret,
-                "--site-url",
-                "https://www.leaguehistory.app",
-                "--mode",
-                "full",
-                "--strategy",
-                "expire",
-                "--jitter-seconds",
-                "0",
-                "--strict",
-                "--verify-hot",
+                sys.executable, str(worker_root / "scripts" / "warm_vercel_cache.py"),
+                "--db", db_name, "--manifest", str(manifest_path),
+                "--secret", os.environ.get("REVALIDATION_SECRET", ""),
+                "--site-url", "https://www.leaguehistory.app",
+                "--mode", "full", "--strategy", "expire", "--jitter-seconds", "0",
+                "--strict", "--soft-warm-failures", "--verify-hot", "--validate",
             ],
             cwd=REPO_ROOT,
             log_file=LOG_DIR / "warm_vercel_cache.log",
         )
-    else:
-        log("[warm-cache] REVALIDATION_SECRET not set; skipping cache warm")
+    except (Exception, SystemExit) as exc:
+        if read_committed_manifest(str(manifest_path), db_name) is None:
+            raise
+        log(f"[multi-platform] Data COMMITTED; page/verification completion pending ({type(exc).__name__})")
+        try:
+            _record_cache_result(SimpleNamespace(db=db_name, manifest=str(manifest_path)), False)
+        except (OSError, ValueError, TypeError) as report_exc:
+            log(f"[multi-platform] Completion reporting pending ({type(report_exc).__name__}); data remains COMMITTED")
 
 
 def main() -> None:

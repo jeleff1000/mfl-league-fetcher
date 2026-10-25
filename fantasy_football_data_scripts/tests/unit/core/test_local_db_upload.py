@@ -27,8 +27,9 @@ def test_confirmed_publication_survives_inventory_failure_without_another_upload
     with LocalLeagueDB(tmp_path, "league") as db:
         db.connect().execute("CREATE TABLE public.matchup (db_name VARCHAR,year INTEGER,week INTEGER,manager_week VARCHAR)")
         db.connect().execute("INSERT INTO public.matchup VALUES ('league',2026,1,'owner_2026_1')")
-        with pytest.raises(RuntimeError, match="committed.*finalization pending"):
-            db.upload_to_fly("league", import_mode=mode, platform=platform, finalize_merge_source=False)
+        receipt = db.upload_to_fly("league", import_mode=mode, platform=platform, finalize_merge_source=False)
+        assert receipt["status"] == "COMMITTED"
+        assert receipt["finalization_status"] == "pending"
     saved = json.loads((tmp_path / "delta_publish_manifest.json").read_text())
     assert saved["publication"]["status"] == "COMMITTED"
     assert saved["publication"]["finalization_status"] == "pending"

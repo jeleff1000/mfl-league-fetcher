@@ -907,6 +907,8 @@ class LocalLeagueDB:
         merge_source_ctx: Any | None = None,
         finalize_inventory: bool | None = None,
         finalize_merge_source: bool = True,
+        finalize_only: bool = False,
+        validate_after_publication: bool = False,
     ):
         """Upload this league's local data to Fly.io.
 
@@ -926,26 +928,37 @@ class LocalLeagueDB:
 
         from multi_league.core.targets.fly_target import FlyTarget
 
-        conn = self.connect()
-        try:
-            conn.execute("CHECKPOINT")
-        except Exception:
-            pass
-
         def _env_bool(name: str, default: bool) -> bool:
             raw = os.environ.get(name)
             if raw is None:
                 return default
             return raw.strip().lower() in {"1", "true", "yes", "on"}
 
-        def finalize_inventory_and_merge_source(target: FlyTarget) -> None:
+        def finalize_inventory_and_merge_source(target: FlyTarget, manifest: dict) -> None:
+            steps = manifest["publication"].setdefault("finalization_steps", {})
+            def assert_current() -> None:
+                if not finalize_only:
+                    return  # The importing job already owns the shared league-update lock.
+                from multi_league.core.readers.fly_reader import FlyReader
+                base = manifest.get("base_generation", (manifest.get("league_generations") or {}).get(db_name))
+                generation = FlyReader().query_scalar(
+                    "SELECT generation FROM merge_admin.league_publish_generations WHERE db_name = '"
+                    + db_name.replace("'", "''") + "'", database="___leagues", timeout_seconds=8, max_retries=1,
+                )
+                if type(base) is not int or generation != base + 1:
+                    raise RuntimeError("Publication superseded; refusing stale completion writes")
+            def completed(name: str, value: str = "complete") -> None:
+                steps[name] = value
+                record_commit(manifest, bundle_id=manifest.get("bundle_id"), finalized=False,
+                              transport=manifest["publication"]["transport"])
             inventory_default = publish_format != "delta"
             should_finalize_inventory = (
                 _env_bool("FLY_FINALIZE_INVENTORY", inventory_default)
                 if finalize_inventory is None
                 else bool(finalize_inventory)
             )
-            if should_finalize_inventory:
+            if should_finalize_inventory and steps.get("inventory") != "complete":
+                assert_current()
                 inventory_start = time.perf_counter()
                 print("[UPLOAD-FLY] finalizing league inventory")
                 target.mark_league_imported(
@@ -954,38 +967,64 @@ class LocalLeagueDB:
                     platform=platform or _infer_fly_platform(),
                 )
                 print(f"[UPLOAD-FLY] inventory finalized in {time.perf_counter() - inventory_start:.1f}s")
-            else:
+                completed("inventory")
+            elif not should_finalize_inventory:
                 reason = (
                     "FLY_FINALIZE_INVENTORY=0"
                     if os.environ.get("FLY_FINALIZE_INVENTORY") is not None
                     else f"default for FLY_PUBLISH_FORMAT={publish_format}"
                 )
                 print(f"[UPLOAD-FLY] inventory finalization skipped ({reason})")
+                steps["inventory"] = "skipped"
 
             if finalize_merge_source:
                 from multi_league.data_fetchers.shared.merge_source_copier import (
                     copy_merge_source_to_public,
-                    maybe_copy_merge_source_to_public,
                 )
 
-                if merge_source_ctx is not None:
-                    merge_stats = copy_merge_source_to_public(
-                        merge_source_ctx,
-                        db_name,
-                        log_func=logger.info,
-                    )
+                if steps.get("merge_source") == "complete":
+                    merge_stats = manifest["publication"].get("merge_source_result") or {}
                 else:
-                    merge_stats = maybe_copy_merge_source_to_public(
-                        data_dir=self.data_dir,
-                        target_db_name=db_name,
-                        log_func=logger.info,
-                    )
+                    assert_current()
+                    context = manifest["publication"]["finalization_plan"]["context"]
+                    if not context.get("year_scope_resolved"):
+                        from multi_league.data_fetchers.shared.merge_source_copier import _merge_years_from_config, _query_years
+                        sources = context.get("merge_sources") or []
+                        implicit = [source for source in sources if not _merge_years_from_config(source)]
+                        if implicit:
+                            from multi_league.core.readers.fly_reader import FlyReader
+                            reader = FlyReader()
+                            target_years = _query_years(reader, db_name)
+                            earliest = min(target_years) if target_years else None
+                            for source in implicit:
+                                source["merge_years"] = [year for year in _query_years(reader, source["source_db"])
+                                                        if earliest is None or year < earliest]
+                        context["merge_sources"] = [source for source in sources if _merge_years_from_config(source)]
+                        context["year_scope_resolved"] = True
+                    if context.get("merge_sources"):
+                        publication = manifest["publication"]
+                        publication["completion_revision"] = publication.get("completion_revision", 0) + 1
+                        manifest["cache_verification"] = {"verified": False, "status": "pending"}
+                        if "validation" in manifest:
+                            manifest["validation"] = {"status": "pending"}
+                        # Freeze exact years and invalidate old cache/QA before any copied table commits.
+                        if not record_commit(manifest, bundle_id=manifest.get("bundle_id"), finalized=False, transport=publication["transport"]):
+                            raise RuntimeError("History completion pending its durable year-scope checkpoint")
+                        merge_stats = copy_merge_source_to_public(context, db_name, log_func=logger.info)
+                    else:
+                        merge_stats = {"status": "no_merge_source"}
+                    manifest["publication"]["merge_source_result"] = {
+                        key: merge_stats[key] for key in ("status", "single_year_import") if key in merge_stats
+                    }
+                    completed("merge_source")
                 if merge_stats.get("status") in {"copied", "copied_multi"}:
                     logger.info("[UPLOAD-FLY] merge_source finalized: %s", merge_stats)
-                    if merge_stats.get("single_year_import") != "true":
+                    if merge_stats.get("single_year_import") != "true" and steps.get("staging_cleanup") != "complete":
+                        assert_current()
                         from multi_league.data_fetchers.shared.staging_reader import clear_staging_tables
 
                         clear_staging_tables(db_name=db_name, log_func=logger.info)
+                        completed("staging_cleanup")
 
         def delta_fallback_allowed(exc: Exception) -> bool:
             if os.environ.get("FLY_DELTA_FALLBACK_TO_DUCKDB", "").strip().lower() not in {"1", "true", "yes", "on"}:
@@ -1006,20 +1045,57 @@ class LocalLeagueDB:
         publish_format = "delta" if quick_publish else os.environ.get("FLY_PUBLISH_FORMAT", "duckdb").strip().lower()
         manifest_path = self.data_dir / "delta_publish_manifest.json"
 
-        def record_commit(manifest: dict, *, bundle_id: str | None, finalized: bool, transport: str) -> None:
+        def record_commit(manifest: dict, *, bundle_id: str | None, finalized: bool, transport: str) -> bool:
             # The existing local manifest also carries the confirmed commit.
             # Save it before inventory, merge-source cleanup, or cache work.
             manifest["publication"] = {
+                **(manifest.get("publication") or {}),
                 "status": "COMMITTED", "executed": True, "bundle_id": bundle_id,
                 "transport": transport,
+                "state_db_name": "___fleet" if quick_publish else db_name,
+                "durable_bundle_id": (result.get("bundle_id") or bundle_id) if transport == "delta" else None,
+                "durable_bundle_hash": (result.get("bundle_hash") or manifest.get("bundle_hash")) if transport == "delta" else None,
+                "import_mode": resolved_mode,
+                "platform": platform or _infer_fly_platform(),
                 "finalization_status": "complete" if finalized else "pending",
             }
+            if validate_after_publication:
+                manifest.setdefault("validation", {"status": "pending"})
+            if "finalization_plan" not in manifest["publication"]:
+                from multi_league.data_fetchers.shared.merge_source_copier import _load_merge_source_context
+                ctx = merge_source_ctx or (_load_merge_source_context(self.data_dir) if finalize_merge_source else None)
+                def value(key):
+                    return ctx.get(key) if isinstance(ctx, dict) else getattr(ctx, key, None)
+                allowed_source_keys = {"source_db", "merge_years", "year_range", "manager_mapping"}
+                sources = value("merge_sources") or ([value("merge_source")] if value("merge_source") else [])
+                manifest["publication"]["finalization_plan"] = {
+                    "inventory": (finalize_inventory if finalize_inventory is not None
+                                  else _env_bool("FLY_FINALIZE_INVENTORY", publish_format != "delta")),
+                    "merge_source": finalize_merge_source,
+                    "context": {**{key: value(key) for key in ("is_single_year_import", "import_mode", "start_year", "end_year")},
+                        "merge_sources": [{key: source[key] for key in allowed_source_keys if key in source}
+                                          for source in sources if isinstance(source, dict)]},
+                }
             try:
                 pending = manifest_path.with_suffix(".json.pending")
                 pending.write_text(json.dumps(manifest, sort_keys=True, indent=2, default=str), encoding="utf-8")
                 pending.replace(manifest_path)
             except (OSError, ValueError, TypeError) as exc:
                 logger.warning("[UPLOAD-FLY] Data committed; local receipt reporting failed (%s)", type(exc).__name__)
+            checkpoint_ok = True
+            if transport == "delta":
+                try:
+                    # Reuse the cache helper's tiny fenced receipt update so a
+                    # lost runner cannot erase completed finalization phases.
+                    import sys
+                    worker_root = str(Path(__file__).resolve().parents[3])
+                    if worker_root not in sys.path:
+                        sys.path.insert(0, worker_root)
+                    from scripts.warm_vercel_cache import _persist_completion
+                    _persist_completion(manifest, db_name)
+                except Exception as exc:
+                    checkpoint_ok = False
+                    logger.warning("[UPLOAD-FLY] Completion checkpoint pending (%s); data remains committed", type(exc).__name__)
             output = os.environ.get("GITHUB_OUTPUT")
             if output:
                 try:
@@ -1028,6 +1104,59 @@ class LocalLeagueDB:
                         handle.write(f"publication_manifest={manifest_path.resolve().as_posix()}\n")
                 except OSError as exc:
                     logger.warning("[UPLOAD-FLY] Data committed; Actions output reporting failed (%s)", type(exc).__name__)
+            return checkpoint_ok
+
+        if finalize_only:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            publication = manifest.get("publication") or {}
+            resolved_mode = str(manifest.get("import_mode") or publication.get("import_mode") or resolved_mode)
+            platform = publication.get("platform") or manifest.get("platform") or platform
+            quick_publish = resolved_mode == "quick"
+            publish_format = str(publication.get("transport") or publish_format)
+            matches_league = manifest.get("db_name") == db_name or (
+                manifest.get("db_name") == "___fleet" and manifest.get("db_names") == [db_name]
+            )
+            if (not matches_league or publication.get("status") != "COMMITTED"
+                or publication.get("executed") is not True or not manifest.get("bundle_id")
+                or publication.get("bundle_id") != manifest.get("bundle_id")
+                or not isinstance(publication.get("finalization_plan"), dict)):
+                raise RuntimeError("Finalization recovery has no matching committed publication plan")
+            from multi_league.core.readers.fly_reader import FlyReader
+            base = manifest.get("base_generation", (manifest.get("league_generations") or {}).get(db_name))
+            generation = FlyReader().query_scalar(
+                "SELECT generation FROM merge_admin.league_publish_generations "
+                "WHERE db_name = '" + db_name.replace("'", "''") + "'",
+                database="___leagues", timeout_seconds=8, max_retries=1,
+            )
+            if type(base) is not int or generation != base + 1:
+                raise RuntimeError("Publication superseded; refusing stale finalization")
+            target = FlyTarget()
+            if target._reconcile_committed_merge(
+                publication.get("state_db_name", db_name),
+                publication.get("durable_bundle_id") or manifest["bundle_id"],
+                publication.get("durable_bundle_hash") or manifest["bundle_hash"]
+            ) is None:
+                raise RuntimeError("Finalization recovery commit receipt is unavailable")
+            plan = publication["finalization_plan"]
+            finalize_inventory = plan["inventory"]
+            finalize_merge_source = plan["merge_source"]
+            merge_source_ctx = plan["context"]
+            result = {"status": "COMMITTED",
+                "bundle_id": publication.get("durable_bundle_id") or manifest["bundle_id"],
+                "bundle_hash": publication.get("durable_bundle_hash") or manifest["bundle_hash"]}
+            try:
+                finalize_inventory_and_merge_source(target, manifest)
+            except Exception as exc:
+                logger.warning("[UPLOAD-FLY] Data remains committed; finalization pending (%s)", type(exc).__name__)
+            else:
+                record_commit(manifest, bundle_id=manifest["bundle_id"], finalized=True, transport=publication["transport"])
+            return manifest["publication"]
+
+        conn = self.connect()
+        try:
+            conn.execute("CHECKPOINT")
+        except Exception:
+            pass
 
         if publish_format == "delta":
             from multi_league.core.delta_publish import build_delta_bundle
@@ -1110,16 +1239,14 @@ class LocalLeagueDB:
                 suffix = f" ({', '.join(timing_bits)})" if timing_bits else ""
                 endpoint = "merge-fleet-partition" if quick_publish else "merge-league-delta"
                 print(f"[UPLOAD-FLY] {endpoint} completed in {elapsed:.1f}s{suffix}")
-                finalize_inventory_and_merge_source(target)
+                finalize_inventory_and_merge_source(target, bundle.manifest)
                 record_commit(bundle.manifest, bundle_id=bundle.bundle_id, finalized=True, transport="delta")
                 logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
                 return
             except Exception as exc:
                 if committed:
-                    raise RuntimeError(
-                        "Fly data committed; finalization pending. Resume finalization; "
-                        "do not repeat the data upload."
-                    ) from exc
+                    logger.warning("[UPLOAD-FLY] Data committed; finalization pending (%s). Do not repeat the data upload.", type(exc).__name__)
+                    return bundle.manifest["publication"]
                 if not quick_publish and delta_fallback_allowed(exc):
                     logger.warning(
                         "[UPLOAD-FLY] Delta publish failed on a fallback-allowed endpoint/network error; "
@@ -1239,13 +1366,11 @@ class LocalLeagueDB:
             try:
                 record_commit(manifest, bundle_id=None, finalized=False, transport="duckdb")
                 print(f"[UPLOAD-FLY] merge-league completed in {time.perf_counter() - merge_start:.1f}s")
-                finalize_inventory_and_merge_source(target)
+                finalize_inventory_and_merge_source(target, manifest)
                 record_commit(manifest, bundle_id=None, finalized=True, transport="duckdb")
             except Exception as exc:
-                raise RuntimeError(
-                    "Fly data committed; finalization pending. Resume finalization; "
-                    "do not repeat the data upload."
-                ) from exc
+                logger.warning("[UPLOAD-FLY] Data committed; finalization pending (%s). Do not repeat the data upload.", type(exc).__name__)
+                return manifest["publication"]
             logger.info("[UPLOAD-FLY] %s: %s", db_name, result)
         finally:
             upload_path.unlink(missing_ok=True)

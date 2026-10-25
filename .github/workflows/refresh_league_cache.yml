@@ -15,15 +15,32 @@ on:
         options:
           - quick
           - full
+      publication_run_id:
+        description: "Original committed import run; resume only unfinished completion steps"
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
+
+concurrency:
+  group: league-update-${{ inputs.database_name }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 2
     env:
       REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
+      DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+      DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+      DATABASE_ADMIN_TOKEN: ${{ secrets.DATABASE_ADMIN_TOKEN }}
+      FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
+      INPUT_DATABASE_NAME: ${{ inputs.database_name }}
+      INPUT_IMPORT_MODE: ${{ inputs.import_mode }}
+      INPUT_PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
     steps:
       - name: Checkout importer
         uses: actions/checkout@v5
@@ -31,19 +48,34 @@ jobs:
           path: yahoo_oauth
 
       - name: Setup Python
+        id: setup-python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
+      - name: Restore existing worker dependencies for completion-only recovery
+        if: inputs.publication_run_id != ''
+        id: completion-venv
+        uses: actions/cache/restore@v5
+        with:
+          path: yahoo_oauth/.venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('yahoo_oauth/requirements.txt') }}
+
+      - name: Activate cached worker dependencies
+        if: steps.completion-venv.outputs.cache-hit == 'true'
+        run: echo "${{ github.workspace }}/yahoo_oauth/.venv/bin" >> "$GITHUB_PATH"
+
       - name: Revalidate and warm Vercel cache
         working-directory: yahoo_oauth
-        run: >-
-          python scripts/warm_vercel_cache.py
-          --db "${{ inputs.database_name }}"
-          --secret "${REVALIDATION_SECRET}"
-          --site-url "https://www.leaguehistory.app"
-          --mode "${{ inputs.import_mode }}"
-          --strategy expire
-          --jitter-seconds 0
-          --strict
-          --verify-hot
+        run: |
+          args=()
+          if [ -n "$INPUT_PUBLICATION_RUN_ID" ]; then
+            args+=(--publication-run-id "$INPUT_PUBLICATION_RUN_ID")
+          fi
+          python scripts/warm_vercel_cache.py \
+            --db "$INPUT_DATABASE_NAME" \
+            --secret "$REVALIDATION_SECRET" \
+            --site-url "https://www.leaguehistory.app" \
+            --mode "$INPUT_IMPORT_MODE" \
+            --strategy expire --jitter-seconds 0 \
+            --strict --soft-warm-failures --verify-hot "${args[@]}"

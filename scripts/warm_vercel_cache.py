@@ -15,6 +15,7 @@ import re
 import sys
 import time
 import os
+import subprocess
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -269,6 +270,11 @@ def resolve_manifest_path(db: str, manifest_path: str | None) -> str | None:
 
 def _has_post_upload_merge_source(manifest_path: str | None) -> bool:
     """Return whether the import context will copy merge_source rows after upload."""
+    if manifest_path:
+        payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        plan = (payload.get("publication") or {}).get("finalization_plan") or {}
+        if plan.get("merge_source") and (plan.get("context") or {}).get("merge_sources"):
+            return True
     candidates: list[Path] = []
     if manifest_path:
         manifest_dir = Path(manifest_path).resolve().parent
@@ -330,20 +336,22 @@ def _paths_from_manifest(manifest_path: str | None, mode: str, db: str) -> tuple
     return tuple(dict.fromkeys(paths))
 
 
-def _fly_query(sql: str, timeout: int, attempts: int = 6) -> list[dict]:
+def _fly_query(sql: str, timeout: int, attempts: int = 6, *, write: bool = False) -> list[dict]:
     server_url = os.environ.get("DATABASE_SERVER_URL", "").rstrip("/")
-    read_token = os.environ.get("DATABASE_READ_TOKEN", "")
+    read_token = os.environ.get("DATABASE_ADMIN_TOKEN" if write else "DATABASE_READ_TOKEN", "")
     if not server_url or not read_token:
         raise RuntimeError("DATABASE_SERVER_URL/DATABASE_READ_TOKEN not set")
     payload = json.dumps({"sql": sql, "database": "___leagues"}).encode("utf-8")
     last_exc: BaseException | None = None
     for attempt in range(1, attempts + 1):
         req = Request(
-            f"{server_url}/query",
+            f"{server_url}/{'query-rw' if write else 'query'}",
             data=payload,
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {read_token}",
+                **({"fly-force-instance-id": os.environ["FLY_PRIMARY_MACHINE_ID"]}
+                   if write and os.environ.get("FLY_PRIMARY_MACHINE_ID") else {}),
             },
             method="POST",
         )
@@ -530,6 +538,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--site-url", default="https://leaguehistory.app")
     parser.add_argument("--mode", choices=("none", "quick", "full"), default="quick")
     parser.add_argument("--manifest", default="", help="Optional delta_publish_manifest.json for touched-table warming")
+    parser.add_argument("--publication-run-id", default="", help="Resume only completion of this existing committed import")
+    parser.add_argument("--validate", action="store_true", help="Run the existing league-scoped diagnostic validator independently of cache refresh")
     parser.add_argument(
         "--skip-fly-commit-check",
         action="store_true",
@@ -676,6 +686,168 @@ def _run_warmer(args) -> tuple[int, bool]:
     return 0, bool(args.verify_hot)
 
 
+def read_committed_manifest(manifest_path: str | None, db: str) -> dict | None:
+    """Read the existing publication receipt; missing evidence is never success."""
+    if not manifest_path or not Path(manifest_path).is_file():
+        return None
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    publication = manifest.get("publication") or {}
+    if (
+        _manifest_matches_league(manifest, db)
+        and publication.get("status") == "COMMITTED"
+        and publication.get("executed") is True
+        and publication.get("bundle_id") == manifest.get("bundle_id")
+    ):
+        return manifest
+    return None
+
+
+def _literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _publication_generation(manifest: dict, db: str) -> int:
+    base = manifest.get("base_generation", (manifest.get("league_generations") or {}).get(db))
+    if type(base) is not int or base < 0:
+        raise RuntimeError("Publication has no valid generation fence")
+    return base + 1
+
+
+def load_committed_publication(db: str, run_id: str, generation: int | None = None, *, mode: str | None = None) -> dict:
+    """Recover a few KB of the existing receipt, never league tables or provider data."""
+    if not DB_NAME_RE.fullmatch(db) or not str(run_id).isdigit():
+        raise ValueError("Invalid publication recovery scope")
+    rows = _fly_query(
+        "SELECT db_name,bundle_id,bundle_hash,status,import_run_id,manifest_json,result_json "
+        "FROM merge_admin.league_delta_merge_state "
+        f"WHERE import_run_id = {_literal(run_id)} AND status = 'COMMITTED' "
+        f"AND (db_name = {_literal(db)} OR (db_name = '___fleet' "
+        f"AND json_extract_string(manifest_json,'$.db_names[0]') = {_literal(db)} "
+        "AND json_array_length(json_extract(manifest_json,'$.db_names')) = 1)) "
+        "ORDER BY updated_at DESC LIMIT 2", 8, 3,
+    )
+    for row in rows:
+        manifest = json.loads(row["manifest_json"])
+        result = json.loads(row["result_json"])
+        completion = result.get("import_completion") or {}
+        publication = completion.get("publication") or {}
+        receipt_mode = manifest.get("import_mode") or publication.get("import_mode") or manifest.get("mode")
+        if not _manifest_matches_league(manifest, db) or (mode and receipt_mode != mode):
+            continue
+        if (row.get("status") != "COMMITTED" or result.get("status") != "COMMITTED"
+            or str(row.get("import_run_id")) != str(run_id)
+            or str(manifest.get("import_run_id")) != str(run_id)
+            or not row.get("bundle_id") or not row.get("bundle_hash")
+            or any(item.get("bundle_id") != row["bundle_id"] or item.get("bundle_hash") != row["bundle_hash"]
+                   for item in (manifest, result))):
+            raise RuntimeError("Publication recovery receipt identity does not match")
+        if generation is None:
+            generations = _fly_query(
+                "SELECT generation FROM merge_admin.league_publish_generations "
+                f"WHERE db_name = {_literal(db)}", 8, 3,
+            )
+            if len(generations) != 1:
+                raise RuntimeError("Publication recovery generation is unavailable")
+            generation = generations[0]["generation"]
+        if generation != _publication_generation(manifest, db):
+            raise RuntimeError("Publication was superseded; do not repeat its data upload")
+        manifest.update({key: completion[key] for key in ("publication", "cache_verification", "validation") if key in completion})
+        manifest.setdefault("publication", {"status": "COMMITTED", "executed": True,
+            "bundle_id": row["bundle_id"], "finalization_status": "pending"})
+        # The fleet lane canonicalizes the client bundle. Keep both identities:
+        # local cache routing uses this restored manifest; status checks use Fly's receipt.
+        manifest["publication"].update(bundle_id=manifest["bundle_id"], state_db_name=row["db_name"],
+            durable_bundle_id=row["bundle_id"], durable_bundle_hash=row["bundle_hash"])
+        if receipt_mode:
+            manifest["import_mode"] = receipt_mode
+        return manifest
+    raise RuntimeError("No matching committed import receipt; data upload was not attempted")
+
+
+def _persist_completion(manifest: dict, db: str) -> None:
+    """Checkpoint only metadata on the existing fenced commit row; no schema or league-data write."""
+    if not os.environ.get("GITHUB_ACTIONS") or not os.environ.get("DATABASE_ADMIN_TOKEN") or not manifest.get("bundle_id"):
+        return
+    completion = {key: manifest[key] for key in ("publication", "cache_verification", "validation") if key in manifest}
+    patch = json.dumps({"import_completion": completion}, sort_keys=True)
+    publication = manifest.get("publication") or {}
+    state_db = publication.get("state_db_name") or manifest["db_name"]
+    bundle_id = publication.get("durable_bundle_id") or manifest["bundle_id"]
+    bundle_hash = publication.get("durable_bundle_hash") or manifest["bundle_hash"]
+    revision = publication.get("completion_revision", 0)
+    if type(revision) is not int or revision < 0:
+        raise ValueError("Invalid completion revision")
+    saved_revision = "COALESCE(TRY_CAST(json_extract_string(result_json,'$.import_completion.publication.completion_revision') AS BIGINT),0)"
+    guards = []
+    for path, incoming, finished in (
+        ("publication.finalization_status", publication.get("finalization_status"), ("complete",)),
+        ("cache_verification.verified", str((manifest.get("cache_verification") or {}).get("verified", False)).lower(), ("true",)),
+        ("validation.status", (manifest.get("validation") or {}).get("status"), ("passed", "warnings")),
+    ):
+        if incoming not in finished:
+            values = ",".join(_literal(value) for value in finished)
+            guards.append(f"COALESCE(json_extract_string(result_json,'$.import_completion.{path}'),'') NOT IN ({values})")
+    monotonic = " AND ".join(guards) or "TRUE"
+    rows = _fly_query(
+        "UPDATE merge_admin.league_delta_merge_state "
+        f"SET result_json = CAST(json_merge_patch(COALESCE(result_json,'{{}}'), {_literal(patch)}) AS VARCHAR) "
+        f"WHERE db_name = {_literal(state_db)} AND bundle_id = {_literal(bundle_id)} "
+        f"AND bundle_hash = {_literal(bundle_hash)} AND status = 'COMMITTED' "
+        f"AND ({saved_revision} < {revision} OR ({saved_revision} = {revision} AND {monotonic})) "
+        "AND EXISTS (SELECT 1 FROM merge_admin.league_publish_generations "
+        f"WHERE db_name = {_literal(db)} AND generation = {_publication_generation(manifest, db)}) "
+        "RETURNING bundle_id", 5, 1, write=True,
+    )
+    if len(rows) != 1 or rows[0].get("bundle_id") != bundle_id:
+        raise RuntimeError("Completion checkpoint lost its publication fence")
+
+
+def record_validation_result(manifest_path: str, db: str, status: str) -> None:
+    manifest = read_committed_manifest(manifest_path, db)
+    if manifest is None:
+        raise RuntimeError("Validation finalization has no confirmed publication")
+    manifest["validation"] = {"status": status}
+    path = Path(manifest_path)
+    pending = path.with_suffix(".json.pending")
+    pending.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
+    pending.replace(path)
+    try:
+        _persist_completion(manifest, db)
+    except Exception as exc:
+        print(f"::warning::Verification result checkpoint pending ({type(exc).__name__})", file=sys.stderr)
+    print(f"Publication COMMITTED; verification {status}", flush=True)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with Path(summary).open("a", encoding="utf-8") as handle:
+            handle.write(f"\nPublication: `COMMITTED`; verification: `{status}`.\n")
+
+
+def validate_publication(manifest_path: str, db: str) -> None:
+    manifest = read_committed_manifest(manifest_path, db)
+    if manifest is None:
+        raise RuntimeError("Cannot finalize verification without a committed publication")
+    if (manifest.get("validation") or {}).get("status") in {"passed", "warnings"}:
+        print("Verification already completed for this publication; skipping")
+        return
+    status = "pending"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "multi_league.validation_v2", "--db", db, "--ci", "-v"],
+            cwd=Path(__file__).resolve().parents[1] / "fantasy_football_data_scripts",
+            timeout=40, capture_output=True, text=True, check=False,
+        )
+        report = (result.stdout or "") + (result.stderr or "")
+        print(report[-65536:], flush=True)
+        counts = re.search(r"Checks: \d+ visible \((\d+) passed, (\d+) failed, (\d+) errored, (\d+) transient\)", report)
+        if result.returncode and "CI FAILURE:" in report:
+            status = "failed"
+        elif result.returncode == 0 and counts and not any(int(counts[i]) for i in (3, 4)):
+            status = "warnings" if int(counts[2]) else "passed"
+    except Exception as exc:
+        print(f"::warning::Data committed; verification pending ({type(exc).__name__})", file=sys.stderr)
+    record_validation_result(manifest_path, db, status)
+
+
 def _record_cache_result(args, verified: bool) -> None:
     """Report cache completion separately from an already-confirmed data write."""
     manifest_path = resolve_manifest_path(args.db.strip(), args.manifest or None)
@@ -698,11 +870,17 @@ def _record_cache_result(args, verified: bool) -> None:
         status = "complete" if verified else "committed_cache_pending"
         if publication.get("finalization_status") != "complete":
             status = "committed_finalization_pending"
+        elif verified and (manifest.get("validation") or {}).get("status") in {"pending", "failed"}:
+            status = "committed_verification_" + manifest["validation"]["status"]
         manifest["cache_verification"] = {"verified": verified, "status": "verified" if verified else "pending"}
         path = Path(manifest_path)
         pending = path.with_suffix(".json.pending")
         pending.write_text(json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8")
         pending.replace(path)
+        try:
+            _persist_completion(manifest, args.db.strip())
+        except Exception as exc:
+            print(f"::warning::Completion checkpoint pending ({type(exc).__name__})", file=sys.stderr)
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with Path(output).open("a", encoding="utf-8") as handle:
@@ -719,10 +897,52 @@ def _record_cache_result(args, verified: bool) -> None:
 
 def main() -> int:
     args = parse_args()
+    if args.publication_run_id:
+        recovered = load_committed_publication(args.db.strip(), args.publication_run_id, mode=args.mode)
+        # This is a small private runner-local receipt, not a database snapshot.
+        receipt_dir = Path(os.environ.get("RUNNER_TEMP", os.environ.get("TEMP", "."))) / f"{args.db}-publication-{args.publication_run_id}"
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        args.manifest = str(receipt_dir / "delta_publish_manifest.json")
+        Path(args.manifest).write_text(json.dumps(recovered, sort_keys=True), encoding="utf-8")
+    manifest_path = resolve_manifest_path(args.db.strip(), args.manifest or None)
+    committed = read_committed_manifest(manifest_path, args.db.strip())
     verified = False
     try:
-        code, verified = _run_warmer(args)
-        return code
+        if committed and committed["publication"].get("finalization_status") != "complete":
+            try:
+                from importlib import import_module
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fantasy_football_data_scripts"))
+                LocalLeagueDB = import_module("multi_league.core.local_db").LocalLeagueDB
+                db = LocalLeagueDB(Path(manifest_path).parent, args.db.strip())
+                db.upload_to_fly(args.db.strip(), import_mode=committed.get("import_mode"),
+                                 platform=committed.get("platform"), finalize_only=True)
+                committed = read_committed_manifest(manifest_path, args.db.strip())
+            except Exception as exc:
+                print(f"::warning::Data committed; inventory/merge finalization pending ({type(exc).__name__})", file=sys.stderr)
+        if committed and (committed.get("cache_verification") or {}).get("verified") is True:
+            print("Cache already verified for this publication; skipping completed work")
+            code, verified = 0, True
+        else:
+            try:
+                code, verified = _run_warmer(args)
+            except Exception as exc:
+                if not committed:
+                    raise
+                print(f"::warning::Data committed; cache refresh pending ({type(exc).__name__})", file=sys.stderr)
+                code = 1
+        if committed and (args.validate or (committed.get("validation") or {}).get("status") == "pending"):
+            # Cache work is independent and checkpointed before diagnostic QA.
+            try:
+                _record_cache_result(args, verified)
+            except (OSError, ValueError, TypeError) as exc:
+                print(f"::warning::Cache reporting pending ({type(exc).__name__}); data remains COMMITTED", file=sys.stderr)
+            try:
+                validate_publication(str(manifest_path), args.db.strip())
+            except (OSError, ValueError, TypeError) as exc:
+                print(f"::warning::Verification reporting pending ({type(exc).__name__}); data remains COMMITTED", file=sys.stderr)
+        # A cache outage cannot undo a confirmed write or justify another import.
+        # Callers without a receipt retain strict failure semantics.
+        return 0 if committed and args.soft_warm_failures else code
     finally:
         try:
             _record_cache_result(args, verified)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import duckdb
@@ -688,6 +689,12 @@ def test_post_merge_reenriches_the_combined_league_before_aggregating(monkeypatc
     """Cross-segment grades must use the combined historical pool, not each source in isolation."""
     runner = load_runner()
     calls: list[str] = []
+    # A real successful upload writes this receipt before any completion work.
+    (tmp_path / "delta_publish_manifest.json").write_text(json.dumps({
+        "db_name": "target_db", "bundle_id": "committed-target",
+        "publication": {"status": "COMMITTED", "executed": True,
+                        "bundle_id": "committed-target", "finalization_status": "complete"},
+    }))
 
     monkeypatch.setattr(runner, "local_matchup_count", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(

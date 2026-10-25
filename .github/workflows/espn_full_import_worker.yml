@@ -606,6 +606,7 @@ jobs:
         run: |
           python scripts/warm_vercel_cache.py \
             --db "$DB_NAME" \
+            --manifest "${{ env.DATA_DIR }}/delta_publish_manifest.json" \
             --secret "$REVALIDATION_SECRET" \
             --site-url "https://www.leaguehistory.app" \
             --mode full \

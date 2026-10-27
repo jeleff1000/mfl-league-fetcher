@@ -8,6 +8,10 @@ inputs:
   release-repository:
     required: false
     default: jeleff1000/mfl-league-fetcher
+  allow-missing:
+    description: Let import workers rebuild an unavailable cache from Fly.
+    required: false
+    default: 'false'
 outputs:
   cache-hit:
     value: ${{ steps.restore.outputs.cache-hit }}
@@ -17,6 +21,7 @@ runs:
     - name: Restore Actions cache
       id: restore
       uses: actions/cache/restore@v5
+      continue-on-error: true
       with:
         path: research_public_lake
         key: ${{ inputs.cache-key }}
@@ -26,12 +31,27 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        rm -rf research_public_lake
         mkdir -p research_public_lake
-        curl --fail --location --retry 3 --retry-all-errors \
-          --output research_public_lake/ops_cache.duckdb \
-          "https://github.com/${{ inputs.release-repository }}/releases/download/${{ inputs.release-tag }}/ops_cache.duckdb"
-        test -s research_public_lake/ops_cache.duckdb
+        if curl --fail --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 \
+          --output research_public_lake/ops_cache.duckdb.download \
+          "https://github.com/${{ inputs.release-repository }}/releases/download/${{ inputs.release-tag }}/ops_cache.duckdb" \
+          && test -s research_public_lake/ops_cache.duckdb.download; then
+          mv research_public_lake/ops_cache.duckdb.download research_public_lake/ops_cache.duckdb
+        else
+          rm -f research_public_lake/ops_cache.duckdb.download
+          if [ "${{ inputs.allow-missing }}" = 'true' ]; then
+            echo '::warning::Cache download unavailable; the importer will recover from Fly.'
+          else
+            exit 1
+          fi
+        fi
     - name: Verify durable ops cache
       shell: bash
-      run: test -s research_public_lake/ops_cache.duckdb
+      run: |
+        if test -s research_public_lake/ops_cache.duckdb; then
+          exit 0
+        elif [ "${{ inputs.allow-missing }}" = 'true' ]; then
+          echo '::warning::No restored OPS cache; live-source recovery will run during import.'
+        else
+          exit 1
+        fi

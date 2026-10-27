@@ -133,6 +133,7 @@ jobs:
         with:
           cache-key: research-public-lake-v5-Linux-2000-plus-player-bio
           release-tag: ops-cache-v6-2000-plus-player-bio
+          allow-missing: ${{ !inputs.cache_only && 'true' || 'false' }}
 
       - name: Restore draft baseline bundle
         uses: actions/cache/restore@v5
@@ -141,6 +142,7 @@ jobs:
           key: ${{ env.CORPUS_DEPENDENCY_KEY }}
 
       - name: Verify draft baseline
+        if: inputs.cache_only
         shell: bash
         run: test -s "${DRAFT_GLOBAL_SOURCE_PATH}"
 

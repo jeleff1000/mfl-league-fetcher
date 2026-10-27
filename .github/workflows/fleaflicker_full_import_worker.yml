@@ -146,23 +146,24 @@ jobs:
         with:
           cache-key: research-public-lake-v5-Linux-2000-plus-player-bio
           release-tag: ops-cache-v6-2000-plus-player-bio
+          allow-missing: 'true'
 
       - name: Verify ops cache from research lake
         shell: bash
         run: |
-          test -s research_public_lake/ops_cache.duckdb
+          test -s research_public_lake/ops_cache.duckdb || echo '::warning::OPS cache will be rebuilt from Fly during import.'
 
       - name: Log cached ops cache
         run: |
           echo "[ops-cache] key-prefix=ops-cache-v5-${{ runner.os }}-manual-"
           echo "[research-lake] restore-hit=${{ steps.research-lake.outputs.cache-hit }}"
           echo "[ops-cache] OPS_CACHE_PATH=${OPS_CACHE_PATH}"
-          test -s "${OPS_CACHE_PATH}" || {
-            echo "::error::research_public_lake/ops_cache.duckdb is missing from the canonical research lake cache."
-            exit 1
-          }
-          echo "[ops-cache] size-bytes=$(stat -c%s "${OPS_CACHE_PATH}")"
-          echo "[ops-cache] size-human=$(du -h "${OPS_CACHE_PATH}" | cut -f1)"
+          if test -s "${OPS_CACHE_PATH}"; then
+            echo "[ops-cache] size-bytes=$(stat -c%s "${OPS_CACHE_PATH}")"
+            echo "[ops-cache] size-human=$(du -h "${OPS_CACHE_PATH}" | cut -f1)"
+          else
+            echo '::warning::OPS cache not restored; live-source recovery will run during import.'
+          fi
 
       - name: Cache Python virtualenv
         uses: actions/cache@v5

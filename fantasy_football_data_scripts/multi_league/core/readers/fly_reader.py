@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 class FlyReaderError(RuntimeError):
     """Base error for FlyReader query failures."""
 
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class FlyReaderTableNotFound(FlyReaderError):
     """Server response indicates the table does not exist."""
@@ -270,7 +274,7 @@ class FlyReader:
                 )
                 if "does not exist" in text_lower or "table not found" in text_lower:
                     raise FlyReaderTableNotFound(msg)
-                raise FlyReaderError(msg)
+                raise FlyReaderError(msg, status_code=resp.status_code)
 
             try:
                 return resp.json()
@@ -372,7 +376,8 @@ class FlyReader:
             if resp.status_code != 200:
                 raise FlyReaderError(
                     f"Parquet query failed ({resp.status_code}): {resp.text} "
-                    f"[database={database}; sql={self._sql_preview(sql)}]"
+                    f"[database={database}; sql={self._sql_preview(sql)}]",
+                    status_code=resp.status_code,
                 )
             return pd.read_parquet(BytesIO(resp.content))
         raise FlyReaderError(f"Parquet query exhausted retries: {last_error or 'unknown error'}")

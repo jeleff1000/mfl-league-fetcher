@@ -22,6 +22,77 @@ OPS_REFRESH_READ_KWARGS = {"timeout_seconds": 8, "max_retries": 3}
 OPS_IMPORT_READ_KWARGS = {"timeout_seconds": 60, "max_retries": 3}
 
 
+def rebuild_import_ops_cache(path: Path, *, start_year: int, end_year: int) -> None:
+    """Recover consumed import inputs using bounded Parquet pages, then replace atomically."""
+    from uuid import uuid4
+
+    from build_ops_cache import _duckdb_type
+    from multi_league.core.db_reader import get_reader
+
+    reader = get_reader()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.rebuild-{uuid4().hex}")
+    cache = None
+    try:
+        cache = duckdb.connect(str(temporary))
+        cache.execute("CREATE SCHEMA nfl_historical")
+        for table in ("nfl_player_stats_all", "player_bio"):
+            target = f"nfl_historical.{table}"
+            schema = reader.query(f"DESCRIBE {target}", database=OPS_DATABASE, **OPS_IMPORT_READ_KWARGS)
+            types = {str(row["column_name"]): str(row["column_type"]) for row in schema}
+            if table == "nfl_player_stats_all":
+                wanted = set(_ops_revision_columns(types)) | {"year", "week", "season_type"}
+                required = set(_OPS_KEY_COLUMNS) | {"year", "week", "season_type"}
+                partitions = reader.query(
+                    f"SELECT year, week, COUNT(*) AS rows FROM {target} "
+                    f"WHERE year BETWEEN {int(start_year)} AND {int(end_year)} "
+                    "GROUP BY year, week ORDER BY year, week",
+                    database=OPS_DATABASE, **OPS_IMPORT_READ_KWARGS,
+                )
+            else:
+                # Bios also cover draft/bench players who have not played an NFL snap.
+                wanted = set(types)
+                required = {"NFL_player_id"}
+                partitions = reader.query(
+                    f"SELECT COUNT(*) AS rows FROM {target}", database=OPS_DATABASE, **OPS_IMPORT_READ_KWARGS,
+                )
+            if missing := required - set(types):
+                raise RuntimeError(f"Fly {target} is missing import inputs: {sorted(missing)}")
+            columns = [column for column in types if column in wanted and column not in _OPS_REFRESH_EXCLUDED_COLUMNS]
+            projection = ", ".join(_quoted_identifier(column) for column in columns)
+            definitions = ", ".join(f"{_quoted_identifier(column)} {_duckdb_type(types[column])}" for column in columns)
+            cache.execute(f"CREATE TABLE {target} ({definitions})")
+            order = ", ".join(_quoted_identifier(column) for column in (
+                "NFL_player_id", "game_date", "season_type", "nfl_team", "opponent_nfl_team",
+            ) if column in columns)
+            for partition in partitions:
+                predicate = ""
+                if table == "nfl_player_stats_all":
+                    week = partition["week"]
+                    week_predicate = "week IS NULL" if week is None else f"week = {int(week)}"
+                    predicate = f" WHERE year = {int(partition['year'])} AND {week_predicate}"
+                count = int(partition["rows"])
+                for offset in range(0, count, 1000):
+                    frame = reader.query_df_parquet(
+                        f"SELECT {projection} FROM {target}{predicate} ORDER BY {order} LIMIT 1000 OFFSET {offset}",
+                        database=OPS_DATABASE, **OPS_IMPORT_READ_KWARGS,
+                    )
+                    if len(frame) != min(1000, count - offset):
+                        raise RuntimeError(f"Fly returned an incomplete import cache page for {target}")
+                    cache.register("__import_ops_page", frame)
+                    try:
+                        cache.execute(f"INSERT INTO {target} ({projection}) SELECT {projection} FROM __import_ops_page")
+                    finally:
+                        cache.unregister("__import_ops_page")
+        cache.close()
+        cache = None
+        temporary.replace(path)
+    finally:
+        if cache is not None:
+            cache.close()
+        temporary.unlink(missing_ok=True)
+
+
 def _sql_literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 

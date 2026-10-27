@@ -18,7 +18,9 @@ def ops_sources(tmp_path, monkeypatch):
             nfl_team VARCHAR, opponent_nfl_team VARCHAR, player_week VARCHAR,
             position VARCHAR, rank_qb_4pt INTEGER, rank_alltime_qb_4pt INTEGER,
             recon_correction_log VARCHAR
-        )
+        );
+        CREATE TABLE nfl_historical.player_bio (NFL_player_id VARCHAR, nfl_position VARCHAR);
+        INSERT INTO nfl_historical.player_bio VALUES ('caleb', 'QB');
     """
     with duckdb.connect(str(cache_path)) as cache:
         cache.execute(schema)
@@ -159,6 +161,173 @@ def test_import_current_rank_revisions_do_not_download_wide_rows(ops_sources):
                              "nfl_historical.nfl_player_stats_all ORDER BY year, week").fetchall() == [
             (2025, 1, 222), (2026, 1, 216), (2026, 2, 216),
         ]
+
+
+@pytest.mark.parametrize("stage", ["admission", "download"])
+@pytest.mark.parametrize("fault", ["timeout", "disconnect", "unavailable"])
+def test_usable_import_cache_survives_temporary_fly_read_failure(ops_sources, monkeypatch, stage, fault):
+    from multi_league.core.readers.fly_reader import FlyReaderError, FlyReaderNetworkError
+
+    cache_path, live, reader = ops_sources
+    current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all").fetchdf()
+    current["rank_alltime_qb_4pt"] = 215
+    with duckdb.connect(str(cache_path)) as cache:
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+    original_query = reader.query_df
+    error = (FlyReaderError("Query failed (503): checkpointing", status_code=503) if fault == "unavailable"
+             else FlyReaderNetworkError(f"{fault} after 3/3 attempts"))
+
+    def query(sql, **kwargs):
+        if stage == "admission" or 'NULL AS "recon_correction_log"' in sql:
+            raise error
+        return original_query(sql, **kwargs)
+
+    monkeypatch.setattr(reader, "query_df", query)
+    monkeypatch.setattr(reader, "query_df_parquet", query)
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT year, week, rank_alltime_qb_4pt FROM "
+                            "nfl_historical.nfl_player_stats_all ORDER BY year, week").fetchall() == [
+            (2025, 1, 222), (2026, 1, 215), (2026, 2, 215),
+        ]
+
+
+@pytest.mark.parametrize("cache_state", ["missing", "empty", "invalid", "malformed_schema"])
+def test_import_rebuilds_unavailable_restored_cache_from_fly(ops_sources, monkeypatch, cache_state):
+    cache_path, _live, reader = ops_sources
+    cache_path.unlink()
+    if cache_state == "empty":
+        cache_path.touch()
+    elif cache_state == "invalid":
+        cache_path.write_bytes(b"interrupted cache download")
+    elif cache_state == "malformed_schema":
+        with duckdb.connect(str(cache_path)) as cache:
+            cache.execute("CREATE SCHEMA nfl_historical")
+            cache.execute("CREATE TABLE nfl_historical.nfl_player_stats_all AS SELECT 2026 AS year")
+    builds = []
+    original = ops_cache.rebuild_import_ops_cache
+
+    def build(path, **kwargs):
+        builds.append(kwargs)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(ops_cache, "rebuild_import_ops_cache", build)
+    assert import_utils.run_track_1_verify(2026, 2026) is True
+    assert len(builds) == 1
+    downloads = [sql for sql in reader.queries if "LIMIT 1000 OFFSET" in sql]
+    assert len(downloads) == 3  # two weekly stats slices, plus player bios
+    assert all("recon_correction_log" not in sql for sql in downloads)
+    assert all("year = 2026" in sql for sql in downloads if "nfl_player_stats_all" in sql)
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT COUNT(*) FROM nfl_historical.nfl_player_stats_all").fetchone() == (2,)
+        assert cache.execute("SELECT nfl_position FROM nfl_historical.player_bio").fetchone() == ('QB',)
+
+
+@pytest.mark.parametrize("transport", ["json", "parquet"])
+def test_import_uses_cached_inputs_after_real_fly_reader_exhausts_503s(ops_sources, monkeypatch, transport):
+    import requests
+    from multi_league.core.readers.fly_reader import FlyReader
+
+    cache_path, live, _reader = ops_sources
+    current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all").fetchdf()
+    current["rank_alltime_qb_4pt"] = 215
+    with duckdb.connect(str(cache_path)) as cache:
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+    attempts = []
+    monkeypatch.setenv("DATABASE_SERVER_URL", "https://fly.test")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "read-token")
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.sleep", lambda _seconds: None)
+
+    def post(url, *, json, **kwargs):
+        response = requests.Response()
+        if ((transport == "json" and json["sql"].startswith("SELECT week,"))
+                or (transport == "parquet" and url.endswith("/query-parquet"))):
+            attempts.append(kwargs["timeout"])
+            response.status_code = 503
+            response._content = b'{"reason":"checkpointing"}'
+        else:
+            response.status_code = 200
+            response._content = live.execute(json["sql"]).fetchdf().to_json(orient="records").encode()
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    monkeypatch.setattr(db_reader, "get_reader", FlyReader)
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+    assert attempts == [60, 60, 60]
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT rank_alltime_qb_4pt FROM nfl_historical.nfl_player_stats_all "
+                             "WHERE year=2026 ORDER BY week").fetchall() == [(215,), (215,)]
+
+
+def test_failed_cache_rebuild_preserves_existing_cache_and_removes_partial_download(ops_sources, monkeypatch):
+    from multi_league.core.readers.fly_reader import FlyReaderNetworkError
+
+    cache_path, _live, reader = ops_sources
+    original = cache_path.read_bytes()
+
+    def download(*args, **kwargs):
+        raise FlyReaderNetworkError("Fly temporarily unavailable")
+
+    monkeypatch.setattr(reader, "query_df_parquet", download)
+    with pytest.raises(FlyReaderNetworkError):
+        ops_cache.rebuild_import_ops_cache(cache_path, start_year=2025, end_year=2026)
+    assert cache_path.read_bytes() == original
+    assert not list(cache_path.parent.glob("*.rebuild-*"))
+
+
+def test_cache_rebuild_pages_consumed_inputs_and_keeps_unplayed_player_bios(ops_sources):
+    cache_path, live, reader = ops_sources
+    live.execute("ALTER TABLE nfl_historical.nfl_player_stats_all ADD COLUMN unrelated_audit_blob VARCHAR")
+    live.execute("INSERT INTO nfl_historical.player_bio VALUES ('bench-only', 'QB')")
+    live.execute("""
+        INSERT INTO nfl_historical.nfl_player_stats_all
+        SELECT 'player_' || i, 2026, 1, 'REG', 'CHI', 'CAR', 'player_' || i || '_2026_1',
+               'QB', 1, 216, 'audit', repeat('unused',1000) FROM range(1500) t(i)
+    """)
+    recovered = cache_path.with_name("paged_cache.duckdb")
+    ops_cache.rebuild_import_ops_cache(recovered, start_year=2026, end_year=2026)
+    downloads = [sql for sql in reader.queries if "LIMIT 1000 OFFSET" in sql]
+    assert any("OFFSET 1000" in sql for sql in downloads)
+    assert all("unrelated_audit_blob" not in sql and "recon_correction_log" not in sql for sql in downloads)
+    with duckdb.connect(str(recovered), read_only=True) as cache:
+        assert cache.execute("SELECT COUNT(*), COUNT(DISTINCT NFL_player_id) FROM "
+                             "nfl_historical.nfl_player_stats_all").fetchone() == (1502, 1501)
+        assert cache.execute("SELECT nfl_position FROM nfl_historical.player_bio "
+                             "WHERE NFL_player_id='bench-only'").fetchone() == ('QB',)
+
+
+def test_missing_cache_recovers_an_unplayed_future_season_without_nfl_rows(ops_sources, monkeypatch):
+    cache_path, live, _reader = ops_sources
+    cache_path.unlink()
+    live.execute("DELETE FROM nfl_historical.nfl_player_stats_all")
+    monkeypatch.setattr(date_utils, "get_nfl_state", lambda: {
+        "season": "2026", "league_season": "2026", "season_type": "pre",
+    })
+    assert import_utils.run_track_1_verify(2026, 2026) is True
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT COUNT(*) FROM nfl_historical.nfl_player_stats_all").fetchone() == (0,)
+
+
+def test_temporary_download_failure_does_not_mark_known_missing_weeks_as_cached(ops_sources, monkeypatch):
+    from multi_league.core.readers.fly_reader import FlyReaderNetworkError
+
+    cache_path, live, reader = ops_sources
+    current = live.execute("SELECT * FROM nfl_historical.nfl_player_stats_all WHERE week=1").fetchdf()
+    with duckdb.connect(str(cache_path)) as cache:
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+
+    def download(*args, **kwargs):
+        raise FlyReaderNetworkError("missing week cannot be downloaded")
+
+    monkeypatch.setattr(reader, "query_df_parquet", download)
+    with pytest.raises(RuntimeError, match="2026"):
+        import_utils.run_track_1_verify(2025, 2026)
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("SELECT week FROM nfl_historical.nfl_player_stats_all WHERE year=2026").fetchall() == [(1,)]
 
 
 def test_refresh_rank_inputs_recover_two_timeouts_without_losing_history(

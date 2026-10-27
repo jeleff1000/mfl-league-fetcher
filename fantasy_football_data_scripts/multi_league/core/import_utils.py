@@ -98,14 +98,21 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
     )
     query = f"SELECT {projection} FROM nfl_historical.nfl_player_stats_all WHERE {predicate}"
     reader = get_reader()
-    expected = _finalized_ops(
-        reader, year=year, through_week=None, read_kwargs=OPS_IMPORT_READ_KWARGS,
-    )
 
     def local_keys() -> set[tuple]:
         with duckdb.connect(str(path), read_only=True) as cache:
             local = cache.execute(query).fetchdf()
         return set(local[keys].itertuples(index=False, name=None))
+
+    try:
+        expected = _finalized_ops(
+            reader, year=year, through_week=None, read_kwargs=OPS_IMPORT_READ_KWARGS,
+        )
+    except Exception as exc:
+        if _temporary_ops_read_failure(exc) and local_keys():
+            log(f"[TRACK 1] WARNING: Live OPS revisions unavailable; using cached {year} inputs")
+            return True
+        raise
 
     if expected.empty:
         from multi_league.core.date_utils import get_nfl_state
@@ -133,14 +140,49 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
 
     weeks = sorted(set(differing_weeks()) | {int(week) for week in expected["week"]})
     log(f"[TRACK 1] Checking finalized OPS revisions for {year} weeks {weeks}; downloading changed rows only")
-    _patch_research_ops_cache_from_fly(
-        reader, expected, base=path, year=year, weeks=weeks,
-        work_dir=path.parent, in_place=True, authoritative_weeks=True,
-        read_kwargs=OPS_IMPORT_READ_KWARGS,
-    )
+    try:
+        _patch_research_ops_cache_from_fly(
+            reader, expected, base=path, year=year, weeks=weeks,
+            work_dir=path.parent, in_place=True, authoritative_weeks=True,
+            read_kwargs=OPS_IMPORT_READ_KWARGS,
+        )
+    except Exception as exc:
+        if _temporary_ops_read_failure(exc) and local_keys() == expected_keys:
+            log(f"[TRACK 1] WARNING: OPS rank freshness pending; all admitted {year} facts are cached")
+            return True
+        raise
     if remaining := differing_weeks():
         raise RuntimeError(f"OPS cache still differs from finalized inputs for {year} weeks {remaining}")
     return True
+
+
+def _import_ops_counts(path: Path, start_year: int, end_year: int) -> pd.DataFrame:
+    import duckdb
+
+    with duckdb.connect(str(path), read_only=True) as cache:
+        cache.execute("SELECT year, week, season_type, NFL_player_id, nfl_team, opponent_nfl_team "
+                      "FROM nfl_historical.nfl_player_stats_all LIMIT 0")
+        cache.execute("SELECT NFL_player_id FROM nfl_historical.player_bio LIMIT 0")
+        return cache.execute(
+            "SELECT year, COUNT(*) AS rows FROM nfl_historical.nfl_player_stats_all "
+            "WHERE year BETWEEN ? AND ? GROUP BY year ORDER BY year",
+            [start_year, end_year],
+        ).fetchdf()
+
+
+def _temporary_ops_read_failure(exc: Exception) -> bool:
+    import requests
+    from multi_league.core.fly_errors import is_permanent_storage_error
+    from multi_league.core.readers.fly_reader import FlyReaderError, FlyReaderNetworkError, FlyReader
+
+    if isinstance(exc, (FlyReaderNetworkError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return True
+    return (
+        isinstance(exc, FlyReaderError)
+        and exc.status_code in FlyReader.RETRY_STATUS
+        and not is_permanent_storage_error(str(exc))
+        and "parser error" not in str(exc).lower()
+    )
 
 
 def run_track_1_verify(
@@ -151,8 +193,8 @@ def run_track_1_verify(
     """Verify NFL super table has required data for the given year range.
 
     Queries ___ops.nfl_historical.nfl_player_stats_all to check row counts.
-    Hydrate missing active-season OPS weeks before SQL enrichment. A configured
-    cache that cannot supply them raises: callers historically ignore False.
+    Hydrate active-season OPS weeks before SQL enrichment. Distribution cache
+    misses recover from Fly; temporary freshness failures can use cached inputs.
     """
     if dry_run:
         log("[TRACK 1][DRY-RUN] Would verify NFL super table")
@@ -175,42 +217,27 @@ def run_track_1_verify(
     ops_cache_path = os.environ.get("OPS_CACHE_PATH")
     if ops_cache_path:
         path = Path(ops_cache_path)
-        if path.exists():
+        try:
+            import duckdb
+            from multi_league.core.date_utils import get_current_nfl_season_year
+            from multi_league.core.ops_cache import rebuild_import_ops_cache
+
             try:
-                import duckdb
+                result = _import_ops_counts(path, start_year, end_year)
+            except (duckdb.Error, OSError):
+                log("[TRACK 1] Restored OPS cache unavailable; rebuilding automatically from Fly")
+                rebuild_import_ops_cache(path, start_year=start_year, end_year=end_year)
+                result = _import_ops_counts(path, start_year, end_year)
 
-                conn = duckdb.connect(str(path), read_only=True)
-                try:
-                    result = conn.execute(
-                        """
-                        SELECT year, COUNT(*) as rows
-                        FROM nfl_historical.nfl_player_stats_all
-                        WHERE year BETWEEN ? AND ?
-                        GROUP BY year ORDER BY year
-                        """,
-                        [start_year, end_year],
-                    ).fetchdf()
-                finally:
-                    conn.close()
-                from multi_league.core.date_utils import get_current_nfl_season_year
-
-                if end_year not in result["year"].values or end_year == get_current_nfl_season_year(
-                    reference_date=datetime.now()
-                ):
-                    if not _ensure_import_ops_weeks(path, end_year):
-                        return True
-                    with duckdb.connect(str(path), read_only=True) as cache:
-                        result = cache.execute(
-                            "SELECT year, COUNT(*) AS rows FROM nfl_historical.nfl_player_stats_all "
-                            "WHERE year BETWEEN ? AND ? GROUP BY year ORDER BY year",
-                            [start_year, end_year],
-                        ).fetchdf()
-                return _verify_result(result, "local ops cache")
-            except Exception as e:
-                raise RuntimeError(
-                    f"Import OPS cache is unavailable for {end_year}; refusing to continue with missing rank inputs"
-                ) from e
-        raise RuntimeError(f"Import OPS cache is missing for {end_year}: {path}")
+            if end_year not in result["year"].values or end_year == get_current_nfl_season_year(
+                reference_date=datetime.now()
+            ):
+                if not _ensure_import_ops_weeks(path, end_year):
+                    return True
+                result = _import_ops_counts(path, start_year, end_year)
+            return _verify_result(result, "local ops cache")
+        except Exception as e:
+            raise RuntimeError(f"NFL inputs could not be loaded from the local cache or Fly for {end_year}") from e
 
     try:
         from multi_league.core.db_reader import get_reader

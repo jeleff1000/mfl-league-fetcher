@@ -14,9 +14,12 @@ import pandas as pd
 from multi_league.core.league_update_manifest import resolve_nfl_scoring_input_columns
 
 OPS_DATABASE = "___ops"
-# An active import/refresh needs a small finalized slice, never permission to
-# spend its whole worker lifetime retrying while the Ops artifact is promoted.
+# Live refreshes need a small finalized slice and must reserve time to publish.
 OPS_REFRESH_READ_KWARGS = {"timeout_seconds": 8, "max_retries": 3}
+# Initial imports run in background workers and scan the season's scoring
+# revisions. Keep retries bounded, but allow healthy scans more than a UI read.
+# FlyReader still clamps this budget when a live-refresh deadline is present.
+OPS_IMPORT_READ_KWARGS = {"timeout_seconds": 60, "max_retries": 3}
 
 
 def _sql_literal(value: object) -> str:
@@ -54,11 +57,15 @@ def _ops_revision_columns(schema_columns: Iterable[str]) -> tuple[str, ...]:
     ))
 
 
-def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.DataFrame:
+def _finalized_ops(
+    reader: Any, *, year: int, through_week: int | None,
+    read_kwargs: dict[str, Any] | None = None,
+) -> pd.DataFrame:
     """Read skinny revisions; rank values are hashed on Fly, not downloaded."""
     target = "nfl_historical.nfl_player_stats_all"
+    read_kwargs = OPS_REFRESH_READ_KWARGS if read_kwargs is None else read_kwargs
     schema = reader.query(
-        f"DESCRIBE {target}", database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+        f"DESCRIBE {target}", database=OPS_DATABASE, **read_kwargs,
     )
     revision_columns = _ops_revision_columns(str(row["column_name"]) for row in schema)
     revision_expr = ", ".join(_quoted_identifier(column) for column in revision_columns)
@@ -70,7 +77,7 @@ def _finalized_ops(reader: Any, *, year: int, through_week: int | None) -> pd.Da
         f"WHERE year = {int(year)} AND COALESCE(season_type, 'REG') = 'REG'{week_clause} "
         "AND NFL_player_id IS NOT NULL AND nfl_team IS NOT NULL AND opponent_nfl_team IS NOT NULL",
         database=OPS_DATABASE,
-        **OPS_REFRESH_READ_KWARGS,
+        **read_kwargs,
     )
 
 
@@ -121,6 +128,7 @@ def _patch_research_ops_cache_from_fly(
     work_dir: Path,
     in_place: bool = False,
     authoritative_weeks: bool = False,
+    read_kwargs: dict[str, Any] | None = None,
 ) -> Path:
     """Patch the reduced research cache from Fly's finalized source rows.
 
@@ -137,6 +145,7 @@ def _patch_research_ops_cache_from_fly(
     from multi_league.core.league_update_timing import PhaseTimer
 
     timer = PhaseTimer()
+    read_kwargs = OPS_REFRESH_READ_KWARGS if read_kwargs is None else read_kwargs
     if not base.is_file():
         raise RuntimeError(f"OPS_CACHE_PATH is missing: {base}")
     output = base if in_place else work_dir / "ops_cache_fly_finalized.duckdb"
@@ -156,7 +165,7 @@ def _patch_research_ops_cache_from_fly(
             raise RuntimeError("research ops cache is missing required weekly columns: " + ", ".join(missing))
         target = "nfl_historical.nfl_player_stats_all"
         fly_schema_rows = reader.query(
-            f"DESCRIBE {target}", database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+            f"DESCRIBE {target}", database=OPS_DATABASE, **read_kwargs,
         )
         timer.mark("fly_schema")
         fly_columns = {
@@ -208,7 +217,7 @@ def _patch_research_ops_cache_from_fly(
                     "AND COALESCE(season_type, 'REG') = 'REG' "
                     f"AND (NFL_player_id, nfl_team, opponent_nfl_team) IN (VALUES {admission_values})",
                     database=OPS_DATABASE,
-                    **OPS_REFRESH_READ_KWARGS,
+                    **read_kwargs,
                 )
                 if (set(expected[list(_OPS_KEY_COLUMNS)].itertuples(index=False, name=None)) != expected_keys
                         or len(expected) != len(expected_keys)):
@@ -254,11 +263,11 @@ def _patch_research_ops_cache_from_fly(
                 parquet_query = getattr(reader, "query_df_parquet", None)
                 source = (
                     parquet_query(
-                        source_sql, database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+                        source_sql, database=OPS_DATABASE, **read_kwargs,
                     )
                     if parquet_query is not None
                     else reader.query_df(
-                        source_sql, database=OPS_DATABASE, **OPS_REFRESH_READ_KWARGS,
+                        source_sql, database=OPS_DATABASE, **read_kwargs,
                     )
                 )
             else:

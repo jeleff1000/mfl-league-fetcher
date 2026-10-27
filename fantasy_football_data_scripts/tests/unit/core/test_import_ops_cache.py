@@ -90,16 +90,57 @@ def test_stale_cache_import_hydrates_live_ranks_without_replacing_history(ops_so
     assert all('NULL AS "recon_correction_log"' in sql for sql in downloads)
 
 
-def test_import_ops_cache_reads_use_the_short_ui_retry_budget(ops_sources):
+def test_import_ops_cache_reads_use_the_worker_retry_budget(ops_sources):
     _cache_path, _live, reader = ops_sources
 
     assert import_utils.run_track_1_verify(2025, 2026) is True
 
     assert reader.read_kwargs
     assert all(
-        kwargs == {"timeout_seconds": 8, "max_retries": 3}
+        kwargs == {"timeout_seconds": 60, "max_retries": 3}
         for kwargs in reader.read_kwargs
     ), reader.read_kwargs
+
+
+def test_initial_import_accepts_ops_reads_slower_than_ui_timeout(ops_sources, monkeypatch):
+    """A healthy scoring revision scan may exceed the live refresh's 8s limit."""
+    from io import BytesIO
+    import requests
+    from multi_league.core.readers.fly_reader import FlyReader
+
+    cache_path, live, _reader = ops_sources
+    monkeypatch.setenv("DATABASE_SERVER_URL", "https://fly.test")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "read-token")
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.sleep", lambda _seconds: None)
+    revision_timeouts = []
+
+    def post(url, *, json, **kwargs):
+        if json["sql"].startswith("SELECT week,"):
+            revision_timeouts.append(kwargs["timeout"])
+            if kwargs["timeout"] < 20:
+                raise requests.exceptions.ReadTimeout("healthy OPS scan needs 20 seconds")
+        frame = live.execute(json["sql"]).fetchdf()
+        response = requests.Response()
+        response.status_code = 200
+        if url.endswith("/query-parquet"):
+            payload = BytesIO()
+            frame.to_parquet(payload, index=False)
+            response._content = payload.getvalue()
+        else:
+            response._content = frame.to_json(orient="records").encode()
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    monkeypatch.setattr(db_reader, "get_reader", FlyReader)
+
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+    assert revision_timeouts == [60]
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute(
+            "SELECT year, week, rank_alltime_qb_4pt FROM "
+            "nfl_historical.nfl_player_stats_all ORDER BY year, week"
+        ).fetchall() == [(2025, 1, 222), (2026, 1, 216), (2026, 2, 216)]
 
 
 def test_import_current_rank_revisions_do_not_download_wide_rows(ops_sources):

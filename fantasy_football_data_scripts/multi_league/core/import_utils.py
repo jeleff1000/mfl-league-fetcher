@@ -85,7 +85,9 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
     import duckdb
 
     from multi_league.core.db_reader import get_reader
-    from multi_league.core.ops_cache import _finalized_ops, _patch_research_ops_cache_from_fly
+    from multi_league.core.ops_cache import (
+        OPS_IMPORT_READ_KWARGS, _finalized_ops, _patch_research_ops_cache_from_fly,
+    )
 
     keys = ["week", "NFL_player_id", "nfl_team", "opponent_nfl_team"]
     projection = ", ".join(keys)
@@ -96,7 +98,9 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
     )
     query = f"SELECT {projection} FROM nfl_historical.nfl_player_stats_all WHERE {predicate}"
     reader = get_reader()
-    expected = _finalized_ops(reader, year=year, through_week=None)
+    expected = _finalized_ops(
+        reader, year=year, through_week=None, read_kwargs=OPS_IMPORT_READ_KWARGS,
+    )
 
     def local_keys() -> set[tuple]:
         with duckdb.connect(str(path), read_only=True) as cache:
@@ -132,6 +136,7 @@ def _ensure_import_ops_weeks(path: Path, year: int) -> bool:
     _patch_research_ops_cache_from_fly(
         reader, expected, base=path, year=year, weeks=weeks,
         work_dir=path.parent, in_place=True, authoritative_weeks=True,
+        read_kwargs=OPS_IMPORT_READ_KWARGS,
     )
     if remaining := differing_weeks():
         raise RuntimeError(f"OPS cache still differs from finalized inputs for {year} weeks {remaining}")
@@ -217,9 +222,9 @@ def run_track_1_verify(
             WHERE year BETWEEN {start_year} AND {end_year}
             GROUP BY year ORDER BY year
         """
-        from multi_league.core.ops_cache import OPS_REFRESH_READ_KWARGS
+        from multi_league.core.ops_cache import OPS_IMPORT_READ_KWARGS
 
-        result = reader.query_df(query, database="___ops", **OPS_REFRESH_READ_KWARGS)
+        result = reader.query_df(query, database="___ops", **OPS_IMPORT_READ_KWARGS)
         return _verify_result(result, "Fly")
 
     except Exception as e:

@@ -634,3 +634,23 @@ def test_allow_empty_quick_fallback_target_requires_prior_matchups():
     empty_db = SimpleNamespace(connect=lambda: empty_conn)
 
     assert initial_import_v3._allow_empty_quick_fallback_target(ctx, empty_db, 2022) is False
+
+
+def test_native_yahoo_predraft_import_is_unplayed_during_the_nfl_season():
+    ctx = SimpleNamespace(import_mode="quick", quick_import_years=[2026], start_year=2026, end_year=2026)
+    counts = {"league_settings": 1, "matchup": 0, "player_fantasy": 0, "draft": 0, "transactions": 0, "schedule": 0}
+    db = SimpleNamespace(table_exists=lambda table: table in counts, row_count=lambda table: counts[table])
+    settings = {2026: {"year": 2026, "metadata": {"season": "2026", "draft_status": "predraft",
+                                               "start_week": "8", "current_week": "7", "num_teams": "1"}}}
+    assert initial_import_v3._allow_empty_quick_startup(ctx, db, set(), league_settings=settings) is True
+
+
+def test_yahoo_predraft_settings_must_match_the_requested_season():
+    settings = {"year": 2025, "metadata": {"season": "2025", "draft_status": "predraft"}}
+    assert initial_import_v3._yahoo_settings_prove_predraft(settings, 2026) is False
+
+
+@pytest.mark.parametrize("draft_status", ["postdraft", "", None])
+def test_yahoo_empty_payload_alone_does_not_mean_predraft(draft_status):
+    settings = {"year": 2026, "metadata": {"season": "2026", "draft_status": draft_status}}
+    assert initial_import_v3._yahoo_settings_prove_predraft(settings, 2026) is False

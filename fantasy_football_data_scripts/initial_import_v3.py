@@ -565,13 +565,32 @@ def _infer_yahoo_season_from_league_key(league_key: str | None) -> int | None:
     return YAHOO_NFL_GAME_KEY_TO_SEASON.get(int(match.group(1)))
 
 
+def _yahoo_settings_prove_predraft(settings: dict | None, year: int) -> bool:
+    """Use the league's own draft state; the NFL may already be playing."""
+    if not isinstance(settings, dict):
+        return False
+    metadata = settings.get("metadata", settings)
+    if not isinstance(metadata, dict):
+        return False
+    season = coerce_int(metadata.get("season", settings.get("year")))
+    return season == int(year) and str(metadata.get("draft_status") or "").strip().lower() == "predraft"
+
+
+def _clear_unplayed_yahoo_manifests(ctx, year: int) -> None:
+    for name in ("matchups", "rosters", "draft", "transactions", "schedule", "schedules"):
+        clear_manifest(ctx.data_directory, name, year)
+
+
 def _allow_empty_quick_startup(ctx, db, unplayed_years: set[int], *, league_settings: dict | None = None) -> bool:
     """Allow settings-only quick imports for a brand-new unplayed season shell."""
     if getattr(ctx, "import_mode", "") != "quick":
         return False
 
     quick_years = set(_quick_import_years_from_ctx(ctx))
-    if not quick_years or not quick_years.issubset(set(unplayed_years or set())):
+    native_predraft_years = {
+        year for year in quick_years if _yahoo_settings_prove_predraft((league_settings or {}).get(year), year)
+    }
+    if not quick_years or not quick_years.issubset(set(unplayed_years or set()) | native_predraft_years):
         return False
 
     for table_name in ("matchup", "player_fantasy"):
@@ -2344,6 +2363,15 @@ def main():
         fetcher_success = {spec["label"]: True for spec in fetcher_specs}
         for year in all_years:
             league_key = ctx.get_league_id_for_year(year) if hasattr(ctx, "get_league_id_for_year") else ctx.league_id
+            if (
+                _yahoo_settings_prove_predraft((fetched_settings or {}).get(year), year)
+                and not _local_table_has_year_rows(db, "matchup", year)
+                and not _local_table_has_year_rows(db, "player_fantasy", year)
+            ):
+                unplayed_yahoo_years.add(year)
+                _clear_unplayed_yahoo_manifests(ctx, year)
+                log(f"[YEAR {year}] Yahoo reports predraft; importing league setup without retrying unplayed rosters/matchups")
+                continue
             order = fetcher_specs_odd if year % 2 == 1 else fetcher_specs_even
             order_label = "odd" if year % 2 == 1 else "even"
             log(f"\n[YEAR {year}] Fetching all data (league {league_key}) [{order_label} order]")
@@ -2379,8 +2407,7 @@ def main():
                     # league data in that case. Treat those empty matchup
                     # seasons as intentionally unplayed, not recoverable gaps.
                     unplayed_yahoo_years.add(year)
-                    for manifest_name in ("matchups", "rosters", "draft", "transactions", "schedule", "schedules"):
-                        clear_manifest(ctx.data_directory, manifest_name, year)
+                    _clear_unplayed_yahoo_manifests(ctx, year)
                     if year >= current_nfl_year:
                         log(
                             f"[YEAR {year}] No played Yahoo matchups found; "

@@ -851,22 +851,15 @@ def assert_refresh_preservation(
     }
 
 
-def _assert_active_aliases_preserved(
+def _configured_active_aliases(
     before: dict[str, pd.DataFrame],
-    after: dict[str, pd.DataFrame],
     *,
     active_year: int,
-) -> None:
-    """Keep configured display names attached to their stable franchise IDs.
-
-    A provider can legitimately change team or owner metadata, but a refresh
-    cannot undo a user's explicit shared-team manager alias. Check the new
-    active rows as well as previously published weeks so an added week cannot
-    quietly revert to the provider's single-owner display name.
-    """
+) -> dict[tuple[str, str], str]:
+    """Bind already-published user aliases to their stable active franchise IDs."""
     contexts = before.get("league_context")
     if contexts is None or contexts.empty or "manager_name_overrides_json" not in contexts:
-        return
+        return {}
     configured: dict[str, set[str]] = {}
     for row in contexts.itertuples(index=False):
         db_name = str(getattr(row, "db_name", "") or "")
@@ -883,7 +876,7 @@ def _assert_active_aliases_preserved(
         if aliases:
             configured[db_name] = aliases
     if not configured:
-        return
+        return {}
 
     fid_to_alias: dict[tuple[str, str], str] = {}
     for table_name in ("matchup", "schedule", "player_fantasy"):
@@ -899,6 +892,62 @@ def _assert_active_aliases_preserved(
             if key in fid_to_alias and fid_to_alias[key] != manager:
                 raise PreservationError(f"conflicting active aliases for franchise {fid} in {db_name}")
             fid_to_alias[key] = manager
+    return fid_to_alias
+
+
+def restore_active_manager_aliases(
+    local_db: Any,
+    before: dict[str, pd.DataFrame],
+    *,
+    active_year: int,
+) -> dict[str, int]:
+    """Reapply existing user aliases when the provider changes its display name."""
+    aliases = _configured_active_aliases(before, active_year=active_year)
+    if not aliases:
+        return {}
+    connection = local_db.connect()
+    bindings = pd.DataFrame([
+        {"db_name": db, "franchise_id": fid, "manager": manager}
+        for (db, fid), manager in aliases.items()
+    ])
+    connection.register("_refresh_manager_aliases", bindings)
+    updated: dict[str, int] = {}
+    try:
+        for table in ("matchup", "schedule", "player_fantasy", "draft", "transactions"):
+            if not local_db.table_exists(table):
+                continue
+            columns = {row[0] for row in connection.execute(f"DESCRIBE public.{table}").fetchall()}
+            if not {"db_name", "year"}.issubset(columns):
+                continue
+            for name, identity in (
+                ("manager", "franchise_id"), ("franchise_name", "franchise_id"),
+                ("opponent", "opponent_franchise_id"),
+                ("source_manager", "source_franchise_id"),
+                ("destination_manager", "destination_franchise_id"),
+            ):
+                if not {name, identity}.issubset(columns):
+                    continue
+                count = connection.execute(
+                    f"UPDATE public.{table} t SET {name} = a.manager "
+                    "FROM _refresh_manager_aliases a "
+                    f"WHERE t.db_name = a.db_name AND t.{identity} = a.franchise_id "
+                    f"AND t.year = ? AND t.{name} IS DISTINCT FROM a.manager",
+                    [int(active_year)],
+                ).fetchone()[0]
+                updated[table] = updated.get(table, 0) + int(count)
+    finally:
+        connection.unregister("_refresh_manager_aliases")
+    return updated
+
+
+def _assert_active_aliases_preserved(
+    before: dict[str, pd.DataFrame],
+    after: dict[str, pd.DataFrame],
+    *,
+    active_year: int,
+) -> None:
+    """Check both retained and newly added rows for lost user aliases."""
+    fid_to_alias = _configured_active_aliases(before, active_year=active_year)
 
     for table_name in ("matchup", "schedule", "player_fantasy", "homepage_current_standings"):
         frame = after.get(table_name)

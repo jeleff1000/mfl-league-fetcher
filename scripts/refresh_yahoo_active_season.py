@@ -2128,6 +2128,11 @@ def _run_local_pipeline(
         frontend_configuration_rows or {},
         db_name=db_name,
     )
+    from multi_league.core.league_update_ownership import restore_active_manager_aliases
+
+    restore_active_manager_aliases(
+        local_db, frontend_configuration_rows or {}, active_year=active_year,
+    )
     if has_finalized_matchups:
         local_db.close()
         _run_refresh_simulations(

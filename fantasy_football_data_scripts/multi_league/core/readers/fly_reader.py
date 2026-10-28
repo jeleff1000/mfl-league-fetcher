@@ -9,6 +9,7 @@ import hashlib
 import json
 import uuid
 from io import BytesIO
+from itertools import count
 from typing import TYPE_CHECKING
 
 import requests
@@ -47,6 +48,8 @@ class FlyReader:
     REFRESH_MAX_ATTEMPTS = 3
     REFRESH_RETRY_MAX_DELAY = 1
     REFRESH_FINALIZE_SECONDS = 30
+    REFRESH_READ_RECOVERY_SECONDS = 60
+    REFRESH_RECOVERY_ATTEMPT_SECONDS = 30
     # 500 included: Fly's DuckDB occasionally returns 500 on transient
     # query-engine hiccups (e.g. concurrent ATTACH races). 502/503/504 are
     # the standard transient gateway errors. All retry on exponential backoff.
@@ -136,6 +139,36 @@ class FlyReader:
             )
         return min(timeout, remaining)
 
+    def _refresh_recovery_deadline(self, read_deadline: float | None) -> float | None:
+        """Let opted-in workers recover a temporary outage within their existing deadline."""
+        if read_deadline is None:
+            return None
+        try:
+            seconds = float(os.environ.get("LEAGUE_UPDATE_READ_RECOVERY_SECONDS", ""))
+        except ValueError:
+            return None
+        if not math.isfinite(seconds) or seconds <= 0:
+            return None
+        return min(read_deadline, time.time() + min(seconds, self.REFRESH_READ_RECOVERY_SECONDS))
+
+    @staticmethod
+    def _can_retry(attempt: int, attempts: int, recovery_deadline: float | None) -> bool:
+        # The deadline check in _wait_for_retry remains authoritative. A short
+        # retry burst must not end a recoverable handoff while that budget remains.
+        return attempt < attempts - 1 or recovery_deadline is not None
+
+    def _retryable_response(self, response: requests.Response) -> bool:
+        if response.status_code not in self.RETRY_STATUS:
+            return False
+        text = (response.text or "").lower()
+        transient_lifecycle = "unique file handle conflict" in text and "in the process of being detached" in text
+        if response.status_code == 500 and not transient_lifecycle:
+            if ("catalog error" in text and "does not exist" in text) or any(marker in text for marker in (
+                "parserexception", "parser error:", "binderexception", "binder error:",
+            )):
+                return False
+        return transient_lifecycle or not is_permanent_storage_error(response.text)
+
     def _wait_for_retry(
         self,
         attempt: int,
@@ -143,14 +176,27 @@ class FlyReader:
         read_deadline: float | None,
         sql: str,
         database: str,
+        *,
+        recovery: bool = False,
     ) -> None:
         delay = self._retry_delay(attempt, resp)
         if read_deadline is not None:
-            retry_cap = self.CHECKPOINT_RETRY_DELAY if self._is_checkpoint_response(resp) else self.REFRESH_RETRY_MAX_DELAY
+            retry_cap = self.CHECKPOINT_RETRY_DELAY if recovery or self._is_checkpoint_response(resp) else self.REFRESH_RETRY_MAX_DELAY
             if not math.isfinite(delay):
                 delay = retry_cap
+            if recovery:
+                delay = max(delay, retry_cap)
             delay = max(0, min(delay, retry_cap))
         delay = self._budget_timeout(delay, read_deadline, sql, database)
+        if recovery:
+            try:
+                print("[fly-read-recovery] " + json.dumps({
+                    "database": database, "after_attempt": attempt + 1,
+                    "wait_seconds": delay,
+                    "remaining_seconds": round(max(0, read_deadline - time.time()), 3),
+                }), flush=True)
+            except (OSError, ValueError, TypeError):
+                pass
         if self._is_checkpoint_response(resp):
             try:
                 print("[fly-read-retry] " + json.dumps({
@@ -207,10 +253,17 @@ class FlyReader:
         max_retries: int | None = None,
     ) -> list[dict]:
         timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
+        recovery_deadline = self._refresh_recovery_deadline(read_deadline)
+        read_deadline = recovery_deadline if recovery_deadline is not None else read_deadline
         read_id = uuid.uuid4().hex
         last_error: str | None = None
-        for attempt in range(attempts):
-            request_timeout = self._budget_timeout(timeout, read_deadline, sql, database)
+        for attempt in count():
+            if attempt >= attempts and recovery_deadline is None:
+                break
+            # After a failed fast attempt, let a healthy slow query or queued
+            # handoff finish instead of repeatedly abandoning it after 8–10s.
+            attempt_timeout = max(timeout, self.REFRESH_RECOVERY_ATTEMPT_SECONDS) if recovery_deadline is not None and attempt else timeout
+            request_timeout = self._budget_timeout(attempt_timeout, read_deadline, sql, database)
             try:
                 resp = self._read_attempt(
                     sql, database, parquet=False, timeout=request_timeout, attempt=attempt,
@@ -218,53 +271,23 @@ class FlyReader:
                 )
             except self.RETRY_EXCEPTIONS as e:
                 last_error = f"Network error: {e} (timeout={request_timeout:g}s)"
-                if attempt < attempts - 1:
-                    self._wait_for_retry(attempt, None, read_deadline, sql, database)
+                if self._can_retry(attempt, attempts, recovery_deadline):
+                    self._wait_for_retry(attempt, None, read_deadline, sql, database,
+                                         recovery=recovery_deadline is not None and attempt >= attempts - 1)
                     continue
                 raise FlyReaderNetworkError(
                     f"{last_error} after {attempt + 1}/{attempts} attempts "
                     f"[database={database}; sql={self._sql_preview(sql)}]"
                 ) from e
 
-            # Fly's query endpoint currently wraps DuckDB's deterministic
-            # missing-table Catalog Error in HTTP 500. Retrying that binder
-            # result six times adds ~30 seconds without any chance of success.
             text_lower = (resp.text or "").lower()
-            transient_database_lifecycle = (
-                resp.status_code == 500
-                and "unique file handle conflict" in text_lower
-                and "in the process of being detached" in text_lower
-            )
-            missing_catalog_table = (
-                resp.status_code == 500
-                and "catalog error" in text_lower
-                and "does not exist" in text_lower
-            )
-            deterministic_query_error = (
-                not transient_database_lifecycle
-                and resp.status_code == 500
-                and any(
-                    marker in text_lower
-                    for marker in (
-                        "parserexception",
-                        "parser error:",
-                        "binderexception",
-                        "binder error:",
-                    )
-                )
-            )
             if (
-                resp.status_code in self.RETRY_STATUS
-                and attempt < attempts - 1
-                and not missing_catalog_table
-                and not deterministic_query_error
-                and (
-                    transient_database_lifecycle
-                    or not is_permanent_storage_error(resp.text)
-                )
+                self._retryable_response(resp)
+                and self._can_retry(attempt, attempts, recovery_deadline)
             ):
                 last_error = f"Query failed ({resp.status_code}): {resp.text or '<empty response body>'}"
-                self._wait_for_retry(attempt, resp, read_deadline, sql, database)
+                self._wait_for_retry(attempt, resp, read_deadline, sql, database,
+                                     recovery=recovery_deadline is not None and attempt >= attempts - 1)
                 continue
 
             if resp.status_code != 200:
@@ -347,10 +370,15 @@ class FlyReader:
 
         database = self._require_db(database)
         timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
+        recovery_deadline = self._refresh_recovery_deadline(read_deadline)
+        read_deadline = recovery_deadline if recovery_deadline is not None else read_deadline
         read_id = uuid.uuid4().hex
         last_error: str | None = None
-        for attempt in range(attempts):
-            request_timeout = self._budget_timeout(timeout, read_deadline, sql, database)
+        for attempt in count():
+            if attempt >= attempts and recovery_deadline is None:
+                break
+            attempt_timeout = max(timeout, self.REFRESH_RECOVERY_ATTEMPT_SECONDS) if recovery_deadline is not None and attempt else timeout
+            request_timeout = self._budget_timeout(attempt_timeout, read_deadline, sql, database)
             try:
                 resp = self._read_attempt(
                     sql, database, parquet=True, timeout=request_timeout, attempt=attempt,
@@ -358,20 +386,21 @@ class FlyReader:
                 )
             except self.RETRY_EXCEPTIONS as exc:
                 last_error = f"Network error: {exc} (timeout={request_timeout:g}s)"
-                if attempt < attempts - 1:
-                    self._wait_for_retry(attempt, None, read_deadline, sql, database)
+                if self._can_retry(attempt, attempts, recovery_deadline):
+                    self._wait_for_retry(attempt, None, read_deadline, sql, database,
+                                         recovery=recovery_deadline is not None and attempt >= attempts - 1)
                     continue
                 raise FlyReaderNetworkError(
                     f"{last_error} after {attempt + 1}/{attempts} attempts "
                     f"[database={database}; sql={self._sql_preview(sql)}]"
                 ) from exc
             if (
-                resp.status_code in self.RETRY_STATUS
-                and attempt < attempts - 1
-                and not is_permanent_storage_error(resp.text)
+                self._retryable_response(resp)
+                and self._can_retry(attempt, attempts, recovery_deadline)
             ):
                 last_error = f"Parquet query failed ({resp.status_code}): {resp.text}"
-                self._wait_for_retry(attempt, resp, read_deadline, sql, database)
+                self._wait_for_retry(attempt, resp, read_deadline, sql, database,
+                                     recovery=recovery_deadline is not None and attempt >= attempts - 1)
                 continue
             if resp.status_code != 200:
                 raise FlyReaderError(

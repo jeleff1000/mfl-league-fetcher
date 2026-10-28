@@ -67,6 +67,7 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: 1
+      LEAGUE_UPDATE_READ_RECOVERY_SECONDS: '60'
       DATABASE_BACKEND: fly
       LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ github.event_name != 'schedule' && inputs.execute && '1' || '0' }}
       SYSTEM_DEMO_UPDATE: ${{ github.event_name == 'schedule' && 'true' || 'false' }}

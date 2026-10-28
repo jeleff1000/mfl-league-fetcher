@@ -61,6 +61,7 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: 1
+      LEAGUE_UPDATE_READ_RECOVERY_SECONDS: '60'
       DATABASE_BACKEND: fly
       LEAGUE_UPDATE_REQUIRE_CLAIM: ${{ inputs.execute && '1' || '0' }}
       INPUT_DB_NAME: ${{ inputs.db_name }}

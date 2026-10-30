@@ -48,6 +48,7 @@ class FlyReader:
     REFRESH_MAX_ATTEMPTS = 3
     REFRESH_RETRY_MAX_DELAY = 1
     REFRESH_FINALIZE_SECONDS = 30
+    REFRESH_CONTROL_FINALIZE_SECONDS = 15
     REFRESH_READ_RECOVERY_SECONDS = 60
     REFRESH_RECOVERY_ATTEMPT_SECONDS = 30
     # 500 included: Fly's DuckDB occasionally returns 500 on transient
@@ -103,6 +104,20 @@ class FlyReader:
     def _sql_preview(sql: str) -> str:
         preview = " ".join(str(sql).split())
         return preview if len(preview) <= 240 else preview[:237] + "..."
+
+    def for_publication_control(self) -> "FlyReader":
+        """Use part of the existing publication reserve for its entitlement read.
+
+        Keep the data reader unchanged and retain time for the fenced merge and
+        cache finalization. The worker's original hard deadline still applies.
+        """
+        from copy import copy
+
+        control = copy(self)
+        control.REFRESH_FINALIZE_SECONDS = min(
+            self.REFRESH_FINALIZE_SECONDS, self.REFRESH_CONTROL_FINALIZE_SECONDS
+        )
+        return control
 
     def _read_budget(
         self, timeout_seconds: float | None, max_retries: int | None

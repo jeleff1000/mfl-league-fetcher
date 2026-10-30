@@ -2,6 +2,8 @@
 
 import pytest
 
+from multi_league.core.readers.fly_reader import FlyReader
+
 from multi_league.core.league_update_publish_claim import renew_claim_for_publication
 
 
@@ -41,12 +43,12 @@ def test_claim_is_renewed_or_stale_writer_is_rejected(monkeypatch, accepted):
     writer = object()
     if accepted:
         assert renew_claim_for_publication(
-            object(), database_name="afi_data", platform="espn", writer=writer
+            FlyReader.__new__(FlyReader), database_name="afi_data", platform="espn", writer=writer
         ) is True
     else:
         with pytest.raises(RuntimeError, match="no longer owns"):
             renew_claim_for_publication(
-                object(), database_name="afi_data", platform="espn", writer=writer
+                FlyReader.__new__(FlyReader), database_name="afi_data", platform="espn", writer=writer
             )
     assert seen[0] == ("entitled", "afi_data")
     assert seen[1][1] == {
@@ -74,5 +76,5 @@ def test_expired_entitlement_prevents_lease_renewal(monkeypatch):
     )
     with pytest.raises(PermissionError, match="expired"):
         renew_claim_for_publication(
-            object(), database_name="afi_data", platform="espn", writer=object()
+            FlyReader.__new__(FlyReader), database_name="afi_data", platform="espn", writer=object()
         )

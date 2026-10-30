@@ -41,7 +41,9 @@ def renew_claim_for_publication(
     if platform not in {"yahoo", "espn", "sleeper"}:
         raise ValueError("Unsupported league update platform")
 
-    assert_league_update_entitled(reader, database_name=database_name)
+    assert_league_update_entitled(
+        reader.for_publication_control(), database_name=database_name
+    )
     if writer is None:
         from multi_league.core.fly_writer import FlyWriter
 

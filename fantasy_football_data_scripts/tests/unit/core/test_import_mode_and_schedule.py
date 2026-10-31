@@ -62,10 +62,13 @@ def test_schedule_rebuild_preserves_future_aliases_and_history(tmp_path, platfor
                 "(db_name,year,week,cumulative_week,manager,franchise_id,manager_week,opponent,team_points,platform) "
                 "VALUES ('league',2026,1,202601,'Stale alias','owner','owner_2026_1','B',0,?),"
                 "('league',2026,2,202602,'Preferred alias','owner','owner_2026_2','C',0,?)", [platform, platform])
-        class Runner:
+        class Runner(MatchupEnrichmentsMixin):
             db_name = "league"
             def _qualified_name(self, table): return "public." + table
             def _db_filter(self, *_args): return "db_name='league'"
+            def _get_connection(self): return conn
+            def _get_table_columns(self, table):
+                return {row[0] for row in conn.execute("DESCRIBE public." + table).fetchall()}
             def _table_exists(self, table):
                 return conn.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' "
                                     "AND table_name=?", [table]).fetchone() is not None

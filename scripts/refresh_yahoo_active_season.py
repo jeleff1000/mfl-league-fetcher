@@ -2099,9 +2099,10 @@ def _run_local_pipeline(
         if not local_db._conn:
             local_db.connect()
 
-        # Saved merges have already rewritten the final matchup identities.
-        # Align the captured provider graph before excluding finalized rows.
-        if has_finalized_matchups and not provider_schedule.empty and getattr(ctx, "franchise_merges", None):
+        # Canonical identity resolution can split hidden owners even without
+        # saved merges. Align every captured graph with the transformed team
+        # identities before excluding finalized rows or restoring live weeks.
+        if has_finalized_matchups and not provider_schedule.empty:
             provider_schedule = resolve_active_schedule_franchise_ids(
                 local_db, provider_schedule, active_year=active_year,
             )

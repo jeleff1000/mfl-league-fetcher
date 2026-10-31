@@ -43,10 +43,13 @@ def test_remaining_eight_weeks_are_simulated_without_rewriting_results(tmp_path,
         db.save_table("schedule", fixtures, year=2026, platform=platform, league_id="native")
         conn = db.connect()
         before = db.read_table("matchup").copy()
-        class Runner:
+        class Runner(MatchupEnrichmentsMixin):
             db_name = "league"
             def _qualified_name(self, table): return "public."+table
             def _db_filter(self, *_args): return "db_name='league'"
+            def _get_connection(self): return conn
+            def _get_table_columns(self, table):
+                return {row[0] for row in conn.execute("DESCRIBE public." + table).fetchall()}
             def _table_exists(self, table): return db.table_exists(table)
             def _execute(self, sql, *_args): return conn.execute(sql).fetchone()[0]
         for _ in range(2):

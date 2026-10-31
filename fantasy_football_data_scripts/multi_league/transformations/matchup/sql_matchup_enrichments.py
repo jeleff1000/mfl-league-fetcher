@@ -97,38 +97,46 @@ class MatchupEnrichmentsMixin:
 
     def dedup_matchup_publish_identity(self) -> int:
         """Collapse duplicate matchup manager_week rows before analytics/upload."""
-        if not self._table_exists("matchup"):
+        return self._dedup_team_week_publish_identity("matchup")
+
+    def _dedup_team_week_publish_identity(self, table_name: str) -> int:
+        """Use one candidate policy for the matchup and schedule team-week slots."""
+        if getattr(self, "dry_run", False):
+            return 0
+        if not self._table_exists(table_name):
             return 0
 
-        matchup_table = self._qualified_name("matchup")
+        table = self._qualified_name(table_name)
         if self._get_connection().execute(
-            f"SELECT 1 FROM {matchup_table} WHERE {self._db_filter()} LIMIT 1"
+            f"SELECT 1 FROM {table} WHERE {self._db_filter()} LIMIT 1"
         ).fetchone() is None:
             return 0
 
-        matchup_cols = self._get_table_columns("matchup")
-        if "manager_week" not in matchup_cols:
+        columns = self._get_table_columns(table_name)
+        if "manager_week" not in columns:
             return 0
 
+        temp_table = f"_{table_name}_publish_dedup"
         statements = matchup_publish_dedup_statements(
-            matchup_table,
-            matchup_cols,
+            table,
+            columns,
             db_filter=self._db_filter("m"),
+            temp_table=temp_table,
         )
         if not statements:
             return 0
 
         conn = self._get_connection()
-        temp_table = "_matchup_publish_dedup"
+        operation = f"dedup_{table_name}_publish_identity"
         try:
-            self._execute(statements[0][1], "dedup_matchup_publish_identity: stage duplicate manager_week rows")
+            self._execute(statements[0][1], f"{operation}: stage duplicate manager_week rows")
             duplicate_count = int(conn.execute(f'SELECT COUNT(*) FROM "{temp_table}"').fetchone()[0] or 0)
             if duplicate_count:
                 self._execute(
                     statements[1][1],
-                    f"dedup_matchup_publish_identity: delete {duplicate_count:,} duplicate manager_week rows",
+                    f"{operation}: delete {duplicate_count:,} duplicate manager_week rows",
                 )
-                logger.info(f"[dedup_matchup_publish_identity] removed {duplicate_count:,} duplicate manager_week rows")
+                logger.info(f"[{operation}] removed {duplicate_count:,} duplicate manager_week rows")
             return duplicate_count
         finally:
             try:
@@ -7141,7 +7149,13 @@ class MatchupEnrichmentsMixin:
             {future_rows}
             ORDER BY year, week, manager
         """
-        return self._execute(sql, "build_schedule_from_matchup: derive schedule table from matchup")
+        result = self._execute(sql, "build_schedule_from_matchup: derive schedule table from matchup")
+        # Provider future fixtures can repeat a team against several opponents
+        # (Yahoo guillotine scoreboards do this). Schedule has the same
+        # db_name/manager_week publication identity as matchup, so apply the
+        # same candidate policy after combining canonical and provider rows.
+        self._dedup_team_week_publish_identity("schedule")
+        return result
 
     def build_schedule_swap_season(self) -> int:
         """Pre-aggregate schedule_swap weekly results into season-level records.

@@ -854,6 +854,7 @@ class PlayerEnrichmentsMixin:
                 from multi_league.transformations.common.dst_brackets import (
                     BRACKET_BOUNDS,
                     bracket_scored_sql,
+                    scalar_available,
                 )
 
                 for col, mult in def_mults_f.items():
@@ -861,8 +862,8 @@ class PlayerEnrichmentsMixin:
                         continue
                     bracket_spec = BRACKET_BOUNDS.get(col)
                     bracket_expr = (
-                        bracket_scored_sql(col, mult, alias="s")
-                        if bracket_spec and bracket_spec[0] in super_cols_set
+                        bracket_scored_sql(col, mult, alias="s", available=super_cols_set)
+                        if bracket_spec and scalar_available(bracket_spec[0], super_cols_set)
                         else None
                     )
                     if bracket_expr:

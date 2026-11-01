@@ -831,7 +831,16 @@ def calculate_all_fantasy_points(df: pd.DataFrame) -> pd.DataFrame:
 
     # Fine-grained yards allowed tiers (some Sleeper leagues split the
     # traditional 300-399, 400-499, and 500+ buckets into smaller bands).
-    total_ya = safe_col(result, "total_yds_allowed")
+    # One yards-allowed column (def_yards_allowed); the retiring twin fills only
+    # rows where it is empty, until the next super-table promotion.
+    ya_parts = [pd.to_numeric(result[c], errors="coerce")
+                for c in ("def_yards_allowed", "total_yds_allowed") if c in result.columns]
+    total_ya = pd.Series(0.0, index=result.index)
+    if ya_parts:
+        total_ya = ya_parts[0]
+        for part in ya_parts[1:]:
+            total_ya = total_ya.fillna(part)
+        total_ya = total_ya.fillna(0.0)
     result["yds_allow_300_349"] = ((total_ya >= 300) & (total_ya <= 349)).astype(float)
     result["yds_allow_350_399"] = ((total_ya >= 350) & (total_ya <= 399)).astype(float)
     result["yds_allow_400_449"] = ((total_ya >= 400) & (total_ya <= 449)).astype(float)

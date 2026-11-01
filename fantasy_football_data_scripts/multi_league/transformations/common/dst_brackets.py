@@ -4,7 +4,7 @@ scalar source, so the one-hot bracket columns need not be physically stored.
 
 Each bracket is a one-hot flag over a scalar:
     pts_allow_*  <- dst_points_allowed
-    yds_allow_*  <- total_yds_allowed
+    yds_allow_*  <- def_yards_allowed (one yards-allowed column; total_yds_allowed retiring)
 
 Measured on the v26 release DEF rows (36,282 with a non-null scalar): the stored one-hot
 equals the derived one-hot on 100.00% of rows for every one of the 16 brackets. So deriving
@@ -19,7 +19,11 @@ them too. Only DROPPABLE (non-mirror) brackets are enumerated in DROPPABLE_BRACK
 from __future__ import annotations
 
 PTS_ALLOW_SCALAR = "dst_points_allowed"
-YDS_ALLOW_SCALAR = "total_yds_allowed"
+YDS_ALLOW_SCALAR = "def_yards_allowed"
+# Stage-1 fallback while the live super table still has DST rows where only the
+# retiring twin is populated (Joe 2026-10-31: one yards-allowed column). Remove
+# after the next super-table promotion, when def_yards_allowed is complete.
+YDS_ALLOW_LEGACY = "total_yds_allowed"
 
 # bracket column -> (scalar column, low, high). Inclusive bounds; None = open on that side.
 # These bounds reproduce the stored columns exactly (verified 100% on the release).
@@ -61,7 +65,20 @@ def _cond(scalar_sql: str, lo, hi) -> str:
     return f"{scalar_sql} <= {hi}"
 
 
-def bracket_onehot_sql(col: str, alias: str | None = None) -> str | None:
+def scalar_sql(scalar: str, alias: str | None = None, available=None) -> str:
+    """SQL for a bracket scalar; yards-allowed falls back to the retiring twin when present."""
+    a = f"{alias}." if alias else ""
+    if scalar == YDS_ALLOW_SCALAR and (available is None or YDS_ALLOW_LEGACY in available):
+        return f"COALESCE({a}{YDS_ALLOW_SCALAR}, {a}{YDS_ALLOW_LEGACY})"
+    return f"{a}{scalar}"
+
+
+def scalar_available(scalar: str, available) -> bool:
+    """True when the table can supply this scalar (directly or via the yards fallback)."""
+    return scalar in available or (scalar == YDS_ALLOW_SCALAR and YDS_ALLOW_LEGACY in available)
+
+
+def bracket_onehot_sql(col: str, alias: str | None = None, available=None) -> str | None:
     """SQL 0/1 one-hot for bracket `col` from its scalar, or None if `col` is not a bracket.
 
     A NULL scalar yields 0 (the WHEN is not satisfied) -- scoring reads are COALESCE(...,0)-wrapped,
@@ -71,16 +88,16 @@ def bracket_onehot_sql(col: str, alias: str | None = None) -> str | None:
     if spec is None:
         return None
     scalar, lo, hi = spec
-    s = f"{alias}.{scalar}" if alias else scalar
+    s = scalar_sql(scalar, alias, available)
     return f"CASE WHEN {_cond(s, lo, hi)} THEN 1 ELSE 0 END"
 
 
-def bracket_scored_sql(col: str, mult, alias: str | None = None) -> str | None:
+def bracket_scored_sql(col: str, mult, alias: str | None = None, available=None) -> str | None:
     """SQL scoring contribution `derived_onehot * mult` for bracket `col`, or None.
 
     Equivalent to `COALESCE(<stored col>, 0) * mult` but reads only the scalar.
     """
-    onehot = bracket_onehot_sql(col, alias=alias)
+    onehot = bracket_onehot_sql(col, alias=alias, available=available)
     if onehot is None:
         return None
     return f"({onehot}) * {mult}"

@@ -485,10 +485,18 @@ def _expected_def(row: dict, def_mults: dict[str, float]) -> float:
     for col, mult in def_mults.items():
         if col == "pts_def_td":
             total += _num(row, "def_tds") * float(mult)
-        elif col in BRACKET_BOUNDS and BRACKET_BOUNDS[col][0] in row:
+        elif col in BRACKET_BOUNDS and (
+            BRACKET_BOUNDS[col][0] in row
+            or (col.startswith("yds_allow_") and "total_yds_allowed" in row)
+        ):
             scalar, low, high = BRACKET_BOUNDS[col]
-            value = _num(row, scalar)
-            in_bracket = (
+            value = row.get(scalar)
+            # The fixture intentionally has the legacy-only schema. Its stored
+            # one-hot columns are synthetic, so derive the oracle from the
+            # scalar just as for a canonical-only or mixed-schema baseline.
+            if scalar == "def_yards_allowed" and pd.isna(value):
+                value = row.get("total_yds_allowed")
+            in_bracket = not pd.isna(value) and (
                 low is None and value <= high
                 or high is None and value >= low
                 or low is not None and high is not None and low <= value <= high

@@ -47,6 +47,21 @@ on:
         required: false
         default: false
         type: boolean
+      verify_only:
+        description: Read-only Fly verification against a saved candidate and original run scope
+        required: false
+        default: false
+        type: boolean
+      source_run_id:
+        description: Original refresh run whose scope artifact should be verified
+        required: false
+        default: ""
+        type: string
+      expected_candidate_sha256:
+        description: Required candidate digest for verify-only; prevents using a newer mutable baseline
+        required: false
+        default: ""
+        type: string
       baseline_release_tag:
         description: Durable release holding the complete pre-refresh ___ops_nfl baseline
         required: true
@@ -65,7 +80,7 @@ concurrency:
 
 jobs:
   refresh:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.revisions_only }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.revisions_only && !inputs.verify_only) }}
     runs-on: ubuntu-latest
     timeout-minutes: 225
     env:
@@ -333,7 +348,7 @@ jobs:
           retention-days: 30
 
   materialize-revisions-only:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.revisions_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.revisions_only && !inputs.verify_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -375,3 +390,83 @@ jobs:
           python scripts/materialize_league_update_nfl_revisions.py \
             --year "${{ inputs.year }}" \
             --week "${{ inputs.week }}"
+
+
+  verify-saved-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    env:
+      OPS_REPOSITORY: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      BASELINE_RELEASE_TAG: ${{ inputs.baseline_release_tag }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      EXPECTED_CANDIDATE_SHA256: ${{ inputs.expected_candidate_sha256 }}
+      APPLY: ${{ inputs.apply }}
+      REVISIONS_ONLY: ${{ inputs.revisions_only }}
+    steps:
+      - name: Reject mutation flags and require pinned recovery inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$APPLY" != "true"
+          test "$REVISIONS_ONLY" != "true"
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$EXPECTED_CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test -n "$BASELINE_RELEASE_TAG"
+
+      - name: Checkout receipt verifier
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install read-only verifier dependencies
+        run: python -m pip install --disable-pip-version-check duckdb requests
+
+      - name: Restore original scope and checksum-pinned candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/scope recovery/parts
+          gh run download "$SOURCE_RUN_ID" --repo "$OPS_REPOSITORY" \
+            --name "live-nfl-ops-scope-$SOURCE_RUN_ID" --dir recovery/scope
+          gh release download "$BASELINE_RELEASE_TAG" --repo "$OPS_REPOSITORY" \
+            --pattern 'ops_nfl.duckdb.part-*' --pattern 'ops_nfl.duckdb.sha256' \
+            --dir recovery/parts
+          manifest_hash=$(awk '{print $1}' recovery/parts/ops_nfl.duckdb.sha256)
+          test "$manifest_hash" = "$EXPECTED_CANDIDATE_SHA256"
+          mapfile -t part_files < <(find recovery/parts -maxdepth 1 -type f -name 'ops_nfl.duckdb.part-*' | LC_ALL=C sort)
+          test "${#part_files[@]}" -gt 0
+          cat "${part_files[@]}" > recovery/ops_nfl.duckdb
+          actual_hash=$(sha256sum recovery/ops_nfl.duckdb | awk '{print $1}')
+          test "$actual_hash" = "$EXPECTED_CANDIDATE_SHA256"
+          rm -rf recovery/parts
+
+      - name: Verify saved candidate through Fly read path
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/fantasy_football_data_scripts
+          DATABASE_BACKEND: fly
+          DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
+          DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
+        run: |
+          python scripts/verify_live_nfl_ops_receipt.py \
+            --scope recovery/scope/refresh_scope.json \
+            --candidate recovery/ops_nfl.duckdb \
+            --output recovery/ops_nfl.fly-receipt.json
+
+      - name: Upload read-only verification receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-nfl-ops-readback-${{ github.run_id }}
+          path: |
+            recovery/scope/refresh_scope.json
+            recovery/ops_nfl.fly-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

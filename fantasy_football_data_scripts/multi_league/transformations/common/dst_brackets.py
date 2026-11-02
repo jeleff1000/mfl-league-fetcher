@@ -69,6 +69,10 @@ def scalar_sql(scalar: str, alias: str | None = None, available=None) -> str:
     """SQL for a bracket scalar; yards-allowed falls back to the retiring twin when present."""
     a = f"{alias}." if alias else ""
     if scalar == YDS_ALLOW_SCALAR and (available is None or YDS_ALLOW_LEGACY in available):
+        # COALESCE handles NULL values, not missing schema columns. Older Ops
+        # baselines may carry only the legacy scalar, which must bind directly.
+        if available is not None and YDS_ALLOW_SCALAR not in available:
+            return f"{a}{YDS_ALLOW_LEGACY}"
         return f"COALESCE({a}{YDS_ALLOW_SCALAR}, {a}{YDS_ALLOW_LEGACY})"
     return f"{a}{scalar}"
 

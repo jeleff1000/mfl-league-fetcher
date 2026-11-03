@@ -704,7 +704,7 @@ def test_shared_refresh_pipeline_forwards_saved_manager_identity_settings(monkey
 
 @pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
 @pytest.mark.parametrize("final_mode", ["complete", "partial", "none"])
-@pytest.mark.parametrize("identity_change", ["saved_merges", "canonical_split"])
+@pytest.mark.parametrize("identity_change", ["saved_merges", "saved_merges_redacted", "canonical_split"])
 def test_shared_refresh_schedule_keeps_saved_owner_merges_without_final_duplicates(
     monkeypatch, tmp_path, platform, final_mode, identity_change,
 ):
@@ -730,10 +730,19 @@ def test_shared_refresh_schedule_keeps_saved_owner_merges_without_final_duplicat
     final_rows = pd.DataFrame([row(week, team)
         for week in range(1, 6) for team in range(1, 13)
         if not (final_mode == "partial" and week == 4 and team in (7, 8))])
+    # Preserve string schemas when the no-final-matchup fixture is empty.
+    for column in final_rows.select_dtypes(include="object"):
+        final_rows[column] = final_rows[column].astype("string")
     if final_mode == "none":
         final_rows = final_rows.iloc[:0].copy()
     provider = pd.DataFrame([row(week, team)
         for week in range(1, 15) for team in range(1, 13)]).drop(columns="team_key")
+    if identity_change == "saved_merges_redacted":
+        # Yahoo's derived schedule aliases its own manager names while leaving
+        # opponent names raw. Redacted opponent GUIDs make 2 x 14 opponents
+        # unresolvable after the played identities have been enriched.
+        provider["manager"] = provider["manager"].replace({"M2": "Preferred2", "M12": "Preferred12"})
+        provider["opponent_guid"] = "--hidden--"
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA public")
     conn.register("final_fixture", final_rows)
@@ -788,7 +797,7 @@ def test_shared_refresh_schedule_keeps_saved_owner_merges_without_final_duplicat
     monkeypatch.setattr(refresh, "_run_refresh_aggregates", lambda *args, **kwargs: None)
     ctx = SimpleNamespace(manager_name_overrides={}, get_league_id_for_year=lambda _: "provider-league",
         franchise_merges=[{"display_name": f"Preferred{team}", "owner_ids": [f"saved-{team}", f"current-{team}"]} for team in (2, 12)]
-        if identity_change == "saved_merges" else [])
+        if identity_change.startswith("saved_merges") else [])
     try:
         for _ in range(2):
             refresh._run_local_pipeline(ctx=ctx, context_path=tmp_path / "context.json",
@@ -796,7 +805,16 @@ def test_shared_refresh_schedule_keeps_saved_owner_merges_without_final_duplicat
                 work_dir=tmp_path, platform=platform)
             assert conn.execute("SELECT COUNT(*) FROM public.schedule").fetchone()[0] == 168
             assert conn.execute("SELECT week FROM public.schedule GROUP BY week HAVING COUNT(*) <> 12 OR COUNT(DISTINCT franchise_id) <> 12").fetchall() == []
-            if identity_change == "saved_merges":
+            assert conn.execute("""
+                SELECT COUNT(*) FROM public.schedule s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM public.schedule other
+                    WHERE other.year=s.year AND other.week=s.week
+                      AND other.franchise_id=s.opponent_franchise_id
+                      AND other.opponent_franchise_id=s.franchise_id
+                )
+            """).fetchone()[0] == 0
+            if identity_change.startswith("saved_merges"):
                 assert conn.execute("SELECT COUNT(*) FROM public.schedule WHERE franchise_id IN ('current-2_0', 'current-12_0')").fetchone()[0] == 0
                 assert conn.execute("SELECT DISTINCT manager FROM public.schedule WHERE franchise_id IN ('saved-2_0', 'saved-12_0') ORDER BY manager").fetchall() == [("Preferred12",), ("Preferred2",)]
             elif final_mode != "none":

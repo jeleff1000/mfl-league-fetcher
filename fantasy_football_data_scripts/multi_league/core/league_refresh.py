@@ -1274,6 +1274,79 @@ def merge_provider_refresh_table(
     )
 
 
+def _rebind_captured_schedule_opponents(
+    captured: pd.DataFrame,
+    resolved: pd.DataFrame,
+    opponent_ids: pd.Series,
+    *,
+    active_year: int,
+) -> pd.Series:
+    """Translate an already resolved pair graph, never trust its old IDs as-is."""
+    rebound = pd.Series(pd.NA, index=captured.index, dtype="string")
+    required = {"year", "week", "franchise_id", "opponent_franchise_id"}
+    if not required.issubset(captured.columns):
+        return rebound
+
+    # Work positionally so even a caller's non-unique index cannot join rows.
+    graph = captured.loc[:, sorted(required)].reset_index(drop=True).rename(
+        columns={"franchise_id": "old", "opponent_franchise_id": "old_opponent"},
+    )
+    graph["db_name"] = captured["db_name"].to_numpy() if "db_name" in captured else "local"
+    graph["new"] = resolved["franchise_id"].to_numpy()
+    graph["new_opponent"] = opponent_ids.to_numpy()
+    for column in ("db_name", "old", "old_opponent", "new", "new_opponent"):
+        values = graph[column].astype("string").str.strip()
+        graph[column] = values.mask(values.isin({"", "None", "nan", "<NA>", "--hidden--"}))
+    graph["year"] = pd.to_numeric(graph["year"], errors="coerce")
+    graph["week"] = pd.to_numeric(graph["week"], errors="coerce")
+    graph = graph.loc[
+        graph["year"].eq(int(active_year)) & graph["week"].gt(0)
+        & graph["week"].mod(1).eq(0) & graph["db_name"].notna()
+    ].copy()
+
+    # An old identity split into several current franchises is not a safe
+    # translation. Include unresolved own rows in the ambiguity check.
+    mapping_rows = graph.dropna(subset=["old"])
+    counts = mapping_rows.groupby(["db_name", "old"])["new"].nunique(dropna=False)
+    unique_keys = counts.loc[counts.eq(1)].index
+    translations = (
+        mapping_rows.set_index(["db_name", "old"]).loc[unique_keys, "new"]
+        .dropna().to_dict()
+    )
+    scope = ["db_name", "year", "week"]
+    unique = ~graph.duplicated([*scope, "old"], keep=False)
+    unique &= ~graph.duplicated([*scope, "new"], keep=False)
+    if "opponent_team_key" in captured:
+        native = captured["opponent_team_key"].reset_index(drop=True).astype("string").str.strip()
+        explicit = native.notna() & ~native.isin({"", "None", "nan", "<NA>", "--", "--hidden--"})
+        # An explicit but unresolved native key is not provider redaction.
+        unresolved_native = explicit & opponent_ids.reset_index(drop=True).isna()
+        unique &= ~unresolved_native.reindex(graph.index)
+    if "opponent" in captured:
+        # A previously generated TBD slot must never gain a made-up pairing.
+        unique &= ~captured["opponent"].reset_index(drop=True).reindex(graph.index).eq("TBD").fillna(False)
+    candidates = graph.loc[unique].dropna(subset=["old", "old_opponent", "new"])
+    by_team_week = {
+        (row.db_name, row.year, row.week, row.old): row
+        for row in candidates.itertuples()
+    }
+    for row in candidates.itertuples():
+        other = by_team_week.get((row.db_name, row.year, row.week, row.old_opponent))
+        if other is None or other.old_opponent != row.old or row.old == other.old:
+            continue
+        own = translations.get((row.db_name, row.old))
+        opponent = translations.get((row.db_name, other.old))
+        if own != row.new or opponent != other.new or own == opponent:
+            continue
+        # Native/name witnesses on either endpoint may veto the captured edge.
+        if pd.notna(row.new_opponent) and row.new_opponent != opponent:
+            continue
+        if pd.notna(other.new_opponent) and other.new_opponent != own:
+            continue
+        rebound.iloc[row.Index] = opponent
+    return rebound
+
+
 def resolve_active_schedule_franchise_ids(
     local_db: Any,
     schedule: pd.DataFrame,
@@ -1283,6 +1356,7 @@ def resolve_active_schedule_franchise_ids(
     future_weeks: Iterable[int] = (),
     expected_team_keys: tuple[str, ...] = (),
     provider_identities: pd.DataFrame | None = None,
+    rebind_captured_opponents: bool = False,
 ) -> pd.DataFrame:
     """Bind a provider's future schedule to the league's canonical franchises.
 
@@ -1291,6 +1365,10 @@ def resolve_active_schedule_franchise_ids(
     already attached to hydrated canonical matchup/roster rows.  Stable owner
     GUIDs are accepted only when they identify one franchise, which keeps
     multiple-team owners unambiguous and preserves cross-platform merges.
+
+    Only the post-enrichment caller may opt into rebinding a previously
+    resolved schedule: its reciprocal edges survive display-name changes, but
+    both endpoints must still resolve independently to current franchises.
     """
     future_weeks = tuple(sorted({int(week) for week in future_weeks}))
     if (schedule is None or schedule.empty) and not future_weeks:
@@ -1506,7 +1584,12 @@ def resolve_active_schedule_franchise_ids(
     if "opponent" in result.columns and by_manager:
         opponent_names = result["opponent"].astype("string").str.strip()
         opponent_ids = opponent_ids.fillna(opponent_names.map(by_manager).astype("string"))
-    result["opponent_franchise_id"] = apply_active_registry(opponent_ids)
+    opponent_ids = apply_active_registry(opponent_ids)
+    if rebind_captured_opponents and opponent_ids.isna().any():
+        opponent_ids = opponent_ids.fillna(_rebind_captured_schedule_opponents(
+            schedule, result, opponent_ids, active_year=active_year,
+        ))
+    result["opponent_franchise_id"] = opponent_ids
     if future_weeks:
         expected = {str(key).strip() for key in expected_team_keys}
         if not expected or len(expected) != len(expected_team_keys) or expected != set(by_team_key):

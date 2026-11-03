@@ -2105,6 +2105,7 @@ def _run_local_pipeline(
         if has_finalized_matchups and not provider_schedule.empty:
             provider_schedule = resolve_active_schedule_franchise_ids(
                 local_db, provider_schedule, active_year=active_year,
+                rebind_captured_opponents=True,
             )
         provider_schedule = _unresolved_provider_schedule_rows(
             provider_schedule,

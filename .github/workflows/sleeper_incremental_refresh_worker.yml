@@ -57,7 +57,7 @@ concurrency:
 jobs:
   sleeper-active-season-refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5  # Includes setup and cache finalization; worker stays bounded to 120s.
     outputs:
       data_committed: ${{ steps.publication.outputs.committed == 'true' || steps.cache_recovery.outcome == 'success' }}
       cache_verified: ${{ steps.cache_publish.outcome == 'success' || steps.cache_recovery.outcome == 'success' }}

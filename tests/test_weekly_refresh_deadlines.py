@@ -41,7 +41,7 @@ def test_two_minute_deadline_starts_after_setup(platform):
 
     assert install < deadline < refresh
     assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in workflow
-    assert "timeout-minutes: 3" in workflow
+    assert "timeout-minutes: 5" in workflow
 
 
 @pytest.mark.skipif(not BASH, reason="Requires Bash and GNU timeout as on Actions")

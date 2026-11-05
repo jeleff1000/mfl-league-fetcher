@@ -279,8 +279,8 @@ def test_ui_lifecycle_wraps_existing_september_refresh(platform: str, filename: 
     assert 'recovery_status=$(python scripts/league_update_workflow_receipt.py' in text
     assert text.index("scripts/warm_vercel_cache.py") < text.index("--status succeeded")
     # The provider refresh itself has a hard two-minute process deadline. The
-    # job gets one extra minute so setup and failure/status cleanup can finish.
-    assert "timeout-minutes: 3" in text
+    # job allows setup and cache/status finalization outside that worker budget.
+    assert "timeout-minutes: 5" in text
 
 
 @pytest.mark.parametrize("filename", WORKFLOWS.values())
@@ -588,8 +588,14 @@ def test_all_platforms_bound_weekly_fly_merge_to_forty_seconds():
 def test_all_platforms_defer_optional_post_commit_reads_near_deadline():
     for platform in ("yahoo", "espn", "sleeper"):
         text = (ROOT / "scripts" / f"refresh_{platform}_active_season.py").read_text(encoding="utf-8")
-        assert "should_run_post_publish_verification" in text
-        assert 'receipt["post_publish_verification_deferred"] = True' in text
+        main = text.split("def main(", 1)[1]
+        committed = main.index("record_publication_commit(")
+        verify = main.index("verify_post_publication_counts(", committed)
+        assert "read_counts=lambda: _scope_counts(" in main[verify:]
+
+    helper = (ROOT / "scripts" / "league_update_workflow_receipt.py").read_text(encoding="utf-8")
+    assert "if not should_run_post_publish_verification():" in helper
+    assert 'receipt["post_publish_verification_deferred"] = True' in helper
 
 
 def test_all_platforms_forward_detected_historical_aggregate_repairs():
@@ -622,7 +628,7 @@ def test_espn_refresh_validates_raw_roster_team_coverage_before_safe_filtering()
     assert "validate_provider_team_inventory(" in text
     assert text.index("validate_active_roster_frame(") < text.index("filter_rosters_to_finalized_games(")
     assert text.index("validate_active_roster_frame(") < text.index("bundle = build_fleet_partition_bundle(")
-    assert "espn_schedule_is_final(schedule_rows, expected_team_ids=expected_team_ids)" in text
+    assert "espn_schedule_is_final(normalized, expected_team_ids=expected_team_ids)" in text
     assert "validate_espn_final_matchup_frame(" in text
     assert text.index("validate_espn_final_matchup_frame(") < text.index(
         'merge_provider_refresh_table(\n            local_db,\n            "matchup"'

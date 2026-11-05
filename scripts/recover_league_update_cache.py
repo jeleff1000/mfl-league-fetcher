@@ -52,11 +52,22 @@ def _load_claim(reader: FlyReader, args: argparse.Namespace, *, allow_running: b
     statuses = "'committed', 'committed_cache_pending'"
     if allow_running:
         statuses += ", 'running'"
+    eligible = (
+        f"(d.status IN ({statuses}) "
+        "AND (d.status = 'committed_cache_pending' OR d.cache_verified_at IS NULL))"
+    )
+    # Completed publications are idempotent only for the explicit original claim;
+    # manual discovery must continue to select unfinished recovery work alone.
+    if args.dispatch_token:
+        eligible = (
+            f"({eligible} OR (d.status = 'succeeded' AND d.healthy = TRUE "
+            "AND d.cache_state = 'succeeded' AND d.cache_verified_at IS NOT NULL))"
+        )
     rows = reader.query(
         "SELECT d.database_name, d.platform, d.status, d.dispatch_token, "
         "d.attempt_id, d.claim_version, d.workflow_run_id, d.source_year, "
         "d.source_week, d.source_fingerprint, d.bundle_id, d.base_generation, "
-        "d.publication_receipt_json, "
+        "d.publication_receipt_json, d.healthy, d.cache_state, d.cache_verified_at, "
         "m.published_manifest_digest, m.published_manifest_json "
         "FROM accounts.league_update_dispatches d "
         "LEFT JOIN accounts.league_update_manifests m "
@@ -64,8 +75,7 @@ def _load_claim(reader: FlyReader, args: argparse.Namespace, *, allow_running: b
         f"WHERE d.database_name = {_literal(args.db)} "
         f"{claim_predicate}"
         f"AND d.platform = {_literal(args.platform)} "
-        f"AND d.status IN ({statuses}) "
-        "AND (d.status = 'committed_cache_pending' OR d.cache_verified_at IS NULL) LIMIT 1",
+        f"AND {eligible} LIMIT 1",
         database="___ops",
     )
     if len(rows) != 1:
@@ -169,6 +179,14 @@ def main(argv: list[str] | None = None) -> int:
         args.dispatch_token = token
         args.attempt_id = token
         args.claim_version = int(row["claim_version"])
+    if row.get("status") == "succeeded":
+        if args.receipt is not None:
+            _validated_original_receipt(reader, row, args.receipt)
+        build_cache_recovery_receipt(
+            row, current_generation=_current_generation(reader, args.db)
+        )
+        print(f"Cache publication already verified for {args.db}; original claim is complete")
+        return 0
     secret = os.environ.get("REVALIDATION_SECRET")
     if not secret:
         raise RuntimeError("Cache revalidation secret is unavailable")

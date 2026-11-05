@@ -135,6 +135,27 @@ def ambiguous_commit(tmp_path, monkeypatch):
     from multi_league.core.league_update_manifest import manifest_digest, source_manifest_from_mapping
 
     connection = duckdb.connect(":memory:")
+    connection.execute("""
+        CREATE SCHEMA accounts;
+        CREATE TABLE accounts.league_update_manifests (
+            database_name VARCHAR PRIMARY KEY,
+            observed_manifest_json VARCHAR, observed_manifest_digest VARCHAR,
+            published_manifest_json VARCHAR, published_manifest_digest VARCHAR,
+            published_at TIMESTAMP, updated_at TIMESTAMP DEFAULT NOW()
+        );
+        CREATE TABLE accounts.league_update_dispatches (
+            database_name VARCHAR PRIMARY KEY, platform VARCHAR NOT NULL, status VARCHAR NOT NULL,
+            workflow_run_id BIGINT, dispatch_token VARCHAR,
+            source_year INTEGER, source_week INTEGER, source_fingerprint VARCHAR,
+            publish_generation VARCHAR, healthy BOOLEAN DEFAULT FALSE,
+            started_at TIMESTAMP, completed_at TIMESTAMP, lease_expires_at TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT NOW(), error VARCHAR,
+            attempt_id VARCHAR, claim_version BIGINT DEFAULT 0, heartbeat_at TIMESTAMP,
+            observed_manifest_digest VARCHAR, base_generation VARCHAR, bundle_id VARCHAR,
+            cache_state VARCHAR, committed_at TIMESTAMP, cache_verified_at TIMESTAMP,
+            publication_receipt_json VARCHAR
+        );
+    """)
 
     class Database:
         def execute(self, sql, database="___ops"):
@@ -231,6 +252,111 @@ def test_reconcile_original_receipt_then_warm_without_republishing(ambiguous_com
     """).fetchone() == ("newer-observation", receipt["source_manifest_digest"])
     assert connection.execute("SELECT generation FROM merge_admin.league_publish_generations").fetchone() == (3,)
     assert connection.execute("SELECT COUNT(*) FROM merge_admin.league_delta_merge_state").fetchone() == (1,)
+
+
+@pytest.fixture
+def completed_claim(ambiguous_commit):
+    connection, path, receipt, warmed = ambiguous_commit
+    claim = dict(database_name="the_league", platform="yahoo", dispatch_token="manual-42-1",
+                 attempt_id="manual-42-1", claim_version=3, workflow_run_id=42)
+    database = recovery.FlyReader()
+    assert recovery.record_league_update_status(
+        database, status="committed_cache_pending", receipt=receipt, **claim,
+    )
+    assert recovery.record_league_update_status(
+        database, status="succeeded", receipt=receipt, cache_verified=True, **claim,
+    )
+    return connection, path, receipt, warmed
+
+
+@pytest.mark.parametrize("with_receipt", [False, True])
+def test_exact_completed_claim_retry_is_read_only_without_secret(completed_claim, monkeypatch, with_receipt):
+    connection, path, receipt, warmed = completed_claim
+    tables = (
+        "accounts.league_update_dispatches", "accounts.league_update_manifests",
+        "merge_admin.league_publish_generations", "merge_admin.league_delta_merge_state",
+    )
+    before = {table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables}
+
+    def unexpected_side_effect(*args, **kwargs):
+        pytest.fail("A completed publication retry must not create a writer, write status, or warm caches")
+
+    monkeypatch.setattr(recovery, "FlyWriter", unexpected_side_effect)
+    monkeypatch.setattr(recovery, "record_league_update_status", unexpected_side_effect)
+    monkeypatch.setattr(recovery.subprocess, "run", unexpected_side_effect)
+    monkeypatch.delenv("REVALIDATION_SECRET", raising=False)
+    argv = _reconcile_args(path)
+    if not with_receipt:
+        del argv[4:6]
+
+    assert recovery.main(argv) == 0
+    assert warmed == []
+    assert {table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables} == before
+
+
+@pytest.mark.parametrize("mutation", [
+    "UPDATE accounts.league_update_dispatches SET healthy=FALSE",
+    "UPDATE accounts.league_update_dispatches SET healthy=NULL",
+    "UPDATE accounts.league_update_dispatches SET cache_state='committed_cache_pending'",
+    "UPDATE accounts.league_update_dispatches SET cache_verified_at=NULL",
+    "UPDATE accounts.league_update_dispatches SET status='failed'",
+    "UPDATE accounts.league_update_dispatches SET claim_version=4",
+    "UPDATE accounts.league_update_dispatches SET dispatch_token='manual-42-2'",
+    "UPDATE accounts.league_update_dispatches SET attempt_id='manual-42-2'",
+    "UPDATE accounts.league_update_dispatches SET platform='espn'",
+    "DELETE FROM accounts.league_update_dispatches",
+])
+def test_load_completed_claim_executes_sql_and_rejects_unverified_or_wrong_claim(completed_claim, mutation):
+    connection, path, receipt, warmed = completed_claim
+    args = recovery.argparse.Namespace(
+        db="the_league", platform="yahoo", dispatch_token="manual-42-1",
+        attempt_id="manual-42-1", claim_version=3,
+    )
+    row = recovery._load_claim(recovery.FlyReader(), args)
+    assert row["status"] == "succeeded"
+    assert row["healthy"] is True
+    assert row["cache_state"] == "succeeded"
+    assert row["cache_verified_at"] is not None
+    connection.execute(mutation)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        recovery._load_claim(recovery.FlyReader(), args)
+    assert warmed == []
+
+
+@pytest.mark.parametrize("mutation,error", [
+    ("UPDATE merge_admin.league_publish_generations SET generation=4", "newer publication"),
+    ("UPDATE accounts.league_update_dispatches SET bundle_id='other'", "identity changed"),
+    ("UPDATE accounts.league_update_dispatches SET source_fingerprint='other'", "manifest identity changed"),
+    ("UPDATE accounts.league_update_manifests SET published_manifest_digest='other'", "published manifest"),
+    ("UPDATE accounts.league_update_dispatches SET publication_receipt_json=NULL", "receipt is missing"),
+    ("UPDATE accounts.league_inventory SET expires_at=NOW() - INTERVAL '1 day'", "not entitled"),
+])
+def test_completed_claim_retry_rejects_changed_publication_or_entitlement(completed_claim, mutation, error):
+    connection, path, receipt, warmed = completed_claim
+    connection.execute(mutation)
+    before = connection.execute("SELECT * FROM accounts.league_update_dispatches").fetchall()
+    argv = _reconcile_args(path)
+    del argv[4:6]
+    with pytest.raises((ValueError, PermissionError), match=error):
+        recovery.main(argv)
+    assert warmed == []
+    assert connection.execute("SELECT * FROM accounts.league_update_dispatches").fetchall() == before
+
+
+def test_blank_claim_cannot_discover_completed_publication(completed_claim):
+    connection, path, receipt, warmed = completed_claim
+    with pytest.raises(RuntimeError, match="unavailable"):
+        recovery.main(["--db", "the_league", "--platform", "yahoo"])
+    assert warmed == []
+
+
+def test_completed_claim_retry_still_validates_original_receipt(completed_claim):
+    connection, path, receipt, warmed = completed_claim
+    receipt["bundle_id"] = "fleet-" + "b" * 64
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="different publication"):
+        recovery.main(_reconcile_args(path))
+    assert warmed == []
 
 
 @pytest.mark.parametrize("mutation", [

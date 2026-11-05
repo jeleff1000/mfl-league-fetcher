@@ -22,6 +22,30 @@ def recovering_reader(monkeypatch):
     return clock, FlyReader()
 
 
+def test_post_commit_counts_use_the_publication_reserve_without_changing_data_reads(recovering_reader, monkeypatch):
+    from scripts.refresh_yahoo_active_season import _scope_counts
+
+    clock, reader = recovering_reader
+    clock["now"] = 1096  # The real failure committed at 96.8 seconds.
+
+    def post(_url, **kwargs):
+        clock["calls"].append(kwargs)
+        assert "db_name = 'league_a'" in kwargs["json"]["sql"]
+        assert "year = 2026" in kwargs["json"]["sql"]
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b'[{"table_name":"matchup","rows":84}]'
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    assert _scope_counts(reader, db_name="league_a", active_year=2026, tables=["matchup"]) == {"matchup": 84}
+    assert len(clock["calls"]) == 1
+    assert 0 < clock["calls"][0]["timeout"] <= 9
+    assert reader.REFRESH_FINALIZE_SECONDS == 30
+    with pytest.raises(FlyReaderNetworkError, match="budget exhausted"):
+        reader.query("SELECT 1", database="___leagues")
+
+
 @pytest.mark.parametrize("method", ["query", "query_df_parquet"])
 @pytest.mark.parametrize("failure", ["timeout", "checkpointing", "ops_writing", "gateway"])
 def test_refresh_survives_34_second_database_handoff(recovering_reader, monkeypatch, method, failure):

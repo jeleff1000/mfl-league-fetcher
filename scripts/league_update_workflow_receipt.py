@@ -7,7 +7,7 @@ import argparse
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,32 @@ def should_run_post_publish_verification(
         deadline_epoch = float(raw_deadline)
     now = time.time() if now_epoch is None else float(now_epoch)
     return float(deadline_epoch) - now > float(reserve_seconds)
+
+
+def verify_post_publication_counts(
+    receipt: dict[str, Any], *, read_counts: Callable[[], Mapping[str, int]],
+) -> bool:
+    """Collect optional counts without turning a confirmed commit into a failed run.
+
+    Fleet validates and commits the data before this diagnostic read. Cache
+    finalization still verifies the published read path separately.
+    """
+    from multi_league.core.readers.fly_reader import FlyReaderNetworkError
+
+    classify_publication(receipt, require_publication=True)
+    if not receipt.get("bundle_id"):
+        raise ValueError("Post-publication counts require a confirmed publication bundle")
+    if not should_run_post_publish_verification():
+        receipt["post_publish_verification_deferred"] = True
+        return False
+    try:
+        counts = dict(read_counts())
+    except FlyReaderNetworkError as exc:
+        receipt["post_publish_verification_deferred"] = True
+        receipt["post_publish_verification_error"] = str(exc)
+        return False
+    receipt["post_publish_counts"] = counts
+    return True
 
 
 def write_refresh_receipt(receipt: Mapping[str, Any], path: Path | None) -> None:

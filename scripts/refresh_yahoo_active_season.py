@@ -2266,7 +2266,7 @@ def _scope_counts(reader: Any, *, db_name: str, active_year: int, tables: list[s
         if registry[table]["cadence_class"] == CADENCE_ACTIVE_SEASON:
             predicate += f" AND year = {int(active_year)}"
         parts.append(f"SELECT {_sql_literal(table)} AS table_name, COUNT(*) AS rows FROM public.{_quoted_identifier(table)} WHERE {predicate}")
-    rows = reader.query(" UNION ALL ".join(parts), database=LEAGUES_DATABASE)
+    rows = reader.for_publication_control().query(" UNION ALL ".join(parts), database=LEAGUES_DATABASE)
     return {str(row["table_name"]): int(row["rows"] or 0) for row in rows}
 
 
@@ -2342,7 +2342,7 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.targets.fly_target import FlyTarget
     from scripts.league_update_workflow_receipt import (
         record_publication_commit,
-        should_run_post_publish_verification,
+        verify_post_publication_counts,
         write_refresh_receipt,
     )
     from multi_league.core.yahoo_league_settings import discover_league_history, fetch_league_settings
@@ -2891,16 +2891,16 @@ def main(argv: list[str] | None = None) -> int:
                 | set(receipt["homepage_rows"])
             )
             timer.mark("fly_publication")
-            if should_run_post_publish_verification():
-                receipt["post_publish_counts"] = _scope_counts(
+            if verify_post_publication_counts(
+                receipt,
+                read_counts=lambda: _scope_counts(
                     reader,
                     db_name=args.db,
                     active_year=active_year,
                     tables=receipt["published_tables"],
-                )
+                ),
+            ):
                 timer.mark("post_publish_verification")
-            else:
-                receipt["post_publish_verification_deferred"] = True
         finally:
             local_db.close()
 

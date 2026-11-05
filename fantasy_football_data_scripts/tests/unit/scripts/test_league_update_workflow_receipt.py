@@ -21,6 +21,55 @@ def test_post_publish_verification_defers_near_hard_deadline():
     assert should_run_post_publish_verification(now_epoch=100, deadline_epoch=None)
 
 
+def test_optional_post_commit_read_timeout_preserves_the_successful_publication(monkeypatch):
+    from multi_league.core.readers.fly_reader import FlyReaderNetworkError
+
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+    receipt = {"status": "COMMITTED", "executed": True, "bundle_id": "fleet-original"}
+
+    def unavailable():
+        raise FlyReaderNetworkError("read deadline expired after commit")
+
+    assert subject.verify_post_publication_counts(receipt, read_counts=unavailable) is False
+    assert receipt["status"] == "COMMITTED"
+    assert receipt["bundle_id"] == "fleet-original"
+    assert receipt["post_publish_verification_deferred"] is True
+    assert "post_publish_counts" not in receipt
+
+
+def test_post_commit_count_check_records_counts_or_defers_before_reading(monkeypatch):
+    receipt = {"status": "COMMITTED", "executed": True, "bundle_id": "fleet-original"}
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+    assert subject.verify_post_publication_counts(receipt, read_counts=lambda: {"matchup": 84}) is True
+    assert receipt["post_publish_counts"] == {"matchup": 84}
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", "1")
+
+    def must_not_read():
+        pytest.fail("optional counts started after the worker deadline")
+
+    late = {"status": "COMMITTED", "executed": True, "bundle_id": "fleet-original"}
+    assert subject.verify_post_publication_counts(late, read_counts=must_not_read) is False
+    assert late["post_publish_verification_deferred"] is True
+
+
+@pytest.mark.parametrize("error", [ValueError("invalid count data"), RuntimeError("schema or authorization error")])
+def test_optional_count_check_does_not_hide_permanent_errors(monkeypatch, error):
+    monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
+
+    def invalid():
+        raise error
+
+    with pytest.raises(type(error), match=str(error)):
+        subject.verify_post_publication_counts(
+            {"status": "COMMITTED", "executed": True, "bundle_id": "fleet-original"}, read_counts=invalid,
+        )
+
+
+def test_uncommitted_run_cannot_defer_its_read_error():
+    with pytest.raises(ValueError, match="publication"):
+        subject.verify_post_publication_counts({"status": "VALIDATED", "executed": True}, read_counts=lambda: {})
+
+
 def test_manual_no_change_is_not_a_commit_and_ui_no_change_is_rejected():
     assert classify_publication({"status": "NO_FINALIZED_WEEKS"}, require_publication=False) is False
     with pytest.raises(ValueError, match="did not publish"):
@@ -276,7 +325,9 @@ else:
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", probe, str(root), platform],
-        cwd=tmp_path, text=True, capture_output=True, timeout=10,
+        # Cold imports on the Windows development host take 12–22 seconds;
+        # the network guard still proves startup performs no external IO.
+        cwd=tmp_path, text=True, capture_output=True, timeout=60 if sys.platform == "win32" else 10,
     )
     assert result.returncode == 0, result.stderr
     assert "IMPORTS_COMPLETE_NO_IO" in result.stdout

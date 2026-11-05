@@ -235,13 +235,15 @@ def test_incomplete_publication_cache_success_does_not_require_manifest_row():
     assert "WHERE EXISTS (SELECT 1 FROM accounts.league_update_manifests m" not in writer.sql
 
 
-def test_recovery_receipt_requires_durable_matching_publication_and_generation():
+@pytest.mark.parametrize("status", ["committed_cache_pending", "succeeded"])
+def test_recovery_receipt_requires_durable_matching_publication_and_generation(status):
     from multi_league.core.league_update_status import build_cache_recovery_receipt
 
     manifest = {"schema_version": 1, "database_name": "the_league", "active_season": 2026}
     # The parser validates the actual manifest shape and digest in the publication recorder.
     row = {
-        "database_name": "the_league", "platform": "yahoo", "status": "committed_cache_pending",
+        "database_name": "the_league", "platform": "yahoo", "status": status,
+        "healthy": True, "cache_state": "succeeded", "cache_verified_at": "2026-11-05T13:36:33",
         "dispatch_token": "opaque", "attempt_id": "opaque", "claim_version": 2,
         "source_year": 2026, "source_week": 1, "source_fingerprint": "digest",
         "bundle_id": "bundle", "base_generation": "3", "workflow_run_id": 42,
@@ -264,6 +266,13 @@ def test_recovery_receipt_requires_durable_matching_publication_and_generation()
         build_cache_recovery_receipt(row | {"published_manifest_digest": "other"}, current_generation=4)
     with pytest.raises(ValueError, match="cache recovery"):
         build_cache_recovery_receipt(row | {"status": "running"}, current_generation=4)
+    if status == "succeeded":
+        for invalid in (
+            {"healthy": False}, {"healthy": None}, {"cache_state": "committed_cache_pending"},
+            {"cache_state": None}, {"cache_verified_at": None}, {"cache_verified_at": ""},
+        ):
+            with pytest.raises(ValueError, match="cache recovery"):
+                build_cache_recovery_receipt(row | invalid, current_generation=4)
     partial = json.loads(row["publication_receipt_json"])
     partial["source_manifest_complete"] = False
     recovered = build_cache_recovery_receipt(

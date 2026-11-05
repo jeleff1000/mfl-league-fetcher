@@ -424,13 +424,7 @@ jobs:
         shell: bash
         run: |
           VENV_PY=.venv/bin/python3.11
-          if [ ! -x "$VENV_PY" ]; then
-            rm -rf .venv
-            python3.11 -m venv .venv
-          fi
-          if ! "$VENV_PY" -c 'import pandas, duckdb'; then
-            "$VENV_PY" -m pip install -r code/requirements.txt
-          fi
+          test -x "$VENV_PY"
           "$VENV_PY" -c 'import pandas, duckdb'
 
       - name: Restore corpus dependencies

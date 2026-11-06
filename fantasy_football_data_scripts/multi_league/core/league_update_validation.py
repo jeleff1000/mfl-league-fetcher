@@ -634,23 +634,35 @@ def assert_active_season_simulation_health(
             alias="schedule_row", latest_week_sql=str(int(latest_week or 0)),
         )
     bye_count = f"COUNT(*) FILTER (WHERE {declared_bye_sql})"
+    from multi_league.core.league_schedule_contract import native_guillotine_inventory_sql
+    native_identity_sql = native_guillotine_inventory_sql(
+        alias="schedule_row", latest_week_sql=str(int(latest_week or 0)),
+    )
     schedule_rows = conn.execute(
         "SELECT CAST(week AS INTEGER), COUNT(*), "
         "COUNT(DISTINCT NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '')), "
         "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) + "
-        + unassigned_count + " + " + bye_count + ", " + bye_count + " "
+        + unassigned_count + " + " + bye_count + ", " + bye_count + ", "
+        f"COUNT(*) FILTER (WHERE NOT {native_identity_sql}) "
         "FROM public.schedule AS schedule_row WHERE db_name = ? AND year = ? "
         "AND week BETWEEN ? AND ?" + schedule_filter + " GROUP BY week ORDER BY week",
         [str(db_name), int(year), regular_season_start, regular_season_end],
     ).fetchall()
     complete_weeks = {
-        int(week) for week, row_count, franchise_count, opponent_count, byes in schedule_rows
+        int(week) for week, row_count, franchise_count, opponent_count, byes, native_mismatches in schedule_rows
         if int(row_count or 0) == expected_week_teams(int(week))
         and int(franchise_count or 0) == expected_week_teams(int(week))
-        and int(opponent_count or 0) == expected_week_teams(int(week))
-        and (int(byes or 0) == 0 or (expected_teams >= 3 and expected_teams % 2 == 1 and int(byes) == 1))
+        and (
+            (is_guillotine and int(native_mismatches or 0) == 0)
+            or (not is_guillotine and int(opponent_count or 0) == expected_week_teams(int(week))
+                and (int(byes or 0) == 0 or (expected_teams >= 3 and expected_teams % 2 == 1 and int(byes) == 1)))
+        )
     }
-    missing_schedule_weeks = sorted(set(range(regular_season_start, regular_season_end + 1)) - complete_weeks)
+    required_end = min(int(latest_week or regular_season_start - 1), regular_season_end) if is_guillotine else regular_season_end
+    required_weeks = set(range(regular_season_start, required_end + 1))
+    if is_guillotine:
+        required_weeks.update(int(row[0]) for row in schedule_rows)
+    missing_schedule_weeks = sorted(required_weeks - complete_weeks)
     if missing_schedule_weeks:
         raise IncompleteSourceError(
             f"schedule must cover every team through regular-season week {regular_season_end}; "

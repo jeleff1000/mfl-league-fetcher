@@ -1093,6 +1093,9 @@ def _guillotine_observed_inputs(df_season, df_sched, season, week, settings):
 
     frames = []
     for label, source in (("scores", df_season), ("schedule", df_sched)):
+        if label == "schedule" and source.empty:
+            frames.append(pd.DataFrame(columns=["year", "week", "franchise_id"]))
+            continue
         if not {"year", "week", "franchise_id"}.issubset(source.columns):
             raise ValueError(f"Guillotine {label} requires complete franchise identities")
         frame = source.loc[pd.to_numeric(source.year, errors="coerce").eq(season)].copy()
@@ -1119,20 +1122,19 @@ def _guillotine_observed_inputs(df_season, df_sched, season, week, settings):
     latest = int(scores.week.max())
     if latest < week or set(scores.week) != set(range(start, latest + 1)):
         raise ValueError("Guillotine completed scoring weeks are incomplete")
-    if set(schedule.week) != set(range(start, end + 1)):
-        raise ValueError("Guillotine schedule is missing future scoring weeks")
-
     native = {int(w): set(g.franchise_id) for w, g in schedule.groupby("week")}
-    initial = native[start]
+    scored = {int(w): set(g.franchise_id) for w, g in scores.groupby("week")}
+    initial = scored[start]
     if len(initial) != n:
         raise ValueError("Guillotine starting team inventory is incomplete")
     cumulative = dict.fromkeys(initial, 0.0)
     current = set(initial)
     finishes = {}
     snapshot_alive = None
+    unresolved_cut = set()
     for scoring_week in range(start, latest + 1):
         observed = scores.loc[scores.week.eq(scoring_week)].set_index("franchise_id").team_points
-        if set(observed.index) != current or native[scoring_week] != current:
+        if set(observed.index) != current or (scoring_week in native and native[scoring_week] != current):
             raise ValueError(f"Guillotine week {scoring_week} has inconsistent survivor inventory")
         for team, points in observed.items():
             cumulative[team] += float(points)
@@ -1140,10 +1142,20 @@ def _guillotine_observed_inputs(df_season, df_sched, season, week, settings):
         lowest_total = min(cumulative[team] for team in lowest)
         candidates = {team for team in lowest if np.isclose(cumulative[team], lowest_total, rtol=0, atol=1e-8)}
         if scoring_week < end:
-            after = native[scoring_week + 1]
-            removed = current - after
-            if len(removed) != 1 or after - current or not removed.issubset(candidates):
-                raise ValueError(f"Guillotine week {scoring_week} does not have one consistent lowest-score cut")
+            # Native Yahoo exposes a rolling survivor inventory, not a full
+            # future schedule. Completed facts prove historical cuts; any next
+            # available future inventory can resolve the latest observed tie.
+            later_native = [w for w in native if w > scoring_week]
+            after = scored.get(scoring_week + 1)
+            if after is None and later_native:
+                after = native[min(later_native)]
+            if after is not None:
+                removed = current - after
+                if len(removed) != 1 or after - current or not removed.issubset(candidates):
+                    raise ValueError(f"Guillotine week {scoring_week} does not have one consistent lowest-score cut")
+            else:
+                removed = candidates if len(candidates) == 1 else set()
+                after = current - removed
         else:
             # No starter-level tiebreak data reaches this solver. If the final
             # weekly and cumulative scores tie exactly, retain model uncertainty
@@ -1162,12 +1174,14 @@ def _guillotine_observed_inputs(df_season, df_sched, season, week, settings):
             for team in removed:
                 finishes[team] = len(current)
             snapshot_alive = set(after)
+            if not removed:
+                unresolved_cut = set(candidates)
         current = set(after)
 
-    for future_week in range(latest + 1, end + 1):
+    for future_week in (w for w in native if w > latest):
         if native[future_week] != current:
             raise ValueError(f"Guillotine future week {future_week} changes the native survivor inventory")
-    return scores.loc[scores.week.le(week)].copy(), sorted(initial), finishes, snapshot_alive
+    return scores.loc[scores.week.le(week)].copy(), sorted(initial), finishes, snapshot_alive, unresolved_cut
 
 
 def _calc_guillotine_week_outputs(df_season, df_sched, season, week, settings, season_stats):
@@ -1179,7 +1193,7 @@ def _calc_guillotine_week_outputs(df_season, df_sched, season, week, settings, s
     PF for an exact weekly tie, then seeded randomness for a residual tie; Yahoo's
     starter-by-starter tiebreak data is unavailable to this model.
     """
-    observed, managers, finishes, survivors = _guillotine_observed_inputs(
+    observed, managers, finishes, survivors, unresolved_cut = _guillotine_observed_inputs(
         df_season, df_sched, season, week, settings,
     )
     mu, sigma, samples, _, _ = build_team_models(
@@ -1203,6 +1217,14 @@ def _calc_guillotine_week_outputs(df_season, df_sched, season, week, settings, s
     active[:, [manager_index[team] for team in survivors]] = True
     rows = np.arange(N_SIMS)
     remaining = len(survivors)
+    if unresolved_cut:
+        # A tied observed cut without a native survivor/winner witness has the
+        # same seeded uncertainty convention as an unresolved final tie.
+        candidates = np.array(sorted(manager_index[team] for team in unresolved_cut))
+        cut = rng.choice(candidates, size=N_SIMS)
+        places[rows, cut] = remaining
+        active[rows, cut] = False
+        remaining -= 1
     for _ in range(week + 1, int(settings["end_week"]) + 1):
         draws = rng.normal(mu_arr, sd_arr, size=(N_SIMS, n))
         totals += np.where(active, draws, 0.0)
@@ -1211,14 +1233,6 @@ def _calc_guillotine_week_outputs(df_season, df_sched, season, week, settings, s
         places[rows, cut] = remaining
         active[rows, cut] = False
         remaining -= 1
-    if remaining == 2 and week == int(settings["end_week"]):
-        # Unresolved actual final weekly+cumulative tie: symmetric, seeded model
-        # uncertainty. Actual provider results and scoring rows stay untouched.
-        finalists = np.array(sorted(manager_index[team] for team in survivors))
-        cut = finalists[rng.integers(0, 2, size=N_SIMS)]
-        places[rows, cut] = 2
-        active[rows, cut] = False
-        remaining = 1
     if remaining != 1:
         raise ValueError("Guillotine forecast did not reach exactly one champion")
     places[active] = 1

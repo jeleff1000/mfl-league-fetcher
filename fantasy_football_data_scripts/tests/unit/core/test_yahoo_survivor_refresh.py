@@ -160,14 +160,23 @@ def test_guillotine_season_rollup_zeroes_eliminated_odds_without_losing_history(
         assert actual == [("owner-1",1,0.0),("owner-2",2,50.0),("owner-3",2,50.0)]
 
 
-@pytest.mark.parametrize("fault", [None, "unmarked", "missing_survivor", "missing_future", "extra_season"])
-def test_survivor_schedule_health_and_planner_use_native_elimination_inventory(fault):
+@pytest.mark.parametrize("fault,latest,last_schedule_week", [
+    (None, 7, 13), (None, 8, 10), (None, 8, 8),
+    ("unmarked", 8, 10), ("missing_survivor", 8, 10), ("missing_future", 8, 10),
+    ("foreign_future", 8, 10), ("changed_future", 8, 10), ("extra_season", 8, 10),
+])
+def test_survivor_schedule_health_and_planner_use_native_elimination_inventory(fault, latest, last_schedule_week):
     import duckdb
     from multi_league.core.league_update_validation import assert_active_season_simulation_health
     from multi_league.core.league_update_plan import _derived_refresh_gaps
 
     source = pd.read_csv(Path(__file__).with_name("fixtures") / "yahoo_guillotine_scoreboard.csv")
     schedule = source.drop_duplicates(["week", "team_slot"]).copy()
+    if latest == 8:
+        schedule = schedule.loc[~(schedule.week.ge(9) & schedule.team_slot.eq(2))]
+        scores = {1: 170, 2: 80, 3: 100, 4: 130, 11: 160, 13: 180, 14: 140}
+        schedule.loc[schedule.week.eq(8), "team_points"] = schedule.loc[schedule.week.eq(8), "team_slot"].map(scores)
+    schedule = schedule.loc[schedule.week.le(last_schedule_week)].copy()
     schedule["db_name"] = "league"
     schedule["year"] = 2026
     schedule["franchise_id"] = "owner-" + schedule.team_slot.astype(str)
@@ -177,23 +186,27 @@ def test_survivor_schedule_health_and_planner_use_native_elimination_inventory(f
     schedule["opponent"] = schedule["opponent_franchise_id"]
     schedule["is_playoffs"] = False
     schedule["p_playoffs"] = 0.0
-    schedule["p_champ"] = 12.5
+    schedule["p_champ"] = 100 / (15 - latest)
     with duckdb.connect() as conn:
         conn.execute("CREATE SCHEMA public")
         conn.execute("CREATE TABLE public.schedule AS SELECT * FROM schedule")
-        conn.execute("CREATE TABLE public.matchup AS SELECT * FROM schedule WHERE week<=7")
+        conn.execute("CREATE TABLE public.matchup AS SELECT * FROM schedule WHERE week<=?", [latest])
         conn.execute("CREATE TABLE public.matchup_season AS SELECT DISTINCT db_name,year,franchise_id,p_playoffs,p_champ FROM public.matchup")
         conn.execute("UPDATE public.matchup_season SET p_champ=0 WHERE franchise_id NOT IN "
-                     "(SELECT franchise_id FROM public.matchup WHERE week=7)")
+                     "(SELECT franchise_id FROM public.matchup WHERE week=?)", [latest])
         conn.execute("CREATE TABLE public.standings_by_year AS SELECT DISTINCT db_name,year,franchise_id FROM public.matchup")
         conn.execute("CREATE TABLE public.league_settings AS SELECT 'league' AS db_name,2026 AS year,14 AS num_teams,"
                      "1 AS start_week,14 AS playoff_start_week,'yahoo' AS platform,? AS is_guillotine", [fault != "unmarked"])
         for table in ('player_fantasy', 'player_fantasy_season', 'player_fantasy_season_all'):
             conn.execute(f"CREATE TABLE public.{table} (db_name VARCHAR,year INTEGER,week INTEGER,NFL_player_id VARCHAR)")
         if fault == "missing_survivor":
-            conn.execute("DELETE FROM public.schedule WHERE week=7 AND team_slot=1")
+            conn.execute("DELETE FROM public.schedule WHERE week=? AND team_slot=1", [latest])
         elif fault == "missing_future":
             conn.execute("DELETE FROM public.schedule WHERE week=9 AND team_slot=1")
+        elif fault == "foreign_future":
+            conn.execute("UPDATE public.schedule SET franchise_id='phantom' WHERE week=9 AND team_slot=1")
+        elif fault == "changed_future":
+            conn.execute("UPDATE public.schedule SET franchise_id='owner-2' WHERE week=10 AND team_slot=1")
         elif fault == "extra_season":
             conn.execute("INSERT INTO public.matchup_season VALUES ('league',2026,'phantom',50,50)")
         class Reader:
@@ -205,7 +218,7 @@ def test_survivor_schedule_health_and_planner_use_native_elimination_inventory(f
                 assert_active_season_simulation_health(conn,db_name="league",year=2026)
         else:
             assert assert_active_season_simulation_health(conn,db_name="league",year=2026) == {
-                "latest_finalized_week":7,"latest_simulation_franchises":8,"simulation_season_franchises":14}
+                "latest_finalized_week":latest,"latest_simulation_franchises":15-latest,"simulation_season_franchises":14}
         if fault != "extra_season":
             assert _derived_refresh_gaps(Reader(),safe_db="league",active_season=2026)[1] is (fault is not None)
 

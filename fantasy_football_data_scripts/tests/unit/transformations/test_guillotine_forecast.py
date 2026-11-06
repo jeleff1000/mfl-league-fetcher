@@ -86,20 +86,35 @@ def test_late_start_native_league_uses_elapsed_cuts_not_calendar_week(monkeypatc
     assert seeds.loc["owner-10", 14] == 100
 
 
-@pytest.mark.parametrize("fault", ["missing_identity", "missing_future_week", "changed_future_inventory", "missing_survivor"])
+@pytest.mark.parametrize("fault", ["missing_identity", "missing_completed_scores", "changed_future_inventory", "missing_survivor"])
 def test_native_forecast_rejects_incomplete_or_changing_native_inventory(monkeypatch, fault):
     monkeypatch.setattr(poi, "N_SIMS", 32)
     played, schedule, settings = native_fixture()
     if fault == "missing_identity":
         schedule.loc[schedule.index[0], "franchise_id"] = None
-    elif fault == "missing_future_week":
-        schedule = schedule.loc[schedule.week.ne(10)]
+    elif fault == "missing_completed_scores":
+        played = played.loc[played.week.ne(4)]
     elif fault == "changed_future_inventory":
         schedule.loc[schedule.week.eq(10) & schedule.team_slot.eq(1), "franchise_id"] = "owner-phantom"
     else:
         schedule = schedule.loc[~(schedule.week.eq(9) & schedule.team_slot.eq(1))]
     with pytest.raises(ValueError, match="[Gg]uillotine"):
         forecast(played, schedule, settings, 7)
+
+
+@pytest.mark.parametrize("last_schedule_week", [8, 9, 10])
+def test_native_rolling_schedule_needs_no_invented_remaining_fixtures(monkeypatch, last_schedule_week):
+    monkeypatch.setattr(poi, "N_SIMS", 512)
+    played, schedule, settings = native_fixture(completed=8)
+    # Official failed quick import: 84 facts in weeks1..8; 96 schedule rows
+    # through week10 (six survivors in each of9/10), despite a week13 finish.
+    assert len(played) == 84 and len(schedule.loc[schedule.week.le(10)]) == 96
+    complete = forecast(played, schedule, settings, 8)
+    rolling = forecast(played, schedule.loc[schedule.week.le(last_schedule_week)], settings, 8)
+    for full, actual in zip(complete, rolling):
+        pd.testing.assert_frame_equal(full, actual)
+    assert rolling[0].P_Champ.sum() == pytest.approx(100)
+    assert rolling[0].P_Champ.gt(0).sum() == 6
 
 
 def small_final_fixture(*, finished):
@@ -240,14 +255,16 @@ def test_ordinary_unassigned_odd_schedule_keeps_even_pair_guard(monkeypatch, nat
         forecast(played, schedule, settings, 7)
 
 
-def test_native_process_writeback_does_not_turn_legacy_pair_records_into_forecast_wins(monkeypatch, tmp_path):
+@pytest.mark.parametrize("completed,last_schedule_week", [(7, 13), (8, 10), (8, 8)])
+def test_native_process_writeback_does_not_turn_legacy_pair_records_into_forecast_wins(monkeypatch, tmp_path, completed, last_schedule_week):
     from multi_league.core.local_db import LocalLeagueDB
 
     monkeypatch.setattr(poi, "N_SIMS", 1000)  # Current production default, across every observed snapshot.
     for name in ("PLAYOFF_SLOTS", "BYE_SLOTS", "BRACKET_RESEED", "TIEBREAKER_ORDER", "NUM_TEAMS",
                  "REGULAR_SEASON_WEEKS", "TARGET_COLS", "ACTIVE_TABLE_CATALOG"):
         monkeypatch.setattr(poi, name, getattr(poi, name))
-    played, schedule, settings = native_fixture()
+    played, schedule, settings = native_fixture(completed=completed)
+    schedule = schedule.loc[schedule.week.le(last_schedule_week)]
     with LocalLeagueDB(tmp_path, "native_forecast") as db:
         db.save_table("matchup", played, platform="yahoo", league_id="470.l.1")
         db.save_table("schedule", schedule, platform="yahoo", league_id="470.l.1")
@@ -259,8 +276,8 @@ def test_native_process_writeback_does_not_turn_legacy_pair_records_into_forecas
         poi.load_playoff_config_from_settings(SimpleNamespace(data_directory=tmp_path), settings_by_year={2026: settings})
         poi.process_parquet_files(conn=conn, db_name="native_forecast", data_directory=str(tmp_path),
                                   settings_by_year={2026: settings}, target_year=2026)
-        actual = conn.execute("SELECT exp_final_wins,x0_win,p_champ FROM public.matchup WHERE week=7").fetchdf()
-        assert len(actual) == 8
+        actual = conn.execute("SELECT exp_final_wins,x0_win,p_champ FROM public.matchup WHERE week=?", [completed]).fetchdf()
+        assert len(actual) == 15 - completed
         assert actual.exp_final_wins.eq(0).all()
         assert actual.x0_win.eq(100).all()
         assert actual.p_champ.sum() == pytest.approx(100, abs=0.05)

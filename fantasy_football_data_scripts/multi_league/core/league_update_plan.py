@@ -290,9 +290,12 @@ def _derived_refresh_gaps(
     reader, *, safe_db: str, active_season: int,
 ) -> tuple[set[int], bool]:
     """Find aggregate damage and the tiny active simulation-schedule gap in one scan."""
-    from multi_league.core.league_schedule_contract import declared_regular_season_bye_sql
+    from multi_league.core.league_schedule_contract import declared_regular_season_bye_sql, native_guillotine_inventory_sql
 
     bye_sql = declared_regular_season_bye_sql(
+        alias="schedule_row", latest_week_sql="(SELECT latest_finalized_week FROM config)",
+    )
+    native_identity_sql = native_guillotine_inventory_sql(
         alias="schedule_row", latest_week_sql="(SELECT latest_finalized_week FROM config)",
     )
     rows = reader.query(
@@ -354,7 +357,8 @@ def _derived_refresh_gaps(
         "AND opponent_franchise_id IS NULL "
         "AND TRY_CAST(week AS INTEGER) > (SELECT latest_finalized_week FROM config)) + "
         f"COUNT(*) FILTER (WHERE {bye_sql}) AS opponent_count, "
-        f"COUNT(*) FILTER (WHERE {bye_sql}) AS bye_count "
+        f"COUNT(*) FILTER (WHERE {bye_sql}) AS bye_count, "
+        f"COUNT(*) FILTER (WHERE NOT {native_identity_sql}) AS native_identity_mismatches "
         "FROM public.schedule AS schedule_row "
         f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
         "AND COALESCE(is_playoffs, FALSE) = FALSE GROUP BY 1), "
@@ -365,15 +369,20 @@ def _derived_refresh_gaps(
         "ELSE f.num_teams END AS expected_teams) expected "
         "WHERE c.week BETWEEN f.regular_season_start AND f.regular_season_end "
         "AND c.row_count = expected.expected_teams AND c.franchise_count = expected.expected_teams "
+        "AND ((f.is_guillotine AND c.native_identity_mismatches = 0) OR (NOT f.is_guillotine "
         "AND c.opponent_count = expected.expected_teams "
         "AND (c.bye_count = 0 OR (expected.expected_teams >= 3 "
-        "AND expected.expected_teams % 2 = 1 AND c.bye_count = 1))) "
+        "AND expected.expected_teams % 2 = 1 AND c.bye_count = 1))))) "
         "SELECT (SELECT string_agg(CAST(year AS VARCHAR), ',' ORDER BY year) "
         "FROM aggregate_gaps) AS missing_derived_years, "
         "CASE WHEN f.num_teams IS NULL OR f.regular_season_end IS NULL "
         "OR f.num_teams < 1 OR f.regular_season_start < 1 "
         "OR f.regular_season_end < f.regular_season_start "
-        "OR c.complete_weeks <> f.regular_season_end - f.regular_season_start + 1 THEN TRUE ELSE FALSE END "
+        "OR c.complete_weeks <> CASE WHEN f.is_guillotine THEN "
+        "GREATEST(0, LEAST(f.latest_finalized_week, f.regular_season_end) - f.regular_season_start + 1) "
+        "+ (SELECT COUNT(*) FROM coverage present WHERE present.week > f.latest_finalized_week "
+        "AND present.week BETWEEN f.regular_season_start AND f.regular_season_end) "
+        "ELSE f.regular_season_end - f.regular_season_start + 1 END THEN TRUE ELSE FALSE END "
         "AS incomplete_simulation_schedule FROM config f CROSS JOIN complete c",
         database="___leagues",
     )

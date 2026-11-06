@@ -53,8 +53,17 @@ def test_track_1_verify_reads_local_ops_cache(monkeypatch, tmp_path):
     ops_cache = tmp_path / "ops_cache.duckdb"
     conn = duckdb.connect(str(ops_cache))
     conn.execute("CREATE SCHEMA nfl_historical")
-    conn.execute("CREATE TABLE nfl_historical.nfl_player_stats_all (year INTEGER)")
-    conn.execute("INSERT INTO nfl_historical.nfl_player_stats_all VALUES (2024), (2024), (2025)")
+    conn.execute("""CREATE TABLE nfl_historical.nfl_player_stats_all (
+        year INTEGER, week INTEGER, season_type VARCHAR, NFL_player_id VARCHAR,
+        nfl_team VARCHAR, opponent_nfl_team VARCHAR
+    )""")
+    conn.execute("""INSERT INTO nfl_historical.nfl_player_stats_all VALUES
+        (2024, 1, 'REG', 'player1', 'NYJ', 'NE'),
+        (2024, 2, 'REG', 'player1', 'NYJ', 'BUF'),
+        (2025, 1, 'REG', 'player1', 'NYJ', 'MIA')
+    """)
+    conn.execute("CREATE TABLE nfl_historical.player_bio (NFL_player_id VARCHAR)")
+    conn.execute("INSERT INTO nfl_historical.player_bio VALUES ('player1')")
     conn.close()
 
     monkeypatch.setenv("OPS_CACHE_PATH", str(ops_cache))

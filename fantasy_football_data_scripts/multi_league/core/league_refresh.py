@@ -955,6 +955,52 @@ def filter_matchups_to_final_results(
     return matchups.loc[final].copy()
 
 
+def espn_regular_season_bye_team_ids(
+    schedule_rows: Iterable[dict[str, Any]],
+    *,
+    expected_team_ids: Iterable[str] | None,
+) -> set[str]:
+    """Recognize ESPN's single bye only in a complete odd-team native graph.
+
+    Regular-season byes have no away side and remain UNDECIDED forever.
+    A one-sided row alone cannot distinguish that from a truncated response.
+    """
+    expected = {str(team_id).strip() for team_id in expected_team_ids or ()}
+    if len(expected) < 3 or len(expected) % 2 != 1 or "" in expected:
+        return set()
+    observed: list[str] = []
+    byes: set[str] = set()
+    periods: set[int] = set()
+    for row in schedule_rows:
+        if not isinstance(row, dict) or str(row.get("playoffTierType") or "").strip().upper() != "NONE":
+            return set()
+        try:
+            period = int(row.get("matchupPeriodId"))
+        except (TypeError, ValueError):
+            return set()
+        if period < 1:
+            return set()
+        periods.add(period)
+        home, away = row.get("home"), row.get("away")
+        if not isinstance(home, dict):
+            return set()
+        home_id = str(home.get("teamId") or "").strip()
+        if not home_id:
+            return set()
+        observed.append(home_id)
+        if away is None:
+            if str(row.get("winner") or "").strip().upper() != "UNDECIDED":
+                return set()
+            byes.add(home_id)
+        elif isinstance(away, dict) and str(away.get("teamId") or "").strip():
+            observed.append(str(away["teamId"]).strip())
+        else:
+            return set()
+    if len(periods) != 1 or len(byes) != 1 or len(observed) != len(expected) or set(observed) != expected:
+        return set()
+    return byes
+
+
 def espn_schedule_is_final(
     schedule_rows: Iterable[dict[str, Any]],
     *,
@@ -969,6 +1015,8 @@ def espn_schedule_is_final(
     rows = list(schedule_rows)
     if not rows:
         return False
+    expected = None if expected_team_ids is None else {str(team_id).strip() for team_id in expected_team_ids}
+    regular_byes = espn_regular_season_bye_team_ids(rows, expected_team_ids=expected)
     final_outcomes = {"HOME", "AWAY", "TIE"}
     observed_teams: set[str] = set()
     for row in rows:
@@ -980,21 +1028,20 @@ def espn_schedule_is_final(
         declared_bye = (
             home_id != ""
             and away is None
-            and playoff_tier.endswith(("_BRACKET", "_LADDER"))
+            and (playoff_tier.endswith(("_BRACKET", "_LADDER")) or home_id in regular_byes)
         )
         outcome = str(row.get("winner") or "").strip().upper()
         if outcome not in final_outcomes and not (declared_bye and outcome == "UNDECIDED"):
             return False
-        if expected_team_ids is not None:
+        if expected is not None:
             if not home_id or (not away_id and not declared_bye):
                 return False
-            if home_id in observed_teams or (away_id and away_id in observed_teams):
+            if home_id in observed_teams or (away_id and (away_id in observed_teams or away_id == home_id)):
                 return False
             observed_teams.add(home_id)
             if away_id:
                 observed_teams.add(away_id)
-    if expected_team_ids is not None:
-        expected = {str(team_id).strip() for team_id in expected_team_ids}
+    if expected is not None:
         if not expected or "" in expected or observed_teams != expected:
             return False
     return True
@@ -1152,6 +1199,38 @@ def _select_matchup_identity_witnesses(
     if drop_indexes:
         result = result.drop(index=drop_indexes)
     return result
+
+
+def canonicalize_provider_matchup_rows(
+    local_db: Any, incoming: pd.DataFrame, *, platform: str, league_id: str,
+) -> pd.DataFrame:
+    """Select canonical team-week candidates from an already-validated graph.
+
+    Native Yahoo guillotine graphs contain multiple legitimate perspectives
+    per team. Apply the import's existing deterministic SQL policy before the
+    ownership overlay, which correctly requires one provider team-week row.
+    """
+    from multi_league.core.player_week_identity import matchup_publish_dedup_statements
+
+    frame = local_db._normalize_table_frame(
+        "matchup", incoming, platform=platform, league_id=league_id,
+        log_context="validated provider graph candidates",
+    )
+    frame = _bind_provider_db_name(local_db, "matchup", frame)
+    conn = local_db.connect()
+    conn.register("_validated_provider_graph", frame)
+    try:
+        conn.execute("CREATE OR REPLACE TEMP TABLE _provider_graph_candidates AS SELECT * FROM _validated_provider_graph")
+        for _, sql in matchup_publish_dedup_statements(
+            '"_provider_graph_candidates"', set(frame.columns), db_filter="TRUE",
+            temp_table="_provider_graph_duplicates",
+        ):
+            conn.execute(sql)
+        return conn.execute("SELECT * FROM _provider_graph_candidates").fetchdf()
+    finally:
+        conn.unregister("_validated_provider_graph")
+        conn.execute("DROP TABLE IF EXISTS _provider_graph_candidates")
+        conn.execute("DROP TABLE IF EXISTS _provider_graph_duplicates")
 
 
 def merge_provider_refresh_table(

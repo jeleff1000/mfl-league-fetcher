@@ -218,11 +218,14 @@ def _fetch_raw_scoring_week_schedule(client, league, year: int, week: int):
     )
 
 
-def _matchup_period_is_final(schedule: list[dict]) -> bool:
+def _matchup_period_is_final(schedule: list[dict], *, expected_team_ids=None) -> bool:
     """Respect explicit outcomes without changing legacy missing-winner fallback."""
     if not any(str(row.get("winner") or "").strip() for row in schedule):
         return True
-    return espn_schedule_is_final(schedule)
+    # Playoff scoreboards legitimately contain only the remaining bracket.
+    # Regular byes require the independent league inventory as proof.
+    regular = all(str(row.get("playoffTierType") or "").strip().upper() == "NONE" for row in schedule)
+    return espn_schedule_is_final(schedule, expected_team_ids=expected_team_ids if regular else None)
 
 
 def _box_score_snapshot_signature(box_scores: list, raw_schedule_lookup: dict | None = None) -> tuple:
@@ -433,7 +436,10 @@ def fetch_espn_matchups_modern(
                 f"requested week {week}; skipping it"
             )
             continue
-        if not _matchup_period_is_final(raw_schedule):
+        if not _matchup_period_is_final(
+            raw_schedule,
+            expected_team_ids=tuple(str(team.team_id) for team in getattr(league, "teams", []) or []) or None,
+        ):
             log(f"  [MATCHUPS] {year} week {week}: fantasy outcomes not final; holding matchup rows")
             break
         raw_schedule_lookup = _index_raw_schedule(raw_schedule, week)
@@ -767,7 +773,10 @@ def fetch_espn_matchups_legacy(
                 f"requested week {week}; skipping it"
             )
             continue
-        if not _matchup_period_is_final(raw_schedule):
+        if not _matchup_period_is_final(
+            raw_schedule,
+            expected_team_ids=tuple(str(team.team_id) for team in getattr(league, "teams", []) or []) or None,
+        ):
             log(f"  [MATCHUPS] {year} week {week}: fantasy outcomes not final; holding matchup rows")
             continue
         raw_schedule_lookup = _index_raw_schedule(raw_schedule, week)

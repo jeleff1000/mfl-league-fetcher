@@ -5,6 +5,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -45,6 +46,7 @@ def test_two_minute_deadline_starts_after_setup(platform):
 
 
 @pytest.mark.skipif(not BASH, reason="Requires Bash and GNU timeout as on Actions")
+@pytest.mark.skipif(sys.platform != "linux", reason="Requires Linux process-group signals; MSYS cannot reliably kill descendant processes")
 @pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
 @pytest.mark.parametrize("phase", ["refresh", "status"])
 def test_workflow_deadline_stops_term_resistant_worker_and_child(platform, phase):
@@ -63,8 +65,7 @@ wait
     assert "STARTED" in result.stdout, result.stderr
     assert "CHILD_OVERRUN" not in result.stdout, "A descendant ran beyond the update deadline"
     assert result.returncode != 0, result.stderr
-    if os.name != "nt":  # Git Bash exposes MSYS signal status differently on Windows.
-        assert result.returncode in (137, -9), result.stderr
+    assert result.returncode in (137, -9), result.stderr
     assert time.monotonic() - started < 3
 
 

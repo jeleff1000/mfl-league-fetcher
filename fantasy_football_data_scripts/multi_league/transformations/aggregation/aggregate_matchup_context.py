@@ -642,10 +642,62 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False, *, year:
             label="matchup_season:insert",
         )
 
+        # A franchise can begin its season on a real bye before playing any
+        # games. Preserve its season membership and snapshots without feeding
+        # bye rows into any of the played-game aggregates above.
+        bye_row_condition = (
+            "COALESCE(CAST(is_bye_week AS INT), 0) = 1 "
+            "AND team_points IS NULL AND opponent_points IS NULL "
+            "AND NULLIF(TRIM(CAST(opponent AS VARCHAR)), '') IS NULL"
+            if has("is_bye_week") else "FALSE"
+        )
+        if has("is_bye_week"):
+            undefined_game_stats = {
+                "avg_team_points", "avg_opponent_points", "avg_margin",
+                "max_team_points", "min_team_points", "std_dev_team_points", "avg_gpa",
+                "proj_spread_avg", "proj_favored_pct", "proj_avg_win_pct", "proj_avg_error",
+                "playoff_result",
+            }
+            snapshot_names = {
+                *snapshot_cols, "playoff_seed_to_date",
+                *(f"mean_{col}" for col in mean_sim_cols),
+            }
+            empty_game_select = ",\n                    ".join(
+                f"{'NULL' if col in undefined_game_stats else '0'} AS {col}"
+                for col in insert_cols
+                if col not in {"db_name", "manager", "year", "franchise_id", *snapshot_names}
+            )
+            execute_scoped(
+                conn,
+                f"""
+                INSERT INTO {central_table('matchup_season')} ({aggregate_insert_columns('matchup_season', insert_cols)})
+                SELECT '{db_name}', MAX(manager), {yr}, franchise_id,
+                    {empty_game_select}
+                    {snapshot_select}
+                    {mean_sim_select}
+                FROM {central_table('matchup')} AS bye
+                WHERE {league_db_filter(db_name)}
+                  AND year = {yr} AND week <= {last_reg_week}
+                  AND COALESCE(CAST(is_playoffs AS INT), 0) = 0
+                  AND COALESCE(CAST(is_consolation AS INT), 0) = 0
+                  AND manager IS NOT NULL
+                  AND {bye_row_condition}
+                  {'AND COALESCE(is_placeholder, 0) = 0' if has('is_placeholder') else ''}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {central_table('matchup_season')} AS season
+                      WHERE season.db_name = bye.db_name AND season.year = bye.year
+                        AND season.franchise_id = bye.franchise_id
+                  )
+                GROUP BY franchise_id
+                """,
+                db_name,
+                label="matchup_season:bye_membership",
+            )
+
         # Simulation snapshots describe the league state at the latest
         # regular-season period, even when a provider leaves one completed
-        # matchup as a 0-0 shell. Keep those rows out of games/W-L/points, but
-        # do not fall back to the prior week's simulation in matchup_season.
+        # matchup as a 0-0 shell or a franchise has a declared bye. Keep those
+        # rows out of games/W-L/points, but retain their current simulation.
         latest_sim_cols = [col for col in PLAYOFF_SIM_COLUMNS if col in snapshot_cols]
         if latest_sim_cols:
             latest_select = ",\n                    ".join(
@@ -667,8 +719,9 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False, *, year:
                   AND week <= {last_reg_week}
                   AND COALESCE(CAST({'is_playoffs' if has('is_playoffs') else '0'} AS INT), 0) = 0
                   AND COALESCE(CAST({'is_consolation' if has('is_consolation') else '0'} AS INT), 0) = 0
-                  AND manager IS NOT NULL AND opponent IS NOT NULL
-                  {'AND COALESCE(is_bye_week, 0) = 0' if has('is_bye_week') else ''}
+                  AND manager IS NOT NULL
+                  AND ((opponent IS NOT NULL {'AND COALESCE(is_bye_week, 0) = 0' if has('is_bye_week') else ''})
+                       OR ({bye_row_condition}))
                   {'AND COALESCE(is_placeholder, 0) = 0' if has('is_placeholder') else ''}
                 GROUP BY franchise_id
             ) AS latest
@@ -682,6 +735,27 @@ def aggregate_matchup_season(conn, db_name: str, dry_run: bool = False, *, year:
                 db_name,
                 label="matchup_season:latest_simulation",
             )
+            settings_columns = get_available_columns(conn, db_name, "league_settings")
+            if {"is_guillotine", "platform"} <= set(settings_columns):
+                native_guillotine = conn.execute(
+                    f"SELECT COALESCE(BOOL_OR(is_guillotine AND platform = 'yahoo'), FALSE) "
+                    f"FROM {central_table('league_settings')} WHERE {league_db_filter(db_name)} AND year = ?", [yr],
+                ).fetchone()[0]
+                if native_guillotine:
+                    probabilities = [col for col in latest_sim_cols if col.startswith("p_")]
+                    if probabilities:
+                        execute_scoped(
+                            conn,
+                            f"UPDATE {central_table('matchup_season')} AS season SET "
+                            + ", ".join(f"{col} = 0" for col in probabilities)
+                            + f" WHERE season.db_name = '{db_name}' AND season.year = {yr} "
+                            f"AND NOT EXISTS (SELECT 1 FROM {central_table('matchup')} m "
+                            f"WHERE m.db_name = season.db_name AND m.year = season.year "
+                            "AND m.franchise_id = season.franchise_id AND m.week = "
+                            f"(SELECT MAX(week) FROM {central_table('matchup')} "
+                            f"WHERE {league_db_filter(db_name)} AND year = {yr} AND week <= {last_reg_week}))",
+                            db_name, label="matchup_season:guillotine_eliminated_odds",
+                        )
 
         # -- C. Playoff detection: UPDATE rows with playoff info
         # NULLIF handles empty strings in playoff_round/consolation_round

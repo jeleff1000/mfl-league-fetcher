@@ -118,15 +118,64 @@ def test_provider_configuration_failure_is_not_retried(clock):
     assert clock[1] == []
 
 
-def test_persistent_gateway_failure_stops_after_three_attempts(clock):
+def test_persistent_gateway_failure_stops_within_the_probe_budget(clock):
     calls = []
     def opener(*args, **kwargs):
         calls.append(1)
         raise http_error(502)
     with pytest.raises(RuntimeError, match="failed \\(502\\)"):
         probe_freshness("paid_league", opener=opener)
-    assert len(calls) == 3
-    assert clock[1] == [1, 2]
+    assert len(calls) > 3
+    assert 25 <= clock[0][0] < 30
+    assert max(clock[1]) <= 3
+
+
+def test_live_gateway_then_pending_sequence_can_finish_inside_existing_budget(clock):
+    calls = []
+
+    def opener(*args, **kwargs):
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            clock[0][0] += 15.5
+            raise http_error(502)
+        if len(calls) < 4:
+            clock[0][0] += 2
+            response = _Response({"healthy": True, "leased": True, "observed_manifest_digest": "old"})
+            response.status = 202
+            return response
+        return _Response({"healthy": True, "observed_manifest_digest": "verified-new"})
+
+    assert probe_freshness("paid_league", opener=opener) == "verified-new"
+    assert len(calls) == 4
+    assert clock[0][0] < 30
+
+
+def test_more_than_three_quick_transient_failures_can_recover_before_deadline(clock):
+    calls = []
+
+    def opener(*args, **kwargs):
+        calls.append(1)
+        if len(calls) <= 3:
+            raise http_error(503)
+        return _Response({"healthy": True, "observed_manifest_digest": "verified"})
+
+    assert probe_freshness("paid_league", opener=opener) == "verified"
+    assert len(calls) == 4
+
+
+def test_pending_lease_never_returns_old_digest_and_stays_within_budget(clock):
+    calls = []
+
+    def opener(*args, **kwargs):
+        calls.append(1)
+        response = _Response({"healthy": True, "leased": True, "observed_manifest_digest": "old"})
+        response.status = 202
+        return response
+
+    with pytest.raises(RuntimeError, match="still in progress"):
+        probe_freshness("paid_league", opener=opener)
+    assert len(calls) > 3
+    assert 25 <= clock[0][0] < 30
 
 
 def test_in_progress_lease_cannot_publish_the_previous_digest(clock):
@@ -228,18 +277,19 @@ def test_probe_deadline_keeps_the_existing_publication_reserve(clock, monkeypatc
 
 
 @pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
-def test_each_worker_manual_path_claims_only_the_recovered_manifest(clock, monkeypatch, platform):
+@pytest.mark.parametrize("transient_failures", [1, 3])
+def test_each_worker_manual_path_claims_only_the_recovered_manifest(clock, monkeypatch, platform, transient_failures):
     from scripts import claim_manual_league_update as manual
     calls, claims = [], []
     original_probe = probe_freshness
     def opener(request, **kwargs):
         calls.append(request.full_url)
-        if len(calls) == 1: raise http_error(502)
+        if len(calls) <= transient_failures: raise http_error(502)
         return _Response({"healthy": True, "observed_manifest_digest": "verified"})
     monkeypatch.setattr(probe_module, "probe_freshness", lambda db:
                         original_probe(db, opener=opener))
     def claim(reader, writer, **kwargs):
-        assert len(calls) == 2
+        assert len(calls) == transient_failures + 1
         claims.append(kwargs["platform"])
         return {"dispatch_token": "owned", "attempt_id": "attempt", "claim_version": 1}
     result = manual.prepare_update_execution(object(), object(), db_name="paid_league", platform=platform,

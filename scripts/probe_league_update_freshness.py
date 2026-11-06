@@ -57,12 +57,16 @@ def probe_freshness(
     timer.daemon = True
     timer.start()
     try:
-        print(f"[freshness-probe] budget_seconds={budget:g} max_attempts=3", flush=True)
-        for attempt in range(3):
+        print(f"[freshness-probe] budget_seconds={budget:g} retry_policy=deadline", flush=True)
+        attempt = 0
+        while True:
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise RuntimeError("Freshness probe budget exhausted; publication reserve preserved")
-            delay = float(attempt + 1)
+            # An active lease is progress, and quick transport failures can
+            # recover while time remains. The existing hard deadline bounds
+            # both paths; a separate attempt cap only rejects useful retries.
+            delay = float(min(attempt + 1, 3))
             cause = None
             try:
                 with opener(request, timeout=min(timeout, remaining)) as response:
@@ -107,10 +111,11 @@ def probe_freshness(
                         raise RuntimeError("Freshness probe did not return a healthy source manifest")
                     return digest
                 failure = RuntimeError("Freshness probe is still in progress")
-            if attempt == 2 or delay >= deadline - monotonic():
+            if delay >= deadline - monotonic():
                 raise failure from cause
             print(f"[freshness-probe] retry_after_attempt={attempt + 1} status={status} wait_seconds={delay:g}", flush=True)
             sleep(delay)
+            attempt += 1
     finally:
         timer.cancel()
 

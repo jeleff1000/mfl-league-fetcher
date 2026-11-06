@@ -1620,6 +1620,7 @@ def _merge_refresh_payloads(
     from multi_league.core.league_refresh import (
         assert_provider_roster_merge,
         assert_authoritative_draft_refetch,
+        canonicalize_provider_matchup_rows,
         filter_matchups_to_final_results,
         filter_rosters_to_finalized_games,
         merge_provider_refresh_table,
@@ -1645,6 +1646,7 @@ def _merge_refresh_payloads(
         raise RuntimeError(f"Yahoo returned no settings for {year} ({league_key})")
     settings_row = pd.DataFrame([flatten_settings(raw_settings, "yahoo", year, league_key)])
     settings_row["db_name"] = local_db.league_name
+    is_guillotine = bool(settings_row.iloc[0].get("is_guillotine", False))
     merge_provider_refresh_table(
         local_db, "league_settings", settings_row, platform="yahoo", league_id=league_key
     )
@@ -1668,14 +1670,40 @@ def _merge_refresh_payloads(
         team_ids=tuple(rosters.attrs.get("expected_team_keys") or ()),
     )
     rosters = normalize_yahoo_roster_provider_identity(rosters)
+    survivor_scoreboards: dict[int, tuple[pd.DataFrame, list]] = {}
+    survivor_team_keys: dict[int, tuple[str, ...]] = {}
+    if is_guillotine:
+        for requested_week in refresh_weeks:
+            scoreboards, failures = weekly_matchup_data(
+                ctx=ctx, year=year, week=requested_week, league_settings=raw_settings,
+            )
+            if failures:
+                raise YahooIncompleteSourceError(f"Yahoo matchup fetch failed for {year} week {requested_week}: {failures}")
+            raw_graph = scoreboards.attrs.get("schedule_df")
+            validate_yahoo_week_matchup_scope(
+                raw_schedule=raw_graph, final_matchups=filter_matchups_to_final_results(scoreboards),
+                season=year, week=requested_week, expected_team_keys=expected_team_keys,
+                playoff_start_week=settings_row.iloc[0].get("playoff_start_week"),
+                is_guillotine=True, league_start_week=int(settings_row.iloc[0].get("start_week") or 1),
+            )
+            survivor_scoreboards[requested_week] = (scoreboards, failures)
+            survivor_team_keys[requested_week] = tuple(raw_graph["team_key"].astype(str).str.strip().unique())
+        # Eliminated teams may legitimately have empty native rosters. Admit
+        # exactly the participants proved by the complete native week graph.
+        rosters = rosters.loc[
+            pd.Series([
+                str(row.team_key).strip() in survivor_team_keys.get(int(row.week), ())
+                for row in rosters.itertuples()
+            ], index=rosters.index, dtype=bool)
+        ].copy()
     if roster_weeks:
-        provider_roster_team_weeks = validate_active_roster_frame(
-            provider="yahoo",
-            season=year,
-            expected_team_ids=expected_team_keys,
-            requested_weeks=tuple(roster_weeks),
-            player_id_column="yahoo_player_id",
-            rosters=rosters,
+        provider_roster_team_weeks = sum(
+            validate_active_roster_frame(
+                provider="yahoo", season=year,
+                expected_team_ids=survivor_team_keys.get(week, expected_team_keys),
+                requested_weeks=(week,), player_id_column="yahoo_player_id",
+                rosters=rosters.loc[pd.to_numeric(rosters["week"], errors="coerce").eq(week)].copy(),
+            ) for week in roster_weeks
         )
     else:
         provider_roster_team_weeks = 0
@@ -1712,7 +1740,7 @@ def _merge_refresh_payloads(
     if pd.isna(playoff_start_week):
         playoff_start_week = None
     for week in refresh_weeks:
-        scoreboards, failures = weekly_matchup_data(ctx=ctx, year=year, week=week)
+        scoreboards, failures = survivor_scoreboards[week] if is_guillotine else weekly_matchup_data(ctx=ctx, year=year, week=week)
         if failures:
             raise RuntimeError(f"Yahoo matchup fetch failed for {year} week {week}: {failures}")
         raw_schedule = scoreboards.attrs.get("schedule_df")
@@ -1724,10 +1752,16 @@ def _merge_refresh_payloads(
             week=week,
             expected_team_keys=expected_team_keys,
             playoff_start_week=playoff_start_week,
+            is_guillotine=is_guillotine,
+            league_start_week=int(settings_row.iloc[0].get("start_week") or 1),
         )
         if week_final:
             final_matchup_weeks += 1
         if not final_matchups.empty:
+            if is_guillotine:
+                final_matchups = canonicalize_provider_matchup_rows(
+                    local_db, final_matchups, platform="yahoo", league_id=league_key,
+                )
             merge_provider_refresh_table(
                 local_db,
                 "matchup",
@@ -1746,7 +1780,7 @@ def _merge_refresh_payloads(
         raise YahooIncompleteSourceError(f"Yahoo returned no full schedule for {year}")
     schedule = resolve_active_schedule_franchise_ids(
         local_db, schedule, active_year=year,
-        future_weeks=future_schedule_weeks, expected_team_keys=expected_team_keys,
+        future_weeks=() if is_guillotine else future_schedule_weeks, expected_team_keys=expected_team_keys,
     )
     merge_provider_refresh_table(
         local_db,

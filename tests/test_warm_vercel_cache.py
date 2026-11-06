@@ -1,4 +1,3 @@
-from argparse import Namespace
 import json
 import pytest
 
@@ -8,7 +7,8 @@ from scripts import warm_vercel_cache as cache_warmer
 @pytest.mark.parametrize("platform", ["yahoo", "espn", "sleeper"])
 @pytest.mark.parametrize("mode", ["quick", "full"])
 @pytest.mark.parametrize("failure", [None, "revalidate", "warm", "visibility"])
-def test_import_cache_result_never_erases_or_repeats_the_confirmed_data_commit(monkeypatch, tmp_path, platform, mode, failure):
+@pytest.mark.parametrize("soft_failures", [False, True])
+def test_import_cache_result_never_erases_or_repeats_the_confirmed_data_commit(monkeypatch, tmp_path, platform, mode, failure, soft_failures):
     manifest = tmp_path / "delta_publish_manifest.json"
     publication = {"status": "COMMITTED", "executed": True, "bundle_id": "bundle-1", "finalization_status": "complete"}
     manifest.write_text(json.dumps({"db_name": "___fleet" if mode == "quick" else "league",
@@ -18,9 +18,11 @@ def test_import_cache_result_never_erases_or_repeats_the_confirmed_data_commit(m
     summary = tmp_path / "summary"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    monkeypatch.setattr("sys.argv", ["warm_vercel_cache", "--db", "league", "--secret", "test-only",
-                                   "--manifest", str(manifest), "--strict", "--soft-warm-failures",
-                                   "--verify-hot", "--jitter-seconds", "0"])
+    argv = ["warm_vercel_cache", "--db", "league", "--secret", "test-only",
+            "--manifest", str(manifest), "--strict", "--verify-hot", "--jitter-seconds", "0"]
+    if soft_failures:
+        argv.append("--soft-warm-failures")
+    monkeypatch.setattr("sys.argv", argv)
     def visibility(*args):
         if failure == "visibility": raise TimeoutError("read path not verified")
     def revalidate(*args):
@@ -40,7 +42,38 @@ def test_import_cache_result_never_erases_or_repeats_the_confirmed_data_commit(m
     assert f"cache_verified={str(expected).lower()}" in output.read_text()
     assert "data_committed=true" in output.read_text()
     assert "committed_cache_pending" in summary.read_text() if failure else "complete" in summary.read_text()
-    assert code == (1 if failure in {"revalidate", "visibility"} else 0)
+    # A confirmed commit stays successful in the workflows' soft mode;
+    # an explicit strict-only CLI invocation still fails its cache checks.
+    assert code == int(failure is not None and not soft_failures)
+
+
+@pytest.mark.parametrize("failure", ["revalidate", "visibility"])
+@pytest.mark.parametrize("receipt", ["absent", "not_executed", "wrong_bundle", "wrong_league", "not_committed"])
+def test_soft_cache_mode_keeps_unconfirmed_publication_failures_strict(monkeypatch, tmp_path, failure, receipt):
+    manifest = tmp_path / "delta_publish_manifest.json"
+    payload = {"db_name": "league", "bundle_id": "bundle-1", "tables": []}
+    if receipt != "absent":
+        payload["publication"] = {"status": "COMMITTED", "executed": True,
+                                  "bundle_id": "bundle-1", "finalization_status": "complete"}
+        if receipt == "not_executed": payload["publication"]["executed"] = False
+        if receipt == "wrong_bundle": payload["publication"]["bundle_id"] = "other"
+        if receipt == "wrong_league": payload["db_name"] = "other"
+        if receipt == "not_committed": payload["publication"]["status"] = "PENDING"
+    manifest.write_text(json.dumps(payload))
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr("sys.argv", ["warm_vercel_cache", "--db", "league", "--secret", "test-only",
+                                   "--manifest", str(manifest), "--strict", "--soft-warm-failures"])
+    def unavailable(*_args):
+        raise TimeoutError("cache verification unavailable")
+    monkeypatch.setattr(cache_warmer, "verify_fly_commit_visible", unavailable if failure == "visibility" else lambda *_: None)
+    monkeypatch.setattr(cache_warmer, "revalidate", unavailable if failure == "revalidate" else lambda *_: None)
+    assert cache_warmer.main() == 1
+    saved = json.loads(manifest.read_text())
+    assert saved == payload
+    assert "data_committed=false" in output.read_text()
+    assert "cache_verified=false" in output.read_text()
+    assert "completion_status=publication_unconfirmed" in output.read_text()
 
 
 def test_quick_cache_visibility_checks_only_the_published_seasons(monkeypatch, tmp_path):
@@ -71,8 +104,7 @@ def test_cache_reporting_failure_does_not_truncate_the_data_commit_or_repeat_wor
             "bundle_id": "bundle-1", "finalization_status": "complete"}
     path.write_text(json.dumps(manifest))
     original = path.read_bytes()
-    args = Namespace(db="league", manifest=str(path))
-    monkeypatch.setattr(cache_warmer, "parse_args", lambda: args)
+    monkeypatch.setattr("sys.argv", ["warm_vercel_cache", "--db", "league", "--manifest", str(path)])
     monkeypatch.setattr(cache_warmer, "_run_warmer", lambda args: (0, True))
     def failed_report(*args): raise OSError("diagnostic artifact unavailable")
     monkeypatch.setattr(cache_warmer.Path, "replace", failed_report)
@@ -87,7 +119,7 @@ def test_cache_reporting_failure_does_not_truncate_the_data_commit_or_repeat_wor
 
 def test_refresh_cache_reporting_does_not_override_its_existing_publication_receipt(monkeypatch, tmp_path):
     monkeypatch.setattr(cache_warmer, "resolve_manifest_path", lambda *args: None)
-    monkeypatch.setattr(cache_warmer, "parse_args", lambda: Namespace(db="league", manifest=""))
+    monkeypatch.setattr("sys.argv", ["warm_vercel_cache", "--db", "league"])
     monkeypatch.setattr(cache_warmer, "_run_warmer", lambda args: (0, True))
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
@@ -102,28 +134,12 @@ def test_disabled_p95_budget_does_not_fail_successful_cache_publication(monkeypa
         path="/api/league/test/overview",
         cache_class="cache_required",
     )
-    args = Namespace(
-        db="test",
-        secret="secret",
-        site_url="https://www.leaguehistory.app",
-        mode="quick",
-        manifest="",
-        skip_fly_commit_check=False,
-        strategy="expire",
-        timeout=5,
-        concurrency=1,
-        warm_attempts=1,
-        jitter_seconds=0,
-        strict=True,
-        soft_warm_failures=False,
-        verify_hot=True,
-        required_only=True,
-        min_hot_ratio=0.95,
-        max_p95_ms=0,
-        hot_verify_attempts=1,
-        hot_verify_delay_seconds=0,
-    )
-    monkeypatch.setattr(cache_warmer, "parse_args", lambda: args)
+    monkeypatch.setattr("sys.argv", ["warm_vercel_cache", "--db", "test", "--secret", "secret",
+                                   "--site-url", "https://www.leaguehistory.app", "--mode", "quick",
+                                   "--timeout", "5", "--concurrency", "1", "--warm-attempts", "1",
+                                   "--jitter-seconds", "0", "--strict", "--verify-hot", "--required-only",
+                                   "--min-hot-ratio", "0.95", "--max-p95-ms", "0",
+                                   "--hot-verify-attempts", "1", "--hot-verify-delay-seconds", "0"])
     monkeypatch.setattr(cache_warmer, "verify_fly_commit_visible", lambda *_args: None)
     monkeypatch.setattr(cache_warmer, "revalidate", lambda *_args: None)
     monkeypatch.setattr(cache_warmer, "iter_warm_targets", lambda *_args: [target])

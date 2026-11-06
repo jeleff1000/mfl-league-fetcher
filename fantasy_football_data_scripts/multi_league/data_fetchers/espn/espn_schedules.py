@@ -40,6 +40,7 @@ def full_espn_schedule_frame(
 ) -> pd.DataFrame:
     """Expand ESPN's one-call season schedule into canonical team-week rows."""
     from multi_league.core.league_update_validation import IncompleteSourceError
+    from multi_league.core.league_refresh import espn_regular_season_bye_team_ids
 
     expected = {str(team_id) for team_id in expected_team_ids}
     rows: list[dict[str, Any]] = []
@@ -48,6 +49,7 @@ def full_espn_schedule_frame(
         matchup_periods, list(range(1, int(regular_season_weeks) + 1))
     )
     expanded: list[tuple[int, int, dict[str, Any]]] = []
+    native_rows: dict[int, list[dict[str, Any]]] = {}
     for matchup in raw_schedule or []:
         if not isinstance(matchup, dict):
             continue
@@ -55,24 +57,33 @@ def full_espn_schedule_frame(
             native_period = int(matchup.get("matchupPeriodId"))
         except (TypeError, ValueError):
             continue
+        native_rows.setdefault(native_period, []).append(matchup)
         expanded.extend(
             (week, native_period, matchup)
             for week, period in period_by_week.items() if period == native_period
         )
+    byes_by_period = {
+        period: espn_regular_season_bye_team_ids(matches, expected_team_ids=expected)
+        for period, matches in native_rows.items()
+    }
     for week, native_period, matchup in expanded:
         home = matchup.get("home")
         away = matchup.get("away")
+        is_bye = (
+            isinstance(home, dict) and away is None
+            and str(home.get("teamId")) in byes_by_period[native_period]
+        )
         unassigned = (
             isinstance(home, dict) and away is None
             and current_matchup_period is not None
             and int(current_matchup_period) > 0 and native_period >= int(current_matchup_period)
             and str(matchup.get("winner") or "").strip().upper() == "UNDECIDED"
         )
-        if not isinstance(home, dict) or (not isinstance(away, dict) and not unassigned):
+        if not isinstance(home, dict) or (not isinstance(away, dict) and not (unassigned or is_bye)):
             raise IncompleteSourceError(f"ESPN schedule week {week} has a missing matchup side")
         try:
             home_id = int(home.get("teamId"))
-            away_id = None if unassigned else int(away.get("teamId"))
+            away_id = None if unassigned or is_bye else int(away.get("teamId"))
         except (TypeError, ValueError) as exc:
             raise IncompleteSourceError(f"ESPN schedule week {week} has an invalid team identity") from exc
         tier = str(matchup.get("playoffTierType") or "NONE").strip().upper()
@@ -100,13 +111,14 @@ def full_espn_schedule_frame(
                 "franchise_id": franchise_id,
                 "team_name": team_name,
                 "manager_week": f"{franchise_id}_{int(year)}_{week}",
-                "opponent": "TBD" if opponent_id is None else ctx.get_manager_name(opponent_id, opponent_team_name, year),
+                "opponent": ("BYE" if is_bye else "TBD") if opponent_id is None else ctx.get_manager_name(opponent_id, opponent_team_name, year),
                 "opponent_guid": None if opponent_id is None else ctx.get_manager_guid(opponent_id, year),
                 "opponent_franchise_id": opponent_franchise_id,
                 "win": int(result is True) if result is not None else None,
                 "loss": int(result is False) if result is not None else None,
                 "is_playoffs": is_playoffs,
                 "is_consolation": is_consolation,
+                "is_bye_week": int(is_bye),
                 "platform": "espn",
                 "league_id": str(ctx.get_league_id_for_year(year)),
             })

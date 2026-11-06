@@ -2179,7 +2179,9 @@ def _resolve_matchup_gap(gap: Gap, ctx, data_dir: Path, oauth=None, local_db=Non
     if not league_key:
         return False
 
-    from multi_league.data_fetchers.yahoo.yahoo_matchups import weekly_matchup_data
+    from multi_league.data_fetchers.yahoo.yahoo_matchups import (
+        apply_yahoo_matchup_settings, local_yahoo_settings_for_year, weekly_matchup_data,
+    )
 
     week = None
     if gap.detail != "full_year":
@@ -2189,8 +2191,12 @@ def _resolve_matchup_gap(gap: Gap, ctx, data_dir: Path, oauth=None, local_db=Non
             return False
         week = int(match.group(1))
 
-    result = weekly_matchup_data(ctx=ctx, year=gap.year, week=week)
+    settings = local_yahoo_settings_for_year(local_db, gap.year)
+    settings_args = {"league_settings": settings} if settings is not None else {}
+    result = weekly_matchup_data(ctx=ctx, year=gap.year, week=week, **settings_args)
     df, failed_weeks = result if isinstance(result, tuple) else (result, [])
+    if df is not None:
+        apply_yahoo_matchup_settings(local_db, df, gap.year)
 
     if df is None or df.empty:
         return "empty"

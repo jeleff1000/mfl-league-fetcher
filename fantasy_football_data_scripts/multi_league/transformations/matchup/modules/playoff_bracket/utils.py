@@ -168,6 +168,20 @@ def _normalize_playoff_settings(values, year: int, source: str) -> dict:
             source,
             default=False,
         ),
+        "is_guillotine": _coerce_optional_bool(
+            _get_first_present(values, ("is_guillotine",)),
+            "is_guillotine",
+            year,
+            source,
+            default=False,
+        ),
+        "start_week": _coerce_optional_int(
+            _get_first_present(values, ("start_week",)),
+            "start_week",
+            year,
+            source,
+            default=1,
+        ),
     }
 
     playoff_seeding_rule = _get_first_present(values, ("playoff_seeding_rule", "playoffSeedingRule"))

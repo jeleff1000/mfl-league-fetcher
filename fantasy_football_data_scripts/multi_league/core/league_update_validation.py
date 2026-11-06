@@ -577,8 +577,9 @@ def assert_active_season_simulation_health(
     if not {"db_name", "year", "num_teams", "playoff_start_week"} <= settings_columns:
         raise IncompleteSourceError("league settings cannot prove the active regular-season schedule")
     start_week_sql = "COALESCE(CAST(start_week AS INTEGER), 1)" if "start_week" in settings_columns else "1"
+    guillotine_sql = "COALESCE(is_guillotine, FALSE) AND platform = 'yahoo'" if {"is_guillotine", "platform"} <= settings_columns else "FALSE"
     settings_row = conn.execute(
-        "SELECT CAST(num_teams AS INTEGER), CAST(playoff_start_week AS INTEGER), " + start_week_sql + " "
+        "SELECT CAST(num_teams AS INTEGER), CAST(playoff_start_week AS INTEGER), " + start_week_sql + ", " + guillotine_sql + " "
         "FROM public.league_settings WHERE db_name = ? AND year = ? LIMIT 1",
         [str(db_name), int(year)],
     ).fetchone()
@@ -590,6 +591,15 @@ def assert_active_season_simulation_health(
     expected_teams = int(settings_row[0])
     regular_season_start = int(settings_row[2])
     regular_season_end = int(settings_row[1]) - 1
+    is_guillotine = bool(settings_row[3])
+
+    def expected_week_teams(week: int) -> int:
+        if not is_guillotine:
+            return expected_teams
+        # One native cut follows each final scoring week. Future fixtures
+        # carry the currently surviving teams until another week is final.
+        cuts = max(0, min(int(week), int(latest_week or regular_season_start - 1) + 1) - regular_season_start)
+        return max(2, expected_teams - cuts)
 
     schedule_columns = {
         str(row[0]) for row in conn.execute(
@@ -617,20 +627,28 @@ def assert_active_season_simulation_health(
             "AND opponent_franchise_id IS NULL "
             f"AND week > {int(latest_week or 0)})"
         )
+    declared_bye_sql = "FALSE"
+    if "opponent" in schedule_columns:
+        from multi_league.core.league_schedule_contract import declared_regular_season_bye_sql
+        declared_bye_sql = declared_regular_season_bye_sql(
+            alias="schedule_row", latest_week_sql=str(int(latest_week or 0)),
+        )
+    bye_count = f"COUNT(*) FILTER (WHERE {declared_bye_sql})"
     schedule_rows = conn.execute(
         "SELECT CAST(week AS INTEGER), COUNT(*), "
         "COUNT(DISTINCT NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '')), "
         "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) + "
-        + unassigned_count + " "
-        "FROM public.schedule WHERE db_name = ? AND year = ? "
+        + unassigned_count + " + " + bye_count + ", " + bye_count + " "
+        "FROM public.schedule AS schedule_row WHERE db_name = ? AND year = ? "
         "AND week BETWEEN ? AND ?" + schedule_filter + " GROUP BY week ORDER BY week",
         [str(db_name), int(year), regular_season_start, regular_season_end],
     ).fetchall()
     complete_weeks = {
-        int(week) for week, row_count, franchise_count, opponent_count in schedule_rows
-        if int(row_count or 0) == expected_teams
-        and int(franchise_count or 0) == expected_teams
-        and int(opponent_count or 0) == expected_teams
+        int(week) for week, row_count, franchise_count, opponent_count, byes in schedule_rows
+        if int(row_count or 0) == expected_week_teams(int(week))
+        and int(franchise_count or 0) == expected_week_teams(int(week))
+        and int(opponent_count or 0) == expected_week_teams(int(week))
+        and (int(byes or 0) == 0 or (expected_teams >= 3 and expected_teams % 2 == 1 and int(byes) == 1))
     }
     missing_schedule_weeks = sorted(set(range(regular_season_start, regular_season_end + 1)) - complete_weeks)
     if missing_schedule_weeks:
@@ -653,21 +671,45 @@ def assert_active_season_simulation_health(
             [str(db_name), int(year), int(latest_week)],
         ).fetchall()
     }
-    if len(schedule_franchises) != expected_teams:
+    latest_expected_teams = expected_week_teams(int(latest_week))
+    if len(schedule_franchises) != latest_expected_teams:
         raise IncompleteSourceError(
             "schedule active franchise coverage differs from league settings "
-            f"(observed={len(schedule_franchises)}, expected={expected_teams})"
+            f"(observed={len(schedule_franchises)}, expected={latest_expected_teams})"
         )
 
+    latest_bye_franchises = {
+        str(row[0]).strip() for row in conn.execute(
+            "SELECT CAST(franchise_id AS VARCHAR) FROM public.schedule AS schedule_row "
+            "WHERE db_name = ? AND year = ? AND week = ? AND "
+            + declared_bye_sql + schedule_filter,
+            [str(db_name), int(year), int(latest_week)],
+        ).fetchall()
+    }
+    latest_complete_sql = (
+        "(team_points IS NOT NULL AND opponent_points IS NOT NULL" + regular_sql + ")"
+    )
+    latest_params: list[Any] = [str(db_name), int(year), int(latest_week)]
+    if latest_bye_franchises and "is_bye_week" in matchup_columns:
+        bye_placeholders = ", ".join("?" for _ in latest_bye_franchises)
+        # A bye has no game scores, but still requires fresh simulation odds.
+        # Its exact identity must agree with the already-validated schedule.
+        latest_complete_sql += (
+            " OR (COALESCE(is_bye_week, FALSE) = TRUE "
+            "AND team_points IS NULL AND opponent_points IS NULL "
+            f"AND franchise_id IN ({bye_placeholders})"
+            + "".join(" AND " + condition for condition in regular_filters if "is_bye_week" not in condition)
+            + ")"
+        )
+        latest_params.extend(sorted(latest_bye_franchises))
     latest_rows = conn.execute(
         "SELECT CAST(franchise_id AS VARCHAR), COUNT(*), COUNT(p_playoffs), COUNT(p_champ), "
         "MIN(CAST(p_playoffs AS DOUBLE)), MAX(CAST(p_playoffs AS DOUBLE)), "
         "MIN(CAST(p_champ AS DOUBLE)), MAX(CAST(p_champ AS DOUBLE)) "
         "FROM public.matchup WHERE db_name = ? AND year = ? AND week = ? "
-        "AND team_points IS NOT NULL AND opponent_points IS NOT NULL"
-        + regular_sql
+        "AND (" + latest_complete_sql + ")"
         + " GROUP BY franchise_id",
-        [str(db_name), int(year), int(latest_week)],
+        latest_params,
     ).fetchall()
     latest: dict[str, tuple[float, float]] = {}
     for franchise_id, row_count, playoff_count, champ_count, p_min, p_max, c_min, c_max in latest_rows:
@@ -692,10 +734,10 @@ def assert_active_season_simulation_health(
         raise IncompleteSourceError(
             f"latest finalized week {int(latest_week)} lacks simulation franchises"
         )
-    if len(latest) != expected_teams or set(latest) != schedule_franchises:
+    if len(latest) != latest_expected_teams or set(latest) != schedule_franchises:
         raise IncompleteSourceError(
             "latest simulation franchise coverage differs from the complete schedule "
-            f"(observed={len(latest)}, expected={expected_teams})"
+            f"(observed={len(latest)}, expected={latest_expected_teams})"
         )
 
     season_columns = {
@@ -727,10 +769,27 @@ def assert_active_season_simulation_health(
         season[key] = (float(p_playoffs), float(p_champ))
     missing = set(latest) - set(season)
     extra = set(season) - set(latest)
+    season_snapshot = latest
+    if is_guillotine:
+        # Eliminated franchises retain season history, with zero current
+        # advancement probability. Their last pre-elimination odds are stale.
+        historical_franchises = {
+            str(row[0]) for row in conn.execute(
+                "SELECT DISTINCT franchise_id "
+                "FROM public.matchup WHERE db_name = ? AND year = ? "
+                "AND team_points IS NOT NULL AND opponent_points IS NOT NULL",
+                [str(db_name), int(year)],
+            ).fetchall()
+        }
+        missing = historical_franchises - set(season)
+        extra = set(season) - historical_franchises
+        season_snapshot = {franchise: latest.get(franchise, (0.0, 0.0)) for franchise in historical_franchises}
+        if abs(sum(champ for _, champ in latest.values()) - 100.0) > len(latest) * 0.011:
+            raise IncompleteSourceError("guillotine championship probabilities do not sum to 100")
     stale = {
-        key for key in latest.keys() & season.keys()
-        if abs(latest[key][0] - season[key][0]) > 0.011
-        or abs(latest[key][1] - season[key][1]) > 0.011
+        key for key in season_snapshot.keys() & season.keys()
+        if abs(season_snapshot[key][0] - season[key][0]) > 0.011
+        or abs(season_snapshot[key][1] - season[key][1]) > 0.011
     }
     if missing or extra or stale:
         raise IncompleteSourceError(
@@ -900,6 +959,28 @@ def assert_refresh_derived_output_health(
     }
 
 
+def _yahoo_survivor_graph(frame: pd.DataFrame) -> bool:
+    """Recognize the witnessed Yahoo hub-to-every-survivor native graph.
+
+    The XML parser separately checks Yahoo's declared matchup-node count. A
+    repeated ordinary pairing or an arbitrary multi-opponent graph is not this
+    format; it still fails the ordinary team cardinality gate.
+    """
+    if not isinstance(frame, pd.DataFrame) or not {"team_key", "opponent_team_key"} <= set(frame):
+        return False
+    if frame[["team_key", "opponent_team_key"]].isna().any().any():
+        return False
+    edges = frame[["team_key", "opponent_team_key"]].astype(str).apply(lambda col: col.str.strip())
+    neighbors = edges.groupby("team_key")["opponent_team_key"].agg(set).to_dict()
+    teams = set(neighbors)
+    if len(teams) < 3 or "" in teams:
+        return False
+    hubs = [team for team, opponents in neighbors.items() if opponents == teams - {team}]
+    return len(hubs) == 1 and all(
+        opponents == {hubs[0]} for team, opponents in neighbors.items() if team != hubs[0]
+    )
+
+
 def validate_yahoo_scoreboard_pair_graph(
     frame: pd.DataFrame,
     *,
@@ -907,6 +988,8 @@ def validate_yahoo_scoreboard_pair_graph(
     week: int,
     expected_team_keys: tuple[str, ...],
     require_full_teams: bool,
+    allow_repeated_teams: bool = False,
+    allow_live_score_changes: bool = False,
 ) -> int:
     """Prove each Yahoo team row against its reciprocal fetched opponent row."""
     expected = {str(value).strip() for value in expected_team_keys}
@@ -927,26 +1010,47 @@ def validate_yahoo_scoreboard_pair_graph(
         scores = frame[["team_points", "opponent_points"]].apply(pd.to_numeric, errors="coerce")
     except (TypeError, ValueError) as exc:
         raise IncompleteSourceError("Yahoo scoreboard season/week/scores are invalid") from exc
-    if years.ne(int(season)).any() or weeks.ne(int(week)).any() or scores.isna().any().any():
+    if years.ne(int(season)).any() or weeks.ne(int(week)).any() or not scores.map(isfinite).all().all():
         raise IncompleteSourceError("Yahoo scoreboard returned the wrong week or invalid scores")
     rows = frame.assign(
         __team=frame["team_key"].astype(str).str.strip(),
         __opponent=frame["opponent_team_key"].astype(str).str.strip(),
     )
-    if rows["__team"].duplicated().any() or rows["__team"].eq("").any():
+    if (rows["__team"].duplicated().any() and not allow_repeated_teams) or rows["__team"].eq("").any():
         raise IncompleteSourceError("Yahoo scoreboard has duplicate or blank teams")
     observed = set(rows["__team"])
     if not observed <= expected or (require_full_teams and observed != expected):
         raise IncompleteSourceError("Yahoo scoreboard team coverage is incomplete or changed")
-    indexed = rows.set_index("__team", verify_integrity=True)
-    for team_id, row in indexed.iterrows():
-        opponent_id = row["__opponent"]
-        if opponent_id == team_id or opponent_id not in indexed.index:
+    rows[["team_points", "opponent_points"]] = scores
+    if not allow_live_score_changes and rows.groupby("__team")["team_points"].nunique().gt(1).any():
+        raise IncompleteSourceError("Yahoo scoreboard repeated team scores disagree")
+    indexed = {
+        key: group for key, group in rows.groupby(["__team", "__opponent"])
+    }
+    for (team_id, opponent_id), group in indexed.items():
+        if opponent_id == team_id or (opponent_id, team_id) not in indexed:
             raise IncompleteSourceError("Yahoo scoreboard reciprocal opponent is missing")
-        opponent = indexed.loc[opponent_id]
-        if opponent["__opponent"] != team_id or abs(float(row["team_points"]) - float(opponent["opponent_points"])) > 1e-6 or abs(float(row["opponent_points"]) - float(opponent["team_points"])) > 1e-6:
+        opposite = indexed[(opponent_id, team_id)]
+        row, opponent = group.iloc[0], opposite.iloc[0]
+        if allow_live_score_changes:
+            from collections import Counter
+
+            # Native duplicate nodes can reflect different live snapshots. Each
+            # node must still have a reciprocal score witness; only cross-node
+            # score agreement waits until the entire week is provider-final.
+            direct = Counter(zip(group.team_points, group.opponent_points))
+            reciprocal = Counter(zip(opposite.opponent_points, opposite.team_points))
+            if direct != reciprocal:
+                raise IncompleteSourceError("Yahoo live scoreboard reciprocal pair scores or IDs disagree")
+            continue
+        if (
+            len(group) != len(opposite)
+            or group["opponent_points"].nunique() != 1
+            or abs(float(row["team_points"]) - float(opponent["opponent_points"])) > 1e-6
+            or abs(float(row["opponent_points"]) - float(opponent["team_points"])) > 1e-6
+        ):
             raise IncompleteSourceError("Yahoo scoreboard reciprocal pair scores or IDs disagree")
-    return len(indexed)
+    return len(rows)
 
 
 def validate_yahoo_week_matchup_scope(
@@ -957,6 +1061,8 @@ def validate_yahoo_week_matchup_scope(
     week: int,
     expected_team_keys: tuple[str, ...],
     playoff_start_week: int | None,
+    is_guillotine: bool = False,
+    league_start_week: int = 1,
 ) -> bool:
     """Require regular-season inventory or the Yahoo-declared playoff pair graph.
 
@@ -972,25 +1078,47 @@ def validate_yahoo_week_matchup_scope(
     if playoff_start is not None and playoff_start < 1:
         raise IncompleteSourceError("Yahoo playoff start week is invalid")
     is_postseason = playoff_start is not None and int(week) >= playoff_start
+    survivor_graph = bool(is_guillotine)
+    explicitly_pending = (
+        survivor_graph and isinstance(raw_schedule, pd.DataFrame) and final_matchups.empty
+        and int(week) in set(raw_schedule.attrs.get("pending_native_weeks") or ())
+    )
+    if survivor_graph:
+        team_count = raw_schedule["team_key"].nunique() if isinstance(raw_schedule, pd.DataFrame) and "team_key" in raw_schedule else 0
+        expected_survivors = max(2, len(expected_team_keys) - max(0, int(week) - int(league_start_week)))
+        if team_count != expected_survivors:
+            raise IncompleteSourceError("Yahoo guillotine scoreboard survivor inventory is incomplete")
+        if team_count != 2 and not _yahoo_survivor_graph(raw_schedule):
+            raise IncompleteSourceError("Yahoo guillotine scoreboard has no complete survivor graph")
     raw_count = validate_yahoo_scoreboard_pair_graph(
         raw_schedule, season=season, week=week,
-        expected_team_keys=expected_team_keys, require_full_teams=not is_postseason,
+        expected_team_keys=expected_team_keys, require_full_teams=not is_postseason and not survivor_graph,
+        allow_repeated_teams=survivor_graph,
+        allow_live_score_changes=explicitly_pending,
     )
     if raw_count == 0:
         raise IncompleteSourceError("Yahoo scoreboard has no declared matchup pairs")
+    if explicitly_pending:
+        return False
     final_count = validate_yahoo_scoreboard_pair_graph(
         final_matchups, season=season, week=week,
         expected_team_keys=expected_team_keys, require_full_teams=False,
+        allow_repeated_teams=survivor_graph,
     )
     if final_count:
-        source = raw_schedule.set_index(raw_schedule["team_key"].astype(str).str.strip())
-        for _, row in final_matchups.iterrows():
-            team_key = str(row["team_key"]).strip()
-            if team_key not in source.index:
+        pair_columns = ["team_key", "opponent_team_key"]
+        source = raw_schedule.copy()
+        finals = final_matchups.copy()
+        for frame in (source, finals):
+            frame[pair_columns] = frame[pair_columns].astype(str).apply(lambda col: col.str.strip())
+        source_groups = dict(tuple(source.groupby(pair_columns)))
+        for key, group in finals.groupby(pair_columns):
+            if key not in source_groups:
                 raise IncompleteSourceError("Yahoo final matchup is absent from raw scoreboard")
-            raw = source.loc[team_key]
+            raw_group = source_groups[key]
+            row, raw = group.iloc[0], raw_group.iloc[0]
             if (
-                str(row["opponent_team_key"]).strip() != str(raw["opponent_team_key"]).strip()
+                len(group) > len(raw_group)
                 or abs(float(row["team_points"]) - float(raw["team_points"])) > 1e-6
                 or abs(float(row["opponent_points"]) - float(raw["opponent_points"])) > 1e-6
             ):

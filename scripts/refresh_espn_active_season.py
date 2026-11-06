@@ -80,7 +80,7 @@ def _closed_espn_schedule(
     The current period
     is never derived, so partial midweek scores remain unpublished.
     """
-    from multi_league.core.league_refresh import espn_schedule_is_final
+    from multi_league.core.league_refresh import espn_regular_season_bye_team_ids, espn_schedule_is_final
 
     # ESPN can expose a complete team graph with ``winner=TIE`` and 0-0
     # scores before the current scoring period has started.  Period position
@@ -92,6 +92,7 @@ def _closed_espn_schedule(
     if native_period < 1 or native_period >= int(current_matchup_period):
         return None
 
+    regular_byes = espn_regular_season_bye_team_ids(schedule_rows, expected_team_ids=expected_team_ids)
     normalized: list[dict[str, Any]] = []
     for source_row in schedule_rows:
         if not isinstance(source_row, dict):
@@ -109,10 +110,11 @@ def _closed_espn_schedule(
         away = row.get("away")
         if not isinstance(home, dict):
             return None
-        # Declared playoff byes have no opponent score; the final graph gate
-        # below still requires their identity and permits only UNDECIDED/final.
-        if away is None and str(row.get("playoffTierType") or "").strip().upper().endswith(
-            ("_BRACKET", "_LADDER")
+        # Verified regular byes and declared playoff byes have no opponent
+        # score. The final graph gate below still validates every real pair.
+        if away is None and (
+            str(home.get("teamId")) in regular_byes
+            or str(row.get("playoffTierType") or "").strip().upper().endswith(("_BRACKET", "_LADDER"))
         ):
             normalized.append(row)
             continue
@@ -219,7 +221,7 @@ def _hydrate_zero_espn_schedule_scores(
     rosters: pd.DataFrame,
 ) -> None:
     """Fill ESPN's closed 0-0 schedule shell from its weekly started lineups."""
-    from multi_league.core.league_refresh import espn_schedule_is_final
+    from multi_league.core.league_refresh import espn_regular_season_bye_team_ids, espn_schedule_is_final
     from multi_league.core.league_update_validation import IncompleteSourceError
 
     required = {"week", "team_key", "fantasy_points", "is_started"}
@@ -244,7 +246,13 @@ def _hydrate_zero_espn_schedule_scores(
             except (TypeError, ValueError):
                 return 0.0
 
-        if any(abs(raw_score(side)) > 1e-9 for side in sides):
+        # A BYE's standalone total cannot prove that played games have scores.
+        game_sides = [
+            side for row in schedule_rows
+            if isinstance(row.get("home"), dict) and isinstance(row.get("away"), dict)
+            for side in (row["home"], row["away"])
+        ]
+        if not game_sides or any(abs(raw_score(side)) > 1e-9 for side in game_sides):
             continue
 
         weekly = rosters.loc[pd.to_numeric(rosters["week"], errors="coerce").eq(int(week))].copy()
@@ -261,7 +269,10 @@ def _hydrate_zero_espn_schedule_scores(
                 f"missing={sorted(expected - set(totals))}, extra={sorted(set(totals) - expected)}"
             )
 
+        regular_byes = espn_regular_season_bye_team_ids(schedule_rows, expected_team_ids=expected)
         for row in schedule_rows:
+            if row.get("away") is None and str((row.get("home") or {}).get("teamId")) in regular_byes:
+                continue
             scored: dict[str, float] = {}
             for side_name in ("home", "away"):
                 side = row.get(side_name)

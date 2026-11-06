@@ -93,7 +93,7 @@ def test_denied_calendar_defers_recovery_without_erasing_transactions(season, mo
     assert not any("/transactions" in url for url in calls)
 
 
-def test_recovery_still_rejects_real_transactions_with_invalid_timestamps(season, monkeypatch):
+def test_recovery_retains_real_moves_without_fabricating_invalid_transaction_dates(season, monkeypatch):
     ctx, db, _calls, response = season
     def invalid_timestamp(url, oauth):
         root = response(url, oauth)
@@ -102,6 +102,17 @@ def test_recovery_still_rejects_real_transactions_with_invalid_timestamps(season
         return root
     monkeypatch.setattr(transactions, "fetch_url", invalid_timestamp)
     gap = recovery.Gap("transaction", 2018, "full_year", "manifest")
+    # The strict mapper still rejects the timestamp. Import/recovery's current
+    # contract retains the real move with unresolved timing instead of guessing.
+    windows = pd.DataFrame([{"year": 2018, "week": 6, "week_start": "2018-10-09", "week_end": "2018-10-15"}])
     with pytest.raises(TransactionWeekError, match="invalid timestamp"):
-        recovery._resolve_transaction_gap(gap, ctx, ctx.data_directory, local_db=db)
-    assert db.connect().execute("SELECT COUNT(*) FROM public.transactions").fetchone() == (0,)
+        transactions.map_transaction_to_week("invalid", 2018, windows)
+    assert recovery._resolve_transaction_gap(gap, ctx, ctx.data_directory, local_db=db) is True
+    row = db.connect().execute(
+        "SELECT manager,yahoo_player_id,week,cumulative_week,timestamp,week_start,week_end,notes "
+        "FROM public.transactions"
+    ).fetchone()
+    assert row[:7] == ("Preferred alias", "123", None, None, None, None, None)
+    assert "timing unresolved" in row[7] and "invalid" in row[7]
+    assert db.connect().execute("SELECT year,week,manager,team_points FROM public.matchup").fetchall() == [
+        (2017, 1, "Historical alias", 123.5)]

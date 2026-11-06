@@ -317,6 +317,7 @@ def _parse_league_metadata(root: ET.Element) -> dict[str, Any]:
         "scoring_type": get_val("scoring_type"),
         "uses_fractional_points": uses_fractional_points,
         "uses_median_score": uses_median_score,
+        "is_guillotine": get_val("is_guillotine", "0") == "1",
         "league_type": get_val("league_type"),
         "renew": get_val("renew"),
         "renewed": get_val("renewed"),

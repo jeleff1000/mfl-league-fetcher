@@ -121,7 +121,7 @@ def _ensure_matchup_output_columns(conn, db_name: str, output_cols: list[str]):
         conn.execute(f'ALTER TABLE {matchup_sql} ADD COLUMN IF NOT EXISTS "{col}" {MATCHUP_COLUMN_TYPES[col]}')
 
 
-def _normalize_x_win_distribution(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_x_win_distribution(df: pd.DataFrame, *, no_h2h_years=()) -> pd.DataFrame:
     """Move impossible x-win mass below current wins into the current bucket."""
     if "wins_to_date" not in df.columns:
         return df
@@ -144,6 +144,10 @@ def _normalize_x_win_distribution(df: pd.DataFrame) -> pd.DataFrame:
     rows_adjusted = 0
 
     wins = pd.to_numeric(df["wins_to_date"], errors="coerce")
+    if no_h2h_years and "year" in df:
+        # Native weekly cuts have no H2H wins. Earlier common enrichments may
+        # still carry a legacy pair record; it cannot create forecast win mass.
+        wins = wins.where(~pd.to_numeric(df.year, errors="coerce").isin(no_h2h_years))
     for idx, current_wins in wins.dropna().items():
         if pd.isna(df.at[idx, x_cols[0][1]]):
             continue
@@ -1070,6 +1074,172 @@ def seed_input_for_projection(df_to_date: pd.DataFrame, reg: pd.DataFrame) -> pd
     return source
 
 
+def _guillotine_observed_inputs(df_season, df_sched, season, week, settings):
+    """Validate native team inventories and recover one observed cut per week.
+
+    Future native rows describe the current survivors, not future opponents or
+    future cuts. Historical survivor inventories may resolve actual scoring ties;
+    later outcomes never enter an earlier snapshot's model or finishing places.
+    """
+    start = int(settings["start_week"])
+    end = int(settings["end_week"])
+    n = int(settings["num_teams"])
+    if (
+        n < 2 or not 1 <= start <= week <= end <= 17 or end - start + 1 != n - 1
+        or int(settings["num_playoff_teams"]) != 0 or int(settings["bye_teams"]) != 0
+        or settings.get("uses_median", False)
+    ):
+        raise ValueError("Guillotine settings must describe one weekly cut through one champion")
+
+    frames = []
+    for label, source in (("scores", df_season), ("schedule", df_sched)):
+        if not {"year", "week", "franchise_id"}.issubset(source.columns):
+            raise ValueError(f"Guillotine {label} requires complete franchise identities")
+        frame = source.loc[pd.to_numeric(source.year, errors="coerce").eq(season)].copy()
+        if "is_playoffs" in frame:
+            frame = frame.loc[frame.is_playoffs.eq(0)]
+        if "is_consolation" in frame:
+            frame = frame.loc[frame.is_consolation.eq(0)]
+        frame["week"] = pd.to_numeric(frame.week, errors="coerce")
+        if frame.empty or frame.week.isna().any() or not frame.week.between(start, end).all():
+            raise ValueError(f"Guillotine {label} has missing or invalid scoring weeks")
+        if frame.franchise_id.isna().any() or frame.franchise_id.astype(str).str.strip().eq("").any():
+            raise ValueError(f"Guillotine {label} requires complete franchise identities")
+        if label == "scores":
+            if "team_points" not in frame:
+                raise ValueError("Guillotine scores are missing")
+            frame["team_points"] = pd.to_numeric(frame.team_points, errors="coerce")
+            if not np.isfinite(frame.team_points).all():
+                raise ValueError("Guillotine completed weeks require finite scores")
+            conflicts = frame.groupby(["week", "franchise_id"]).team_points.nunique()
+            if conflicts.gt(1).any():
+                raise ValueError("Guillotine repeated team scores disagree")
+        frames.append(frame.drop_duplicates(["week", "franchise_id"]))
+    scores, schedule = frames
+    latest = int(scores.week.max())
+    if latest < week or set(scores.week) != set(range(start, latest + 1)):
+        raise ValueError("Guillotine completed scoring weeks are incomplete")
+    if set(schedule.week) != set(range(start, end + 1)):
+        raise ValueError("Guillotine schedule is missing future scoring weeks")
+
+    native = {int(w): set(g.franchise_id) for w, g in schedule.groupby("week")}
+    initial = native[start]
+    if len(initial) != n:
+        raise ValueError("Guillotine starting team inventory is incomplete")
+    cumulative = dict.fromkeys(initial, 0.0)
+    current = set(initial)
+    finishes = {}
+    snapshot_alive = None
+    for scoring_week in range(start, latest + 1):
+        observed = scores.loc[scores.week.eq(scoring_week)].set_index("franchise_id").team_points
+        if set(observed.index) != current or native[scoring_week] != current:
+            raise ValueError(f"Guillotine week {scoring_week} has inconsistent survivor inventory")
+        for team, points in observed.items():
+            cumulative[team] += float(points)
+        lowest = observed.loc[np.isclose(observed, observed.min(), rtol=0, atol=1e-8)].index
+        lowest_total = min(cumulative[team] for team in lowest)
+        candidates = {team for team in lowest if np.isclose(cumulative[team], lowest_total, rtol=0, atol=1e-8)}
+        if scoring_week < end:
+            after = native[scoring_week + 1]
+            removed = current - after
+            if len(removed) != 1 or after - current or not removed.issubset(candidates):
+                raise ValueError(f"Guillotine week {scoring_week} does not have one consistent lowest-score cut")
+        else:
+            # No starter-level tiebreak data reaches this solver. If the final
+            # weekly and cumulative scores tie exactly, retain model uncertainty
+            # between those finalists rather than inventing an actual winner.
+            removed = candidates if len(candidates) == 1 else set()
+            if {"team_key", "winner_team_key"}.issubset(scores.columns):
+                final_rows = scores.loc[scores.week.eq(scoring_week)]
+                winners = set(final_rows.winner_team_key.dropna()) - {""}
+                if winners:
+                    native_winner = set(final_rows.loc[final_rows.team_key.isin(winners), "franchise_id"])
+                    if len(winners) != 1 or len(native_winner) != 1 or not (current - native_winner).issubset(candidates):
+                        raise ValueError("Guillotine final winner conflicts with native score evidence")
+                    removed = current - native_winner
+            after = current - removed
+        if scoring_week <= week:
+            for team in removed:
+                finishes[team] = len(current)
+            snapshot_alive = set(after)
+        current = set(after)
+
+    for future_week in range(latest + 1, end + 1):
+        if native[future_week] != current:
+            raise ValueError(f"Guillotine future week {future_week} changes the native survivor inventory")
+    return scores.loc[scores.week.le(week)].copy(), sorted(initial), finishes, snapshot_alive
+
+
+def _calc_guillotine_week_outputs(df_season, df_sched, season, week, settings, season_stats):
+    """Forecast lowest-score weekly cuts with the existing seeded score model.
+
+    Seed columns mean final finishing place. Playoff advancement and H2H win
+    metrics retain the no-playoffs neutral zero convention. Expected PF includes
+    each team's scores only while it survives. Continuous normal draws use total
+    PF for an exact weekly tie, then seeded randomness for a residual tie; Yahoo's
+    starter-by-starter tiebreak data is unavailable to this model.
+    """
+    observed, managers, finishes, survivors = _guillotine_observed_inputs(
+        df_season, df_sched, season, week, settings,
+    )
+    mu, sigma, samples, _, _ = build_team_models(
+        observed, season, week, HALF_LIFE_WEEKS, SHRINK_K,
+        # The ordinary caller supplies full-season league mean/SD. Native
+        # historical forecasts derive those from the snapshot's observed scores
+        # so later guillotine cuts and scores cannot alter earlier strength.
+        boundary_penalty=0.05, prior_w_cap=2.0, season_stats=None,
+    )
+    rng = get_rng(season, week)
+    n = len(managers)
+    manager_index = {team: idx for idx, team in enumerate(managers)}
+    mu_arr = np.array([mu[team] for team in managers])
+    sd_arr = np.array([sigma[team] for team in managers])
+    points = observed.groupby("franchise_id").team_points.sum().reindex(managers).to_numpy(dtype=float)
+    totals = np.broadcast_to(points, (N_SIMS, n)).copy()
+    places = np.zeros((N_SIMS, n), dtype=int)
+    active = np.zeros((N_SIMS, n), dtype=bool)
+    for team, place in finishes.items():
+        places[:, manager_index[team]] = place
+    active[:, [manager_index[team] for team in survivors]] = True
+    rows = np.arange(N_SIMS)
+    remaining = len(survivors)
+    for _ in range(week + 1, int(settings["end_week"]) + 1):
+        draws = rng.normal(mu_arr, sd_arr, size=(N_SIMS, n))
+        totals += np.where(active, draws, 0.0)
+        lowest = np.where(active, draws, np.inf)
+        cut = np.lexsort((rng.random((N_SIMS, n)), totals, lowest), axis=1)[:, 0]
+        places[rows, cut] = remaining
+        active[rows, cut] = False
+        remaining -= 1
+    if remaining == 2 and week == int(settings["end_week"]):
+        # Unresolved actual final weekly+cumulative tie: symmetric, seeded model
+        # uncertainty. Actual provider results and scoring rows stay untouched.
+        finalists = np.array(sorted(manager_index[team] for team in survivors))
+        cut = finalists[rng.integers(0, 2, size=N_SIMS)]
+        places[rows, cut] = 2
+        active[rows, cut] = False
+        remaining = 1
+    if remaining != 1:
+        raise ValueError("Guillotine forecast did not reach exactly one champion")
+    places[active] = 1
+    index = pd.Index(managers, name="manager")
+    seed_dist = pd.DataFrame(
+        {place: (places == place).mean(axis=0) * 100.0 for place in range(1, n + 1)}, index=index,
+    )
+    odds = pd.DataFrame({
+        "Exp_Final_Wins": 0.0,
+        "Exp_Final_PF": totals.mean(axis=0),
+        "Avg_Seed": places.mean(axis=0),
+        "P_Playoffs": 0.0, "P_Bye": 0.0, "P_Semis": 0.0, "P_Final": 0.0,
+        "P_Champ": seed_dist[1],
+        "Power_Rating": compute_power_ratings(mu, samples, bootstrap_min=3).reindex(index),
+        "Team_Mu": mu_arr, "Team_Sigma": sd_arr,
+    }, index=index)
+    wins = pd.DataFrame(0.0, index=index, columns=[f"x{k}_win" for k in range(int(settings["end_week"]) + 1)])
+    wins["x0_win"] = 100.0
+    return odds, seed_dist, wins
+
+
 def calc_regular_week_outputs(
     df_season,
     df_sched,
@@ -1093,6 +1263,9 @@ def calc_regular_week_outputs(
         df=df_to_date,
         settings_by_year=settings_by_year,
     )
+
+    if settings.get("is_guillotine", False):
+        return _calc_guillotine_week_outputs(df_season, df_sched, season, week, settings, season_stats)
 
     num_playoff_teams = int(settings["num_playoff_teams"])
     bye_teams = int(settings["bye_teams"])
@@ -2670,6 +2843,8 @@ def process_parquet_files(
         "franchise_id",
         "opponent_franchise_id",
         "team_name",
+        "team_key",
+        "winner_team_key",
         "is_playoffs",
         "is_consolation",
         "is_bye_week",
@@ -2822,15 +2997,18 @@ def process_parquet_files(
     # playoff config for) is unsimulatable -- skip IT, not the league. One 2025 shell season
     # was killing 15 good years of MFL history (crawl run 29626415574).
     simulatable = []
+    no_h2h_years = set()
     for season in seasons:
         try:
-            load_league_settings(
+            season_settings = load_league_settings(
                 int(season),
                 data_directory=str(ctx.data_directory),
                 df=df_matches[df_matches["year"] == season],
                 settings_by_year=settings_by_year,
             )
             simulatable.append(season)
+            if season_settings.get("is_guillotine", False):
+                no_h2h_years.add(int(season))
         except ValueError as exc:
             logger.warning(
                 f" Skipping season {season}: playoff settings unresolvable ({exc}). "
@@ -3029,7 +3207,7 @@ def process_parquet_files(
     except Exception as e:
         logger.warning(f" Could not hold playoff values: {e}")
 
-    df_all = _normalize_x_win_distribution(df_all)
+    df_all = _normalize_x_win_distribution(df_all, no_h2h_years=no_h2h_years)
     df_all = fill_missing_title_odds(df_all)
 
     # DEFENSIVE: Ensure string columns are never null (use empty string instead)
@@ -3079,6 +3257,8 @@ def process_parquet_files(
         "tie",
         "franchise_id",
         "team_name",
+        "team_key",
+        "winner_team_key",
         "is_playoffs",
         "is_consolation",
         "is_bye_week",

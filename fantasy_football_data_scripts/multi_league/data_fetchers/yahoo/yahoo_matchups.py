@@ -57,6 +57,48 @@ def _is_transient_yahoo_service_error(error: Exception) -> bool:
     """Yahoo's temporary user-database outage is not an OAuth revocation."""
     return "udb validation unavailable" in str(error).lower()
 
+
+def _native_guillotine_mode(*sources) -> bool | None:
+    """Resolve explicit Yahoo mode witnesses without inferring a score graph."""
+    values = set()
+    for value in sources:
+        if value is None or pd.isna(value) or str(value).strip() == "":
+            continue
+        token = str(value).strip().lower()
+        if token in {"1", "1.0", "true"}:
+            values.add(True)
+        elif token in {"0", "0.0", "false"}:
+            values.add(False)
+        else:
+            raise ValueError("Yahoo guillotine mode metadata is invalid")
+    if len(values) > 1:
+        raise ValueError("Yahoo guillotine mode metadata is inconsistent")
+    return True in values if values else None
+
+
+def local_yahoo_settings_for_year(local_db, year: int) -> dict | None:
+    """Reuse already-fetched canonical settings for targeted/recovery admission."""
+    if local_db is None or not local_db.table_exists("league_settings"):
+        return None
+    settings = local_db.read_table("league_settings", year=int(year))
+    return None if settings.empty else settings.iloc[0].to_dict()
+
+
+def apply_yahoo_matchup_settings(local_db, frame: pd.DataFrame, year: int) -> None:
+    """Propagate fresh native metadata through the normal local settings table."""
+    mode = frame.attrs.get("provider_is_guillotine")
+    if mode is None or local_db is None or not local_db.table_exists("league_settings"):
+        return
+    settings = local_db.read_table("league_settings", year=int(year))
+    if settings.empty:
+        return
+    existing = settings.get("is_guillotine", pd.Series(None, index=settings.index, dtype=object))
+    if all(_native_guillotine_mode(value) == mode for value in existing):
+        return
+    settings = settings.copy()
+    settings["is_guillotine"] = bool(mode)
+    local_db.save_table("league_settings", settings, year=int(year))
+
 try:
     import yahoo_fantasy_api as yfa
 
@@ -563,6 +605,10 @@ def parse_matchups_from_xml(
                 teams = matchup.findall(".//team")
             if len(teams) != 2:
                 raise RuntimeError("Yahoo matchup team cardinality is not a reciprocal pair")
+    flags = [node.text for node in root.findall(".//league/is_guillotine")]
+    if root.tag == "league":
+        flags.extend(node.text for node in root.findall("./is_guillotine"))
+    provider_is_guillotine = _native_guillotine_mode(*flags) if flags else None
     rows: list[dict[str, Any]] = []
     for matchup in root.findall(".//matchup"):
         wk_node = matchup.find("week")
@@ -597,6 +643,7 @@ def parse_matchups_from_xml(
                 {
                     "week_start": week_start,
                     "provider_final_tie": provider_final_tie,
+                    "provider_is_guillotine": provider_is_guillotine,
                     "week_end": week_end,
                     "matchup_recap_url": matchup_recap_url,
                     "matchup_recap_title": matchup_recap_title,
@@ -627,6 +674,7 @@ def weekly_matchup_data(
     league_key: str | None = None,
     data_dir: Path | None = None,
     logger: RunLogger | None = None,
+    league_settings: dict | None = None,
 ) -> pd.DataFrame:
     """
     Fetch weekly matchup data from Yahoo Fantasy API.
@@ -900,17 +948,40 @@ def weekly_matchup_data(
             (int(row.year), int(row.week), str(row.team_key))
             for row in all_df.loc[final_tie_mask].itertuples()
         ]
+        supplied_settings = (league_settings or {}).get("metadata", league_settings or {})
+        fresh_mode = _native_guillotine_mode(
+            settings.get("is_guillotine"),
+            *all_df.get("provider_is_guillotine", pd.Series(dtype=object)).tolist(),
+        )
+        native_mode = fresh_mode if fresh_mode is not None else _native_guillotine_mode(supplied_settings.get("is_guillotine"))
         # Transient identity-input columns are consumed above; drop so they do
         # not flow into the canonical matchup/schedule schema.
-        all_df = all_df.drop(columns=["manager_nickname_raw", "manager_image_url", "provider_final_tie"], errors="ignore")
+        all_df = all_df.drop(columns=["manager_nickname_raw", "manager_image_url", "provider_final_tie",
+                                      "provider_is_guillotine"], errors="ignore")
 
         # Split: played games (have scores) → matchup table,
         # ALL games (played + unplayed) → schedule table.
         # A game is "played" if either team has non-zero points.
         played_mask = (all_df["team_points"].fillna(0) != 0) | (all_df["opponent_points"].fillna(0) != 0) | final_tie_mask
         played_mask &= pd.to_numeric(all_df["week"], errors="coerce").isin(weeks)
+        if native_mode:
+            from multi_league.core.league_refresh import filter_matchups_to_final_results
+
+            final = filter_matchups_to_final_results(all_df)
+            # A native weekly cut is league-wide. Do not admit a subset of a
+            # survivor graph whose other declared matchup nodes are still live.
+            raw_counts = all_df.groupby("week").size()
+            # Team-week tie witnesses are for canonical downstream rows. Here
+            # the same pair can appear in multiple native nodes; a final tie on
+            # one node must not finalize another node that is still live.
+            row_final = all_df.index.isin(final.index) | final_tie_mask
+            final_counts = all_df.loc[row_final].groupby("week").size()
+            complete_weeks = raw_counts.index[raw_counts.eq(final_counts.reindex(raw_counts.index, fill_value=0))]
+            played_mask = all_df.week.isin(complete_weeks) & all_df.week.isin(fetch_weeks)
         df = all_df[played_mask].copy()
         schedule_df = all_df.copy()  # schedule gets everything
+        if native_mode:
+            schedule_df.attrs["pending_native_weeks"] = tuple(int(w) for w in raw_counts.index.difference(complete_weeks))
 
         played_weeks = df["week"].nunique() if not df.empty else 0
         total_weeks = all_df["week"].nunique()
@@ -950,6 +1021,8 @@ def weekly_matchup_data(
         # Attach schedule_df for the caller to write to the schedule table
         df.attrs["schedule_df"] = schedule_df
         df.attrs["final_tie_team_weeks"] = final_tie_team_weeks
+        if fresh_mode is not None:
+            df.attrs["provider_is_guillotine"] = fresh_mode
 
         return df, failed_weeks
 

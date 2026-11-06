@@ -290,6 +290,11 @@ def _derived_refresh_gaps(
     reader, *, safe_db: str, active_season: int,
 ) -> tuple[set[int], bool]:
     """Find aggregate damage and the tiny active simulation-schedule gap in one scan."""
+    from multi_league.core.league_schedule_contract import declared_regular_season_bye_sql
+
+    bye_sql = declared_regular_season_bye_sql(
+        alias="schedule_row", latest_week_sql="(SELECT latest_finalized_week FROM config)",
+    )
     rows = reader.query(
         "WITH source_keys AS ("
         "SELECT DISTINCT 'player_fantasy_season' AS target_name, "
@@ -333,21 +338,36 @@ def _derived_refresh_gaps(
         "config AS ("
         "SELECT MAX(TRY_CAST(num_teams AS INTEGER)) AS num_teams, "
         "COALESCE(MAX(TRY_CAST(start_week AS INTEGER)), 1) AS regular_season_start, "
-        "MAX(TRY_CAST(playoff_start_week AS INTEGER)) - 1 AS regular_season_end "
+        "MAX(TRY_CAST(playoff_start_week AS INTEGER)) - 1 AS regular_season_end, "
+        "BOOL_OR(json_extract_string(to_json(league_settings), '$.platform') = 'yahoo' AND COALESCE(TRY_CAST("
+        "json_extract_string(to_json(league_settings), '$.is_guillotine') AS BOOLEAN), FALSE)) AS is_guillotine, "
+        "(SELECT COALESCE(MAX(TRY_CAST(week AS INTEGER)), 0) FROM public.matchup "
+        f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
+        "AND team_points IS NOT NULL AND opponent_points IS NOT NULL) AS latest_finalized_week "
         "FROM public.league_settings "
         f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)}), "
         "coverage AS ("
         "SELECT TRY_CAST(week AS INTEGER) AS week, COUNT(*) AS row_count, "
         "COUNT(DISTINCT NULLIF(TRIM(CAST(franchise_id AS VARCHAR)), '')) AS franchise_count, "
-        "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) AS opponent_count "
-        "FROM public.schedule "
+        "COUNT(NULLIF(TRIM(CAST(opponent_franchise_id AS VARCHAR)), '')) + "
+        "COUNT(*) FILTER (WHERE platform IN ('espn', 'yahoo', 'sleeper') AND opponent = 'TBD' "
+        "AND opponent_franchise_id IS NULL "
+        "AND TRY_CAST(week AS INTEGER) > (SELECT latest_finalized_week FROM config)) + "
+        f"COUNT(*) FILTER (WHERE {bye_sql}) AS opponent_count, "
+        f"COUNT(*) FILTER (WHERE {bye_sql}) AS bye_count "
+        "FROM public.schedule AS schedule_row "
         f"WHERE db_name = '{safe_db}' AND TRY_CAST(year AS INTEGER) = {int(active_season)} "
         "AND COALESCE(is_playoffs, FALSE) = FALSE GROUP BY 1), "
         "complete AS ("
         "SELECT COUNT(*) AS complete_weeks FROM coverage c CROSS JOIN config f "
+        "CROSS JOIN LATERAL (SELECT CASE WHEN f.is_guillotine THEN "
+        "GREATEST(2, f.num_teams - GREATEST(0, LEAST(c.week, f.latest_finalized_week + 1) - f.regular_season_start)) "
+        "ELSE f.num_teams END AS expected_teams) expected "
         "WHERE c.week BETWEEN f.regular_season_start AND f.regular_season_end "
-        "AND c.row_count = f.num_teams AND c.franchise_count = f.num_teams "
-        "AND c.opponent_count = f.num_teams) "
+        "AND c.row_count = expected.expected_teams AND c.franchise_count = expected.expected_teams "
+        "AND c.opponent_count = expected.expected_teams "
+        "AND (c.bye_count = 0 OR (expected.expected_teams >= 3 "
+        "AND expected.expected_teams % 2 = 1 AND c.bye_count = 1))) "
         "SELECT (SELECT string_agg(CAST(year AS VARCHAR), ',' ORDER BY year) "
         "FROM aggregate_gaps) AS missing_derived_years, "
         "CASE WHEN f.num_teams IS NULL OR f.regular_season_end IS NULL "

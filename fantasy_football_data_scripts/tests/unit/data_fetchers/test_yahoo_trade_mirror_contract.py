@@ -15,6 +15,7 @@ from multi_league.data_fetchers.yahoo.yahoo_identity import resolve_yahoo_manage
 from multi_league.data_fetchers.yahoo.yahoo_matchups import extract_team
 from multi_league.data_fetchers.yahoo.yahoo_schedules import _derive_schedule_df_from_matchup_df
 from multi_league.transformations.aggregation.homepage_summary import _compute_best_trade
+from multi_league.transformations.aggregation.aggregation_utils import set_active_catalog
 from multi_league.transformations.common.sql_base import SQLEnrichmentsBase
 from multi_league.transformations.matchup.sql_matchup_enrichments import MatchupEnrichmentsMixin
 from multi_league.transformations.transaction.sql_transaction_enrichments import TransactionEnrichmentsMixin
@@ -116,6 +117,9 @@ def yahoo_trade_pipeline(monkeypatch, tmp_path):
         frame["db_name"] = "yahoo_trade_fixture"
 
     conn = duckdb.connect(":memory:")
+    # In-memory helpers intentionally retain a configured named catalog.
+    # This fixture owns its scratch catalog and must restore the caller's state.
+    previous_catalog = set_active_catalog("memory")
     try:
         conn.execute("CREATE SCHEMA public")
         for ddl in (
@@ -147,6 +151,7 @@ def yahoo_trade_pipeline(monkeypatch, tmp_path):
         yield runner
     finally:
         conn.close()
+        set_active_catalog(previous_catalog)
 
 
 def test_hidden_yahoo_trade_identities_preserve_all_eight_mirrored_valuations(yahoo_trade_pipeline):

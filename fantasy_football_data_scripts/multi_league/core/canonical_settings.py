@@ -797,6 +797,7 @@ def _extract_fleaflicker(raw: dict, year: int, league_key: str) -> dict:
         "num_teams": league_size,
         "scoring_type": _detect_scoring_type(_fleaflicker_scoring(rules)),
         "uses_median": False,
+        "is_guillotine": False,
         "draft_type": "snake",
         "playoff_teams": playoff_meta["playoff_teams"],
         "bye_teams": playoff_meta["bye_teams"],
@@ -1054,6 +1055,7 @@ def _extract_mfl(raw: dict, year: int, league_key: str) -> dict:
         "num_teams": num_teams,
         "scoring_type": _detect_scoring_type(scoring),
         "uses_median": False,
+        "is_guillotine": False,
         "draft_type": "snake",
         "playoff_teams": playoff_meta["playoff_teams"],
         "bye_teams": None,
@@ -1156,6 +1158,7 @@ def _extract_yahoo(raw: dict, year: int, league_key: str) -> dict:
         # the pre-~2014 era), 1 = decimal. Default True (decimal) when absent.
         "uses_fractional_points": _to_bool(meta.get("uses_fractional_points", True)),
         "uses_median": _to_bool(meta.get("uses_median_score")),
+        "is_guillotine": _to_bool(meta.get("is_guillotine", False)),
         "draft_type": draft_type,
         # Playoff
         "playoff_teams": playoff_teams,
@@ -1269,6 +1272,7 @@ def _extract_sleeper(raw: dict, year: int, league_key: str) -> dict:
         "num_teams": settings.get("num_teams", raw.get("total_rosters", None)),
         "scoring_type": _detect_scoring_type(scoring),
         "uses_median": _to_bool(settings.get("league_average_match")),
+        "is_guillotine": False,
         "draft_type": draft_type,
         # Playoff
         "playoff_teams": playoff_teams,
@@ -1520,6 +1524,7 @@ def _extract_espn(raw: dict, year: int, league_key: str) -> dict:
         "num_teams": num_teams,
         "scoring_type": _detect_scoring_type(scoring),
         "uses_median": False,
+        "is_guillotine": False,
         "draft_type": draft_type,
         # Playoff
         "playoff_teams": playoff_teams,
@@ -1649,6 +1654,7 @@ def get_schema_keys() -> list[str]:
         "scoring_type",
         "uses_fractional_points",
         "uses_median",
+        "is_guillotine",
         "draft_type",
         "playoff_teams",
         "bye_teams",
@@ -1718,6 +1724,7 @@ def _col_type(key: str) -> str:
         return "DOUBLE"
     if key in (
         "uses_median",
+        "is_guillotine",
         "uses_fractional_points",
         "has_multiweek_championship",
         "uses_playoff_reseeding",

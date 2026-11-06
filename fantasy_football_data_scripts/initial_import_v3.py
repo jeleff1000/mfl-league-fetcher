@@ -612,7 +612,8 @@ def _allow_empty_quick_startup(ctx, db, unplayed_years: set[int], *, league_sett
             before_start = coerce_int(metadata.get("current_week")) is not None and completed_matchup_week(
                 year=year, end_week=coerce_int(metadata.get("end_week")) or 17, metadata=metadata,
             ) < (coerce_int(metadata.get("start_week")) or 1)
-            if not (predraft or before_start) or not _local_schedule_year_has_no_played_rows(db, year):
+            native_unplayed = str(metadata.get("is_guillotine", "")).strip().lower() in {"true", "1"} and before_start
+            if not (predraft or before_start) or (not native_unplayed and not _local_schedule_year_has_no_played_rows(db, year)):
                 return False
     return True
 
@@ -903,6 +904,10 @@ def run_v3_fetcher(
             else:
                 df = result
 
+            if fetcher_name == "matchups" and df is not None:
+                from multi_league.data_fetchers.yahoo.yahoo_matchups import apply_yahoo_matchup_settings
+                apply_yahoo_matchup_settings(db, df, year)
+
             if normalize_fn is not None and df is not None and not df.empty:
                 df = normalize_fn(df, year)
 
@@ -1007,7 +1012,9 @@ def run_targeted_fetch(
     Returns:
         dict with keys: ok (bool), rows (int), failed_weeks (list|None), error (str|None)
     """
-    from multi_league.data_fetchers.yahoo.yahoo_matchups import weekly_matchup_data
+    from multi_league.data_fetchers.yahoo.yahoo_matchups import (
+        apply_yahoo_matchup_settings, local_yahoo_settings_for_year, weekly_matchup_data,
+    )
     from multi_league.data_fetchers.yahoo.yahoo_rosters import fetch_rosters_for_year
     from multi_league.data_fetchers.yahoo.yahoo_draft import fetch_draft_data
     from multi_league.data_fetchers.yahoo.yahoo_transactions import fetch_transactions
@@ -1026,7 +1033,11 @@ def run_targeted_fetch(
         failed_weeks = None
 
         if fetch_name == "matchups":
-            new_df, failed_weeks = weekly_matchup_data(ctx=ctx, year=fetch_year, week=fetch_week)
+            new_df, failed_weeks = weekly_matchup_data(
+                ctx=ctx, year=fetch_year, week=fetch_week,
+                league_settings=local_yahoo_settings_for_year(db, fetch_year),
+            )
+            apply_yahoo_matchup_settings(db, new_df, fetch_year)
         elif fetch_name == "rosters":
             new_df, failed_weeks = fetch_rosters_for_year(
                 ctx=ctx,
@@ -2210,7 +2221,7 @@ def main():
                 log(f"[MANIFEST] Warning: could not clear stale manifests: {e}")
 
         # In-process fetcher imports
-        from multi_league.data_fetchers.yahoo.yahoo_matchups import weekly_matchup_data
+        from multi_league.data_fetchers.yahoo.yahoo_matchups import local_yahoo_settings_for_year, weekly_matchup_data
         from multi_league.data_fetchers.yahoo.yahoo_rosters import fetch_rosters_for_year
         from multi_league.data_fetchers.yahoo.yahoo_draft import fetch_draft_data
         from multi_league.data_fetchers.yahoo.yahoo_transactions import fetch_transactions
@@ -2260,6 +2271,15 @@ def main():
                 df["player"] = df["player"].fillna(df["player_name"])
             return df
 
+        def _fetch_matchup_year(year, oauth):
+            raw_settings = fetched_settings.get(year) or local_yahoo_settings_for_year(db, year)
+            frame, failures = weekly_matchup_data(ctx=ctx, year=year, league_settings=raw_settings)
+            mode = frame.attrs.get("provider_is_guillotine")
+            if mode is not None and year in fetched_settings:
+                raw = fetched_settings[year]
+                raw.get("metadata", raw)["is_guillotine"] = mode
+            return frame, failures
+
         # Fetcher order: matchups(1 call) first, then draft(~12 calls) and
         # rosters(~17 calls) separated by transactions(1 call). Schedules
         # derived from matchup data (0 API calls). Odd/even years swap
@@ -2277,7 +2297,7 @@ def main():
                     "Matchups",
                     log,
                 ),
-                "fetch_year_fn": lambda year, oauth: weekly_matchup_data(ctx=ctx, year=year),
+                "fetch_year_fn": _fetch_matchup_year,
             },
             {
                 "label": "Yahoo Transactions",

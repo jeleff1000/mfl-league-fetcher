@@ -142,6 +142,29 @@ def test_final_playoff_period_allows_declared_bye_without_awarding_win(provider,
 
 
 @pytest.mark.parametrize("archive", [False, True])
+@pytest.mark.parametrize("scoped", [False, True])
+def test_odd_team_regular_bye_keeps_completed_games_without_awarding_a_win(provider, archive, scoped):
+    # ESPN league 1454840497 has seven teams: three final games plus an
+    # UNDECIDED home-only bye, even after that team's players have scored.
+    rows = [
+        schedule_row("AWAY", home=11, away=1, scores=(93.22, 164.06)),
+        schedule_row("UNDECIDED", home=9, away=None, scores=(121.06, 0)),
+        schedule_row("HOME", home=3, away=7, scores=(156.3, 123.4)),
+        schedule_row("HOME", home=2, away=4, scores=(164.86, 106.36)),
+    ]
+    ctx, _, _, _ = provider({1: rows}, archive=archive)
+    frame = espn_matchups.fetch_espn_matchups(ctx, 2026, weeks=[1] if scoped else None)
+
+    assert frame is not None
+    assert set(frame.team_key) == {"1", "2", "3", "4", "7", "9", "11"}
+    assert frame.win.sum() == frame.loss.sum() == 3
+    bye = frame.loc[frame.team_key.eq("9")]
+    assert bye.is_bye_week.tolist() == [1]
+    assert bye.opponent.isna().all()
+    assert bye[["team_points", "opponent_points", "win", "loss", "tie"]].isna().all().all()
+
+
+@pytest.mark.parametrize("archive", [False, True])
 def test_missing_historical_winner_retains_existing_fallback(provider, archive):
     ctx, _, _, _ = provider({1: [schedule_row(None)]}, archive=archive,
                              current_period=1, scoring_period=1)

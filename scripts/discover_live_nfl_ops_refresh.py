@@ -12,17 +12,15 @@ import json
 import sys
 from pathlib import Path
 
-import pandas as pd
-
 ROOT = Path(__file__).resolve().parents[1]
 DATA_SCRIPTS = ROOT / "fantasy_football_data_scripts"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(DATA_SCRIPTS))
 
-from multi_league.data_fetchers.live_nfl_ops_refresh import discover_scheduled_refresh_scope  # noqa: E402
-
-
-SCHEDULE_URL = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.parquet"
+from multi_league.data_fetchers.live_nfl_ops_refresh import (  # noqa: E402
+    discover_scheduled_refresh_scope,
+    load_nflverse_schedule,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -35,7 +33,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    schedule = pd.read_parquet(SCHEDULE_URL)
+    schedule = load_nflverse_schedule()
     scope = discover_scheduled_refresh_scope(schedule, season=args.season, game_date=args.game_date)
     payload: dict[str, object] = {
         "status": "ready" if scope is not None else "no-op",

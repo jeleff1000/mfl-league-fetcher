@@ -10,14 +10,38 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from io import StringIO
+import urllib.request
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from io import BytesIO, StringIO
 from pathlib import Path
+from urllib.error import HTTPError
 
 import duckdb
 import pandas as pd
 import requests
+
+from multi_league.utils.retry import RetryContext
+
+
+SCHEDULE_URL = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.parquet"
+_RETRYABLE_SCHEDULE_STATUS = {429, 500, 502, 503, 504}
+
+
+def load_nflverse_schedule() -> pd.DataFrame:
+    """Read the release schedule with bounded retries on transient HTTP responses."""
+    retry = RetryContext(max_retries=3, max_delay=8, operation="NFLverse schedule download")
+    for _ in retry:
+        try:
+            with urllib.request.urlopen(SCHEDULE_URL, timeout=30) as response:
+                payload = response.read()
+        except HTTPError as error:
+            if error.code not in _RETRYABLE_SCHEDULE_STATUS:
+                raise
+            retry.retry(error)
+        else:
+            break
+    return pd.read_parquet(BytesIO(payload))
 
 
 class RefreshGateError(RuntimeError):

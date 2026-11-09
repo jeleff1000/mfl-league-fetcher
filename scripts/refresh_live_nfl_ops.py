@@ -33,12 +33,12 @@ from multi_league.data_fetchers.live_nfl_ops_refresh import (  # noqa: E402
     assert_complete_ops_artifact,
     assert_ops_schema_compatible,
     finalized_game_scope,
+    load_nflverse_schedule,
     prepare_weekly_facts,
     refresh_local_ops_artifact,
     write_refresh_manifest,
 )
 
-SCHEDULE_URL = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.parquet"
 ROSTER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/rosters/roster_{year}.csv"
 
 
@@ -62,7 +62,7 @@ def fetch_live_refresh_inputs(
     game_date: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Read a finalized NFLverse scope and return canonical-ready fact inputs."""
-    schedule = pd.read_parquet(SCHEDULE_URL)
+    schedule = load_nflverse_schedule()
     normalized_season_type = str(season_type).strip().upper()
     games = finalized_game_scope(
         schedule,

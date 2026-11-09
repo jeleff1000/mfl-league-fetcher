@@ -7,7 +7,7 @@ def test_live_ops_refresh_reads_the_year_scoped_nflverse_roster(monkeypatch):
     from multi_league.data_fetchers import update_nfl_super_table
 
     expected_url = "https://github.com/nflverse/nflverse-data/releases/download/rosters/roster_2026.csv"
-    monkeypatch.setattr(refresh_live_nfl_ops.pd, "read_parquet", lambda _url: pd.DataFrame())
+    monkeypatch.setattr(refresh_live_nfl_ops, "load_nflverse_schedule", pd.DataFrame)
     monkeypatch.setattr(
         refresh_live_nfl_ops,
         "finalized_game_scope",

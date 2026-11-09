@@ -41,8 +41,7 @@ def test_verify_only_has_no_writer_credentials_or_commands():
     assert "secrets.DATABASE_READ_TOKEN" in text
     commands = "\n".join(step.get("run", "") for step in job["steps"])
     assert 'live-nfl-ops-scope-$SOURCE_RUN_ID' in commands
-    assert 'test "$manifest_hash" = "$EXPECTED_CANDIDATE_SHA256"' in commands
-    assert 'test "$actual_hash" = "$EXPECTED_CANDIDATE_SHA256"' in commands
+    assert 'live_nfl_ops_checkpoint.py restore --sha256 "$EXPECTED_CANDIDATE_SHA256"' in commands
     assert "--scope recovery/scope/refresh_scope.json" in commands
     assert "--candidate recovery/ops_nfl.duckdb" in commands
     assert "date --date=yesterday" not in commands

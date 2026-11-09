@@ -123,6 +123,17 @@ def test_materializer_discovers_precomputed_scoring_columns_from_source_schema()
     assert corrected != original
 
 
+def test_materializer_keeps_the_original_timestamp_when_retrying_identical_stats():
+    with duckdb.connect(":memory:") as connection:
+        _source(connection)
+        reader, writer = ConnectionReader(connection), ConnectionWriter(connection)
+        query = "SELECT revision, refreshed_at FROM accounts.league_update_nfl_revisions"
+        materialize_nfl_revisions(reader, writer, year=2026, week=1, official_week_witness=_witness)
+        first = connection.execute(query).fetchall()
+        materialize_nfl_revisions(reader, writer, year=2026, week=1, official_week_witness=_witness)
+        assert connection.execute(query).fetchall() == first
+
+
 @pytest.mark.parametrize("rank_column", ["rank_qb_4pt", "rank_alltime_qb_4pt"])
 def test_materializer_changes_revision_for_rank_only_correction(rank_column):
     """Rank-only view corrections must reach the existing compact UI receipt."""

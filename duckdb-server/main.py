@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 import threading
 import time
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, nullcontext, suppress
 from pathlib import Path
 from typing import Any
 
@@ -199,6 +199,7 @@ QUERY_RW_STARTUP_WAIT_SECONDS = _env_float(
 
 _query_semaphore: asyncio.Semaphore | None = None
 _merge_lock: asyncio.Lock | None = None
+_ops_nfl_replace_lock: asyncio.Lock | None = None
 _delta_publish_semaphore: asyncio.Semaphore | None = None
 _delta_publish_inflight = 0
 _delta_publish_active: dict[str, dict[str, Any]] = {}
@@ -950,7 +951,7 @@ async def shutdown_database(*, deadline: float) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _query_semaphore, _merge_lock, _delta_publish_semaphore, _delta_publish_inflight
+    global _query_semaphore, _merge_lock, _ops_nfl_replace_lock, _delta_publish_semaphore, _delta_publish_inflight
     global _ops_read_count, _ops_write_count, _runtime_contract, _storage_health
     _state["status"] = "starting"
     data_dir = Path(os.environ.get("DATA_DIR", "/data"))
@@ -968,6 +969,7 @@ async def lifespan(app: FastAPI):
         _ops_write_count = 0
         _query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
         _merge_lock = asyncio.Lock()
+        _ops_nfl_replace_lock = asyncio.Lock()
         _delta_publish_semaphore = asyncio.Semaphore(MAX_INFLIGHT_DELTA_PUBLISHES)
         with _delta_publish_active_lock:
             _delta_publish_inflight = 0
@@ -5109,6 +5111,14 @@ async def replace_db(
     if x_db_name not in ("___leagues", "___ops", "___ops_nfl"):
         raise HTTPException(status_code=400, detail="Invalid db_name")
 
+    # Serialize reuse of the NFL staging filename, including when the caller
+    # timed out but the original upload is still finishing on the server.
+    lock = _ops_nfl_replace_lock if x_db_name == "___ops_nfl" else nullcontext()
+    async with lock:
+        return await _replace_db_file(file, x_db_name, x_content_sha256)
+
+
+async def _replace_db_file(file: UploadFile, x_db_name: str, x_content_sha256: str | None) -> dict:
     logger.info("Starting DB replace: %s", x_db_name)
     data_dir = Path(os.environ.get("DATA_DIR", "/data"))
     incoming_path = data_dir / f"{x_db_name}.duckdb.incoming"
@@ -5133,6 +5143,21 @@ async def replace_db(
 
     # Serialize write operations (replace-db and merge-league share the lock)
     async with _merge_lock:
+        live_path = data_dir / f"{x_db_name}.duckdb"
+        if (x_db_name == "___ops_nfl" and x_content_sha256 and live_path.is_file()
+                and live_path.stat().st_size == written):
+            try:
+                await asyncio.to_thread(verify_checksum, live_path, x_content_sha256)
+            except SwapError:
+                pass  # Same length, different verified content.
+            else:
+                incoming_path.unlink()
+                if _state["status"] in {"draining", "recovery_failed"}:
+                    await _reopen_pool_after_write(f"{x_db_name} replace recovery")
+                    _set_serving_or_ops_writing()
+                logger.info("Skipping identical DB replace: %s", x_db_name)
+                return {"status": "already_current", "db_name": x_db_name}
+
         # Drain: wait for in-flight queries to finish
         logger.info("Draining queries (active=%d)", db.get_active_count())
         _state["status"] = "draining"
@@ -5225,7 +5250,8 @@ async def compact_db(request: Request, x_db_name: str = Header(...)):
         }
 
     logger.info("Starting DB compact: %s", x_db_name)
-    async with _merge_lock:
+    lock = _ops_nfl_replace_lock if x_db_name == "___ops_nfl" else nullcontext()
+    async with lock, _merge_lock:
         _state["status"] = "draining"
         elapsed = 0
         while db.get_active_count() > 0 and elapsed < SOFT_DRAIN_TIMEOUT:

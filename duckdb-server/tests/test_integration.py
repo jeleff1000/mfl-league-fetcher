@@ -2158,6 +2158,41 @@ def test_full_database_upload_limit_accommodates_verified_ops_artifacts():
     assert main_mod.MAX_UPLOAD_BYTES >= 8 * 1024 * 1024 * 1024
 
 
+@pytest.mark.parametrize("reopen_fails", [False, True])
+def test_identical_ops_nfl_upload_does_not_swap_twice(data_dir, client, monkeypatch, reopen_fails):
+    import hashlib
+    import main as main_mod
+
+    path = data_dir / "candidate.duckdb"
+    with duckdb.connect(str(path)) as candidate:
+        candidate.execute("CREATE TABLE test_stats AS SELECT 42 AS stat")
+    body = path.read_bytes()
+    headers = {
+        "Authorization": "Bearer test-admin",
+        "x-db-name": "___ops_nfl",
+        "x-content-sha256": hashlib.sha256(body).hexdigest(),
+    }
+    reopen = main_mod._reopen_pool_after_write
+
+    async def lose_reopen(_context):
+        raise main_mod.HTTPException(status_code=503, detail="fixture lost pool reopen")
+
+    if reopen_fails:
+        monkeypatch.setattr(main_mod, "_reopen_pool_after_write", lose_reopen)
+    files = {"file": ("db.duckdb", body)}
+    first = client.post("/replace-db", headers=headers, files=files)
+    assert first.status_code == (503 if reopen_fails else 200), first.text
+    if not reopen_fails:
+        assert first.json()["status"] == "swapped"
+
+    monkeypatch.setattr(main_mod, "_reopen_pool_after_write", reopen)
+    second = client.post("/replace-db", headers=headers, files=files)
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "already_current"
+    assert client.get("/ready").status_code == 200
+    assert not (data_dir / "___ops_nfl.duckdb.prev").exists()
+
+
 def test_replace_db_rejects_invalid_name(client):
     resp = client.post(
         "/replace-db",

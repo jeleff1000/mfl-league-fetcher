@@ -24,6 +24,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Verify idempotent NFL database replacement
+        run: |
+          python -m pip install --disable-pip-version-check -r duckdb-server/requirements.txt
+          python -m pytest duckdb-server/tests/test_integration.py -k 'replace_db or identical_ops_nfl_upload' -q
+
       - name: Install flyctl
         run: |
           curl -sL https://fly.io/install.sh | sh

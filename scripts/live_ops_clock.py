@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A small Eastern-time clock which only dispatches the public Ops worker."""
+"""Track the daily NFL refresh through its Fly verification receipt."""
 
 from __future__ import annotations
 
@@ -18,8 +18,12 @@ from zoneinfo import ZoneInfo
 EASTERN = ZoneInfo("America/New_York")
 REPOSITORY = "jeleff1000/mfl-league-fetcher"
 EVENT = "live-nfl-ops-refresh"
+ALERT_EVENT = "live-nfl-ops-refresh-exhausted"
 PROBE_EVENT = "live-nfl-ops-clock-probe"
 SEASON_MONTHS = {1, 2, 9, 10, 11, 12}
+RETRY_DELAYS = (timedelta(minutes=10), timedelta(minutes=30))
+DISPATCH_GRACE = timedelta(minutes=1)
+RUN_CREATION_LIMIT = timedelta(minutes=10)
 
 
 def instant(value: str) -> datetime:
@@ -103,6 +107,26 @@ class GitHub:
                 return False
             page += 1
 
+    def clock_runs(self, key: str, due: datetime, *, alert: bool = False) -> list[dict]:
+        workflow = "notify_live_nfl_ops.yml" if alert else "refresh_live_nfl_ops.yml"
+        params = urllib.parse.urlencode({
+            "event": "repository_dispatch",
+            "created": ">=" + due.astimezone(timezone.utc).isoformat(),
+            "per_page": 100,
+        })
+        runs = self.request("GET", f"actions/workflows/{workflow}/runs?{params}")["workflow_runs"]
+        return [run for run in runs if key in run.get("display_title", "").split()]
+
+    def has_receipt(self, run: dict, game_date: str) -> bool:
+        name = f"live-nfl-ops-complete-{game_date}-{run['run_attempt']}"
+        result = self.request("GET", f"actions/runs/{run['id']}/artifacts?name={name}")
+        return any(artifact["name"] == name and not artifact["expired"] for artifact in result["artifacts"])
+
+    def check_receipt_access(self) -> None:
+        result = self.request("GET", "actions/workflows/refresh_live_nfl_ops.yml/runs?per_page=1")
+        run = result["workflow_runs"][0]
+        self.request("GET", f"actions/runs/{run['id']}/artifacts?per_page=1")
+
 
 class Clock:
     def __init__(self, state_path: Path, github: GitHub):
@@ -154,14 +178,94 @@ class Clock:
         return True
 
     def pending_due(self, now: datetime) -> datetime:
+        if "refresh" in self.state:
+            return instant(self.state["refresh"]["due"])
         if self.state.get("pending_due"):
             return instant(self.state["pending_due"])
         key = self.state.get("acknowledged_key", "")
         if key.startswith("ops-"):
             following = due_on(date.fromisoformat(key.removeprefix("ops-")) + timedelta(days=1))
+            while following.month not in SEASON_MONTHS:
+                following = due_on(following.date() + timedelta(days=1))
             if following <= now:
                 return following
         return latest_due(now)
+
+    def refresh(self, due: datetime, now: datetime) -> None:
+        payload = payload_for(due)
+        fields = payload["client_payload"]
+        key, game_date = fields["dispatch_key"], fields["game_date"]
+        if self.state.get("acknowledged_key") == key:
+            return
+        if "refresh" not in self.state:
+            self.state["refresh"] = {"due": due.isoformat(), "attempt": 1}
+            self.save()
+        refresh = self.state["refresh"]
+        runs = self.github.clock_runs(key, due)
+        if any(run["status"] != "completed" for run in runs):
+            return
+        if any(self.github.has_receipt(run, game_date) for run in runs):
+            self.finish_refresh(key, now)
+            return
+
+        attempt = refresh["attempt"]
+        if attempt > len(RETRY_DELAYS) + 1:
+            alerts = self.github.clock_runs(key, due, alert=True)
+            if any(run["conclusion"] == "success" for run in alerts):
+                self.finish_refresh(key, now)
+                return
+            if any(run["status"] != "completed" for run in alerts):
+                return
+            last_alert = refresh.get("alert_sent_at")
+            if last_alert and now - instant(last_alert) < RUN_CREATION_LIMIT:
+                return
+            refresh["alert_sent_at"] = now.isoformat()
+            self.save()
+            self.github.request("POST", "dispatches", {
+                "event_type": ALERT_EVENT,
+                "client_payload": {
+                    "dispatch_key": key,
+                    "game_date": game_date,
+                    "run_ids": sorted({run["id"] for run in runs}),
+                },
+            })
+            return
+
+        if "retry_at" in refresh and now < instant(refresh["retry_at"]):
+            return
+        slot = [run for run in runs if f"attempt-{attempt}" in run["display_title"].split()]
+        # A legacy dispatch interrupted by the clock upgrade still owns attempt one.
+        if attempt == 1:
+            slot.extend(run for run in runs if " attempt-" not in run["display_title"])
+        started = refresh.get("slot_started_at")
+        if slot or (started and now - instant(started) >= RUN_CREATION_LIMIT):
+            failed_at = max(instant(run["updated_at"]) for run in slot) if slot else now
+            self.state["refresh"] = {"due": due.isoformat(), "attempt": attempt + 1}
+            if attempt <= len(RETRY_DELAYS):
+                retry_at = failed_at + RETRY_DELAYS[attempt - 1]
+                self.state["refresh"]["retry_at"] = retry_at.isoformat()
+            self.save()
+            print(json.dumps({"dispatch_key": key, "failed_attempt": attempt, **self.state["refresh"]}), flush=True)
+            if attempt > len(RETRY_DELAYS) or now >= failed_at + RETRY_DELAYS[attempt - 1]:
+                self.refresh(due, now)
+            return
+        sent_at = refresh.get("sent_at")
+        if refresh.get("accepted") or (sent_at and now - instant(sent_at) < DISPATCH_GRACE):
+            return
+        refresh.setdefault("slot_started_at", now.isoformat())
+        refresh["sent_at"] = now.isoformat()
+        self.save()
+        fields["refresh_attempt"] = attempt
+        self.github.request("POST", "dispatches", payload)
+        refresh["accepted"] = True
+        self.save()
+        print(json.dumps(fields), flush=True)
+
+    def finish_refresh(self, key: str, now: datetime) -> None:
+        for field in ("refresh", "pending_key", "pending_since", "pending_due"):
+            self.state.pop(field, None)
+        self.state.update(acknowledged_key=key, acknowledged_at=now.isoformat())
+        self.save()
 
 
 def main() -> None:
@@ -171,13 +275,25 @@ def main() -> None:
     args = parser.parse_args()
     github = GitHub(os.environ["GITHUB_DISPATCH_TOKEN"])
     clock = Clock(args.state, github)
-    print(json.dumps({"next_scheduled_for": next_due(datetime.now(timezone.utc)).isoformat(), "probe": bool(args.probe_at), "revision": os.environ.get("CLOCK_REVISION")}), flush=True)
+    startup = {"next_scheduled_for": next_due(datetime.now(timezone.utc)).isoformat(),
+               "probe": bool(args.probe_at), "revision": os.environ.get("CLOCK_REVISION")}
+    if not args.probe_at:
+        try:
+            github.check_receipt_access()
+            startup["github_receipt_access"] = True
+        except (RuntimeError, OSError) as exc:
+            startup["github_receipt_access"] = False
+            startup["startup_error"] = str(exc)
+    print(json.dumps(startup), flush=True)
     while True:
         now = datetime.now(timezone.utc)
         due = args.probe_at or clock.pending_due(now)
-        if now >= due and (args.probe_at or due.month in SEASON_MONTHS):
+        if now >= due and (args.probe_at or "refresh" in clock.state or due.month in SEASON_MONTHS):
             try:
-                clock.dispatch(due, probe=bool(args.probe_at))
+                if args.probe_at:
+                    clock.dispatch(due, probe=True)
+                else:
+                    clock.refresh(due, now)
                 if args.probe_at and clock.state.get("probe", {}).get("acknowledged_key"):
                     return
             except (RuntimeError, OSError) as exc:
@@ -185,7 +301,8 @@ def main() -> None:
                 time.sleep(10)
                 continue
         wake_at = args.probe_at or next_due(now)
-        time.sleep(min(5, max(0.1, (wake_at - now).total_seconds())))
+        poll_seconds = 30 if "refresh" in clock.state else 5
+        time.sleep(min(poll_seconds, max(0.1, (wake_at - now).total_seconds())))
 
 
 if __name__ == "__main__":

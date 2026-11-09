@@ -1,6 +1,6 @@
 name: Refresh Live NFL Ops
 run-name: >-
-  Refresh Live NFL Ops — ${{ (github.event_name == 'repository_dispatch' || github.event_name == 'schedule') && 'scheduled' || inputs.game_date || 'manual' }} ${{ github.event.client_payload.dispatch_key || '' }}
+  Refresh Live NFL Ops — ${{ (github.event_name == 'repository_dispatch' || github.event_name == 'schedule') && 'scheduled' || inputs.game_date || 'manual' }} ${{ github.event.client_payload.dispatch_key || '' }} ${{ github.event.client_payload.refresh_attempt && format('attempt-{0}', github.event.client_payload.refresh_attempt) || '' }}
 
 # Track 1 only: this workflow builds a complete local ___ops_nfl replacement
 # from finalized NFLverse data. It never imports, reads, writes, or rebuilds
@@ -81,6 +81,9 @@ concurrency:
 jobs:
   refresh:
     if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.revisions_only && !inputs.verify_only) }}
+    # The clock owns retries and the terminal alert. Missing completion
+    # receipts still count as failed attempts even when GitHub reports success.
+    continue-on-error: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.refresh_attempt != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 225
     env:
@@ -89,6 +92,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       BASELINE_PATH: ${{ github.workspace }}/baseline/ops_nfl.duckdb
       OUTPUT_PATH: ${{ github.workspace }}/output/ops_nfl.duckdb
+      CHECKPOINT_STATE: ${{ github.workspace }}/nfl-checkpoint.json
+      CLOCK_DISPATCH_KEY: ${{ github.event.client_payload.dispatch_key || '' }}
+      CLOCK_REFRESH_ATTEMPT: ${{ github.event.client_payload.refresh_attempt || '' }}
+      DISPATCH_GAME_DATE: ${{ github.event.client_payload.game_date || '' }}
 
     steps:
       - name: Record clock and runner timestamps
@@ -120,6 +127,8 @@ jobs:
             --event "$EVENT_NAME" \
               --scheduled-for "$CLOCK_SCHEDULED_FOR" \
               --dispatch-key "$CLOCK_DISPATCH_KEY" \
+              --refresh-attempt "$CLOCK_REFRESH_ATTEMPT" \
+              --game-date "$DISPATCH_GAME_DATE" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Set up Python
@@ -131,6 +140,13 @@ jobs:
       - name: Install refresh dependencies
         if: ${{ steps.boundary.outputs.should_run == 'true' }}
         run: python -m pip install --disable-pip-version-check pandas duckdb pyarrow requests
+
+      - name: Select durable baseline or same-date checkpoint
+        id: checkpoint
+        if: ${{ steps.boundary.outputs.should_run == 'true' && github.event_name == 'repository_dispatch' }}
+        run: |
+          python code/scripts/live_nfl_ops_checkpoint.py select --state "$CHECKPOINT_STATE" \
+            --key "$CLOCK_DISPATCH_KEY" --scope code/refresh_scope.json
 
       - name: Resolve final live refresh scope
         id: scope
@@ -146,11 +162,12 @@ jobs:
           DISPATCH_GAME_DATE: ${{ github.event.client_payload.game_date || '' }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "repository_dispatch" || "$EVENT_NAME" == "schedule" ]]; then
+          if [[ -f refresh_scope.json ]]; then
+            test "$(jq -r '.game_date' refresh_scope.json)" = "$DISPATCH_GAME_DATE"
+          elif [[ "$EVENT_NAME" == "repository_dispatch" || "$EVENT_NAME" == "schedule" ]]; then
             default_game_date=$(TZ=America/New_York date --date=yesterday +%F)
             game_date="${DISPATCH_GAME_DATE:-$default_game_date}"
             python scripts/discover_live_nfl_ops_refresh.py \
-              --season 2026 \
               --game-date "$game_date" \
               --output refresh_scope.json
           else
@@ -193,44 +210,32 @@ jobs:
 
       - name: Upload refresh scope receipt
         if: ${{ always() && steps.boundary.outputs.should_run == 'true' }}
+        continue-on-error: ${{ github.event.client_payload.refresh_attempt != null }}
         uses: actions/upload-artifact@v4
         with:
           name: live-nfl-ops-scope-${{ github.run_id }}
+          overwrite: true
           path: code/refresh_scope.json
           if-no-files-found: warn
           retention-days: 30
 
       - name: Reconstruct and verify the durable baseline
-        if: ${{ steps.scope.outputs.should_refresh == 'true' }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.checkpoint.outputs.mode != 'resume' && steps.checkpoint.outputs.mode != 'verify' }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p baseline parts
-          gh release download "$BASELINE_RELEASE_TAG" \
-            --repo "$OPS_REPOSITORY" \
-            --pattern 'ops_nfl.duckdb.part-*' \
-            --dir parts
-          gh release download "$BASELINE_RELEASE_TAG" \
-            --repo "$OPS_REPOSITORY" \
-            --pattern 'ops_nfl.duckdb.sha256' \
-            --dir baseline
-          mapfile -t part_files < <(find parts -maxdepth 1 -type f -name 'ops_nfl.duckdb.part-*' | LC_ALL=C sort)
-          test "${#part_files[@]}" -gt 0
-          cat "${part_files[@]}" > "$BASELINE_PATH"
-          # The release manifest retains the artifact's original
-          # output/ops_nfl.duckdb filename. Compare its digest to the file we
-          # just reconstructed at BASELINE_PATH instead of resolving that old
-          # filename relative to the runner workspace.
-          expected_hash=$(awk '{print $1}' baseline/ops_nfl.duckdb.sha256)
-          actual_hash=$(sha256sum "$BASELINE_PATH" | awk '{print $1}')
-          if [[ -z "$expected_hash" || "$actual_hash" != "$expected_hash" ]]; then
-            echo "::error::durable baseline SHA-256 mismatch"
-            exit 1
+          if [[ ! -f "$CHECKPOINT_STATE" ]]; then
+            python code/scripts/live_nfl_ops_checkpoint.py select --state "$CHECKPOINT_STATE"
           fi
-          rm -rf parts
+          python code/scripts/live_nfl_ops_checkpoint.py restore --state "$CHECKPOINT_STATE" --database "$BASELINE_PATH"
+
+      - name: Restore the exact saved candidate for this date
+        if: ${{ steps.checkpoint.outputs.mode == 'resume' && steps.scope.outputs.should_refresh == 'true' }}
+        run: |
+          python code/scripts/live_nfl_ops_checkpoint.py restore --state "$CHECKPOINT_STATE" --database "$OUTPUT_PATH"
 
       - name: Build and verify the local eight-table candidate
-        if: ${{ steps.scope.outputs.should_refresh == 'true' }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.checkpoint.outputs.mode != 'resume' && steps.checkpoint.outputs.mode != 'verify' }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -251,33 +256,15 @@ jobs:
           python scripts/refresh_live_nfl_ops.py "${refresh_args[@]}"
 
       - name: Publish the verified candidate as the next durable baseline
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.checkpoint.outputs.mode != 'resume' && steps.checkpoint.outputs.mode != 'verify' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p publish
-          split --bytes=1800M --numeric-suffixes=0 --suffix-length=2 \
-            "$OUTPUT_PATH" publish/ops_nfl.duckdb.part-
-          sha256sum "$OUTPUT_PATH" > publish/ops_nfl.duckdb.sha256
-          if gh release view "$BASELINE_RELEASE_TAG" --repo "$OPS_REPOSITORY" >/dev/null 2>&1; then
-            # `gh release view --json id` returns a GraphQL node ID.  The
-            # REST asset-list endpoint needs the numeric REST release ID.
-            release_id=$(gh api "repos/$OPS_REPOSITORY/releases/tags/$BASELINE_RELEASE_TAG" --jq .id)
-            while read -r asset_id; do
-              test -z "$asset_id" || gh api --method DELETE \
-                "repos/$OPS_REPOSITORY/releases/assets/$asset_id"
-            done < <(gh api --paginate "repos/$OPS_REPOSITORY/releases/$release_id/assets" \
-              --jq '.[] | select(.name == "ops_nfl.duckdb.sha256" or (.name | startswith("ops_nfl.duckdb.part-"))) | .id')
-          else
-            gh release create "$BASELINE_RELEASE_TAG" --repo "$OPS_REPOSITORY" \
-              --target main --title "Current live NFL ops baseline" \
-              --notes "Verified full ___ops_nfl baseline for the live refresh worker."
-          fi
-          gh release upload "$BASELINE_RELEASE_TAG" publish/ops_nfl.duckdb.part-* \
-            publish/ops_nfl.duckdb.sha256 --repo "$OPS_REPOSITORY"
+          python code/scripts/live_nfl_ops_checkpoint.py publish --database "$OUTPUT_PATH" \
+            --scope code/refresh_scope.json --key "$CLOCK_DISPATCH_KEY"
 
       - name: Atomically promote the verified ops artifact
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.checkpoint.outputs.mode != 'verify' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code:${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -301,14 +288,14 @@ jobs:
           receipt = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
           promote_complete_artifact(
               output,
-              baseline,
+              baseline if baseline.exists() else output,
               receipt["table_counts"],
               receipt["schema_columns"],
           )
           PY
 
       - name: Materialize compact league-update NFL revisions
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.checkpoint.outputs.mode != 'verify' && steps.scope.outputs.refresh_season_type == 'REG' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -325,27 +312,48 @@ jobs:
       - name: Verify promoted Fly receipt
         if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
         env:
+          CHECKPOINT_MODE: ${{ steps.checkpoint.outputs.mode }}
           PYTHONPATH: ${{ github.workspace }}/code:${{ github.workspace }}/code/fantasy_football_data_scripts
           DATABASE_BACKEND: fly
           DATABASE_SERVER_URL: ${{ secrets.DATABASE_SERVER_URL }}
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
         run: |
           set -euo pipefail
+          candidate=(--candidate "$OUTPUT_PATH")
+          if [[ "$CHECKPOINT_MODE" == "verify" ]]; then
+            candidate=(--checkpoint "$CHECKPOINT_STATE")
+          fi
           python code/scripts/verify_live_nfl_ops_receipt.py \
             --scope code/refresh_scope.json \
-            --candidate "$OUTPUT_PATH" \
+            "${candidate[@]}" \
             --output output/ops_nfl.fly-receipt.json
 
       - name: Upload the local validation receipt
         if: ${{ always() && steps.scope.outputs.should_refresh == 'true' }}
+        continue-on-error: ${{ github.event.client_payload.refresh_attempt != null }}
         uses: actions/upload-artifact@v4
         with:
           name: live-nfl-ops-receipt-${{ steps.scope.outputs.refresh_year }}-w${{ steps.scope.outputs.refresh_week }}-${{ github.run_id }}
+          overwrite: true
           path: |
             output/ops_nfl.manifest.json
             output/ops_nfl.fly-receipt.json
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Upload clock completion receipt
+        if: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.refresh_attempt && steps.scope.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-nfl-ops-complete-${{ github.event.client_payload.game_date }}-${{ github.run_attempt }}
+          path: ${{ steps.scope.outputs.should_refresh == 'true' && 'output/ops_nfl.fly-receipt.json' || 'code/refresh_scope.json' }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Retain the latest two durable candidates
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || inputs.apply) }}
+        continue-on-error: true
+        run: python code/scripts/live_nfl_ops_checkpoint.py prune
 
   materialize-revisions-only:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.revisions_only && !inputs.verify_only }}
@@ -433,20 +441,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p recovery/scope recovery/parts
+          mkdir -p recovery/scope
           gh run download "$SOURCE_RUN_ID" --repo "$OPS_REPOSITORY" \
             --name "live-nfl-ops-scope-$SOURCE_RUN_ID" --dir recovery/scope
-          gh release download "$BASELINE_RELEASE_TAG" --repo "$OPS_REPOSITORY" \
-            --pattern 'ops_nfl.duckdb.part-*' --pattern 'ops_nfl.duckdb.sha256' \
-            --dir recovery/parts
-          manifest_hash=$(awk '{print $1}' recovery/parts/ops_nfl.duckdb.sha256)
-          test "$manifest_hash" = "$EXPECTED_CANDIDATE_SHA256"
-          mapfile -t part_files < <(find recovery/parts -maxdepth 1 -type f -name 'ops_nfl.duckdb.part-*' | LC_ALL=C sort)
-          test "${#part_files[@]}" -gt 0
-          cat "${part_files[@]}" > recovery/ops_nfl.duckdb
-          actual_hash=$(sha256sum recovery/ops_nfl.duckdb | awk '{print $1}')
-          test "$actual_hash" = "$EXPECTED_CANDIDATE_SHA256"
-          rm -rf recovery/parts
+          python scripts/live_nfl_ops_checkpoint.py restore --sha256 "$EXPECTED_CANDIDATE_SHA256" \
+            --database recovery/ops_nfl.duckdb
 
       - name: Verify saved candidate through Fly read path
         env:

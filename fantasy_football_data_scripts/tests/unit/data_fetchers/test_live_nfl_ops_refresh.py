@@ -143,7 +143,7 @@ def test_finalized_game_scope_admits_a_scored_postseason_game_on_the_requested_d
     assert games["game_id"].tolist() == ["2026_19_NE_SEA"]
 
 
-def test_discover_scheduled_refresh_scope_returns_none_without_a_final_game():
+def test_discover_scheduled_refresh_scope_retries_unfinalized_games_but_skips_empty_dates():
     schedule = pd.DataFrame(
         [
             {
@@ -160,17 +160,20 @@ def test_discover_scheduled_refresh_scope_returns_none_without_a_final_game():
         ]
     )
 
-    assert discover_scheduled_refresh_scope(schedule, season=2026, game_date="2026-09-10") is None
+    assert discover_scheduled_refresh_scope(schedule, season=2026, game_date="2026-09-11") is None
+    with pytest.raises(RefreshGateError, match="not final"):
+        discover_scheduled_refresh_scope(schedule, season=2026, game_date="2026-09-10")
 
 
-def test_discover_scheduled_refresh_scope_returns_one_exact_ready_work_item():
+@pytest.mark.parametrize(("game_type", "season_type"), [("REG", "REG"), ("POST", "POST"), ("WC", "POST")])
+def test_discover_scheduled_refresh_scope_returns_one_exact_ready_work_item(game_type, season_type):
     schedule = pd.DataFrame(
         [
             {
                 "game_id": "2026_01_NE_SEA",
                 "season": 2026,
                 "week": 1,
-                "game_type": "REG",
+                "game_type": game_type,
                 "gameday": "2026-09-10",
                 "away_team": "NE",
                 "away_score": 10,
@@ -194,7 +197,7 @@ def test_discover_scheduled_refresh_scope_returns_one_exact_ready_work_item():
     assert discover_scheduled_refresh_scope(schedule, season=2026, game_date="2026-09-10") == {
         "year": 2026,
         "week": 1,
-        "season_type": "REG",
+        "season_type": season_type,
         "game_date": "2026-09-10",
         "game_ids": ["2026_01_NE_SEA"],
     }

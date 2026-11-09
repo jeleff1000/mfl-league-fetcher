@@ -110,6 +110,7 @@ REQUIRED_OPS_TABLES = (
 )
 
 VALID_LIVE_GAME_TYPES = frozenset({"REG", "POST"})
+NFLVERSE_POSTSEASON_ROUNDS = dict.fromkeys(("WC", "DIV", "CON", "SB"), "POST")
 
 # The live fetch plane converts NFLverse codes to the historical/stathead
 # vocabulary.  Schedule releases retain NFLverse's codes, so normalize only
@@ -161,6 +162,10 @@ def _normalized_live_game_types(season_types: tuple[str, ...]) -> frozenset[str]
     return allowed
 
 
+def _schedule_season_type(schedule: pd.DataFrame) -> pd.Series:
+    return schedule["game_type"].astype(str).str.strip().str.upper().replace(NFLVERSE_POSTSEASON_ROUNDS)
+
+
 def finalized_game_scope(
     schedule: pd.DataFrame,
     *,
@@ -185,7 +190,7 @@ def finalized_game_scope(
     scoped = schedule.loc[
         (pd.to_numeric(schedule["season"], errors="coerce") == int(year))
         & (pd.to_numeric(schedule["week"], errors="coerce") == int(week))
-        & (schedule["game_type"].astype(str).str.strip().str.upper().isin(allowed_types))
+        & _schedule_season_type(schedule).isin(allowed_types)
     ].copy()
     scoped["away_score"] = pd.to_numeric(scoped["away_score"], errors="coerce")
     scoped["home_score"] = pd.to_numeric(scoped["home_score"], errors="coerce")
@@ -226,24 +231,23 @@ def discover_scheduled_refresh_scope(
     if missing:
         raise RefreshGateError(f"schedule missing required columns: {', '.join(missing)}")
     target_date = _parse_refresh_game_date(game_date)
-    scoped = schedule.loc[
+    season_types = _schedule_season_type(schedule)
+    scoped = schedule.assign(season_type=season_types).loc[
         (pd.to_numeric(schedule["season"], errors="coerce") == int(season))
-        & (schedule["game_type"].astype(str).str.strip().str.upper().isin(VALID_LIVE_GAME_TYPES))
+        & season_types.isin(VALID_LIVE_GAME_TYPES)
     ].copy()
-    scoped["away_score"] = pd.to_numeric(scoped["away_score"], errors="coerce")
-    scoped["home_score"] = pd.to_numeric(scoped["home_score"], errors="coerce")
-    scoped = scoped.loc[scoped["away_score"].notna() & scoped["home_score"].notna()].copy()
     if scoped.empty:
-        return None
+        raise RefreshGateError(f"schedule has no REG or POST games for season {season}")
 
     dates = pd.to_datetime(scoped["gameday"], errors="coerce")
     if dates.isna().any():
-        raise RefreshGateError("finalized schedule has an invalid game date")
+        raise RefreshGateError("schedule has an invalid game date")
     scoped["game_date"] = dates.dt.strftime("%Y-%m-%d")
-    scoped["season_type"] = scoped["game_type"].astype(str).str.strip().str.upper()
     scoped = scoped.loc[scoped["game_date"] == target_date].copy()
     if scoped.empty:
         return None
+    if scoped[["away_score", "home_score"]].apply(pd.to_numeric, errors="coerce").isna().any().any():
+        raise RefreshGateError(f"scheduled NFL games are not final for {target_date}")
 
     scoped["_week"] = pd.to_numeric(scoped["week"], errors="coerce")
     if scoped["_week"].isna().any():

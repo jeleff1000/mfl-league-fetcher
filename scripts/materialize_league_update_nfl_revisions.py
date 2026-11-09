@@ -220,6 +220,7 @@ def materialize_nfl_revisions(
         ) + ")"
         for row in revisions
     )
+    current_games = ", ".join(_literal(str(row["game_key"])) for row in revisions)
     writer.execute(
         f"""
         BEGIN TRANSACTION;
@@ -233,10 +234,17 @@ def materialize_nfl_revisions(
             refreshed_at TIMESTAMP NOT NULL,
             PRIMARY KEY (season, week, game_key)
         );
-        DELETE FROM {target} WHERE season = {int(year)} AND week = {int(week)};
+        DELETE FROM {target} WHERE season = {int(year)} AND week = {int(week)}
+            AND game_key NOT IN ({current_games});
         INSERT INTO {target}
             (season, week, game_key, revision, schema_version, refreshed_at)
-        VALUES {values};
+        VALUES {values}
+        ON CONFLICT (season, week, game_key) DO UPDATE
+        SET revision = excluded.revision,
+            schema_version = excluded.schema_version,
+            refreshed_at = excluded.refreshed_at
+        WHERE {target.rsplit(".", 1)[-1]}.revision <> excluded.revision
+           OR {target.rsplit(".", 1)[-1]}.schema_version <> excluded.schema_version;
         COMMIT;
         """,
         database=OPS_DATABASE,

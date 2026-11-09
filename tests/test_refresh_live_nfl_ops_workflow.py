@@ -37,12 +37,9 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     assert steps_by_name["Resolve final live refresh scope"]["if"] == (
         "${{ steps.boundary.outputs.should_run == 'true' }}"
     )
-    assert steps_by_name["Reconstruct and verify the durable baseline"]["if"] == (
-        "${{ steps.scope.outputs.should_refresh == 'true' }}"
-    )
-    assert steps_by_name["Build and verify the local eight-table candidate"]["if"] == (
-        "${{ steps.scope.outputs.should_refresh == 'true' }}"
-    )
+    for name in ("Reconstruct and verify the durable baseline", "Build and verify the local eight-table candidate"):
+        assert "steps.scope.outputs.should_refresh == 'true'" in steps_by_name[name]["if"]
+        assert "steps.checkpoint.outputs.mode != 'resume'" in steps_by_name[name]["if"]
     assert "steps.scope.outputs.should_refresh == 'true'" in steps_by_name[
         "Publish the verified candidate as the next durable baseline"
     ]["if"]
@@ -96,13 +93,22 @@ def test_dispatch_gate_admits_manual_runs_and_only_the_0130_to_0500_et_dispatch_
 def test_durable_baseline_checksum_uses_the_reconstructed_artifact_path() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
-    # Release manifests retain the original output/ops_nfl.duckdb filename.
-    # The verifier must compare that digest with the reconstructed baseline,
-    # rather than asking sha256sum to find the old filename locally.
-    assert 'expected_hash=$(awk \'{print $1}\' baseline/ops_nfl.duckdb.sha256)' in text
-    assert 'actual_hash=$(sha256sum "$BASELINE_PATH" | awk \'{print $1}\')' in text
-    assert "durable baseline SHA-256 mismatch" in text
-    assert "(cd baseline && sha256sum --check ops_nfl.duckdb.sha256)" not in text
+    assert 'restore --state "$CHECKPOINT_STATE" --database "$BASELINE_PATH"' in text
+
+
+def test_clock_completes_only_after_the_scoped_fly_readback_or_no_games():
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    job = workflow["jobs"]["refresh"]
+    steps = {step["name"]: step for step in job["steps"]}
+    done = steps["Upload clock completion receipt"]
+    assert "refresh_attempt" in job["continue-on-error"]
+    assert "steps.scope.outcome == 'success'" in done["if"]
+    assert "always()" not in done["if"]
+    assert done["with"]["if-no-files-found"] == "error"
+    assert "output/ops_nfl.fly-receipt.json" in done["with"]["path"]
+    assert "code/refresh_scope.json" in done["with"]["path"]
+    assert list(steps).index("Verify promoted Fly receipt") < list(steps).index(done["name"])
+    assert "steps.checkpoint.outputs.mode != 'verify'" in steps["Atomically promote the verified ops artifact"]["if"]
 
 
 def test_legacy_in_place_ops_writer_is_fail_closed() -> None:

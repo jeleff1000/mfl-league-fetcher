@@ -47,17 +47,17 @@ def test_discovery_cli_emits_week_one_scope_for_september_tenth(monkeypatch, tmp
     }
 
 
-def test_discovery_cli_emits_no_op_for_a_date_without_a_final_game(monkeypatch, tmp_path):
+def test_discovery_cli_emits_no_op_for_a_date_without_games(monkeypatch, tmp_path):
     from scripts import discover_live_nfl_ops_refresh as discovery
 
     monkeypatch.setattr(discovery, "load_nflverse_schedule", lambda: _opener_schedule(final=False))
     output = tmp_path / "scope.json"
 
-    assert discovery.main(["--season", "2026", "--game-date", "2026-09-10", "--output", str(output)]) == 0
+    assert discovery.main(["--game-date", "2026-09-11", "--output", str(output)]) == 0
 
     assert json.loads(output.read_text(encoding="utf-8")) == {
         "status": "no-op",
-        "game_date": "2026-09-10",
+        "game_date": "2026-09-11",
         "scope": None,
     }
 

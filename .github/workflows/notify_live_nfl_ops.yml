@@ -1,0 +1,52 @@
+name: Alert on exhausted NFL refresh retries
+run-name: NFL refresh exhausted ${{ github.event.client_payload.dispatch_key }}
+
+on:
+  repository_dispatch:
+    types: [live-nfl-ops-refresh-exhausted]
+
+permissions:
+  actions: read
+  issues: write
+
+concurrency:
+  group: nfl-refresh-alert-${{ github.event.client_payload.dispatch_key }}
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Assign one alert to the repository owner
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { dispatch_key: key, game_date: gameDate, run_ids: runIds } = context.payload.client_payload;
+            if (!/^ops-\d{4}-\d{2}-\d{2}$/.test(key) || !/^\d{4}-\d{2}-\d{2}$/.test(gameDate) ||
+                !Array.isArray(runIds) || !runIds.every(id => Number.isSafeInteger(id) && id > 0)) {
+              core.setFailed("Invalid NFL refresh alert payload");
+              return;
+            }
+            const repo = context.repo;
+            for (const id of runIds) {
+              const { data: run } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: id });
+              if (!run.display_title.split(/\s+/).includes(key) || run.path !== ".github/workflows/refresh_live_nfl_ops.yml") {
+                throw new Error("Alert references a different workflow or date");
+              }
+              const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+                ...repo, run_id: id, name: `live-nfl-ops-complete-${gameDate}-${run.run_attempt}`,
+              });
+              if (data.artifacts.some(artifact => !artifact.expired)) return;
+            }
+            const title = `NFL stats refresh still unverified for ${gameDate}`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...repo, state: "all", creator: "github-actions[bot]", per_page: 100,
+            });
+            if (issues.some(issue => issue.title === title)) return;
+            const links = runIds.map(id => `- [Run ${id}](${context.serverUrl}/${repo.owner}/${repo.repo}/actions/runs/${id})`);
+            await github.rest.issues.create({
+              ...repo, title, assignees: [repo.owner],
+              body: [`The 3 a.m. Eastern refresh and both retries ended without a Fly verification receipt for ${gameDate}.`,
+                     "", ...links].join("\n"),
+            });

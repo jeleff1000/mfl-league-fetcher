@@ -16,7 +16,7 @@ import argparse
 import json
 import os
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -62,6 +62,17 @@ def is_duplicate(dispatch_key: str, run_id: int, runs: list[dict]) -> bool:
     )
 
 
+def is_duplicate_attempt(dispatch_key: str, attempt: str, run_id: int, runs: list[dict]) -> bool:
+    return any(
+        int(run["id"]) < run_id
+        and dispatch_key in (title := run.get("display_title", "").split())
+        and (f"attempt-{attempt}" in title or (attempt == "1" and not any(
+            word.startswith("attempt-") for word in title
+        )))
+        for run in runs
+    )
+
+
 def previous_clock_runs() -> list[dict]:
     request = urllib.request.Request(
         "https://api.github.com/repos/jeleff1000/mfl-league-fetcher/actions/workflows/refresh_live_nfl_ops.yml/runs?event=repository_dispatch&per_page=100",
@@ -77,6 +88,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--now", help="ISO-8601 instant for deterministic validation")
     parser.add_argument("--scheduled-for", default="", help="clock's original Eastern 03:00 instant")
     parser.add_argument("--dispatch-key", default="", help="daily key from the authenticated clock event")
+    parser.add_argument("--refresh-attempt", default="", help="scheduled attempt number")
+    parser.add_argument("--game-date", default="", help="original game date from the clock")
     parser.add_argument("--github-output", type=Path, help="optional GitHub step output file")
     return parser.parse_args(argv)
 
@@ -91,7 +104,17 @@ def main(argv: list[str] | None = None) -> int:
         now = datetime.now(EASTERN)
     allowed = should_run(args.event, now, scheduled_for=args.scheduled_for, dispatch_key=args.dispatch_key)
     if allowed and args.dispatch_key:
-        if is_duplicate(args.dispatch_key, int(os.environ["GITHUB_RUN_ID"]), previous_clock_runs()):
+        runs = previous_clock_runs()
+        run_id = int(os.environ["GITHUB_RUN_ID"])
+        if args.refresh_attempt:
+            eastern_due = datetime.fromisoformat(args.scheduled_for).astimezone(EASTERN)
+            expected_date = (eastern_due.date() - timedelta(days=1)).isoformat()
+            if args.refresh_attempt not in {"1", "2", "3"} or args.game_date != expected_date:
+                raise ValueError("Invalid scheduled NFL refresh attempt or game date")
+            duplicate = is_duplicate_attempt(args.dispatch_key, args.refresh_attempt, run_id, runs)
+        else:
+            duplicate = is_duplicate(args.dispatch_key, run_id, runs)
+        if duplicate:
             print(f"duplicate_clock_dispatch={args.dispatch_key}")
             allowed = False
     value = "true" if allowed else "false"

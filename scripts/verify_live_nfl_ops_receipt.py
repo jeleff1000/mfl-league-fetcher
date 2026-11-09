@@ -208,7 +208,9 @@ def collect_fly_receipt(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", type=Path, required=True, help="ready refresh_scope.json emitted by discovery")
-    parser.add_argument("--candidate", type=Path, required=True, help="verified complete candidate DuckDB artifact")
+    expected = parser.add_mutually_exclusive_group(required=True)
+    expected.add_argument("--candidate", type=Path, help="verified complete candidate DuckDB artifact")
+    expected.add_argument("--checkpoint", type=Path, help="durable checkpoint with exact candidate game counts")
     parser.add_argument("--output", type=Path, required=True, help="Fly read-path JSON receipt")
     return parser.parse_args(argv)
 
@@ -222,7 +224,13 @@ def main(argv: list[str] | None = None) -> int:
     from multi_league.core.readers.fly_reader import FlyReader
 
     normalized = _normalized_scope(payload["scope"])
-    expected_game_rows = _candidate_game_rows(args.candidate, normalized)
+    if args.checkpoint:
+        checkpoint = json.loads(args.checkpoint.read_text(encoding="utf-8"))
+        if _normalized_scope(checkpoint["scope"]["scope"]) != normalized:
+            raise FlyReceiptError("durable checkpoint is for a different game scope")
+        expected_game_rows = checkpoint["game_rows"]
+    else:
+        expected_game_rows = _candidate_game_rows(args.candidate, normalized)
     receipt = collect_fly_receipt(FlyReader(), normalized, expected_game_rows=expected_game_rows)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")

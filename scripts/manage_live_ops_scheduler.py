@@ -103,6 +103,26 @@ def deploy_clock(org: str, *, bootstrap_key: str, revision: str) -> None:
     print(json.dumps({"app": app_name, "machine_id": machine["id"], "volume_id": volume["id"], "revision": revision, "memory_mb": 256}), flush=True)
 
 
+def update_clock(revision: str) -> None:
+    app = "league-history-ops-clock"
+    machine_id = "8ed954ef456048"
+    path = f"/apps/{app}/machines/{machine_id}"
+    machine = request("GET", path)
+    config = machine["config"]
+    if (machine["state"] != "started" or machine["name"] != "live-ops-clock"
+            or not any(mount["volume"] == "vol_r7ymem2ykw73ydnr" and mount["path"] == "/data"
+                       for mount in config["mounts"])):
+        raise RuntimeError("Expected the running production clock and its existing state volume")
+    source = Path(__file__).with_name("live_ops_clock.py").read_bytes()
+    clock_file = [entry for entry in config["files"] if entry["guest_path"] == "/clock.py"]
+    if len(clock_file) != 1:
+        raise RuntimeError("Expected exactly one deployed clock source file")
+    clock_file[0]["raw_value"] = base64.b64encode(source).decode()
+    config["env"]["CLOCK_REVISION"] = revision
+    request("POST", path, {"config": config})
+    print(json.dumps({"app": app, "machine_id": machine_id, "revision": revision}), flush=True)
+
+
 def timing_probe(probe_app: str, *, hosted: bool = False) -> dict:
     github = GitHub(os.environ["GITHUB_DISPATCH_TOKEN"])
     label = f"live-ops-probe-{os.environ['GITHUB_RUN_ID']}"
@@ -162,9 +182,15 @@ def main() -> None:
     parser.add_argument("--hosted", action="store_true")
     parser.add_argument("--inspect-only", action="store_true")
     parser.add_argument("--deploy", action="store_true")
+    parser.add_argument("--update", action="store_true", help="update only the deployed clock source and revision")
     parser.add_argument("--bootstrap-key", default="")
     parser.add_argument("--revision", default="")
     args = parser.parse_args()
+    if args.update:
+        if not args.revision:
+            raise ValueError("Clock update requires the reviewed revision")
+        update_clock(args.revision)
+        return
     app = request("GET", "/apps/league-history-duckdb")
     org = app["organization"]["slug"]
     print(json.dumps({"app": app["name"], "organization": org, "credential_access": True}), flush=True)

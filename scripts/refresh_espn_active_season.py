@@ -380,9 +380,15 @@ def _build_context(
     from multi_league.data_fetchers.espn.espn_context import ESPNContext, build_manager_names
     from multi_league.utils.credential_store import retrieve_espn_credentials
 
+    # Public ESPN leagues import without cookies, so a missing cookie row is
+    # not a failure by itself. As in the full-import credential step, public
+    # access is proven by the provider read below (an anonymous read of a
+    # private league returns no teams), never by the app's visibility flag.
     credentials = retrieve_espn_credentials(db_name, reader=reader)
-    if not credentials:
-        raise RuntimeError(f"Fly has no usable encrypted ESPN cookies for {db_name}")
+    if not credentials or not credentials.get("espn_s2") or not credentials.get("swid"):
+        if not active_league_id:
+            raise RuntimeError(f"Fly has no usable encrypted ESPN cookies for {db_name}")
+        credentials = {"league_id": active_league_id, "espn_s2": None, "swid": None}
 
     frontend = frontend_settings if frontend_settings is not None else _load_frontend_context_settings(
         reader,

@@ -303,12 +303,15 @@ def test_sleeper_incomplete_real_currency_transfer_is_rejected(monkeypatch, budg
         parse_events("sleeper", [txn], monkeypatch)
 
 
-def parse_native_espn(events, monkeypatch, feed=()):
+def parse_native_espn(events, monkeypatch, cards=()):
     """Stub only HTTP; retain native relationship resolution and parsing."""
     from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
     client = ESPNAPIClient(1)
     monkeypatch.setattr(client, "get_raw_transactions", lambda year, period, **kw: events if period == 6 else [])
-    monkeypatch.setattr(client, "get_activity_trades", lambda year, **kw: list(feed))
+    def request_league(year, params, **kw):
+        assert params == {"view": "kona_playercard"}
+        return {"players": [{"id": 1, "transactions": list(cards)}]}
+    monkeypatch.setattr(client, "_request_league", request_league)
     monkeypatch.setattr("multi_league.data_fetchers.espn.espn_api_client.time.sleep", lambda _: None)
     from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
     ctx = SimpleNamespace(get_league_id_for_year=lambda year: 1,
@@ -376,35 +379,34 @@ def test_espn_trade_canceled_after_acceptance_is_not_published(monkeypatch):
     assert raw["transaction_type"].tolist() == ["add"]
 
 
-def _feed_trade(trade_id, date, moves):
-    return {"id": trade_id, "date": date,
-            "items": [{"type": "TRADE", "playerId": pid, "fromTeamId": src, "toTeamId": dst} for pid, src, dst in moves]}
-
-
-def test_espn_feed_adds_trades_the_cookie_owner_was_not_part_of(monkeypatch):
-    # mTransactions2 only carries assets for the cookie owner's trades; the
-    # activity feed lists every executed trade. Same trade must not double.
+def test_espn_player_cards_add_trades_the_cookie_owner_was_not_part_of(monkeypatch):
+    # mTransactions2 only carries assets for the cookie owner's trades; player
+    # cards carry every processed trade under the same native id.
     own = event("espn", kind="trade")
     own.update(id="own", executionType="PROCESS", status="EXECUTED")
     own["items"][0]["type"] = "TRADE"
-    clock = dict(event("espn"), id="clock", proposedDate=1728520236000 + 10, scoringPeriodId=6)
-    feed = [_feed_trade("feed-own", own["acceptDate"] + 25, [(1, 1, 2)]),
-            _feed_trade("feed-other", 1728520236000 + 3_600_000, [(5, 2, 1), (6, 1, 2)])]
-    raw = parse_native_espn([own, clock], monkeypatch, feed=feed)
-    trades = raw[raw["transaction_type"] == "trade"]
-    assert sorted(set(trades["transaction_id"])) == ["feed-other", "own"]
-    other = trades[trades["transaction_id"] == "feed-other"]
-    assert sorted(other[["espn_player_id", "source_manager", "destination_manager"]].values.tolist()) == [
-        [5, "Maxx", "Scott"], [6, "Scott", "Maxx"]]
-    assert set(other["week"]) == {6}
-    assert not other["is_estimated"].any()
+    other = {"id": "other", "type": "TRADE_ACCEPT", "status": "EXECUTED", "executionType": "PROCESS",
+             "scoringPeriodId": 6, "processDate": 1728520236000 + 3_600_000,
+             "items": [{"type": "TRADE", "playerId": 5, "fromTeamId": 2, "toTeamId": 1},
+                       {"type": "TRADE", "playerId": 6, "fromTeamId": 1, "toTeamId": 2},
+                       {"type": "DROP", "playerId": 9, "fromTeamId": 1, "toTeamId": 0}]}
+    vetoed = dict(other, id="vetoed", status="CANCELED", executionType="CANCEL")
+    future = dict(other, id="future", scoringPeriodId=7)
+    raw = parse_native_espn([own], monkeypatch, cards=[own, other, vetoed, future])
+    assert sorted(set(raw["transaction_id"])) == ["other", "own"]
+    moved = raw[raw["transaction_id"] == "other"]
+    assert sorted(moved[["espn_player_id", "transaction_type", "source_manager", "destination_manager"]]
+                  .astype(str).values.tolist()) == [
+        ["5", "trade", "Maxx", "Scott"], ["6", "trade", "Scott", "Maxx"], ["9", "drop", "None", "None"]]
+    assert set(moved["week"]) == {6}
+    assert not moved["is_estimated"].any()
 
 
-def test_espn_archived_season_without_feed_keeps_native_trades(monkeypatch):
+def test_espn_owner_trades_are_not_duplicated_by_player_cards(monkeypatch):
     own = event("espn", kind="trade")
     own.update(id="own", executionType="PROCESS", status="EXECUTED")
     own["items"][0]["type"] = "TRADE"
-    raw = parse_native_espn([own], monkeypatch, feed=[])
+    raw = parse_native_espn([own], monkeypatch, cards=[own])
     assert raw["transaction_id"].tolist() == ["own"]
 
 

@@ -13,7 +13,6 @@ Three paths depending on era and transaction type:
 Output columns match CanonicalTransactionColumns for pipeline compatibility.
 """
 
-import bisect
 import logging
 
 import pandas as pd
@@ -74,54 +73,19 @@ def _build_player_lookup(league) -> dict[int, str]:
     return player_lookup
 
 
-FEED_MATCH_TOLERANCE_MS = 60_000
-
-
-def _trade_moves(items) -> frozenset:
-    return frozenset(
-        (item.get("playerId"), item.get("fromTeamId"), item.get("toTeamId"))
-        for item in items or [] if item.get("type") == "TRADE"
-    )
-
-
-def _activity_feed_trades(client, year: int, viewer_trades: list[dict], *, max_weeks: int) -> list[dict]:
-    """Trades between teams other than the cookie owner's, from the activity feed.
+def _playercard_trades(client, year: int, viewer_trades: list[dict], *, max_weeks: int, strict: bool) -> list[dict]:
+    """Trades the cookie owner was not part of, from ESPN player cards.
 
     mTransactions2 only shows trade assets to the teams in the trade, so a
     league imported with one member's cookies lost every trade that member
-    was not part of. The feed lists all of them; trades already present from
-    mTransactions2 (same player moves, executed within a minute) are skipped
-    so the richer native record (collateral drops, period) is kept.
+    was not part of. Player cards list all of them under the same ids as the
+    native processed record; ids already present natively are kept as-is.
     """
-    if not hasattr(client, "get_activity_trades"):
+    if not hasattr(client, "get_playercard_trades"):
         return []
-    feed = client.get_activity_trades(year)
-    known = [(_trade_moves(t.get("items")), t.get("acceptDate")) for t in viewer_trades]
-    missing = [
-        trade for trade in feed
-        if not any(
-            moves == _trade_moves(trade["items"]) and accepted
-            and abs(int(accepted) - int(trade["date"])) <= FEED_MATCH_TOLERANCE_MS
-            for moves, accepted in known
-        )
-    ]
-    if not missing:
-        return []
-    clock = client.get_transaction_period_clock(year, max_weeks=max_weeks)
-    if not clock:
-        raise RuntimeError(f"ESPN {year} feed has {len(missing)} trades but no dated transactions to place them")
-    clock_dates = [date for date, _ in clock]
-    out = []
-    for trade in missing:
-        index = bisect.bisect_right(clock_dates, int(trade["date"])) - 1
-        period = clock[max(index, 0)][1]
-        if period > max_weeks:
-            continue
-        out.append({
-            "id": trade["id"], "status": "EXECUTED", "scoringPeriodId": period,
-            "acceptDate": trade["date"], "items": trade["items"],
-        })
-    return out
+    known = {str(trade.get("id")) for trade in viewer_trades}
+    return [trade for trade in client.get_playercard_trades(year, max_weeks=max_weeks, strict=strict)
+            if str(trade.get("id")) not in known]
 
 
 def fetch_espn_transactions_modern(
@@ -272,11 +236,12 @@ def fetch_espn_transactions_modern(
         else:
             trades = client.get_raw_trades(year, max_weeks=max_weeks)
         try:
-            trades = list(trades) + _activity_feed_trades(client, year, trades, max_weeks=max_weeks)
+            trades = list(trades) + _playercard_trades(
+                client, year, trades, max_weeks=max_weeks, strict=strict_active_scope)
         except Exception as e:
             if strict_active_scope:
                 raise
-            log(f"  [TRANSACTIONS] League activity feed unavailable for {year}: {e}")
+            log(f"  [TRANSACTIONS] ESPN player-card trades unavailable for {year}: {e}")
         for trade in trades:
             trade_id = trade.get("id")
             items = trade.get("items") or []

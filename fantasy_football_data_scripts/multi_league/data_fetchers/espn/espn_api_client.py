@@ -28,7 +28,6 @@ _verbose = "--verbose" in sys.argv
 
 # ESPN Fantasy API base URL
 ESPN_FANTASY_BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
-ESPN_TRADED_MESSAGE_TYPE = 244  # league activity feed: one message per player moved by a trade
 
 
 def log(msg: str):
@@ -564,69 +563,49 @@ class ESPNAPIClient:
     def get_raw_trades_strict(self, year: int, *, max_weeks: int) -> list[dict]:
         return self.get_raw_trades(year, max_weeks=max_weeks, strict=True)
 
-    def get_activity_trades(self, year: int, *, page_size: int = 500) -> list[dict]:
-        """Every executed trade in the league, from ESPN's league activity feed.
+    def get_playercard_trades(self, year: int, *, max_weeks: int, strict: bool = False,
+                              chunk_size: int = 100) -> list[dict]:
+        """Every executed trade in the league, from ESPN player cards.
 
         mTransactions2 only carries trade assets for trades involving the
         cookie owner's team; other teams' trades surface there as itemless
-        TRADE_ACCEPT acknowledgements. The activity feed's "traded" messages
-        (type 244) carry from/to team per player for every executed trade.
-        ESPN drops the feed once a season is archived: a missing communication
-        group is an empty feed, any other failure raises.
+        TRADE_ACCEPT acknowledgements. Each player's card (kona_playercard)
+        lists that player's processed transactions league-wide, archived
+        seasons included, with the same ids as the native processed record.
+        Every traded player was drafted, added or traded first, so the player
+        ids on the season's own transactions reach every trade; ids found on
+        trades are followed until no new player appears.
         """
-        url = f"{self._build_league_url(year, history=False)}/communication/"
-        topics: list[dict] = []
-        offset = 0
-        while True:
-            feed_filter = {"topics": {
-                "filterType": {"value": ["ACTIVITY_TRANSACTIONS"]},
-                "filterIncludeMessageTypeIds": {"value": [ESPN_TRADED_MESSAGE_TYPE]},
-                "limit": page_size, "offset": offset,
-                "sortMessageDate": {"sortPriority": 1, "sortAsc": True},
-            }}
-            resp = self._session.get(
-                url, params={"view": "kona_league_communication"},
-                headers={"x-fantasy-filter": json.dumps(feed_filter)}, timeout=self._request_timeout,
-            )
-            if resp.status_code == 404 and "Communication Group does not exist" in resp.text:
-                return []
-            resp.raise_for_status()
-            batch = (resp.json() or {}).get("topics") or []
-            topics.extend(batch)
-            if len(batch) < page_size:
-                break
-            offset += page_size
-
-        trades = []
-        for topic in topics:
-            if topic.get("isDeleted"):
-                continue
-            items = [
-                {"type": "TRADE", "playerId": msg.get("targetId"),
-                 "fromTeamId": msg.get("from"), "toTeamId": msg.get("to")}
-                for msg in topic.get("messages") or []
-                if msg.get("messageTypeId") == ESPN_TRADED_MESSAGE_TYPE and not msg.get("isDeleted")
-            ]
-            if items:
-                trades.append({"id": topic.get("id"), "date": topic.get("date"), "items": items})
-        return trades
-
-    def get_transaction_period_clock(self, year: int, *, max_weeks: int) -> list[tuple[int, int]]:
-        """(proposedDate, scoringPeriodId) pairs from the league's own transactions.
-
-        ESPN stamps each transaction with the scoring period that was current
-        when it was proposed, so these pairs date any same-league event.
-        FUTURE_ROSTER and DRAFT records carry periods other than "current".
-        """
-        seen: dict[str, tuple[int, int]] = {}
+        pending: set[int] = set()
         for period in range(1, max_weeks + 1):
-            for txn in self.get_raw_transactions(year, period):
-                if txn.get("type") in ("FUTURE_ROSTER", "DRAFT"):
-                    continue
-                if txn.get("proposedDate") and txn.get("scoringPeriodId") and txn.get("id"):
-                    seen[txn["id"]] = (int(txn["proposedDate"]), int(txn["scoringPeriodId"]))
+            for txn in self.get_raw_transactions(year, period, strict=strict):
+                pending.update(int(item["playerId"]) for item in txn.get("items") or []
+                               if item.get("playerId") is not None)
             time.sleep(0.05)
-        return sorted(seen.values())
+        seen: set[int] = set()
+        trades: dict[str, dict] = {}
+        while pending - seen:
+            batch = sorted(pending - seen)[:chunk_size]
+            seen.update(batch)
+            card_filter = {"players": {
+                "filterIds": {"value": batch},
+                "filterStatsForTopScoringPeriodIds": {"value": 1, "additionalValue": [f"00{year}"]},
+            }}
+            data = self._request_league(year, {"view": "kona_playercard"},
+                                        headers={"x-fantasy-filter": json.dumps(card_filter)})
+            players = data.get("players")
+            if not isinstance(players, list):
+                raise ESPNAPIError(f"ESPN player cards for {year} are malformed")
+            for player in players:
+                for txn in player.get("transactions") or []:
+                    if (txn.get("type") == "TRADE_ACCEPT" and txn.get("status") == "EXECUTED"
+                            and txn.get("id") and int(txn.get("scoringPeriodId") or 0) <= max_weeks):
+                        trades.setdefault(txn["id"], txn)
+                        pending.update(int(item["playerId"]) for item in txn.get("items") or []
+                                       if item.get("playerId") is not None)
+            time.sleep(0.05)
+        return [{**txn, "acceptDate": txn.get("processDate") or txn.get("acceptedDate")}
+                for txn in sorted(trades.values(), key=lambda row: row.get("processDate") or 0)]
 
     def get_raw_waivers(
         self, year: int, max_weeks: int = 18, *, strict: bool = False,

@@ -1434,6 +1434,16 @@ def _compute_best_trade(
     txn_cols = cache.columns("transactions") if cache else get_available_columns(conn, db_name, "transactions")
     if "franchise_id" not in txn_cols:
         raise KeyError("franchise_id is required for manager identity")
+    # A move whose timing the provider could not resolve is retained with
+    # week and cumulative_week both NULL; trade valuation leaves it NULL
+    # (pending). Exclude only that state so a pending asset neither blocks
+    # publication nor wins with a partial value; any dated asset stays strict.
+    dated_trade_filter = (
+        " AND (t.week IS NOT NULL OR t.cumulative_week IS NOT NULL)"
+        if {"week", "cumulative_week"}.issubset(txn_cols) else ""
+    )
+    year_filter += dated_trade_filter
+    validation_year_filter += dated_trade_filter
     player_id_col = select_platform_player_id_column(txn_cols, platform_hint=platform) or "yahoo_player_id"
 
     # Build separate LAMAR expressions for received vs sent sides:
@@ -1655,7 +1665,7 @@ def _compute_best_trade(
             and "trade_asset_lamar" in txn_cols
             and validation_years is not None
         ):
-            unselected_invalid = count_invalid_trade_assets("")
+            unselected_invalid = count_invalid_trade_assets(dated_trade_filter)
             if unselected_invalid:
                 raise IncompleteTradeMirrorError(
                     f"{unselected_invalid} trade assets lack complete mirrored valuations"

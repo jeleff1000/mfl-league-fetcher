@@ -53,8 +53,14 @@ class RefreshGateError(RuntimeError):
 # Sleeper ID and an independent provider anchor; it is never a name match.
 # DJ Herman: nflverse stats_player_week_2026 player_id=00-0041436; Sleeper
 # player_id=14026 publishes Rotowire 20084.
+# Gregory Desrosiers: nflverse stats_player_week_2026 player_id=00-0041376
+# (NYG RB, weeks 9-10; roster row has no Rotowire/ESPN/Sportradar). Sleeper
+# player_id=13603 publishes Rotowire 19655 and no GSIS; DynastyProcess
+# db_playerids carries the same Sleeper/Rotowire pair. Both sides: NYG RB,
+# born 2001-03-27, Memphis, 2026 rookie, 71 in / 200 lb.
 _VERIFIED_SLEEPER_IDENTITIES = {
     "14026": {"gsis_id": "00-0041436", "rotowire_id": "20084"},
+    "13603": {"gsis_id": "00-0041376", "rotowire_id": "19655"},
 }
 
 

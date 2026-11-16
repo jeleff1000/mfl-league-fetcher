@@ -216,6 +216,20 @@ def load_matchup_windows(ctx, year: int, local_db=None) -> pd.DataFrame:
     return pd.DataFrame(columns=["year", "week", "week_start", "week_end", "cumulative_week"])
 
 
+def yahoo_game_week_windows(oauth, league_key: str, year: int) -> pd.DataFrame:
+    """Native NFL game-week calendar for the league's Yahoo game key."""
+    game_key = str(league_key).split('.')[0]
+    root = fetch_url(f'https://fantasysports.yahooapis.com/fantasy/v2/game/{game_key}/game_weeks', oauth)
+    win = dated_matchup_windows(pd.DataFrame([
+        {'year': int(year),
+         'week': native_transaction_week(w.findtext('week'), platform='yahoo', transaction_id=league_key),
+         'week_start': w.findtext('start'), 'week_end': w.findtext('end')}
+        for w in root.findall('.//game_week')
+    ], columns=['year', 'week', 'week_start', 'week_end']))
+    win['cumulative_week'] = (int(year) * 100 + pd.to_numeric(win['week'])).astype('Int64')
+    return win.reset_index(drop=True)
+
+
 def build_week_windows_from_yahoo(ctx, year: int) -> pd.DataFrame:
     """
     Build (year, week, week_start, week_end, cumulative_week=YYYYWW) directly
@@ -245,13 +259,31 @@ def build_week_windows_from_yahoo(ctx, year: int) -> pd.DataFrame:
         settings = league.settings() or {}
         start_week = int(settings.get("start_week") or 1)
         end_week = int(settings.get("end_week") or 17)
+        head_to_head = str(settings.get("scoring_type") or "head").strip().lower().startswith("head")
     except Exception:
-        start_week, end_week = 1, 17
+        start_week, end_week, head_to_head = 1, 17, True
 
+    base = f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/scoreboard;week="
     weeks = ','.join(str(w) for w in range(start_week, end_week + 1))
-    root = fetch_url(f"https://fantasysports.yahooapis.com/fantasy/v2/league/{league_key}/scoreboard;week={weeks}", oauth)
+    matchups = fetch_url(base + weeks, oauth).findall(".//matchup") if head_to_head else []
+    if not matchups and head_to_head:
+        # Some leagues (e.g. late-start public leagues) reject any multi-week
+        # list with "no scoreboard available for week 8,9,..." while every
+        # single week resolves. Weeks without a schedule yet stay absent.
+        matchups = [
+            matchup
+            for week_num in range(start_week, end_week + 1)
+            for matchup in fetch_url(base + str(week_num), oauth).findall(".//matchup")
+        ]
+    if not matchups:
+        # Total-points leagues have no scoreboard at all. Yahoo football
+        # scoring periods are the NFL game weeks, so the game calendar is the
+        # league calendar over the league's own start..end weeks.
+        game_weeks = yahoo_game_week_windows(oauth, league_key, year)
+        week_numbers = pd.to_numeric(game_weeks["week"], errors="coerce")
+        return game_weeks[week_numbers.between(start_week, end_week)].reset_index(drop=True)
     rows = []
-    for matchup in root.findall(".//matchup"):
+    for matchup in matchups:
         week = native_transaction_week(matchup.findtext("week"), platform="yahoo", transaction_id=league_key)
         rows.append(
             {
@@ -733,19 +765,10 @@ def fetch_transactions_for_year(
             last_end = pd.to_datetime(dated['week_end'], utc=True).max()
             if calendar_extended or dated.empty or pd.isna(stamp) or stamp < last_end + pd.Timedelta(days=1):
                 raise
-            game_key = league_key.split('.')[0]
             calendar_extended = True  # One bounded calendar attempt, not one per undated move.
-            root = fetch_url(f'https://fantasysports.yahooapis.com/fantasy/v2/game/{game_key}/game_weeks', oauth)
-            extra = pd.DataFrame([
-                {'year': int(year),
-                 'week': native_transaction_week(w.findtext('week'), platform='yahoo', transaction_id=league_key),
-                 'week_start': w.findtext('start'), 'week_end': w.findtext('end')}
-                for w in root.findall('.//game_week')
-            ], columns=['year', 'week', 'week_start', 'week_end'])
-            extra = dated_matchup_windows(extra)
+            extra = yahoo_game_week_windows(oauth, league_key, year)
             extra = extra[(pd.to_datetime(extra['week_start'], utc=True) > last_end)
                           & (pd.to_numeric(extra['week']) > pd.to_numeric(dated['week']).max())]
-            extra['cumulative_week'] = int(year) * 100 + pd.to_numeric(extra['week'])
             extended_windows = pd.concat([matchup_windows, extra], ignore_index=True)
             if on_calendar_extended is not None:
                 on_calendar_extended(extended_windows)

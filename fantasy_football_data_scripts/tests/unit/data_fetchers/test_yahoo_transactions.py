@@ -162,6 +162,64 @@ def test_yahoo_calendar_uses_one_bulk_request_and_actual_response_weeks(monkeypa
     assert calls == ['https://fantasysports.yahooapis.com/fantasy/v2/league/470.l.40871/scoreboard;week='+','.join(str(w) for w in range(1,18))]
 
 
+def test_yahoo_calendar_reads_single_weeks_when_a_late_start_league_rejects_week_lists(monkeypatch):
+    # Observed 2026-11-16 on 470.l.1711720 (start_week=8): any comma list returns
+    # "There is no scoreboard available for week 8,9,..." while each week resolves.
+    from xml.etree import ElementTree as ET
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+    base = 'https://fantasysports.yahooapis.com/fantasy/v2/league/470.l.1711720/scoreboard;week='
+    dates = {8: ('2026-10-27', '2026-11-02'), 9: ('2026-11-03', '2026-11-09'), 10: ('2026-11-10', '2026-11-16')}
+    calls = []
+    class Game:
+        def __init__(self, *args): pass
+        def to_league(self, key):
+            return SimpleNamespace(settings=lambda: {'start_week': 8, 'end_week': 17, 'scoring_type': 'head'})
+    def response(url, oauth):
+        calls.append(url)
+        week = url.removeprefix(base)
+        if ',' in week or int(week) not in dates:
+            return ET.fromstring('<fantasy_content><league><exceptions><exception><key>scoreboard</key>'
+                                 f'<message>There is no scoreboard available for week {week}.</message>'
+                                 '</exception></exceptions></league></fantasy_content>')
+        start, end = dates[int(week)]
+        return ET.fromstring(f'<fantasy_content><matchups><matchup><week>{week}</week><week_start>{start}</week_start>'
+                             f'<week_end>{end}</week_end></matchup></matchups></fantasy_content>')
+    monkeypatch.setattr(fetcher.yfa, 'Game', Game)
+    monkeypatch.setattr(fetcher, 'fetch_url', response)
+    ctx = SimpleNamespace(get_oauth_session=lambda: None, game_code='nfl', get_league_id_for_year=lambda year: '470.l.1711720')
+    windows = fetcher.build_week_windows_from_yahoo(ctx, 2026)
+    assert windows['week'].tolist() == [8, 9, 10]
+    assert calls == [base + ','.join(str(w) for w in range(8, 18))] + [base + str(w) for w in range(8, 18)]
+    assert map_transaction_to_week('1794302262', 2026, windows)[0] == 10
+
+
+def test_yahoo_calendar_for_points_only_league_is_the_native_game_week_calendar(monkeypatch):
+    # Observed on 222.l.739118 (2009, scoring_type=point): every scoreboard
+    # returns "league 739118 is not a head-to-head league."
+    from xml.etree import ElementTree as ET
+    from multi_league.data_fetchers.yahoo import yahoo_transactions as fetcher
+    calls = []
+    class Game:
+        def __init__(self, *args): pass
+        def to_league(self, key):
+            return SimpleNamespace(settings=lambda: {'start_week': 2, 'end_week': 3, 'scoring_type': 'point'})
+    def response(url, oauth):
+        calls.append(url)
+        assert url == 'https://fantasysports.yahooapis.com/fantasy/v2/game/222/game_weeks'
+        return ET.fromstring('<fantasy_content><game_weeks>'
+            '<game_week><week>1</week><start>2009-09-10</start><end>2009-09-14</end></game_week>'
+            '<game_week><week>2</week><start>2009-09-15</start><end>2009-09-21</end></game_week>'
+            '<game_week><week>3</week><start>2009-09-22</start><end>2009-09-28</end></game_week>'
+            '<game_week><week>4</week><start>2009-09-29</start><end>2009-10-05</end></game_week>'
+            '</game_weeks></fantasy_content>')
+    monkeypatch.setattr(fetcher.yfa, 'Game', Game)
+    monkeypatch.setattr(fetcher, 'fetch_url', response)
+    ctx = SimpleNamespace(get_oauth_session=lambda: None, game_code='nfl', get_league_id_for_year=lambda year: '222.l.739118')
+    windows = fetcher.build_week_windows_from_yahoo(ctx, 2009)
+    assert windows[['week', 'cumulative_week']].values.tolist() == [[2, 200902], [3, 200903]]
+    assert len(calls) == 1
+
+
 def test_recovery_reuses_retained_calendar_before_final_matchups():
     from multi_league.data_fetchers.yahoo.yahoo_recovery_api import _build_matchup_windows
     class LocalDB:

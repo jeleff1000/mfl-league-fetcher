@@ -243,3 +243,17 @@ def test_homepage_still_rejects_broken_yahoo_trade_mirrors(yahoo_trade_pipeline,
     with pytest.raises(RuntimeError, match="trade assets lack complete mirrored valuations") as exc_info:
         _compute_best_trade(runner.conn, "yahoo_trade_fixture", platform="yahoo")
     assert "reasons=" in str(exc_info.value)
+
+
+def test_undated_trade_stays_pending_without_blocking_or_winning_the_highlight(yahoo_trade_pipeline):
+    # mansgame 2009 (points-only, no scoreboard) and 470.l.1711720 (late start)
+    # retained real trades with week=NULL; the enrichment leaves their value
+    # NULL, so the homepage must not abort the league or rank a partial value.
+    runner = yahoo_trade_pipeline
+    runner.conn.execute("""UPDATE public.transactions SET week = NULL, cumulative_week = NULL
+        WHERE db_name='yahoo_trade_fixture' AND transaction_id='461.l.1.tr.166'""")
+    runner._compute_trade_net_lamar()
+    assert runner.conn.execute("""SELECT COUNT(*) FROM public.transactions
+        WHERE transaction_id='461.l.1.tr.166' AND trade_asset_lamar IS NULL""").fetchone()[0] == 4
+    highlight = _compute_best_trade(runner.conn, "yahoo_trade_fixture", platform="yahoo")
+    assert (highlight["winner_lamar"], highlight["loser_lamar"], highlight["net_lamar"]) == (8, 2, 6)

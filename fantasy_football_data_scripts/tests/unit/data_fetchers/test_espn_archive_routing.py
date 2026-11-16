@@ -93,6 +93,8 @@ def provider(monkeypatch):
             }
             if not state.transactions:
                 payload.pop("transactions")
+            if "kona_playercard" in views:
+                payload["players"] = []
             if history:
                 payload = [payload]
         response._content = json.dumps(payload).encode()

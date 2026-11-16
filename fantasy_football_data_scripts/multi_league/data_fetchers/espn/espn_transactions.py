@@ -46,6 +46,12 @@ def _normalize_dst_name(name: str) -> str:
     return name
 
 
+def _roster_player_ids(league) -> set[int]:
+    return {pid for team in getattr(league, "teams", None) or []
+            for player in getattr(team, "roster", []) or []
+            if (pid := getattr(player, "playerId", None)) is not None}
+
+
 def _build_player_lookup(league) -> dict[int, str]:
     """Build player ID -> name lookup from league roster and free agents."""
     player_lookup = {}
@@ -73,7 +79,8 @@ def _build_player_lookup(league) -> dict[int, str]:
     return player_lookup
 
 
-def _playercard_trades(client, year: int, viewer_trades: list[dict], *, max_weeks: int, strict: bool) -> list[dict]:
+def _playercard_trades(client, year: int, viewer_trades: list[dict], *, max_weeks: int, strict: bool,
+                       roster_player_ids=()) -> list[dict]:
     """Trades the cookie owner was not part of, from ESPN player cards.
 
     mTransactions2 only shows trade assets to the teams in the trade, so a
@@ -84,7 +91,8 @@ def _playercard_trades(client, year: int, viewer_trades: list[dict], *, max_week
     if not hasattr(client, "get_playercard_trades"):
         return []
     known = {str(trade.get("id")) for trade in viewer_trades}
-    return [trade for trade in client.get_playercard_trades(year, max_weeks=max_weeks, strict=strict)
+    return [trade for trade in client.get_playercard_trades(
+                year, max_weeks=max_weeks, strict=strict, seed_player_ids=roster_player_ids)
             if str(trade.get("id")) not in known]
 
 
@@ -237,7 +245,8 @@ def fetch_espn_transactions_modern(
             trades = client.get_raw_trades(year, max_weeks=max_weeks)
         try:
             trades = list(trades) + _playercard_trades(
-                client, year, trades, max_weeks=max_weeks, strict=strict_active_scope)
+                client, year, trades, max_weeks=max_weeks, strict=strict_active_scope,
+                roster_player_ids=_roster_player_ids(league))
         except Exception as e:
             if strict_active_scope:
                 raise

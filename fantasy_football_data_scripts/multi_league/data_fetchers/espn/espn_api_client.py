@@ -564,7 +564,7 @@ class ESPNAPIClient:
         return self.get_raw_trades(year, max_weeks=max_weeks, strict=True)
 
     def get_playercard_trades(self, year: int, *, max_weeks: int, strict: bool = False,
-                              chunk_size: int = 100) -> list[dict]:
+                              seed_player_ids=(), chunk_size: int = 100) -> list[dict]:
         """Every executed trade in the league, from ESPN player cards.
 
         mTransactions2 only carries trade assets for trades involving the
@@ -572,11 +572,12 @@ class ESPNAPIClient:
         TRADE_ACCEPT acknowledgements. Each player's card (kona_playercard)
         lists that player's processed transactions league-wide, archived
         seasons included, with the same ids as the native processed record.
-        Every traded player was drafted, added or traded first, so the player
-        ids on the season's own transactions reach every trade; ids found on
+        A traded player either moves in some other transaction that season or
+        sits on a roster at season end, so the season's transaction ids plus
+        ``seed_player_ids`` (current rosters) reach every trade; ids found on
         trades are followed until no new player appears.
         """
-        pending: set[int] = set()
+        pending: set[int] = {int(pid) for pid in seed_player_ids if pid is not None}
         for period in range(1, max_weeks + 1):
             for txn in self.get_raw_transactions(year, period, strict=strict):
                 pending.update(int(item["playerId"]) for item in txn.get("items") or []

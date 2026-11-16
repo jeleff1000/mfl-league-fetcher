@@ -1,5 +1,6 @@
 """No-op provider events must not hide, corrupt, or block actual roster moves."""
 
+import json
 from types import SimpleNamespace
 from xml.etree import ElementTree as ET
 
@@ -303,14 +304,16 @@ def test_sleeper_incomplete_real_currency_transfer_is_rejected(monkeypatch, budg
         parse_events("sleeper", [txn], monkeypatch)
 
 
-def parse_native_espn(events, monkeypatch, cards=()):
+def parse_native_espn(events, monkeypatch, cards=(), rosters=()):
     """Stub only HTTP; retain native relationship resolution and parsing."""
     from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
     client = ESPNAPIClient(1)
     monkeypatch.setattr(client, "get_raw_transactions", lambda year, period, **kw: events if period == 6 else [])
-    def request_league(year, params, **kw):
+    def request_league(year, params, headers=None, **kw):
         assert params == {"view": "kona_playercard"}
-        return {"players": [{"id": 1, "transactions": list(cards)}]}
+        asked = set(json.loads(headers["x-fantasy-filter"])["players"]["filterIds"]["value"])
+        return {"players": [{"id": pid, "transactions": [card for card in cards if any(
+            item.get("playerId") == pid for item in card.get("items") or [])]} for pid in sorted(asked)]}
     monkeypatch.setattr(client, "_request_league", request_league)
     monkeypatch.setattr("multi_league.data_fetchers.espn.espn_api_client.time.sleep", lambda _: None)
     from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
@@ -319,7 +322,8 @@ def parse_native_espn(events, monkeypatch, cards=()):
         get_manager_guid=lambda rid, **kw: ROSTERS[rid]["manager_guid"],
         get_franchise_id=lambda rid, **kw: ROSTERS[rid]["manager_guid"],
         get_team_name=lambda rid, year: ROSTERS[rid]["team_name"])
-    return fetch_espn_transactions_modern(ctx, 2024, max_week=6, client=client, league=SimpleNamespace(teams=[]))
+    league = SimpleNamespace(teams=[SimpleNamespace(roster=[SimpleNamespace(playerId=pid, name=f"P{pid}") for pid in rosters])])
+    return fetch_espn_transactions_modern(ctx, 2024, max_week=6, client=client, league=league)
 
 
 @pytest.mark.parametrize("processed", [False, True])
@@ -392,7 +396,7 @@ def test_espn_player_cards_add_trades_the_cookie_owner_was_not_part_of(monkeypat
                        {"type": "DROP", "playerId": 9, "fromTeamId": 1, "toTeamId": 0}]}
     vetoed = dict(other, id="vetoed", status="CANCELED", executionType="CANCEL")
     future = dict(other, id="future", scoringPeriodId=7)
-    raw = parse_native_espn([own], monkeypatch, cards=[own, other, vetoed, future])
+    raw = parse_native_espn([own], monkeypatch, cards=[own, other, vetoed, future], rosters=[5])
     assert sorted(set(raw["transaction_id"])) == ["other", "own"]
     moved = raw[raw["transaction_id"] == "other"]
     assert sorted(moved[["espn_player_id", "transaction_type", "source_manager", "destination_manager"]]
@@ -400,6 +404,17 @@ def test_espn_player_cards_add_trades_the_cookie_owner_was_not_part_of(monkeypat
         ["5", "trade", "Maxx", "Scott"], ["6", "trade", "Scott", "Maxx"], ["9", "drop", "None", "None"]]
     assert set(moved["week"]) == {6}
     assert not moved["is_estimated"].any()
+
+
+def test_espn_trade_of_players_with_no_other_moves_is_found_via_rosters(monkeypatch):
+    # Dynasty swap: neither player is drafted, added or dropped that season.
+    swap = {"id": "swap", "type": "TRADE_ACCEPT", "status": "EXECUTED", "executionType": "PROCESS",
+            "scoringPeriodId": 6, "processDate": 1728520236000,
+            "items": [{"type": "TRADE", "playerId": 40, "fromTeamId": 1, "toTeamId": 2},
+                      {"type": "TRADE", "playerId": 41, "fromTeamId": 2, "toTeamId": 1}]}
+    assert "swap" not in set(parse_native_espn([event("espn")], monkeypatch, cards=[swap])["transaction_id"])
+    raw = parse_native_espn([event("espn")], monkeypatch, cards=[swap], rosters=[40, 41])
+    assert sorted(raw.loc[raw["transaction_id"] == "swap", "espn_player_id"].tolist()) == [40, 41]
 
 
 def test_espn_owner_trades_are_not_duplicated_by_player_cards(monkeypatch):

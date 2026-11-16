@@ -303,11 +303,12 @@ def test_sleeper_incomplete_real_currency_transfer_is_rejected(monkeypatch, budg
         parse_events("sleeper", [txn], monkeypatch)
 
 
-def parse_native_espn(events, monkeypatch):
+def parse_native_espn(events, monkeypatch, feed=()):
     """Stub only HTTP; retain native relationship resolution and parsing."""
     from multi_league.data_fetchers.espn.espn_api_client import ESPNAPIClient
     client = ESPNAPIClient(1)
     monkeypatch.setattr(client, "get_raw_transactions", lambda year, period, **kw: events if period == 6 else [])
+    monkeypatch.setattr(client, "get_activity_trades", lambda year, **kw: list(feed))
     monkeypatch.setattr("multi_league.data_fetchers.espn.espn_api_client.time.sleep", lambda _: None)
     from multi_league.data_fetchers.espn.espn_transactions import fetch_espn_transactions_modern
     ctx = SimpleNamespace(get_league_id_for_year=lambda year: 1,
@@ -360,6 +361,51 @@ def test_espn_acknowledgement_never_borrows_an_unrelated_proposal(monkeypatch, a
     ack.update(relatedTransactionId="purged", status=ack_status, executionType="EXECUTE", teamId=1)
     raw = parse_native_espn([proposal, ack, event("espn")], monkeypatch)
     assert raw["transaction_type"].tolist() == ["add"]
+
+
+def test_espn_trade_canceled_after_acceptance_is_not_published(monkeypatch):
+    # ass_poop 2026: accepted, vetoed in review, accept record canceled; players never moved.
+    proposal = event("espn", kind="trade")
+    proposal.update(id="proposal", type="TRADE_PROPOSAL", status="PENDING")
+    proposal["items"][0]["type"] = "TRADE"
+    ack = event("espn", kind="trade", assets=False)
+    ack.update(id="ack", relatedTransactionId="proposal", status=None, executionType="EXECUTE")
+    veto = dict(proposal, id="canceled", type="TRADE_ACCEPT", relatedTransactionId="proposal",
+                status="CANCELED", executionType="CANCEL")
+    raw = parse_native_espn([proposal, ack, veto, event("espn")], monkeypatch)
+    assert raw["transaction_type"].tolist() == ["add"]
+
+
+def _feed_trade(trade_id, date, moves):
+    return {"id": trade_id, "date": date,
+            "items": [{"type": "TRADE", "playerId": pid, "fromTeamId": src, "toTeamId": dst} for pid, src, dst in moves]}
+
+
+def test_espn_feed_adds_trades_the_cookie_owner_was_not_part_of(monkeypatch):
+    # mTransactions2 only carries assets for the cookie owner's trades; the
+    # activity feed lists every executed trade. Same trade must not double.
+    own = event("espn", kind="trade")
+    own.update(id="own", executionType="PROCESS", status="EXECUTED")
+    own["items"][0]["type"] = "TRADE"
+    clock = dict(event("espn"), id="clock", proposedDate=1728520236000 + 10, scoringPeriodId=6)
+    feed = [_feed_trade("feed-own", own["acceptDate"] + 25, [(1, 1, 2)]),
+            _feed_trade("feed-other", 1728520236000 + 3_600_000, [(5, 2, 1), (6, 1, 2)])]
+    raw = parse_native_espn([own, clock], monkeypatch, feed=feed)
+    trades = raw[raw["transaction_type"] == "trade"]
+    assert sorted(set(trades["transaction_id"])) == ["feed-other", "own"]
+    other = trades[trades["transaction_id"] == "feed-other"]
+    assert sorted(other[["espn_player_id", "source_manager", "destination_manager"]].values.tolist()) == [
+        [5, "Maxx", "Scott"], [6, "Scott", "Maxx"]]
+    assert set(other["week"]) == {6}
+    assert not other["is_estimated"].any()
+
+
+def test_espn_archived_season_without_feed_keeps_native_trades(monkeypatch):
+    own = event("espn", kind="trade")
+    own.update(id="own", executionType="PROCESS", status="EXECUTED")
+    own["items"][0]["type"] = "TRADE"
+    raw = parse_native_espn([own], monkeypatch, feed=[])
+    assert raw["transaction_id"].tolist() == ["own"]
 
 
 def test_espn_awesomest_empty_executed_ack_does_not_block_real_moves(monkeypatch):

@@ -28,6 +28,7 @@ _verbose = "--verbose" in sys.argv
 
 # ESPN Fantasy API base URL
 ESPN_FANTASY_BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
+ESPN_TRADED_MESSAGE_TYPE = 244  # league activity feed: one message per player moved by a trade
 
 
 def log(msg: str):
@@ -498,6 +499,7 @@ class ESPNAPIClient:
         """
         proposals_by_id = {}
         accepts = {}
+        canceled = set()
         for period in range(1, max_weeks + 1):
             for txn in self.get_raw_transactions(year, period, strict=strict):
                 txn_type = txn.get("type")
@@ -505,16 +507,26 @@ class ESPNAPIClient:
                     if txn.get("id"):
                         proposals_by_id[txn["id"]] = txn
                 elif txn_type == "TRADE_ACCEPT":
+                    key = txn.get("relatedTransactionId") or txn.get("id")
                     if transaction_has_publishable_assets(
                         platform="espn", transaction_id=txn.get("id"), transaction_type=txn_type,
                         status=txn.get("status"), has_assets=True,
                     ):
-                        key = txn.get("relatedTransactionId") or txn.get("id")
                         accepts.setdefault(key, {})[txn.get("id")] = txn
+                    else:
+                        canceled.add(key)
             time.sleep(0.05)
 
         all_transactions = []
         for related_id, records in accepts.items():
+            processed = any(
+                row.get("executionType") == "PROCESS" and row.get("status") == "EXECUTED"
+                for row in records.values()
+            )
+            if related_id in canceled and not processed:
+                # Accepted, then canceled by veto/review: the players never moved.
+                logger.info("[TRANSACTIONS] ESPN trade %s was canceled after acceptance; skipping", related_id)
+                continue
             # Prefer the actual processed movement over the acknowledgement.
             txn = max(records.values(), key=lambda row: (
                 row.get("executionType") == "PROCESS", row.get("status") == "EXECUTED",
@@ -551,6 +563,70 @@ class ESPNAPIClient:
 
     def get_raw_trades_strict(self, year: int, *, max_weeks: int) -> list[dict]:
         return self.get_raw_trades(year, max_weeks=max_weeks, strict=True)
+
+    def get_activity_trades(self, year: int, *, page_size: int = 500) -> list[dict]:
+        """Every executed trade in the league, from ESPN's league activity feed.
+
+        mTransactions2 only carries trade assets for trades involving the
+        cookie owner's team; other teams' trades surface there as itemless
+        TRADE_ACCEPT acknowledgements. The activity feed's "traded" messages
+        (type 244) carry from/to team per player for every executed trade.
+        ESPN drops the feed once a season is archived: a missing communication
+        group is an empty feed, any other failure raises.
+        """
+        url = f"{self._build_league_url(year, history=False)}/communication/"
+        topics: list[dict] = []
+        offset = 0
+        while True:
+            feed_filter = {"topics": {
+                "filterType": {"value": ["ACTIVITY_TRANSACTIONS"]},
+                "filterIncludeMessageTypeIds": {"value": [ESPN_TRADED_MESSAGE_TYPE]},
+                "limit": page_size, "offset": offset,
+                "sortMessageDate": {"sortPriority": 1, "sortAsc": True},
+            }}
+            resp = self._session.get(
+                url, params={"view": "kona_league_communication"},
+                headers={"x-fantasy-filter": json.dumps(feed_filter)}, timeout=self._request_timeout,
+            )
+            if resp.status_code == 404 and "Communication Group does not exist" in resp.text:
+                return []
+            resp.raise_for_status()
+            batch = (resp.json() or {}).get("topics") or []
+            topics.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+
+        trades = []
+        for topic in topics:
+            if topic.get("isDeleted"):
+                continue
+            items = [
+                {"type": "TRADE", "playerId": msg.get("targetId"),
+                 "fromTeamId": msg.get("from"), "toTeamId": msg.get("to")}
+                for msg in topic.get("messages") or []
+                if msg.get("messageTypeId") == ESPN_TRADED_MESSAGE_TYPE and not msg.get("isDeleted")
+            ]
+            if items:
+                trades.append({"id": topic.get("id"), "date": topic.get("date"), "items": items})
+        return trades
+
+    def get_transaction_period_clock(self, year: int, *, max_weeks: int) -> list[tuple[int, int]]:
+        """(proposedDate, scoringPeriodId) pairs from the league's own transactions.
+
+        ESPN stamps each transaction with the scoring period that was current
+        when it was proposed, so these pairs date any same-league event.
+        FUTURE_ROSTER and DRAFT records carry periods other than "current".
+        """
+        seen: dict[str, tuple[int, int]] = {}
+        for period in range(1, max_weeks + 1):
+            for txn in self.get_raw_transactions(year, period):
+                if txn.get("type") in ("FUTURE_ROSTER", "DRAFT"):
+                    continue
+                if txn.get("proposedDate") and txn.get("scoringPeriodId") and txn.get("id"):
+                    seen[txn["id"]] = (int(txn["proposedDate"]), int(txn["scoringPeriodId"]))
+            time.sleep(0.05)
+        return sorted(seen.values())
 
     def get_raw_waivers(
         self, year: int, max_weeks: int = 18, *, strict: bool = False,

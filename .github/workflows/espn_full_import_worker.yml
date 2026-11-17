@@ -1,4 +1,5 @@
 name: ESPN Full Import Worker (Paid ESPN)
+run-name: "${{ github.workflow }} · ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}"
 
 # Paid ESPN import: runs full historical import + sims + aggregations locally,
 # uploads final result to Fly.io.

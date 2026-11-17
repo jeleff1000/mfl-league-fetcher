@@ -281,3 +281,55 @@ def test_normal_sleeper_bio_sync_resolves_scored_missing_link_from_existing_play
     finally:
         league.close()
         live.close()
+
+
+def _rookie_witnesses():
+    # Observed 2026-11-16: NFLverse roster has only a GSIS id; Sleeper has only
+    # Rotowire/Sportradar ids (Gregory Desrosiers). A different Sleeper id keeps
+    # this independent of the verified-identity table.
+    roster = pd.DataFrame([
+        {"gsis_id": "00-0041376", "full_name": "Gregory Desrosiers", "birth_date": "2001-03-27",
+         "team": "NYG", "position": "RB", "espn_id": None, "rotowire_id": None, "sleeper_id": None},
+        {"gsis_id": "other", "full_name": "Other Player", "birth_date": "2000-01-01",
+         "team": "NYG", "position": "RB", "espn_id": "999", "rotowire_id": "999", "sleeper_id": "999"},
+    ])
+    sleeper = pd.DataFrame([
+        {"player_id": "99603", "full_name": "Gregory Desrosiers", "birth_date": "2001-03-27",
+         "team": "NYG", "position": "RB", "gsis_id": None, "espn_id": None, "rotowire_id": 19655},
+    ])
+    return roster, sleeper
+
+
+def test_rookie_without_shared_ids_resolves_only_on_exact_bio_agreement():
+    roster, sleeper = _rookie_witnesses()
+    assert refresh.build_sleeper_bio_mapping_rows(roster, sleeper).to_dict("records") == [
+        {"NFL_player_id": "00-0041376", "sleeper_player_id": 99603}
+    ]
+
+
+@pytest.mark.parametrize("case", [
+    "missing_birth_date", "different_birth_date", "different_team", "different_position",
+    "different_name", "duplicate_bio", "conflicting_rotowire", "conflicting_sleeper_id",
+])
+def test_rookie_bio_fallback_rejects_anything_short_of_one_exact_match(case):
+    roster, sleeper = _rookie_witnesses()
+    if case == "missing_birth_date":
+        sleeper.loc[0, "birth_date"] = None
+    elif case == "different_birth_date":
+        sleeper.loc[0, "birth_date"] = "2001-03-28"
+    elif case == "different_team":
+        sleeper.loc[0, "team"] = "NYJ"
+    elif case == "different_position":
+        sleeper.loc[0, "position"] = "WR"
+    elif case == "different_name":
+        sleeper.loc[0, "full_name"] = "Greg Desrosiers"
+    elif case == "duplicate_bio":
+        twin = roster.iloc[[0]].copy()
+        twin["gsis_id"] = "00-0099999"
+        roster = pd.concat([roster, twin], ignore_index=True)
+    elif case == "conflicting_rotowire":
+        roster.loc[0, "rotowire_id"] = "11111"
+    else:
+        roster.loc[0, "sleeper_id"] = "12345"
+    with pytest.raises(refresh.RefreshGateError):
+        refresh.build_sleeper_bio_mapping_rows(roster, sleeper)

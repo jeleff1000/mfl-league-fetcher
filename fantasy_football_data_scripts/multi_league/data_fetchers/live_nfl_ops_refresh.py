@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 import shutil
 import urllib.request
 from datetime import UTC, datetime
@@ -442,6 +444,58 @@ def _provider_identity(value: object, *, numeric: bool = True) -> str | None:
     raise RefreshGateError("player bio crosswalk contains an invalid provider ID")
 
 
+logger = logging.getLogger(__name__)
+_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def _bio_name_key(value) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    tokens = re.sub(r"[^a-z0-9 ]+", "", str(value).lower().replace("-", " ")).split()
+    tokens = [token for token in tokens if token not in _NAME_SUFFIXES]
+    return " ".join(tokens) or None
+
+
+def _bio_text(value) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip().upper()
+    return text or None
+
+
+def _exact_bio_candidates(roster: pd.DataFrame, provider: dict) -> set[str]:
+    """Last resort when the two directories share no stable ID at all.
+
+    Undrafted rookies routinely appear in Sleeper with only Rotowire/Sportradar
+    IDs while NFLverse's roster row has only a GSIS ID (Gregory Desrosiers,
+    2026). Accept one roster row only when full name, birth date, current NFL
+    team and position all agree exactly; anything missing or ambiguous returns
+    no candidate, and the caller's anchor-conflict checks still apply.
+    """
+    if not {"full_name", "birth_date", "team", "position"}.issubset(roster.columns):
+        return set()
+    wanted = (
+        _bio_name_key(provider.get("full_name")),
+        _bio_text(provider.get("birth_date")),
+        _bio_text(provider.get("team")),
+        _bio_text(provider.get("position")),
+    )
+    if any(part is None for part in wanted):
+        return set()
+    keys = zip(
+        roster["full_name"].map(_bio_name_key), roster["birth_date"].map(_bio_text),
+        roster["team"].map(_bio_text), roster["position"].map(_bio_text),
+    )
+    matches = {gsis for gsis, key in zip(roster["gsis_id"], keys) if key == wanted}
+    if len(matches) == 1:
+        logger.info(
+            "[player-bio] Sleeper %s matched NFLverse %s by exact name+birth date+team+position "
+            "(no shared provider ID)", provider.get("player_id"), next(iter(matches)),
+        )
+        return matches
+    return set()
+
+
 def build_sleeper_bio_mapping_rows(
     players: pd.DataFrame, sleeper_players: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -450,7 +504,9 @@ def build_sleeper_bio_mapping_rows(
     ``players`` is the NFLverse roster; ``sleeper_players`` is an explicitly
     selected provider subset, not a nickname/league-specific override. ESPN,
     Rotowire and GSIS anchors must be unambiguous and must not contradict one
-    another. Names, teams and birthdays never establish an identity here.
+    another. A name never establishes identity by itself: only when no
+    provider ID is shared does an exact name + birth date + NFL team + position
+    agreement with exactly one roster row stand in (``_exact_bio_candidates``).
     The existing population hook emits only the two mapping columns.
     """
     columns = [("NFL_player_id", "VARCHAR"), ("sleeper_player_id", "DOUBLE")]
@@ -503,6 +559,8 @@ def build_sleeper_bio_mapping_rows(
                     f"for provider_id={provider_id}; supplied={supplied}"
                 )
             candidates.add(verified["gsis_id"])
+        if not candidates:
+            candidates = _exact_bio_candidates(roster, provider)
         if len(candidates) != 1:
             raise RefreshGateError(
                 "player bio crosswalk has missing or disagreeing stable anchors "

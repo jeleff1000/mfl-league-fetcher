@@ -1,4 +1,5 @@
 name: Sleeper Full Import Worker (All Years)
+run-name: "${{ github.workflow }} · ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}"
 
 # This workflow imports ALL years including current year to run complete transformations.
 # Quick import fetches raw data; full import runs transformations on the complete dataset.

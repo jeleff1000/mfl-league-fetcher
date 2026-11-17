@@ -1,4 +1,5 @@
 name: Sleeper Quick Import Worker (Current Year Only)
+run-name: "${{ github.workflow }} · ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}"
 
 # This workflow imports ONLY the current year for fast startup (~5 min).
 # Self-contained: fetch → transforms → enrichments → sims → aggregations → upload.

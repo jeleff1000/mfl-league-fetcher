@@ -1,4 +1,5 @@
 name: Yahoo Full Import Worker (Paid Tier)
+run-name: "${{ github.workflow }} · ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}"
 
 # Paid Yahoo import: runs quick import (uploads for fast site), then full historical
 # import + sims + aggregations locally, uploads final result via Fly.io.

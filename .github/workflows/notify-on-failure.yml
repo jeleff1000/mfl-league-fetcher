@@ -15,6 +15,11 @@ on:
       - "ESPN Quick Import Worker (Current Year Only)"
       - "Playoff Odds & Expected Record Calculator"
       - "Update NFL Super Table"
+      - "Yahoo Active-Season Refresh Worker"
+      - "ESPN Active-Season Refresh Worker"
+      - "Sleeper Active-Season Refresh Worker"
+      - "Multi-Platform Full Import Worker"
+      - "Public Worker Boundary Guard"
     types:
       - completed
 
@@ -40,6 +45,7 @@ jobs:
               `| Field | Value |`,
               `|-------|-------|`,
               `| **Workflow** | ${run.name} |`,
+              `| **Run** | ${run.display_title} |`,
               `| **Branch** | ${run.head_branch} |`,
               `| **Trigger** | ${run.event} |`,
               `| **Started** | ${run.created_at} |`,

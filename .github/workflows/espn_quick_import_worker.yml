@@ -1,4 +1,5 @@
 name: ESPN Quick Import Worker (Current Year Only)
+run-name: "${{ github.workflow }} · ${{ github.event.inputs.import_lock_key || github.event.client_payload.import_lock_key }}"
 
 # Free ESPN import: fetches current year, runs sims + aggregations locally,
 # uploads to Fly.io once at the end. Self-contained — no trigger-downstream.

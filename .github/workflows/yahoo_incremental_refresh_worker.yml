@@ -1,4 +1,5 @@
 name: Yahoo Active-Season Refresh Worker
+run-name: "${{ github.workflow }} · ${{ inputs.db_name }}"
 
 on:
   schedule:

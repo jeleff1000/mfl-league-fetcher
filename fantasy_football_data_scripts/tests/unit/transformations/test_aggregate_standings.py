@@ -417,3 +417,49 @@ def test_aggregate_standings_keeps_duplicate_manager_names_separate_by_franchise
         ("Alex", "fid_c", "Gamma", 0, 1),
         ("Carl", "fid_d", "Delta", 1, 0),
     ]
+
+
+def test_in_progress_seed_is_latest_week_not_worst_week():
+    # harvest_ffl 2026: final_playoff_seed is a weekly snapshot. Gombita went
+    # 4,4,3,2,... to 1 and ROBERT 1,...,1 to 2; MAX showed 4 and 2 - each team's
+    # worst seed - producing duplicate, out-of-order standings.
+    from multi_league.transformations.aggregation.aggregate_standings import aggregate_standings
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    db_name = _db_name(conn)
+    conn.execute(
+        """
+        CREATE TABLE public.matchup (
+            db_name VARCHAR, year INTEGER, week INTEGER, manager VARCHAR,
+            team_name VARCHAR, opponent VARCHAR, team_points DOUBLE,
+            opponent_points DOUBLE, win INTEGER, loss INTEGER,
+            is_playoffs INTEGER, playoff_round VARCHAR,
+            consolation_round VARCHAR, champion INTEGER, sacko INTEGER,
+            is_consolation INTEGER, final_playoff_seed INTEGER,
+            is_bye_week INTEGER, franchise_id VARCHAR,
+            opponent_franchise_id VARCHAR, above_league_median INTEGER
+        )
+        """
+    )
+    row = lambda week, mgr, opp, pts, opp_pts, win, seed: (  # noqa: E731
+        db_name, 2026, week, mgr, mgr + " team", opp, pts, opp_pts, win, 1 - win,
+        0, None, None, 0, 0, 0, seed, 0, "f_" + mgr, "f_" + opp, None,
+    )
+    conn.executemany(
+        "INSERT INTO public.matchup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            row(1, "Gombita", "ROBERT", 90.0, 100.0, 0, 2),
+            row(1, "ROBERT", "Gombita", 100.0, 90.0, 1, 1),
+            row(2, "Gombita", "ROBERT", 130.0, 100.0, 1, 2),
+            row(2, "ROBERT", "Gombita", 100.0, 130.0, 0, 1),
+            row(3, "Gombita", "ROBERT", 120.0, 100.0, 1, 1),
+            row(3, "ROBERT", "Gombita", 100.0, 120.0, 0, 2),
+        ],
+    )
+
+    aggregate_standings(conn, db_name, [2026], active_season=2026)
+
+    assert conn.execute(
+        "SELECT manager, wins, losses, seed FROM public.standings_by_year ORDER BY seed"
+    ).fetchall() == [("Gombita", 2, 1, 1), ("ROBERT", 1, 2, 2)]

@@ -263,7 +263,7 @@ def aggregate_standings(
                 ARG_MAX(consolation_round, week) AS last_consolation_round,
                 ARG_MAX(win, week) AS last_game_win,
                 ARG_MAX(is_consolation, week) AS last_game_consolation,
-                MAX(final_playoff_seed) AS final_playoff_seed
+                ARG_MAX(final_playoff_seed, week) FILTER (WHERE final_playoff_seed IS NOT NULL) AS final_playoff_seed
             FROM base
             WHERE is_playoffs = 1 OR is_consolation = 1
             GROUP BY identity_key
@@ -279,7 +279,9 @@ def aggregate_standings(
                 0 AS ties,
                 ROUND(SUM(b.team_points), 1) AS points_for,
                 ROUND(SUM(b.opponent_points), 1) AS points_against,
-                MAX(b.final_playoff_seed) AS final_playoff_seed
+                -- final_playoff_seed is a weekly snapshot during a season;
+                -- MAX picked each team's worst seed. Use the latest week's.
+                ARG_MAX(b.final_playoff_seed, b.week) FILTER (WHERE b.final_playoff_seed IS NOT NULL) AS final_playoff_seed
                 {median_select}
             FROM base b
             GROUP BY {agg_identity_group}

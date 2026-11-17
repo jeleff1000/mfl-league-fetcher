@@ -7095,9 +7095,33 @@ class MatchupEnrichmentsMixin:
         target = self._qualified_name("schedule")
         future_rows = ""
         if self._table_exists("schedule"):
+            # Retained provider fixtures were fetched before identity
+            # resolution (hidden-manager splits, merges). Re-key each one to
+            # the matchup table's canonical franchise for the same season
+            # owner + team name when that mapping is unique, so a live/future
+            # week cannot carry a pre-split franchise_id (blade_of_glory: two
+            # hidden "Dylan" teams share one synthetic guid until the split).
+            sched_cols = self._get_table_columns("schedule")
+            matchup_cols = self._get_table_columns("matchup")
+            identity = ("manager_guid", "team_name", "franchise_id")
+            replacements, joins = [], []
+            if set(identity).issubset(sched_cols) and set(identity).issubset(matchup_cols):
+                replacements.append("COALESCE(own_key.franchise_id, s.franchise_id) AS franchise_id")
+                joins.append(f"""LEFT JOIN (
+                    SELECT year, manager_guid, team_name, MIN(franchise_id) AS franchise_id
+                    FROM {m}
+                    WHERE {self._db_filter()} AND franchise_id IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(CAST(team_name AS VARCHAR), '')), '') IS NOT NULL
+                    GROUP BY 1, 2, 3
+                    HAVING COUNT(DISTINCT franchise_id) = 1
+                ) own_key ON own_key.year = s.year
+                  AND own_key.manager_guid IS NOT DISTINCT FROM s.manager_guid
+                  AND own_key.team_name = s.team_name""")
+            retained = f"s.* REPLACE ({', '.join(replacements)})" if replacements else "s.*"
             future_rows = f"""
                 UNION ALL BY NAME
-                SELECT s.* FROM {target} s
+                SELECT {retained} FROM {target} s
+                {' '.join(joins)}
                 WHERE s.db_name = '{self.db_name}' AND NOT EXISTS (
                     SELECT 1 FROM {m} m WHERE m.db_name = s.db_name
                     AND m.year = s.year AND m.week >= s.week

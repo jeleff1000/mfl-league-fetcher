@@ -77,3 +77,37 @@ def test_schedule_rebuild_dry_run_leaves_provider_rows_unchanged(tmp_path):
         runner.build_schedule_from_matchup()
 
         assert conn.execute("SELECT COUNT(*) FROM public.schedule").fetchone() == (2,)
+
+
+def test_retained_future_fixture_follows_split_franchise_identity(tmp_path):
+    # blade_of_glory 2026: two hidden "Dylan" teams share guid yh-nick-dylan;
+    # the matchup split assigns "Greasy GOAT" -> yh-nick-dylan_2. The live week
+    # is a retained provider fixture and must not keep the pre-split id
+    # (guillotine week 9 then saw the eliminated Dylan reappear).
+    with LocalLeagueDB(tmp_path, "guillotine") as db:
+        db.ensure_table("matchup")
+        db.ensure_table("schedule")
+        conn = db.connect()
+        conn.execute("""INSERT INTO public.matchup
+            (db_name, year, week, manager, manager_guid, team_name, franchise_id, manager_week, team_points)
+            VALUES ('guillotine', 2026, 9, 'Dylan', 'yh-nick-dylan', 'Greasy GOAT', 'yh-nick-dylan_2', 'd14_9', 136.26),
+                   ('guillotine', 2026, 9, 'Travis', 'yh-nick-travis', 'Travis Team', 'yh-nick-travis', 't9_9', 84.16),
+                   ('guillotine', 2026, 3, 'Dylan', 'yh-nick-dylan', 'Discount Double Champ', 'yh-nick-dylan', 'd4_3', 70.0)""")
+        conn.execute("""INSERT INTO public.schedule
+            (db_name, year, week, manager, manager_guid, team_name, franchise_id, manager_week)
+            VALUES ('guillotine', 2026, 10, 'Dylan', 'yh-nick-dylan', 'Greasy GOAT', 'yh-nick-dylan', 'd14_10'),
+                   ('guillotine', 2026, 10, 'Brendon', 'yh-nick-brendon', 'Brendon Team', 'yh-nick-brendon', 'b15_10'),
+                   ('guillotine', 2026, 11, 'Sam', 'shared', 'Same Name', 'shared', 's_11')""")
+        # An ambiguous owner + team-name mapping is left as the provider sent it.
+        conn.execute("""INSERT INTO public.matchup (db_name, year, week, manager, manager_guid, team_name, franchise_id, manager_week)
+            VALUES ('guillotine', 2026, 1, 'Sam', 'shared', 'Same Name', 'shared_1', 's1_1'),
+                   ('guillotine', 2026, 2, 'Sam', 'shared', 'Same Name', 'shared_2', 's1_2')""")
+        runner = _ScheduleRunner(db_name="guillotine", conn=conn, data_dir=str(tmp_path))
+        for _ in range(2):
+            runner.build_schedule_from_matchup()
+            assert conn.execute("""SELECT manager_week, franchise_id FROM public.schedule
+                WHERE week >= 10 ORDER BY manager_week""").fetchall() == [
+                ("b15_10", "yh-nick-brendon"),
+                ("d14_10", "yh-nick-dylan_2"),
+                ("s_11", "shared"),
+            ]

@@ -1152,7 +1152,12 @@ def _guillotine_observed_inputs(df_season, df_sched, season, week, settings):
             if after is not None:
                 removed = current - after
                 if len(removed) != 1 or after - current or not removed.issubset(candidates):
-                    raise ValueError(f"Guillotine week {scoring_week} does not have one consistent lowest-score cut")
+                    raise ValueError(
+                        f"Guillotine week {scoring_week} does not have one consistent lowest-score cut "
+                        f"(removed={sorted(map(str, removed))}, appeared={sorted(map(str, after - current))}, "
+                        f"lowest={sorted(map(str, candidates))}, "
+                        f"source={'scores' if scored.get(scoring_week + 1) is not None else 'schedule'})"
+                    )
             else:
                 removed = candidates if len(candidates) == 1 else set()
                 after = current - removed

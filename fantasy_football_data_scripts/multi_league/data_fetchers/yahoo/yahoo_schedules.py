@@ -114,6 +114,7 @@ REQ_COLUMNS = [
 
 
 from multi_league.data_fetchers.shared.name_utils import safe_float
+from multi_league.data_fetchers.yahoo.yahoo_runtime import call_yahoo_with_transient_retry
 
 
 def get_league_for_year(y: int, ctx=None):
@@ -137,7 +138,9 @@ def get_league_for_year(y: int, ctx=None):
             print(f"[schedule] WARNING: Multiple leagues found for {y}: {league_ids} - using last one")
         league_key = league_ids[-1]
 
-    league = gm.to_league(league_key)
+    league = call_yahoo_with_transient_retry(
+        lambda: gm.to_league(league_key), label="schedule"
+    )
     return league_key, league
 
 

@@ -53,9 +53,9 @@ import pandas as pd
 import time
 
 
-def _is_transient_yahoo_service_error(error: Exception) -> bool:
-    """Yahoo's temporary user-database outage is not an OAuth revocation."""
-    return "udb validation unavailable" in str(error).lower()
+from multi_league.data_fetchers.yahoo.yahoo_runtime import (
+    is_transient_yahoo_service_error as _is_transient_yahoo_service_error,
+)
 
 
 def _native_guillotine_mode(*sources) -> bool | None:

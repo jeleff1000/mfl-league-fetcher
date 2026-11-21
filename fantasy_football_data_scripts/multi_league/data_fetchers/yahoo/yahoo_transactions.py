@@ -76,6 +76,7 @@ from multi_league.core.transaction_periods import (
     TransactionWeekError, dated_matchup_windows, local_yahoo_transaction_windows, native_transaction_week,
     transaction_has_publishable_assets,
 )
+from multi_league.data_fetchers.yahoo.yahoo_runtime import call_yahoo_with_transient_retry
 
 import pandas as pd
 import requests
@@ -252,7 +253,9 @@ def build_week_windows_from_yahoo(ctx, year: int) -> pd.DataFrame:
             print(f"[transactions] WARNING: Multiple leagues found for {year}: {league_ids} - using last one")
         league_key = league_ids[-1]
 
-    league = gm.to_league(league_key)
+    league = call_yahoo_with_transient_retry(
+        lambda: gm.to_league(league_key), label="transactions"
+    )
 
     # Figure out min/max weeks from settings; fall back to 1..17
     try:

@@ -20,6 +20,38 @@ from multi_league.core.date_utils import get_current_nfl_season_year
 _SESSION_LOCK = threading.RLock()
 _logger = logging.getLogger(__name__)
 
+# yahoo_fantasy_api raises RuntimeError(response.content) on any non-200.
+# Auth/permission failures carry an XML error body; an empty body is Yahoo's
+# edge (5xx/999 throttle) dropping the request, which succeeds on retry.
+_EMPTY_YAHOO_ERROR_BODIES = {"b''", 'b""', ""}
+
+
+def is_transient_yahoo_service_error(error: Exception) -> bool:
+    """True for Yahoo outages that are not OAuth revocations or bad requests."""
+    text = str(error).strip()
+    if "udb validation unavailable" in text.lower():
+        return True
+    return isinstance(error, RuntimeError) and text in _EMPTY_YAHOO_ERROR_BODIES
+
+
+def call_yahoo_with_transient_retry(fn, *, label: str, attempts: int = 3, sleep=None):
+    """Call ``fn()``; retry only transient Yahoo service errors (1s, 2s backoff).
+
+    Short, bounded backoff so it fits inside the two-minute weekly update
+    budget; any other error is raised immediately.
+    """
+    import time
+
+    sleeper = sleep or time.sleep
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as error:
+            if attempt >= attempts or not is_transient_yahoo_service_error(error):
+                raise
+            print(f"[{label}] Transient Yahoo service error (attempt {attempt}/{attempts}); retrying")
+            sleeper(attempt)
+
 
 def prepare_yahoo_session(oauth, *, refresh: bool = False, failed_token=None):
     """Keep rauth's bearer in sync with yahoo_oauth, including external refreshes.

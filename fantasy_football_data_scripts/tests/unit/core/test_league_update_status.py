@@ -772,3 +772,46 @@ def test_attempt_lifecycle_accepts_recovery_and_cancellation_states(status):
         receipt=_committed_receipt() if status in {"committed", "cache_verified", "committed_cache_pending"} else None,
         cache_verified=status == "cache_verified",
     )
+
+
+def _seed_demo_manifest(writer: LocalWriter, *, observed: str, published: str | None) -> None:
+    writer.connection.execute(
+        "INSERT INTO accounts.league_update_manifests "
+        "(database_name, observed_manifest_json, observed_manifest_digest, "
+        " published_manifest_json, published_manifest_digest) "
+        "VALUES ('demo_league', '{\"weeks\":12}', ?, '{\"weeks\":2}', ?)",
+        [observed, published],
+    )
+
+
+def test_scheduled_demo_promotes_exactly_its_planned_observation():
+    from multi_league.core.league_update_status import promote_scheduled_demo_manifest
+
+    writer = LocalWriter()
+    _seed_demo_manifest(writer, observed="obs-12", published="stale-2")
+    assert promote_scheduled_demo_manifest(writer, database_name="demo_league", observed_digest="obs-12")
+    row = writer.connection.execute(
+        "SELECT published_manifest_json, published_manifest_digest, published_at IS NOT NULL "
+        "FROM accounts.league_update_manifests WHERE database_name = 'demo_league'"
+    ).fetchone()
+    assert row == ('{"weeks":12}', "obs-12", True)
+
+
+def test_scheduled_demo_does_not_promote_a_newer_observation_it_did_not_publish():
+    from multi_league.core.league_update_status import promote_scheduled_demo_manifest
+
+    writer = LocalWriter()
+    _seed_demo_manifest(writer, observed="obs-13", published="stale-2")
+    assert not promote_scheduled_demo_manifest(writer, database_name="demo_league", observed_digest="obs-12")
+    assert writer.connection.execute(
+        "SELECT published_manifest_digest FROM accounts.league_update_manifests"
+    ).fetchone() == ("stale-2",)
+
+
+def test_scheduled_demo_promotion_is_limited_to_demo_league():
+    from multi_league.core.league_update_status import promote_scheduled_demo_manifest
+
+    with pytest.raises(PermissionError):
+        promote_scheduled_demo_manifest(LocalWriter(), database_name="the_league", observed_digest="x")
+    with pytest.raises(ValueError):
+        promote_scheduled_demo_manifest(LocalWriter(), database_name="demo_league", observed_digest="")

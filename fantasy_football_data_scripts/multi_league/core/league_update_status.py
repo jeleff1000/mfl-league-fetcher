@@ -389,3 +389,37 @@ def record_league_update_status(
 
 
 transition_league_update_attempt = record_league_update_status
+
+
+SCHEDULED_DEMO_DATABASE = "demo_league"
+
+
+def promote_scheduled_demo_manifest(writer: Any, *, database_name: str, observed_digest: str) -> bool:
+    """Record the demo's verified publication as its published manifest.
+
+    The workflow-owned demo refresh has no UI dispatch claim, so the claim
+    lifecycle above never promotes its manifest. Without this the demo plans
+    every run against a stale published snapshot and rebuilds the full active
+    season each day. Promote only the exact observation this run planned from.
+    """
+    if database_name != SCHEDULED_DEMO_DATABASE:
+        raise PermissionError("scheduled manifest promotion is limited to demo_league")
+    digest = str(observed_digest or "").strip()
+    if not digest:
+        raise ValueError("scheduled demo promotion requires the planned observed digest")
+    response = writer.execute(
+        f"""
+        UPDATE accounts.league_update_manifests SET
+          published_manifest_json = observed_manifest_json,
+          published_manifest_digest = observed_manifest_digest,
+          published_at = NOW(), updated_at = NOW()
+        WHERE database_name = {_literal(database_name)}
+          AND observed_manifest_digest = {_literal(digest)}
+        RETURNING database_name;
+        """,
+        database="___ops",
+    )
+    if isinstance(response, list):
+        return bool(response)
+    fetchone = getattr(response, "fetchone", None)
+    return bool(fetchone and fetchone())

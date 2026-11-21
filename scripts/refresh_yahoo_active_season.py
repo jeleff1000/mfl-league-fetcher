@@ -2326,6 +2326,28 @@ def _persist_rotated_oauth_refresh_token(
     return True
 
 
+def _promote_scheduled_demo_publication(
+    receipt: dict[str, Any], writer: Any, *, database_name: str, persisted_plan: Any,
+) -> None:
+    """After a committed demo publication, mark its planned snapshot published.
+
+    The data is already committed, so a failed promotion is recorded on the
+    receipt instead of failing the run; the next run simply replans wider.
+    """
+    from multi_league.core.league_update_status import promote_scheduled_demo_manifest
+
+    try:
+        receipt["scheduled_demo_manifest_promoted"] = promote_scheduled_demo_manifest(
+            writer,
+            database_name=database_name,
+            observed_digest=persisted_plan.observed_manifest_digest,
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostic only after commit
+        receipt["scheduled_demo_manifest_promoted"] = False
+        receipt["scheduled_demo_manifest_error"] = str(exc)[:500]
+        print(f"[weekly-refresh] demo manifest promotion deferred: {exc}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="Yahoo league db_name")
@@ -2925,6 +2947,10 @@ def main(argv: list[str] | None = None) -> int:
                 | set(receipt["homepage_rows"])
             )
             timer.mark("fly_publication")
+            if scheduled_demo:
+                _promote_scheduled_demo_publication(
+                    receipt, writer, database_name=args.db, persisted_plan=persisted_plan,
+                )
             if verify_post_publication_counts(
                 receipt,
                 read_counts=lambda: _scope_counts(

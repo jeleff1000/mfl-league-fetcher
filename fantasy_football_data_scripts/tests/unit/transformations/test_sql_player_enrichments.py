@@ -988,3 +988,48 @@ def test_apply_super_table_skill_positions_overrides_fb_to_rb_from_super_table()
         (12, "00-0036900", "MagicMawlz", "RB"),  # already RB, no-op
         (12, "00-9999999", "Unrostered", "FB"),  # no super_table match, untouched
     ]
+
+
+def _zero_point_starter_conn(*, fantasy_position, lineup_position, is_started):
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA public")
+    conn.execute("ATTACH ':memory:' AS ___ops")
+    conn.execute("CREATE SCHEMA ___ops.nfl_historical")
+    conn.execute(f"""
+        CREATE TABLE public.player_fantasy AS
+        SELECT 'test_db' AS db_name, 'inactive_2026_2' AS player_week, 'inactive' AS NFL_player_id,
+               2026 AS year, 2 AS week, 'WR' AS position, 'Jesse' AS manager, 'f1' AS franchise_id,
+               0.0::DOUBLE AS fantasy_points, {is_started} AS is_started,
+               '{fantasy_position}' AS fantasy_position, '{lineup_position}' AS lineup_position
+    """)
+    conn.execute("""
+        CREATE TABLE public.matchup AS
+        SELECT 'test_db' AS db_name, 2026 AS year, 2 AS week, 'Jesse' AS manager,
+               'f1' AS franchise_id, 101.5::DOUBLE AS team_points
+    """)
+    conn.execute("""
+        CREATE TABLE ___ops.nfl_historical.nfl_player_stats_all AS
+        SELECT 'someone_else_2026_2' AS player_week
+    """)
+    return conn
+
+
+def test_zero_point_starter_fix_benches_lineup_slot_too_so_scoped_equals_full():
+    """A whole-season rebuild copies WR into lineup_position, then un-starts
+    the inactive player; a scoped refresh sees the retained row already BN.
+    Both must publish the same slot (kmffl 2026 weeks 2/4/5/6/8/9)."""
+    results = []
+    for state in (
+        {"fantasy_position": "WR", "lineup_position": "WR", "is_started": 1},  # full rebuild
+        {"fantasy_position": "BN", "lineup_position": "BN", "is_started": 0},  # scoped retained
+    ):
+        conn = _zero_point_starter_conn(**state)
+        runner = _PlayerRunner(db_name="test_db", data_dir="local")
+        runner._conn = conn
+        runner._platform = "yahoo"
+        runner.fix_zero_point_starters()
+        results.append(conn.execute(
+            "SELECT is_started, fantasy_position, lineup_position FROM public.player_fantasy"
+        ).fetchone())
+        conn.close()
+    assert results[0] == results[1] == (0, "BN", "BN")

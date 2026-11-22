@@ -1075,12 +1075,17 @@ class PlayerEnrichmentsMixin:
             right_has_franchise_id="franchise_id" in player_cols,
         )
 
+        # ensure_lineup_position copied fantasy_position into lineup_position
+        # earlier in this wave. Bench both, or a whole-season rebuild leaves
+        # BN/WR while a scoped refresh (whose retained rows are already BN)
+        # recopies BN/BN — the same inputs would publish different slots.
+        lineup_sql = ",\n                lineup_position = 'BN'" if "lineup_position" in player_cols else ""
         # Only un-start players whose manager scored > 0 in that week
         # (if team_points=0, the whole roster legitimately scored 0 — don't touch)
         sql = f"""
             UPDATE {player_table} pf
             SET is_started = 0,
-                fantasy_position = 'BN'
+                fantasy_position = 'BN'{lineup_sql}
             WHERE pf.is_started = 1
               AND COALESCE(pf.fantasy_points, 0) = 0
               AND COALESCE(pf.position, '') NOT IN ('DEF', 'K')

@@ -689,6 +689,8 @@ def aggregate_transaction_report_card(conn, db_name: str, *, year: int | None = 
     grade_col = "transaction_grade" if "transaction_grade" in cols else None
     faab_col = "faab_bid" if "faab_bid" in cols else None
     fid_col = "franchise_id" if "franchise_id" in cols else None
+    # Deterministic tie-break for the top-N lists below (see top_pickups).
+    tiebreak_sql = ", t.week, t.player" + (", t.transaction_id" if "transaction_id" in cols else "")
     trade_lamar_expr = (
         "COALESCE(t.trade_asset_lamar, 0)"
         if "trade_asset_lamar" in cols
@@ -770,7 +772,7 @@ def aggregate_transaction_report_card(conn, db_name: str, *, year: int | None = 
                   AND {grade_col} IS NOT NULL AND TRIM({grade_col}) <> ''
                 GROUP BY {grade_col}
             """).fetchall()
-            grade_counts = {str(r[0]): r[1] for r in gc_rows}
+            grade_counts = {str(r[0]): r[1] for r in sorted(gc_rows, key=lambda row: str(row[0]))}
 
         # Top 4 pickups
         faab_select = f", COALESCE(t.{faab_col}, 0) as faab" if faab_col else ", 0 as faab"
@@ -781,7 +783,9 @@ def aggregate_transaction_report_card(conn, db_name: str, *, year: int | None = 
             FROM {central_table("transactions")} t
             WHERE t.db_name = '{db_name}' AND t.franchise_id = '{fid_lit}' AND t.year = {yr}
               AND t.transaction_type IN {_ADD_TRANSACTION_TYPES_SQL} AND t.player IS NOT NULL
-            ORDER BY COALESCE(t.{add_lamar_col}, 0) DESC
+            -- Ties at the LIMIT boundary must not depend on physical row
+            -- order (a scoped refresh and a full rebuild store rows differently).
+            ORDER BY COALESCE(t.{add_lamar_col}, 0) DESC{tiebreak_sql}
             LIMIT 4
         """).fetchall()
         top_pickups = [
@@ -805,7 +809,7 @@ def aggregate_transaction_report_card(conn, db_name: str, *, year: int | None = 
                 FROM {central_table("transactions")} t
                 WHERE t.db_name = '{db_name}' AND t.franchise_id = '{fid_lit}' AND t.year = {yr}
                   AND t.transaction_type = 'drop' AND t.player IS NOT NULL
-                ORDER BY COALESCE(t.{regret_col}, 0) DESC
+                ORDER BY COALESCE(t.{regret_col}, 0) DESC{tiebreak_sql}
                 LIMIT 4
             """).fetchall()
             worst_drops_list = [
@@ -887,7 +891,7 @@ def aggregate_transaction_report_card(conn, db_name: str, *, year: int | None = 
                 )
                 SELECT transaction_id, year, week, got, got_lamar, partner, gave, gave_lamar, net_lamar
                 FROM trade_summary
-                ORDER BY net_lamar DESC
+                ORDER BY net_lamar DESC, week, transaction_id
             """).fetchall()
 
         if trade_rows:

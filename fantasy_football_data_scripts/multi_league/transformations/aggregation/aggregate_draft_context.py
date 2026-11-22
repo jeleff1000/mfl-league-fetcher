@@ -509,7 +509,7 @@ def aggregate_draft_player_career(conn, db_name: str) -> int:
             {points_agg} as total_fantasy_points,
             {ppg_agg} as avg_season_ppg,
             {quality_agg} as avg_pick_quality_zscore,
-            FIRST(d.manager ORDER BY COALESCE(d.{lamar_col}, 0) DESC) as best_manager,
+            FIRST(d.manager ORDER BY COALESCE(d.{lamar_col}, 0) DESC, d.manager) as best_manager,
             STRING_AGG(DISTINCT d.manager, ', ' ORDER BY d.manager) as managers,
             {fid_agg_player} as franchise_ids,
             STRING_AGG(DISTINCT CAST(d.year AS VARCHAR), ', ' ORDER BY CAST(d.year AS VARCHAR)) as years,

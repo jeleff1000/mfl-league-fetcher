@@ -1081,7 +1081,7 @@ def _compute_player_leaders(
             WHERE fc.manager_lamar IS NOT NULL
               AND {league_db_filter(db_name, 'fc')}
               AND {rostered_filter_sql('fc', 'managers')}
-            ORDER BY fc.manager_lamar DESC LIMIT 1
+            ORDER BY fc.manager_lamar DESC, fc.player, fc.managers LIMIT 1
         """).fetchone()
         if row:
             leaders["best_career_lamar_player"] = row[0]
@@ -1102,7 +1102,7 @@ def _compute_player_leaders(
                 WHERE fc.clutch_equity IS NOT NULL AND fc.clutch_equity != 0
                   AND {league_db_filter(db_name, 'fc')}
                   AND {rostered_filter_sql('fc', 'managers')}
-                ORDER BY fc.clutch_equity DESC LIMIT 1
+                ORDER BY fc.clutch_equity DESC, fc.player, fc.managers LIMIT 1
             """).fetchone()
             if row:
                 leaders["best_career_clutch_player"] = row[0]

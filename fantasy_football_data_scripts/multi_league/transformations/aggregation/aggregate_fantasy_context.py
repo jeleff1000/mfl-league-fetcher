@@ -267,7 +267,7 @@ def _prepare_scoped_nfl_lookup_tables(conn, db_name: str) -> None:
         ), nfl_team_lookup AS (
             SELECT s.NFL_player_id, s.nfl_team,
                    ROW_NUMBER() OVER (
-                       PARTITION BY s.NFL_player_id ORDER BY s.year DESC, s.week DESC
+                       PARTITION BY s.NFL_player_id ORDER BY s.year DESC, s.week DESC, s.nfl_team
                    ) AS rn
             FROM ___ops.nfl_historical.nfl_player_stats_all s
             INNER JOIN needed_player_ids n
@@ -321,7 +321,7 @@ def _scoped_nfl_lookup_ctes(db_name: str, *, prepared: bool = False) -> str:
         nfl_team_lookup AS (
             SELECT s.NFL_player_id, s.nfl_team,
                    ROW_NUMBER() OVER (
-                       PARTITION BY s.NFL_player_id ORDER BY s.year DESC, s.week DESC
+                       PARTITION BY s.NFL_player_id ORDER BY s.year DESC, s.week DESC, s.nfl_team
                    ) AS rn
             FROM ___ops.nfl_historical.nfl_player_stats_all s
             INNER JOIN needed_player_ids n
@@ -441,7 +441,7 @@ def _aggregate_fantasy(
             {c['win']}
             {c['loss']}
             COALESCE(
-                STRING_AGG(DISTINCT NULLIF(TRIM(f.manager), ''), ', ')
+                STRING_AGG(DISTINCT NULLIF(TRIM(f.manager), ''), ', ' ORDER BY NULLIF(TRIM(f.manager), ''))
                     FILTER (WHERE f.manager IS NOT NULL AND TRIM(f.manager) <> '' AND LOWER(TRIM(f.manager)) <> 'unrostered'),
                 'Unrostered'
             ) AS managers,

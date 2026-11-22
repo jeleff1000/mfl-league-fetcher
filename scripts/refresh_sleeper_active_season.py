@@ -615,6 +615,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Current Sleeper league ID from the onboarding chain; persisted after a successful refresh",
     )
     parser.add_argument("--execute", action="store_true", help="Commit the scoped Fleet bundle to Fly")
+    parser.add_argument(
+        "--full-active-season",
+        action="store_true",
+        help="QA: refresh every finalized active-season week instead of the planned scope",
+    )
     parser.add_argument("--json-out", type=Path, help="Optional non-secret run receipt path")
     args = parser.parse_args(argv)
 
@@ -734,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
         finalized_weeks=finalized_ops["week"].dropna().tolist(),
         last_materialized_week=last_materialized_week,
         through_week=args.through_week,
+        full_active_season=args.full_active_season,
     )
     receipt: dict[str, Any] = {
         "db_name": args.db,

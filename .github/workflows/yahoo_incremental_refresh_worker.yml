@@ -49,6 +49,11 @@ on:
         description: 'Exact provider/NFL source manifest claimed by the UI'
         required: false
         type: string
+      full_active_season:
+        description: 'QA only: rebuild every finalized active-season week (scoped-vs-full comparison)'
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
 
@@ -167,6 +172,7 @@ jobs:
           THROUGH_WEEK: ${{ inputs.through_week }}
           EXECUTE: ${{ env.INPUT_EXECUTE }}
           OBSERVED_MANIFEST_DIGEST: ${{ env.INPUT_OBSERVED_MANIFEST_DIGEST }}
+          FULL_ACTIVE_SEASON: ${{ github.event_name == 'workflow_dispatch' && inputs.full_active_season && 'true' || 'false' }}
         run: |
           set -euo pipefail
           args=(--db "${DB_NAME}" --credential-db "${CREDENTIAL_DB_NAME}" --json-out yahoo_active_season_refresh.json)
@@ -185,6 +191,9 @@ jobs:
           fi
           if [ -n "${OBSERVED_MANIFEST_DIGEST}" ]; then
             args+=(--observed-manifest-digest "${OBSERVED_MANIFEST_DIGEST}")
+          fi
+          if [ "${FULL_ACTIVE_SEASON}" = "true" ]; then
+            args+=(--full-active-season)
           fi
           remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))
           if [ "${remaining}" -le 0 ]; then

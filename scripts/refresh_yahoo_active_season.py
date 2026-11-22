@@ -2365,8 +2365,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--full-active-season",
+        action="store_true",
+        help="QA: refresh every finalized active-season week instead of the planned scope",
+    )
     parser.add_argument("--json-out", type=Path, help="Optional non-secret run receipt path")
     args = parser.parse_args(argv)
+    if args.full_active_season and args.scheduled_demo:
+        raise PermissionError("--full-active-season is a manual QA option")
 
     scheduled_demo = authorize_scheduled_demo(
         requested=args.scheduled_demo,
@@ -2481,6 +2488,7 @@ def main(argv: list[str] | None = None) -> int:
         finalized_weeks=finalized_weeks,
         last_materialized_week=last_materialized_week,
         through_week=args.through_week,
+        full_active_season=args.full_active_season,
     )
     identity_repair_count = 0
     identity_repair_week = None

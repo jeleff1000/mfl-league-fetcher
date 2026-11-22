@@ -3561,3 +3561,12 @@ def test_update_source_snapshot_rejects_concurrent_publication(monkeypatch):
         worker._capture_update_source_frames(
             object(), db_name="the_league", active_year=2026, tables=("league_context",),
         )
+
+
+def test_full_active_season_qa_lane_adds_every_finalized_week_to_the_plan():
+    from multi_league.core.league_refresh import refresh_weeks_for_run
+
+    kwargs = dict(planned_weeks=[10, 11], finalized_weeks=[1, 2, 3, 10, 11, 12], last_materialized_week=11)
+    assert refresh_weeks_for_run(**kwargs) == [10, 11]
+    assert refresh_weeks_for_run(**kwargs, full_active_season=True) == [1, 2, 3, 10, 11, 12]
+    assert refresh_weeks_for_run(**kwargs, through_week=10, full_active_season=True) == [1, 2, 3, 10]

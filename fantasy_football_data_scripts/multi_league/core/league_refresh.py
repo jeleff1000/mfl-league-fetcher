@@ -731,8 +731,23 @@ def refresh_weeks_for_run(
     finalized_weeks: Iterable[int | str],
     last_materialized_week: int | None,
     through_week: int | None = None,
+    full_active_season: bool = False,
 ) -> list[int]:
-    """Resolve one run's week scope while honoring an explicit manual ceiling."""
+    """Resolve one run's week scope while honoring an explicit manual ceiling.
+
+    ``full_active_season`` is a manual QA lane: the planned scope plus every
+    finalized week, so a scoped run's multi-week derived output can be
+    compared against a whole-season rebuild of the same inputs.
+    """
+    if full_active_season:
+        planned = refresh_weeks_for_run(
+            planned_weeks=planned_weeks, finalized_weeks=finalized_weeks,
+            last_materialized_week=last_materialized_week, through_week=through_week,
+        )
+        finalized = {week for value in finalized_weeks if (week := _positive_int(value)) is not None}
+        if through_week is not None:
+            finalized = {week for week in finalized if week <= int(through_week)}
+        return sorted(set(planned) | finalized)
     if planned_weeks is None:
         weeks = completed_weeks_to_refresh(
             finalized_weeks=finalized_weeks,

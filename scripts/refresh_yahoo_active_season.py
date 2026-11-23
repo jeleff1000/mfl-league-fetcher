@@ -2694,6 +2694,16 @@ def main(argv: list[str] | None = None) -> int:
             # otherwise correctly restored historical source rows appear new.
             preservation_before = preservation_witnesses
             timer.mark("local_hydration")
+            from multi_league.transformations.draft.sql_draft_enrichments import (
+                prefetch_global_draft_score_baseline_for,
+            )
+
+            # The draft step runs late, often inside the Fly read reserve; fetch
+            # its fleet-wide baseline now so grades never silently go local-only.
+            receipt["draft_baseline_prefetch_rows"] = prefetch_global_draft_score_baseline_for(
+                local_db, db_name=args.db, data_dir=work_dir,
+            )
+            timer.mark("draft_baseline_prefetch")
             active_scoring = _active_year_scoring_info(
                 local_db,
                 db_name=args.db,

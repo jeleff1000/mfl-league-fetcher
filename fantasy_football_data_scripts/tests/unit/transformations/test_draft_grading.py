@@ -526,3 +526,79 @@ def test_pick_grades_partition_keepers_from_non_keepers(tmp_path):
     assert non_keepers[0][3] == "F"
     assert keepers[-1][3] == "A+"
     assert keepers[0][3] == "F"
+
+
+def _seed_prefetch_draft(path):
+    conn = duckdb.connect(str(path))
+    conn.execute("CREATE SCHEMA IF NOT EXISTS public")
+    conn.execute(
+        """
+        CREATE TABLE public.draft (
+            year INTEGER, round INTEGER, pick INTEGER, cost DOUBLE, draft_type VARCHAR,
+            manager VARCHAR, franchise_id VARCHAR, position VARCHAR, manager_lamar DOUBLE,
+            expected_lamar DOUBLE, draft_value_zscore DOUBLE, pick_quality_zscore DOUBLE,
+            pick_score DOUBLE, draft_grade VARCHAR, manager_draft_score DOUBLE,
+            manager_draft_grade VARCHAR, is_keeper INTEGER
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO public.draft VALUES (?, ?, ?, 0, 'snake', ?, ?, 'RB', ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0)",
+        [(2025, 1, i, f"M{i}", f"f{i}", v) for i, v in enumerate([40.0, 55.0, 70.0, 85.0, 120.0], start=1)],
+    )
+    conn.close()
+
+
+def _grades(tmp_path, db_name, monkeypatch, *, prefetch: bool, late_fly_ok: bool):
+    import pandas as pd
+    from multi_league.core.readers import fly_reader
+    from multi_league.transformations.draft import sql_draft_enrichments as module
+
+    module._PREFETCHED_GLOBAL_BASELINES.clear()
+    monkeypatch.delenv("CORPUS_MODE", raising=False)
+    monkeypatch.delenv("DRAFT_GLOBAL_SOURCE_PATH", raising=False)
+    monkeypatch.setenv("DATABASE_SERVER_URL", "http://fly.invalid")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "t")
+    baseline = pd.DataFrame([{
+        "profile_year": 2025, "draft_market": "redraft", "draft_kind": "snake", "cohort": "draft",
+        "position": "RB", "capital_bucket": f"s_{b:02d}", "mean_lamar": 150.0, "std_lamar": 30.0,
+        "sample_size": 400, "effective_n": 300.0,
+    } for b in range(1, 21)])
+    calls = {"n": 0, "fly_up": True}
+
+    def query_df(self, sql, database=None):
+        calls["n"] += 1
+        if not calls["fly_up"]:
+            raise fly_reader.FlyReaderNetworkError("Fly refresh read budget exhausted (30s reserved)")
+        return baseline.copy()
+
+    monkeypatch.setattr(fly_reader.FlyReader, "query_df", query_df)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / f"{db_name}.duckdb"
+    _seed_prefetch_draft(path)
+    if prefetch:
+        early = _DraftRunner(db_name=db_name, data_dir=str(tmp_path))
+        try:
+            assert early.prefetch_global_draft_score_baseline() == len(baseline)
+        finally:
+            early._conn.close()
+    calls["fly_up"] = late_fly_ok
+    runner = _DraftRunner(db_name=db_name, data_dir=str(tmp_path))
+    try:
+        runner.draft_value_zscore()
+        rows = runner.conn.execute(
+            "SELECT pick, expected_lamar, draft_value_zscore, draft_grade FROM public.draft ORDER BY pick"
+        ).fetchall()
+    finally:
+        runner._conn.close()
+    return rows, calls["n"]
+
+
+def test_prefetched_global_baseline_survives_late_fly_read_refusal(tmp_path, monkeypatch):
+    healthy, _ = _grades(tmp_path / "a", "prefetch_a", monkeypatch, prefetch=False, late_fly_ok=True)
+    degraded, _ = _grades(tmp_path / "b", "prefetch_b", monkeypatch, prefetch=False, late_fly_ok=False)
+    prefetched, calls = _grades(tmp_path / "c", "prefetch_c", monkeypatch, prefetch=True, late_fly_ok=False)
+
+    assert degraded != healthy  # the bug: late refusal silently switches to a local-only model
+    assert prefetched == healthy  # the fix: same grades as when Fly answered on time
+    assert calls == 1  # one early read; the late draft step never touches Fly

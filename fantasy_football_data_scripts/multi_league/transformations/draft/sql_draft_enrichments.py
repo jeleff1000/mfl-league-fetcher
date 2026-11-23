@@ -11,6 +11,14 @@ from multi_league.shared.filters import rostered_filter_sql  # noqa: F401 - used
 
 logger = logging.getLogger(__name__)
 
+# Weighted global draft baselines fetched early in a weekly update, keyed by
+# (db_name, target profile VALUES).  The draft step runs late in the update,
+# often after the Fly read budget has entered its publication reserve; a
+# prefetched baseline lets it keep the fleet-wide model instead of silently
+# falling back to the league's own picks.  A profile change misses the cache
+# and takes the normal Fly path.
+_PREFETCHED_GLOBAL_BASELINES: dict[tuple[str, str], "object"] = {}
+
 
 def _detect_draft_type_for_year(settings_row: dict):
     """Detect auction vs snake from a single league_settings row.
@@ -1127,6 +1135,15 @@ class DraftEnrichmentsMixin:
             for row in profiles
         )
         db_lit = self._sql_literal(self.db_name)
+        self._global_baseline_targets = target_values
+
+        prefetched = _PREFETCHED_GLOBAL_BASELINES.get((str(self.db_name), target_values))
+        if prefetched is not None:
+            count = self._insert_global_baseline_rows(prefetched)
+            logger.info("[draft_score] Loaded %s weighted global baseline rows from prefetch", count)
+            return count
+        if _PREFETCHED_GLOBAL_BASELINES:
+            logger.info("[draft_score] Prefetched global baseline profile differs; querying Fly")
 
         local_count = self._fetch_global_draft_score_baseline_from_local_source(target_values, db_lit)
         if local_count is not None:
@@ -1341,6 +1358,12 @@ class DraftEnrichmentsMixin:
                 "effective_n",
             ]
         )
+        count = self._insert_global_baseline_rows(rows)
+        logger.info("[draft_score] Loaded %s weighted global baseline rows", count)
+        return count
+
+    def _insert_global_baseline_rows(self, rows) -> int:
+        conn = self._get_connection()
         conn.register("_draft_global_baseline_upload", rows)
         try:
             conn.execute(
@@ -1355,9 +1378,48 @@ class DraftEnrichmentsMixin:
             )
         finally:
             conn.unregister("_draft_global_baseline_upload")
-        count = int(conn.execute("SELECT COUNT(*) FROM _draft_global_baseline").fetchone()[0] or 0)
-        logger.info("[draft_score] Loaded %s weighted global baseline rows", count)
-        return count
+        return int(conn.execute("SELECT COUNT(*) FROM _draft_global_baseline").fetchone()[0] or 0)
+
+    def prefetch_global_draft_score_baseline(self) -> int:
+        """Fetch the Fly global draft baseline before slow provider work.
+
+        Builds the same target profiles the draft step will build from the
+        hydrated draft/settings rows and caches the weighted baseline for this
+        process.  Never mutates league tables.  Returns cached row count
+        (0 when nothing could be prefetched; the draft step then behaves as
+        before).
+        """
+        try:
+            if not self._table_exists("draft"):
+                return 0
+            draft_cols = self._get_table_columns("draft")
+            lamar_col = "manager_lamar" if "manager_lamar" in draft_cols else "player_lamar"
+            pos_col = "yahoo_position" if "yahoo_position" in draft_cols else "position"
+            if lamar_col not in draft_cols or pos_col not in draft_cols:
+                return 0
+            if self._create_draft_score_rows_temp(self._qualified_name("draft"), draft_cols, lamar_col, pos_col) == 0:
+                return 0
+            count = self._fetch_global_draft_score_baseline()
+            targets = getattr(self, "_global_baseline_targets", None)
+            if count > 0 and targets is not None:
+                conn = self._get_connection()
+                frame = conn.execute(
+                    "SELECT profile_year, draft_market, draft_kind, cohort, position, capital_bucket, "
+                    "mean_lamar, std_lamar, sample_size, effective_n FROM _draft_global_baseline"
+                ).df()
+                _PREFETCHED_GLOBAL_BASELINES[(str(self.db_name), targets)] = frame
+                logger.info("[draft_score] Prefetched %s weighted global baseline rows", count)
+            return count
+        except Exception as exc:  # noqa: BLE001
+            logger.info("[draft_score] Global baseline prefetch skipped: %s", exc)
+            return 0
+        finally:
+            try:
+                conn = self._get_connection()
+                conn.execute("DROP TABLE IF EXISTS _draft_score_rows")
+                conn.execute("DROP TABLE IF EXISTS _draft_global_baseline")
+            except Exception:  # noqa: BLE001
+                pass
 
     def _fetch_global_draft_score_baseline_from_local_source(self, target_values: str, db_lit: str) -> int | None:
         """Build global draft baselines from a local source cache when available.
@@ -3347,3 +3409,17 @@ class DraftEnrichmentsMixin:
         rows += self._execute(sql_default, "draft_bench_value: fill defaults")
 
         return rows
+
+
+def prefetch_global_draft_score_baseline_for(local_db, *, db_name: str, data_dir) -> int:
+    """Weekly-update hook: prefetch the global draft baseline right after hydration."""
+    if os.environ.get("DRAFT_SCORE_GLOBAL_BASELINE", "1").lower() in {"0", "false", "no"}:
+        return 0
+    try:
+        from multi_league.transformations.sql_enrichments import SQLEnrichments
+
+        enricher = SQLEnrichments(db_name=db_name, data_dir=str(data_dir), quick=True, conn=local_db.connect())
+        return enricher.prefetch_global_draft_score_baseline()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[draft_score] Global baseline prefetch skipped: %s", exc)
+        return 0

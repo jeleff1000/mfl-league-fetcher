@@ -711,3 +711,52 @@ def test_preseason_does_not_hide_missing_previously_cached_games(ops_sources, mo
         """)
     with pytest.raises(RuntimeError, match="2026"):
         import_utils.run_track_1_verify(2026, 2026)
+
+
+def _seed_rank_change(cache_path, live):
+    current = live.execute("""
+        SELECT NFL_player_id, year, week, season_type, nfl_team, opponent_nfl_team,
+               player_week, position, rank_qb_4pt, rank_alltime_qb_4pt, recon_correction_log
+        FROM nfl_historical.nfl_player_stats_all
+    """).fetchdf()
+    current.loc[current["week"] == 2, "rank_alltime_qb_4pt"] = 1
+    with duckdb.connect(str(cache_path)) as cache:
+        cache.register("current_rows", current)
+        cache.execute("INSERT INTO nfl_historical.nfl_player_stats_all SELECT * FROM current_rows")
+
+
+def _empty_keyed_reads(monkeypatch, reader, times):
+    real = reader.query_df
+    state = {"left": times}
+
+    def query(sql, *, database, **kwargs):
+        frame = real(sql, database=database, **kwargs)
+        if "IN (VALUES" in sql and "hash(" not in sql and state["left"] > 0:
+            state["left"] -= 1
+            return frame.iloc[:0]
+        return frame
+
+    monkeypatch.setattr(reader, "query_df_parquet", query)
+
+
+def test_one_transient_empty_keyed_read_is_retried_not_failed(ops_sources, monkeypatch):
+    # 2026-11-23 bad_chemistry: Fly answered 200 with zero rows for admitted keys.
+    cache_path, live, reader = ops_sources
+    _seed_rank_change(cache_path, live)
+    _empty_keyed_reads(monkeypatch, reader, times=1)
+
+    assert import_utils.run_track_1_verify(2025, 2026) is True
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        assert cache.execute("""
+            SELECT week, rank_alltime_qb_4pt FROM nfl_historical.nfl_player_stats_all
+            WHERE year=2026 ORDER BY week
+        """).fetchall() == [(1, 216), (2, 216)]
+
+
+def test_persistently_empty_keyed_read_still_fails_closed(ops_sources, monkeypatch):
+    cache_path, live, reader = ops_sources
+    _seed_rank_change(cache_path, live)
+    _empty_keyed_reads(monkeypatch, reader, times=2)
+
+    with pytest.raises(RuntimeError):
+        import_utils.run_track_1_verify(2025, 2026)

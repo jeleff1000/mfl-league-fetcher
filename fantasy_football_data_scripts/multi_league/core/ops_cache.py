@@ -332,15 +332,20 @@ def _patch_research_ops_cache_from_fly(
                     f"IN (VALUES {values})"
                 )
                 parquet_query = getattr(reader, "query_df_parquet", None)
-                source = (
-                    parquet_query(
-                        source_sql, database=OPS_DATABASE, **read_kwargs,
-                    )
-                    if parquet_query is not None
-                    else reader.query_df(
-                        source_sql, database=OPS_DATABASE, **read_kwargs,
-                    )
-                )
+
+                def _fetch_source(sql: str = source_sql) -> pd.DataFrame:
+                    if parquet_query is not None:
+                        return parquet_query(sql, database=OPS_DATABASE, **read_kwargs)
+                    return reader.query_df(sql, database=OPS_DATABASE, **read_kwargs)
+
+                source = _fetch_source()
+                if source.empty:
+                    # These keys were just admitted from Fly, so an empty
+                    # answer is a transient server anomaly (seen under load,
+                    # 2026-11-23 bad_chemistry quick import), not real
+                    # absence. Ask once more before failing closed below.
+                    print(f"[ops-cache] {year} week {week}: empty keyed read; retrying once", flush=True)
+                    source = _fetch_source()
             else:
                 source = pd.DataFrame(columns=columns)
             timer.mark(f"week_{int(week)}_fetch")

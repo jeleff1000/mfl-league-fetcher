@@ -602,3 +602,38 @@ def test_prefetched_global_baseline_survives_late_fly_read_refusal(tmp_path, mon
     assert degraded != healthy  # the bug: late refusal silently switches to a local-only model
     assert prefetched == healthy  # the fix: same grades as when Fly answered on time
     assert calls == 1  # one early read; the late draft step never touches Fly
+
+
+def test_prefetch_gives_up_fast_while_fly_is_checkpointing(tmp_path, monkeypatch):
+    import time
+
+    from multi_league.core.readers import fly_reader
+    from multi_league.transformations.draft import sql_draft_enrichments as module
+
+    class Busy:
+        status_code = 503
+        text = '{"reason": "checkpointing"}'
+        headers = {"Retry-After": "1"}
+
+        def json(self):
+            return {"reason": "checkpointing"}
+
+    module._PREFETCHED_GLOBAL_BASELINES.clear()
+    monkeypatch.delenv("CORPUS_MODE", raising=False)
+    monkeypatch.delenv("DRAFT_GLOBAL_SOURCE_PATH", raising=False)
+    monkeypatch.setenv("DATABASE_SERVER_URL", "http://fly.invalid")
+    monkeypatch.setenv("DATABASE_READ_TOKEN", "t")
+    # Worker environment: a two-minute update with 60 s outage recovery enabled.
+    monkeypatch.setenv("LEAGUE_UPDATE_DEADLINE_EPOCH", str(time.time() + 120))
+    monkeypatch.setenv("LEAGUE_UPDATE_READ_RECOVERY_SECONDS", "60")
+    monkeypatch.setenv("DRAFT_SCORE_BASELINE_PREFETCH_SECONDS", "2")
+    monkeypatch.setattr(fly_reader.FlyReader, "_read_attempt", lambda self, *a, **k: Busy())
+    _seed_prefetch_draft(tmp_path / "busy.duckdb")
+    runner = _DraftRunner(db_name="busy", data_dir=str(tmp_path))
+    started = time.time()
+    try:
+        assert runner.prefetch_global_draft_score_baseline() == 0
+    finally:
+        runner._conn.close()
+    assert time.time() - started < 6
+    assert module._PREFETCHED_GLOBAL_BASELINES == {}

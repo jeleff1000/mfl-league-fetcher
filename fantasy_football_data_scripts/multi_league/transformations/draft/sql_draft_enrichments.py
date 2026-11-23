@@ -1337,6 +1337,12 @@ class DraftEnrichmentsMixin:
             reader = FlyReader()
             reader.MAX_RETRIES = self._env_int("DRAFT_SCORE_BASELINE_MAX_RETRIES", 2)
             reader.TIMEOUT_SECONDS = self._env_int("DRAFT_SCORE_BASELINE_TIMEOUT_SECONDS", 45)
+            cap = getattr(self, "_baseline_read_cap_seconds", None)
+            if cap:
+                # Prefetch must stay cheap: a checkpointing/busy server makes it
+                # give up quickly and leaves the draft step's own read as before.
+                reader.REFRESH_READ_RECOVERY_SECONDS = cap
+                reader.TIMEOUT_SECONDS = min(reader.TIMEOUT_SECONDS, cap)
             rows = reader.query_df(sql, database="___leagues")
         except (FlyReaderTableNotFound, FlyReaderNetworkError, FlyReaderError, RuntimeError) as e:
             logger.info("[draft_score] Fly global baseline unavailable; using local baseline only: %s", e)
@@ -1399,7 +1405,11 @@ class DraftEnrichmentsMixin:
                 return 0
             if self._create_draft_score_rows_temp(self._qualified_name("draft"), draft_cols, lamar_col, pos_col) == 0:
                 return 0
-            count = self._fetch_global_draft_score_baseline()
+            self._baseline_read_cap_seconds = self._env_int("DRAFT_SCORE_BASELINE_PREFETCH_SECONDS", 8)
+            try:
+                count = self._fetch_global_draft_score_baseline()
+            finally:
+                self._baseline_read_cap_seconds = None
             targets = getattr(self, "_global_baseline_targets", None)
             if count > 0 and targets is not None:
                 conn = self._get_connection()

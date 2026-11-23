@@ -1451,6 +1451,7 @@ def resolve_active_schedule_franchise_ids(
     expected_team_keys: tuple[str, ...] = (),
     provider_identities: pd.DataFrame | None = None,
     rebind_captured_opponents: bool = False,
+    fetched_weeks: Iterable[int] = (),
 ) -> pd.DataFrame:
     """Bind a provider's future schedule to the league's canonical franchises.
 
@@ -1463,8 +1464,16 @@ def resolve_active_schedule_franchise_ids(
     Only the post-enrichment caller may opt into rebinding a previously
     resolved schedule: its reciprocal edges survive display-name changes, but
     both endpoints must still resolve independently to current franchises.
+
+    ``fetched_weeks`` names the weeks this run just pulled from the provider.
+    Those rows still carry provider-native franchise ids, while hydrated rows
+    from earlier weeks carry the ids enrichment already canonicalized.  Mixing
+    the two makes every re-identified team look ambiguous, so fetched rows are
+    the primary witness (exactly what a full-season run sees) and hydrated rows
+    only fill teams the fetched weeks do not cover.
     """
     future_weeks = tuple(sorted({int(week) for week in future_weeks}))
+    fetched = {int(week) for week in fetched_weeks}
     if (schedule is None or schedule.empty) and not future_weeks:
         return schedule
     if schedule is None:
@@ -1487,6 +1496,10 @@ def resolve_active_schedule_franchise_ids(
         if "franchise_id" in columns:
             witness = frame.loc[:, columns].copy()
             witness["_identity_priority"] = identity_priority
+            if fetched and "week" in frame.columns:
+                weeks = pd.to_numeric(frame["week"], errors="coerce")
+                hydrated = ~weeks.isin(fetched)
+                witness.loc[hydrated.to_numpy(), "_identity_priority"] = identity_priority + 2
             witnesses.append(witness)
     identity_source = None
     if not witnesses:
@@ -1519,7 +1532,7 @@ def resolve_active_schedule_franchise_ids(
             raise RefreshScopeError("canonical active-season schedule identity is unavailable")
         if "franchise_id" not in seed:
             seed["franchise_id"] = manager_guids
-        seed["_identity_priority"] = 2
+        seed["_identity_priority"] = 4
         witnesses.append(seed)
     if not witnesses:
         raise RefreshScopeError("canonical active-season schedule identity is unavailable")

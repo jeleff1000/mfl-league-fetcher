@@ -1781,6 +1781,7 @@ def _merge_refresh_payloads(
     schedule = resolve_active_schedule_franchise_ids(
         local_db, schedule, active_year=year,
         future_weeks=() if is_guillotine else future_schedule_weeks, expected_team_keys=expected_team_keys,
+        fetched_weeks=refresh_weeks,
     )
     merge_provider_refresh_table(
         local_db,

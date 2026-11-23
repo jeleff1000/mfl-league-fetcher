@@ -549,6 +549,7 @@ def _merge_active_payloads(
             active_league, regular_season_end=playoff_start_week - 1,
         ),
         expected_team_keys=expected_ids,
+        fetched_weeks=refresh_weeks,
         provider_identities=pd.DataFrame([
             {"team_key": str(roster["roster_id"]),
              "manager_guid": ctx.get_manager_guid(int(roster["roster_id"])),

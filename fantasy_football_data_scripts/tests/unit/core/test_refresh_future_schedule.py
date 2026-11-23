@@ -142,3 +142,45 @@ def test_explicit_unknown_future_pairing_can_be_rebound_by_shared_pipeline(provi
     result = resolve_active_schedule_franchise_ids(LocalDB(), frame, active_year=2026)
     assert result.franchise_id.tolist() == ["saved-a", "saved-b"]
     assert result.opponent_franchise_id.isna().all()
+
+
+class MixedIdentityDB:
+    """Scoped run: hydrated week 1 carries canonical ids, fetched week 10 provider-native ids."""
+    league_name = "league_a"
+
+    def table_exists(self, name):
+        return name in {"matchup", "player_fantasy"}
+
+    def read_table(self, name, year=None):
+        return pd.DataFrame({
+            "year": [2026] * 4, "week": [1, 1, 10, 10], "team_key": ["1", "2", "1", "2"],
+            "manager_guid": ["g-a", "g-b", "g-a", "g-b"], "manager": ["A", "B", "A", "B"],
+            "franchise_id": ["yh-nick-a", "yh-team-b", "g-a", "g-b"],
+        })
+
+
+def test_scoped_run_mixed_hydrated_and_fetched_identity_raises_without_fetched_weeks():
+    with pytest.raises(RefreshScopeError, match="inventory"):
+        resolve_active_schedule_franchise_ids(
+            MixedIdentityDB(), redacted(), active_year=2026, future_weeks=(14,), expected_team_keys=("1", "2"),
+        )
+
+
+def test_scoped_run_binds_future_schedule_like_a_full_run_from_fetched_weeks():
+    scoped = resolve_active_schedule_franchise_ids(
+        MixedIdentityDB(), redacted(), active_year=2026, future_weeks=(14,),
+        expected_team_keys=("1", "2"), fetched_weeks=(10,),
+    )
+
+    class FullRunDB(MixedIdentityDB):
+        def read_table(self, name, year=None):
+            frame = super().read_table(name, year)
+            frame["franchise_id"] = ["g-a", "g-b", "g-a", "g-b"]
+            return frame
+
+    full = resolve_active_schedule_franchise_ids(
+        FullRunDB(), redacted(), active_year=2026, future_weeks=(14,),
+        expected_team_keys=("1", "2"), fetched_weeks=(1, 10),
+    )
+    assert scoped.franchise_id.tolist() == ["g-a", "g-b"]
+    pd.testing.assert_frame_equal(scoped.reset_index(drop=True), full.reset_index(drop=True))

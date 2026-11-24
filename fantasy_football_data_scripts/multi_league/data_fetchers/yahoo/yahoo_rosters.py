@@ -151,6 +151,10 @@ class YahooRosterFetcher:
         self.last_request_time = 0.0
         self.request_count = 0
         self._rate_lock = threading.Lock()
+        # >1 fetches weeks concurrently through the same shared rate limiter
+        # (same request rate to Yahoo), so one stalled call cannot serialize the
+        # rest. Live refreshes opt in; imports keep the sequential circuit breaker.
+        self.concurrent_weeks = 1
 
     def _initialize_oauth(self, oauth_file: Path) -> OAuth2:
         """Initialize OAuth session."""
@@ -660,10 +664,30 @@ class YahooRosterFetcher:
         self._access_denied_logged = False  # Reset per-year so we log once per year
         CIRCUIT_BREAKER_THRESHOLD = 3  # After 3 consecutive empty weeks, manifest and move on
 
+        prefetched: dict[int, object] = {}
+        concurrent = int(getattr(self, "concurrent_weeks", 1) or 1)
+        if concurrent > 1 and len(weeks) > 1:
+
+            def _fetch_week(week_number: int):
+                try:
+                    return self.fetch_all_rosters_for_week(year, week_number, teams)
+                except Exception as exc:  # re-raised in week order below
+                    return exc
+
+            with ThreadPoolExecutor(max_workers=min(concurrent, len(weeks))) as executor:
+                for week_number, result in zip(weeks, executor.map(_fetch_week, weeks)):
+                    prefetched[week_number] = result
+
         for i, week in enumerate(weeks, 1):
             try:
                 # Fetch all teams' rosters for this week in ONE call
-                week_df, week_failures = self.fetch_all_rosters_for_week(year, week, teams)
+                if week in prefetched:
+                    result = prefetched[week]
+                    if isinstance(result, Exception):
+                        raise result
+                    week_df, week_failures = result
+                else:
+                    week_df, week_failures = self.fetch_all_rosters_for_week(year, week, teams)
                 if week_failures:
                     failed_team_weeks[week] = week_failures
 
@@ -692,7 +716,7 @@ class YahooRosterFetcher:
                     break
 
                 # Small delay between weeks to be respectful to API
-                if i < len(weeks):
+                if i < len(weeks) and not prefetched:
                     time.sleep(0.5)
 
             except Exception as e:
@@ -1181,6 +1205,7 @@ def fetch_rosters_for_year(
     oauth_session=None,
     local_db: Any | None = None,
     weeks: list[int] | None = None,
+    concurrent_weeks: int = 1,
 ) -> tuple[pd.DataFrame, list[int]]:
     """Fetch all weekly rosters for a single year.
 
@@ -1197,6 +1222,8 @@ def fetch_rosters_for_year(
         weeks: Optional explicit positive weeks to fetch.  Incremental callers
             use this to avoid reading an entire live season for one finalized
             game; normal imports retain settings-based discovery.
+        concurrent_weeks: Fetch up to this many weeks at once through the
+            fetcher's shared rate limiter (live refreshes); 1 = sequential.
 
     Returns:
         ``(combined_df, failed_weeks)`` — DataFrame of all roster records for
@@ -1295,6 +1322,7 @@ def fetch_rosters_for_year(
             manager_name_overrides=manager_overrides,
             oauth_session=oauth_session,
         )
+        fetcher.concurrent_weeks = max(1, int(concurrent_weeks or 1))
 
         df = fetcher.fetch_season_rosters(
             year=year, weeks=resolved_weeks, end_week=int(settings_end_week) if settings_end_week else None

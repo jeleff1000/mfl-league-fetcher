@@ -1599,6 +1599,9 @@ def _yahoo_future_schedule_weeks(raw_settings: dict[str, Any], *, regular_season
     return tuple(range(current, int(regular_season_end) + 1)) if current > 0 else ()
 
 
+YAHOO_REFRESH_CONCURRENT_ROSTER_WEEKS = 4
+
+
 def _merge_refresh_payloads(
     *,
     ctx: Any,
@@ -1661,6 +1664,9 @@ def _merge_refresh_payloads(
         year,
         oauth_session=oauth,
         weeks=roster_fetch_weeks,
+        # Same Yahoo request rate; a stalled call no longer serializes a full
+        # rebuild past the 120s update deadline (bohannon_s_league_ng 11-24).
+        concurrent_weeks=YAHOO_REFRESH_CONCURRENT_ROSTER_WEEKS,
     )
     if roster_failures:
         raise YahooIncompleteSourceError(f"Yahoo roster fetch failed for weeks: {roster_failures}")

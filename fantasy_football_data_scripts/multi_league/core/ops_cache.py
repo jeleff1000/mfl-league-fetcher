@@ -19,7 +19,7 @@ OPS_REFRESH_READ_KWARGS = {"timeout_seconds": 8, "max_retries": 3}
 # Initial imports run in background workers and scan the season's scoring
 # revisions. Keep retries bounded, but allow healthy scans more than a UI read.
 # FlyReader still clamps this budget when a live-refresh deadline is present.
-OPS_IMPORT_READ_KWARGS = {"timeout_seconds": 60, "max_retries": 3}
+OPS_IMPORT_READ_KWARGS = {"timeout_seconds": 60, "max_retries": 3, "checkpoint_patience_seconds": 120}
 
 
 def rebuild_import_ops_cache(path: Path, *, start_year: int, end_year: int) -> None:

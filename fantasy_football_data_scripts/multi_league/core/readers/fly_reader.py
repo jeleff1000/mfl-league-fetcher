@@ -41,6 +41,11 @@ class FlyReader:
     RETRY_BASE_DELAY = 1
     RETRY_MAX_DELAY = 15
     CHECKPOINT_RETRY_DELAY = 5
+    # Opt-in (checkpoint_patience_seconds=): an unbudgeted read with no fallback
+    # (import NFL inputs) waits out a checkpoint instead of failing after its short
+    # attempt burst; Fly checkpoints run 20-45s. Callers with a fallback keep
+    # failing fast, and refresh workers stay inside their deadline budget.
+    CHECKPOINT_PATIENCE_SECONDS = 120
     TIMEOUT_SECONDS = 75
     # Refresh workers need time after reads to publish and finalize.
     REFRESH_TIMEOUT_SECONDS = 10
@@ -172,6 +177,18 @@ class FlyReader:
         # retry burst must not end a recoverable handoff while that budget remains.
         return attempt < attempts - 1 or recovery_deadline is not None
 
+    def _checkpoint_patience_until(self, read_deadline: float | None, seconds: float | None) -> float | None:
+        if read_deadline is not None or not seconds or seconds <= 0:
+            return None  # off by default; refresh workers stay inside their own deadline budget
+        return time.time() + min(float(seconds), self.CHECKPOINT_PATIENCE_SECONDS)
+
+    def _within_checkpoint_patience(self, resp: requests.Response | None, patience_until: float | None) -> bool:
+        return (
+            patience_until is not None
+            and self._is_checkpoint_response(resp)
+            and time.time() + self.CHECKPOINT_RETRY_DELAY < patience_until
+        )
+
     def _retryable_response(self, response: requests.Response) -> bool:
         if response.status_code not in self.RETRY_STATUS:
             return False
@@ -266,10 +283,12 @@ class FlyReader:
         *,
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        checkpoint_patience_seconds: float | None = None,
     ) -> list[dict]:
         timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
         recovery_deadline = self._refresh_recovery_deadline(read_deadline)
         read_deadline = recovery_deadline if recovery_deadline is not None else read_deadline
+        patience_until = self._checkpoint_patience_until(read_deadline, checkpoint_patience_seconds)
         read_id = uuid.uuid4().hex
         last_error: str | None = None
         for attempt in count():
@@ -296,6 +315,12 @@ class FlyReader:
                 ) from e
 
             text_lower = (resp.text or "").lower()
+            if (
+                self._retryable_response(resp)
+                and not self._can_retry(attempt, attempts, recovery_deadline)
+                and self._within_checkpoint_patience(resp, patience_until)
+            ):
+                attempts = attempt + 2  # a checkpoint wait does not spend the caller's retry budget
             if (
                 self._retryable_response(resp)
                 and self._can_retry(attempt, attempts, recovery_deadline)
@@ -346,12 +371,14 @@ class FlyReader:
         *,
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        checkpoint_patience_seconds: float | None = None,
     ) -> list[dict]:
         return self._post(
             sql,
             self._require_db(database),
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
+            checkpoint_patience_seconds=checkpoint_patience_seconds,
         )
 
     def query_df(
@@ -361,6 +388,7 @@ class FlyReader:
         *,
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        checkpoint_patience_seconds: float | None = None,
     ) -> pd.DataFrame:
         import pandas as pd
 
@@ -369,6 +397,7 @@ class FlyReader:
             self._require_db(database),
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
+            checkpoint_patience_seconds=checkpoint_patience_seconds,
         )
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 
@@ -379,6 +408,7 @@ class FlyReader:
         *,
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        checkpoint_patience_seconds: float | None = None,
     ) -> pd.DataFrame:
         """Read a wide result without materializing every value through JSON."""
         import pandas as pd
@@ -387,6 +417,7 @@ class FlyReader:
         timeout, attempts, read_deadline = self._read_budget(timeout_seconds, max_retries)
         recovery_deadline = self._refresh_recovery_deadline(read_deadline)
         read_deadline = recovery_deadline if recovery_deadline is not None else read_deadline
+        patience_until = self._checkpoint_patience_until(read_deadline, checkpoint_patience_seconds)
         read_id = uuid.uuid4().hex
         last_error: str | None = None
         for attempt in count():
@@ -411,6 +442,12 @@ class FlyReader:
                 ) from exc
             if (
                 self._retryable_response(resp)
+                and not self._can_retry(attempt, attempts, recovery_deadline)
+                and self._within_checkpoint_patience(resp, patience_until)
+            ):
+                attempts = attempt + 2  # a checkpoint wait does not spend the caller's retry budget
+            if (
+                self._retryable_response(resp)
                 and self._can_retry(attempt, attempts, recovery_deadline)
             ):
                 last_error = f"Parquet query failed ({resp.status_code}): {resp.text}"
@@ -433,12 +470,14 @@ class FlyReader:
         *,
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        checkpoint_patience_seconds: float | None = None,
     ) -> object:
         rows = self._post(
             sql,
             self._require_db(database),
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
+            checkpoint_patience_seconds=checkpoint_patience_seconds,
         )
         if not rows:
             return None

@@ -104,3 +104,54 @@ def test_invalid_checkpoint_retry_header_cannot_break_wait(clock, monkeypatch, r
     monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", lambda *_args, **_kwargs: next(responses, good))
     assert FlyReader().query("SELECT rank_alltime_qb_4pt", database="___ops", timeout_seconds=8, max_retries=2) == [{"rank_alltime_qb_4pt":216}]
     assert clock["sleeps"] == [5]
+
+
+@pytest.mark.parametrize("method", ["query_df", "query_df_parquet"])
+def test_import_read_waits_out_a_long_checkpoint(clock, monkeypatch, method):
+    """Regression: south_fl_finaddicts quick import (run 45416382748) failed after
+    3 attempts / 10s while a Fly checkpoint ran longer. Imports have no refresh
+    deadline, so a checkpoint must not spend the caller's 3-attempt budget."""
+    frame = pd.DataFrame([{"rank_qb_4pt": 7}])
+    payload = BytesIO()
+    frame.to_parquet(payload, index=False)
+
+    def post(_url, **kwargs):
+        clock["calls"].append(kwargs)
+        if clock["now"] < 1040:
+            return busy_response()
+        response = requests.Response()
+        response.status_code = 200
+        response._content = payload.getvalue() if method.endswith("parquet") else frame.to_json(orient="records").encode()
+        return response
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    result = getattr(FlyReader(), method)("SELECT rank_qb_4pt", database="___ops", timeout_seconds=60, max_retries=3, checkpoint_patience_seconds=120)
+    assert result.to_dict("records") == [{"rank_qb_4pt": 7}]
+    assert clock["now"] >= 1040
+
+
+@pytest.mark.parametrize("method", ["query_df", "query_df_parquet"])
+def test_import_read_checkpoint_patience_is_bounded(clock, monkeypatch, method):
+    def post(_url, **kwargs):
+        clock["calls"].append(kwargs)
+        return busy_response()
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    with pytest.raises(FlyReaderError):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops", timeout_seconds=60, max_retries=3,
+                                     checkpoint_patience_seconds=120)
+    assert len(clock["calls"]) > 3
+    assert clock["now"] - 1000 <= FlyReader.CHECKPOINT_PATIENCE_SECONDS
+
+
+@pytest.mark.parametrize("method", ["query_df", "query_df_parquet"])
+def test_non_checkpoint_503_still_uses_the_attempt_budget(clock, monkeypatch, method):
+    def post(_url, **kwargs):
+        clock["calls"].append(kwargs)
+        return busy_response(reason="overloaded")
+
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
+    with pytest.raises(FlyReaderError):
+        getattr(FlyReader(), method)("SELECT 1", database="___ops", timeout_seconds=60, max_retries=3,
+                                     checkpoint_patience_seconds=120)
+    assert len(clock["calls"]) == 3

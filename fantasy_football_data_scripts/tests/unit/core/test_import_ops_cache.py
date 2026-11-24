@@ -99,7 +99,7 @@ def test_import_ops_cache_reads_use_the_worker_retry_budget(ops_sources):
 
     assert reader.read_kwargs
     assert all(
-        kwargs == {"timeout_seconds": 60, "max_retries": 3}
+        kwargs == {"timeout_seconds": 60, "max_retries": 3, "checkpoint_patience_seconds": 120}
         for kwargs in reader.read_kwargs
     ), reader.read_kwargs
 
@@ -239,7 +239,12 @@ def test_import_uses_cached_inputs_after_real_fly_reader_exhausts_503s(ops_sourc
     monkeypatch.setenv("DATABASE_SERVER_URL", "https://fly.test")
     monkeypatch.setenv("DATABASE_READ_TOKEN", "read-token")
     monkeypatch.delenv("LEAGUE_UPDATE_DEADLINE_EPOCH", raising=False)
-    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.sleep", lambda _seconds: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("multi_league.core.readers.fly_reader.time.time", lambda: clock["now"])
+    monkeypatch.setattr(
+        "multi_league.core.readers.fly_reader.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
 
     def post(url, *, json, **kwargs):
         response = requests.Response()
@@ -256,7 +261,10 @@ def test_import_uses_cached_inputs_after_real_fly_reader_exhausts_503s(ops_sourc
     monkeypatch.setattr("multi_league.core.readers.fly_reader.requests.post", post)
     monkeypatch.setattr(db_reader, "get_reader", FlyReader)
     assert import_utils.run_track_1_verify(2025, 2026) is True
-    assert attempts == [60, 60, 60]
+    # A checkpoint is waited out for up to CHECKPOINT_PATIENCE_SECONDS per read
+    # before the cached inputs take over.
+    assert len(attempts) > 3 and set(attempts) == {60}
+    assert clock["now"] - 1000 <= 2 * FlyReader.CHECKPOINT_PATIENCE_SECONDS
     with duckdb.connect(str(cache_path), read_only=True) as cache:
         assert cache.execute("SELECT rank_alltime_qb_4pt FROM nfl_historical.nfl_player_stats_all "
                              "WHERE year=2026 ORDER BY week").fetchall() == [(215,), (215,)]

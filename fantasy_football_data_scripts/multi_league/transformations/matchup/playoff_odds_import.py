@@ -31,6 +31,7 @@ from transformations.matchup.modules.playoff_helpers import (
     p_bye_from_seeds,
     normalize_playoff_seeding_rule,
     seed_indices_from_totals,
+    seeding_divisions,
 )
 from transformations.matchup.modules.playoff_bracket import (
     load_league_settings,
@@ -685,7 +686,11 @@ def _vectorized_regular_and_bracket(
 
             W_all = W_add + WTD
 
-    seeds_idx = seed_indices_from_totals(W_all, PF_all, _seeding_rule)
+    team_divisions = seeding_divisions(reg_to_date, _mgr_col)
+    seeds_idx = seed_indices_from_totals(
+        W_all, PF_all, _seeding_rule,
+        divisions=[team_divisions.get(m) for m in managers] if team_divisions else None,
+    )
 
     inv_seed = np.full((N_SIMS, n), n - 1, dtype=int)
     row_idx = np.arange(N_SIMS)[:, None]

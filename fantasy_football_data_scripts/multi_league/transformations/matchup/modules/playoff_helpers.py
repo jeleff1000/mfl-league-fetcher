@@ -168,7 +168,64 @@ def normalize_playoff_seeding_rule(
     return RECORD_FIRST_SEEDING
 
 
-def seed_indices_from_totals(wins_matrix: np.ndarray, points_matrix: np.ndarray, seeding_rule=None) -> np.ndarray:
+# Platforms whose playoff seeding puts every division winner ahead of the
+# wildcards. ESPN: each division's best team (record, then the league's
+# tiebreaker) takes the top seeds, ordered among themselves the same way; the
+# rest follow by record (espn_api League.standings_weekly mirrors this).
+# Observed in ESPN's own brackets, e.g. puro_chile_mx 2021 (9-win division
+# winner seeded #2 over a 10-win wildcard). Other platforms stay record-first
+# until their rule is proven from provider-sourced seeds.
+DIVISION_WINNER_SEEDING_PLATFORMS = {"espn"}
+
+
+def seeding_divisions(frame: pd.DataFrame | None, identity_col: str = "franchise_id") -> dict | None:
+    """Return {team identity: division} when division-winner seeding applies, else None.
+
+    Applies only on a division-winner platform, when every team in the season
+    has exactly one non-empty division and there are at least two divisions.
+    Anything partial or contradictory returns None (plain record seeding)
+    rather than inventing a division.
+    """
+    if frame is None or frame.empty or "division_id" not in frame.columns or identity_col not in frame.columns:
+        return None
+    if "platform" not in frame.columns:
+        return None
+    platforms = {str(p).strip().lower() for p in frame["platform"].dropna().unique()}
+    if not platforms or not platforms <= DIVISION_WINNER_SEEDING_PLATFORMS:
+        return None
+    rows = frame[[identity_col, "division_id"]].copy()
+    rows = rows[rows[identity_col].notna() & (rows[identity_col].astype(str).str.strip() != "")]
+    rows["division_id"] = rows["division_id"].map(
+        lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() in {"", "nan", "None"}
+        else str(v).strip()
+    )
+    teams = set(rows[identity_col])
+    known = rows.dropna(subset=["division_id"]).drop_duplicates()
+    if known.empty or known[identity_col].duplicated().any() or set(known[identity_col]) != teams:
+        return None
+    mapping = dict(zip(known[identity_col], known["division_id"]))
+    return mapping if len(set(mapping.values())) > 1 else None
+
+
+def division_winners_first(order: list, divisions: dict | None) -> list:
+    """Move each division's first-listed (best) team ahead, keeping relative order."""
+    if not divisions:
+        return list(order)
+    seen: set = set()
+    winners, rest = [], []
+    for team in order:
+        division = divisions.get(team)
+        if division is not None and division not in seen:
+            seen.add(division)
+            winners.append(team)
+        else:
+            rest.append(team)
+    return winners + rest
+
+
+def seed_indices_from_totals(
+    wins_matrix: np.ndarray, points_matrix: np.ndarray, seeding_rule=None, divisions=None,
+) -> np.ndarray:
     """Return team indices ordered by simulated final seed for each row.
 
     The output shape matches ``wins_matrix``. Each row contains the team indices
@@ -183,11 +240,20 @@ def seed_indices_from_totals(wins_matrix: np.ndarray, points_matrix: np.ndarray,
     seeds_idx = np.empty_like(np.argsort(-wins_matrix, axis=1, kind="stable"))
     identity_order = np.arange(wins_matrix.shape[1])
 
+    division_codes = None
+    if divisions is not None and rule != POINTS_FIRST_SEEDING:
+        codes = list(divisions)
+        if len(codes) == wins_matrix.shape[1] and all(code is not None for code in codes) and len(set(codes)) > 1:
+            division_codes = {index: code for index, code in enumerate(codes)}
+
     for sim_idx in range(wins_matrix.shape[0]):
         if rule == POINTS_FIRST_SEEDING:
             seeds_idx[sim_idx] = np.lexsort((identity_order, -wins_matrix[sim_idx], -points_matrix[sim_idx]))
         else:
-            seeds_idx[sim_idx] = np.lexsort((identity_order, -points_matrix[sim_idx], -wins_matrix[sim_idx]))
+            order = np.lexsort((identity_order, -points_matrix[sim_idx], -wins_matrix[sim_idx]))
+            if division_codes is not None:
+                order = np.asarray(division_winners_first(order.tolist(), division_codes))
+            seeds_idx[sim_idx] = order
 
     return seeds_idx
 
@@ -542,6 +608,7 @@ def rank_and_seed(
                 # Resolve ties using tiebreaker system
                 resolved = resolve_tiebreaker(tied_teams, played_raw, stats_df, tiebreaker_order)
                 sorted_managers.extend(resolved)
+        sorted_managers = division_winners_first(sorted_managers, seeding_divisions(played_raw))
 
     table = pd.DataFrame(
         {

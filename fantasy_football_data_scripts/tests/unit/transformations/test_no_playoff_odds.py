@@ -416,3 +416,51 @@ def test_espn_seeding_tiebreaker_values_seed_by_record():
     for rule in ("TOTAL_POINTS_SCORED", "H2H_RECORD", "INTRA_DIVISION_RECORD"):
         assert normalize_playoff_seeding_rule(rule, 0) == RECORD_FIRST_SEEDING
     assert normalize_playoff_seeding_rule("points_for") == POINTS_FIRST_SEEDING
+
+
+def test_espn_division_winners_take_the_top_seeds():
+    """ESPN seeds every division winner ahead of the wildcards (nau_rfl 2025:
+    an 8-6 division winner is seed 3 over 9-5 wildcards; dad_bods_unite
+    2023/2024 match ESPN only under this rule)."""
+    import numpy as np
+
+    from multi_league.transformations.matchup.modules.playoff_helpers import (
+        division_winners_first,
+        seed_indices_from_totals,
+        seeding_divisions,
+    )
+
+    frame = pd.DataFrame([
+        {"franchise_id": "a", "division_id": "0", "platform": "espn"},
+        {"franchise_id": "b", "division_id": "0", "platform": "espn"},
+        {"franchise_id": "c", "division_id": "1", "platform": "espn"},
+        {"franchise_id": "d", "division_id": "1", "platform": "espn"},
+    ])
+    divisions = seeding_divisions(frame)
+    assert divisions == {"a": "0", "b": "0", "c": "1", "d": "1"}
+    # Record order a(10) b(9) c(8) d(7): division 1's winner c jumps to seed 2.
+    assert division_winners_first(["a", "b", "c", "d"], divisions) == ["a", "c", "b", "d"]
+    wins = np.array([[10.0, 9.0, 8.0, 7.0]])
+    points = np.array([[100.0, 100.0, 100.0, 100.0]])
+    seeds = seed_indices_from_totals(wins, points, "record", divisions=["0", "0", "1", "1"])
+    assert seeds[0].tolist() == [0, 2, 1, 3]
+
+
+def test_division_seeding_needs_complete_espn_divisions():
+    from multi_league.transformations.matchup.modules.playoff_helpers import seeding_divisions
+
+    base = [
+        {"franchise_id": "a", "division_id": "0", "platform": "espn"},
+        {"franchise_id": "b", "division_id": "1", "platform": "espn"},
+    ]
+    assert seeding_divisions(pd.DataFrame(base)) is not None
+    # Yahoo/Sleeper stay record-first until their rule is proven.
+    assert seeding_divisions(pd.DataFrame([dict(r, platform="yahoo") for r in base])) is None
+    # A team with no division, a team in two divisions, or one division -> no division seeding.
+    assert seeding_divisions(pd.DataFrame(base + [{"franchise_id": "c", "division_id": None, "platform": "espn"}])) is None
+    assert seeding_divisions(pd.DataFrame(base + [{"franchise_id": "a", "division_id": "1", "platform": "espn"}])) is None
+    assert seeding_divisions(pd.DataFrame([dict(r, division_id="0") for r in base])) is None
+    # Old hydrated rows without a division do not block it when the team has one elsewhere.
+    assert seeding_divisions(pd.DataFrame(base + [{"franchise_id": "a", "division_id": None, "platform": "espn"}])) == {
+        "a": "0", "b": "1",
+    }

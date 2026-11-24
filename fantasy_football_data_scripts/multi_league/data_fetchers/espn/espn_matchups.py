@@ -19,6 +19,14 @@ from multi_league.core.league_refresh import espn_schedule_is_final
 logger = logging.getLogger(__name__)
 
 
+def _espn_division_id(team) -> str | None:
+    """ESPN's per-season division for this team (espn_api Team.division_id)."""
+    value = getattr(team, "division_id", None)
+    if value is None or str(value).strip() in {"", "None", "nan"}:
+        return None
+    return str(value).strip()
+
+
 def log(msg: str):
     logger.info(msg)
     print(msg)
@@ -948,6 +956,7 @@ def _build_matchup_row(
             "team_key": str(team_id),
             "team_name": team_name_val,
             "franchise_id": ctx.get_franchise_id(team_id, year=year),
+            "division_id": _espn_division_id(team),
             "team_points": None,
             "opponent": None,
             "opponent_guid": "",
@@ -1005,6 +1014,7 @@ def _build_matchup_row(
         "team_key": str(team_id),
         "team_name": team_name_val,
         "franchise_id": ctx.get_franchise_id(team_id, year=year),
+        "division_id": _espn_division_id(team),
         "team_points": round(team_score, 2),
         "opponent": ctx.get_manager_name(opp_id, team_name=opp_name, year=year),
         "opponent_guid": ctx.get_manager_guid(opp_id, year=year),

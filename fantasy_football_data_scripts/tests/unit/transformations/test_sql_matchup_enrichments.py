@@ -3491,7 +3491,7 @@ def test_shape_playoff_bracket_generic_tracer_respects_points_standings(tmp_path
     conn.execute(
         """
         INSERT INTO public.league_settings VALUES
-            (2025, 4, 14, 15, 4, 0, FALSE, 0, FALSE, FALSE, 'TOTAL_POINTS_SCORED', 0)
+            (2025, 4, 14, 15, 4, 0, FALSE, 0, FALSE, FALSE, 'points_for', 0)
         """
     )
     conn.execute(
@@ -4877,7 +4877,7 @@ def test_shape_playoff_bracket_no_playoff_points_standings_marks_points_champion
     conn.execute(
         """
         INSERT INTO public.league_settings VALUES
-            (2024, 0, 4, 3, 3, 0, FALSE, 0, FALSE, FALSE, 'TOTAL_POINTS_SCORED', 0)
+            (2024, 0, 4, 3, 3, 0, FALSE, 0, FALSE, FALSE, 'points_for', 0)
         """
     )
     conn.execute(

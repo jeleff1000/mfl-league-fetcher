@@ -101,6 +101,18 @@ RECORD_FIRST_SEEDING_ALIASES = {
     "wins",
 }
 
+# ESPN's scheduleSettings.playoffSeedingRule is the playoff seeding TIEBREAKER
+# ("Playoff Seeding Tiebreaker" in ESPN league settings), not the primary seed
+# order: ESPN always seeds by record. Fleet evidence (2026-11-24): of 917
+# completed seasons in 191 leagues tagged TOTAL_POINTS_SCORED, 766 seed exactly
+# by record and only 1 orders by points with any record inversion. Seeding them
+# points-first ranked a 6-win 7-seed below a 3-win 10-seed.
+ESPN_SEEDING_TIEBREAKER_TOKENS = {
+    "total_points_scored",
+    "h2h_record",
+    "intra_division_record",
+}
+
 
 def _normalize_seeding_token(value) -> str:
     if value is None:
@@ -146,6 +158,8 @@ def normalize_playoff_seeding_rule(
         token = _normalize_seeding_token(value)
         if not token:
             continue
+        if token in ESPN_SEEDING_TIEBREAKER_TOKENS:
+            return RECORD_FIRST_SEEDING
         if _is_points_first_seed_token(token):
             return POINTS_FIRST_SEEDING
         if _is_record_first_seed_token(token):

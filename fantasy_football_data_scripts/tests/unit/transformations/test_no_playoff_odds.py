@@ -326,11 +326,28 @@ def test_disabled_playoff_champion_odds_respect_best_score_seeding(monkeypatch):
         regular_season_weeks=2,
         num_teams=4,
         use_median=False,
+        seeding_rule="points_for",
+    )
+    espn_tiebreaker_pack, _, _ = poi._vectorized_regular_and_bracket(
+        reg_to_date,
+        pd.DataFrame(),
+        {},
+        {},
+        season=2025,
+        week=2,
+        playoff_slots=0,
+        bye_slots=0,
+        bracket_reseed=False,
+        regular_season_weeks=2,
+        num_teams=4,
+        use_median=False,
+        # ESPN playoffSeedingRule is the tiebreaker; ESPN still seeds by record.
         seeding_rule="TOTAL_POINTS_SCORED",
     )
 
     assert record_pack["P_Champ"].idxmax() == "alpha_0"
     assert points_pack["P_Champ"].idxmax() == "delta_0"
+    assert espn_tiebreaker_pack["P_Champ"].idxmax() == "alpha_0"
 
 
 def test_regular_week_odds_handles_two_team_championship(monkeypatch):
@@ -382,3 +399,20 @@ def test_regular_week_odds_handles_two_team_championship(monkeypatch):
     assert not win_df.empty
     assert series_pack["P_Final"].sum() == 200.0
     assert series_pack["P_Champ"].sum() == 100.0
+
+
+def test_espn_seeding_tiebreaker_values_seed_by_record():
+    """ESPN playoffSeedingRule is the seeding tiebreaker, never the primary order.
+
+    Regression: tfl_of_extraordinary_gentleman 2026 seeded points-first, so a
+    6-win 7-seed (Avi) got lower playoff odds than a 3-win 10-seed (Ari).
+    """
+    from multi_league.transformations.matchup.modules.playoff_helpers import (
+        POINTS_FIRST_SEEDING,
+        RECORD_FIRST_SEEDING,
+        normalize_playoff_seeding_rule,
+    )
+
+    for rule in ("TOTAL_POINTS_SCORED", "H2H_RECORD", "INTRA_DIVISION_RECORD"):
+        assert normalize_playoff_seeding_rule(rule, 0) == RECORD_FIRST_SEEDING
+    assert normalize_playoff_seeding_rule("points_for") == POINTS_FIRST_SEEDING

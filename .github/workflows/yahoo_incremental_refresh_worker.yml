@@ -67,7 +67,7 @@ jobs:
     # Pinned: ubuntu-26.04 coreutils `timeout --signal=KILL` leaves descendants
     # running past the update deadline (tests/test_weekly_refresh_deadlines.py).
     runs-on: ubuntu-24.04
-    timeout-minutes: 5  # Includes setup and cache finalization; worker stays bounded to 120s.
+    timeout-minutes: 5  # Includes setup and cache finalization; worker stays bounded to 210s (scoped updates tighten to 120s).
     outputs:
       data_committed: ${{ steps.publication.outputs.committed == 'true' || steps.cache_recovery.outcome == 'success' }}
       cache_verified: ${{ steps.cache_publish.outcome == 'success' || steps.cache_recovery.outcome == 'success' }}
@@ -157,7 +157,7 @@ jobs:
 
       - name: Set hard refresh deadline
         if: ${{ env.INPUT_CACHE_ONLY != 'true' }}
-        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" >> "$GITHUB_ENV"
+        run: echo "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 210 ))" >> "$GITHUB_ENV"
 
       - name: Refresh Yahoo active season
         id: refresh
@@ -197,7 +197,7 @@ jobs:
           fi
           remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))
           if [ "${remaining}" -le 0 ]; then
-            echo "::error::Weekly update exhausted its two-minute budget before provider refresh."
+            echo "::error::Weekly update exhausted its update budget before provider refresh."
             exit 124
           fi
           # Kill the local worker process group at the reserved deadline.

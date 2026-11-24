@@ -41,7 +41,9 @@ def test_two_minute_deadline_starts_after_setup(platform):
     refresh = workflow.index(f"- name: Refresh {display_name} active season")
 
     assert install < deadline < refresh
-    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in workflow
+    # Hard stop sized for a full rebuild; scoped updates tighten to 120s in
+    # size_update_deadline(). Setup + 210s + finalization must fit in 5 minutes.
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 210 ))" in workflow
     assert "timeout-minutes: 5" in workflow
 
 

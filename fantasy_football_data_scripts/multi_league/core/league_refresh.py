@@ -12,6 +12,8 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
+import math
+import os
 from pathlib import Path
 import re
 import time
@@ -723,6 +725,48 @@ def completed_weeks_to_refresh(
         watermark = 0
     first_week = max(1, watermark)
     return [week for week in sorted(weeks) if week >= first_week]
+
+
+# The workflow arms a hard stop sized for a full-season rebuild. A normal
+# scoped update keeps the two-minute promise by tightening its own budget once
+# it knows how much work it has; only large rebuilds use the longer window.
+UPDATE_DEADLINE_FULL_SECONDS = 210
+UPDATE_DEADLINE_SCOPED_SECONDS = 120
+SCOPED_UPDATE_MAX_WEEKS = 3
+
+
+def size_update_deadline(
+    refresh_weeks: Iterable[int | str], *, arm_hard_exit: bool = True,
+) -> float | None:
+    """Return this update's time budget in seconds, tightening scoped runs.
+
+    Reads and only ever narrows ``LEAGUE_UPDATE_DEADLINE_EPOCH``: runs
+    refreshing at most ``SCOPED_UPDATE_MAX_WEEKS`` weeks get the scoped budget
+    measured from the start of the workflow's update window (deadline - 210s).
+    """
+    raw = os.environ.get("LEAGUE_UPDATE_DEADLINE_EPOCH", "")
+    try:
+        deadline = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(deadline) or deadline <= 0:
+        return None
+    weeks = {int(week) for week in refresh_weeks}
+    if len(weeks) > SCOPED_UPDATE_MAX_WEEKS:
+        return float(UPDATE_DEADLINE_FULL_SECONDS)
+    started = deadline - UPDATE_DEADLINE_FULL_SECONDS
+    scoped = started + UPDATE_DEADLINE_SCOPED_SECONDS
+    if scoped < deadline:
+        os.environ["LEAGUE_UPDATE_DEADLINE_EPOCH"] = str(int(scoped))
+        if arm_hard_exit:
+            # Same policy as the workflow's KILL: a hung scoped update still
+            # stops at two minutes, not at the rebuild window.
+            import threading
+
+            timer = threading.Timer(max(0.0, scoped - time.time()), lambda: os._exit(124))
+            timer.daemon = True
+            timer.start()
+    return float(UPDATE_DEADLINE_SCOPED_SECONDS)
 
 
 def refresh_weeks_for_run(

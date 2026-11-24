@@ -148,7 +148,7 @@ def test_active_updates_reserve_time_to_fail_and_exit_after_setup(
     text = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
     display_name = {"yahoo": "Yahoo", "espn": "ESPN", "sleeper": "Sleeper"}[platform]
     assert "- name: Set hard refresh deadline" in text
-    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in text
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 210 ))" in text
     assert 'remaining=$(( LEAGUE_UPDATE_DEADLINE_EPOCH - $(date +%s) ))' in text
     assert 'timeout --signal=KILL "${remaining}s" python scripts/refresh_' in text
     assert 'timeout --signal=KILL 8s python scripts/record_league_update_status.py' in text

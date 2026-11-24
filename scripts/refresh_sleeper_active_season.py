@@ -751,6 +751,11 @@ def main(argv: list[str] | None = None) -> int:
         "canonical_history": canonical_history,
     }
     receipt.update(finalized_source_boundary(finalized_ops, year=active_year))
+    from multi_league.core.league_refresh import size_update_deadline
+
+    # Scoped updates keep the two-minute budget; full rebuilds keep the
+    # workflow's longer window instead of being killed mid-download.
+    receipt["update_budget_seconds"] = size_update_deadline(refresh_weeks)
     timer.mark("source_plan")
     if persisted_plan is not None:
         receipt["source_manifest_digest"] = persisted_plan.observed_manifest_digest

@@ -1261,6 +1261,18 @@ def main(argv: list[str] | None = None) -> int:
                 nfl_player_ids=active_nfl_player_ids(active_connection),
                 provider_name_hints=active_platform_player_name_hints(active_connection, platform="espn"),
             )
+            from multi_league.core.league_refresh import resolve_active_player_nfl_ids_from_bio
+
+            # Re-link every active-season row against the synced bio, not just
+            # the fetched weeks: a player whose ESPN ID reached the bio after an
+            # earlier week published (Hollywood Brown, fantasy week 7) heals here.
+            receipt["player_bio_exact_id_repairs"] = resolve_active_player_nfl_ids_from_bio(
+                active_connection,
+                db_name=args.db,
+                active_year=active_year,
+                platform="espn",
+                ops_cache=Path(os.environ.get("OPS_CACHE_PATH", "")),
+            )
             timer.mark("player_bio_sync")
             receipt["ops_cache"] = str(
                 _ensure_ops_cache_matches_live(

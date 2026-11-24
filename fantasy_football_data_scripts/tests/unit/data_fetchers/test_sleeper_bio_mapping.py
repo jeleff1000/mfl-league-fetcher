@@ -166,9 +166,7 @@ def test_mapping_only_upsert_rejects_entire_batch_without_mutation(case):
 
 def test_finite_mapping_repairs_existing_refresh_guard_without_changing_scores_or_history():
     from multi_league.core.league_refresh import resolve_active_player_nfl_ids_from_bio
-    from multi_league.core.league_update_validation import (
-        IncompleteSourceError, assert_transformed_active_player_scope,
-    )
+    from multi_league.core.league_update_validation import assert_transformed_active_player_scope
 
     con = bio_connection()
     try:
@@ -184,8 +182,7 @@ def test_finite_mapping_repairs_existing_refresh_guard_without_changing_scores_o
                     "('other',2026,1,'13324',NULL,8.0)")
         kwargs = dict(db_name="scope", year=2026, weeks=(1,),
                       provider_id_column="sleeper_player_id", expected_keys={(1, "13324")})
-        with pytest.raises(IncompleteSourceError, match="1 scored provider players"):
-            assert_transformed_active_player_scope(con, **kwargs)
+        assert assert_transformed_active_player_scope(con, **kwargs)["unmapped_scored_players"] == 1
         roster, sleeper = witnesses()
         rows = refresh.build_sleeper_bio_mapping_rows(roster, sleeper)
         refresh.upsert_player_bio_rows(

@@ -497,7 +497,7 @@ def _exact_bio_candidates(roster: pd.DataFrame, provider: dict) -> set[str]:
 
 
 def build_sleeper_bio_mapping_rows(
-    players: pd.DataFrame, sleeper_players: pd.DataFrame,
+    players: pd.DataFrame, sleeper_players: pd.DataFrame, *, skip_unresolved: bool = False,
 ) -> pd.DataFrame:
     """Build only requested Sleeper mappings from agreeing, unique stable IDs.
 
@@ -530,59 +530,82 @@ def build_sleeper_bio_mapping_rows(
         indexes[anchor] = index
     resolved: dict[str, str] = {}
     seen_provider_ids: set[str] = set()
+    skipped: list[str] = []
+    contested: set[str] = set()
     for provider in sleeper_players.to_dict("records"):
-        provider_id = _provider_identity(provider.get("player_id"))
-        if provider_id is None or provider_id in seen_provider_ids:
-            raise RefreshGateError("player bio crosswalk requires unique nonempty provider IDs")
-        seen_provider_ids.add(provider_id)
-        candidates: set[str] = set()
-        supplied: dict[str, str] = {}
-        for anchor in anchors:
-            value = _provider_identity(provider.get(anchor), numeric=anchor != "gsis_id")
-            if value is None:
-                continue
-            supplied[anchor] = value
-            matches = indexes.get(anchor, {}).get(value, set())
-            if len(matches) > 1:
-                raise RefreshGateError(f"ambiguous player bio crosswalk: {anchor}")
-            candidates.update(matches)
-        verified = _VERIFIED_SLEEPER_IDENTITIES.get(provider_id)
-        if not candidates and verified is not None:
-            expected_anchor = {
-                key: value for key, value in verified.items() if key != "gsis_id"
-            }
-            if not expected_anchor or any(
-                supplied.get(key) != value for key, value in expected_anchor.items()
-            ):
-                raise RefreshGateError(
-                    "verified player bio crosswalk anchor mismatch "
-                    f"for provider_id={provider_id}; supplied={supplied}"
+        if skip_unresolved:
+            # Fleet-wide link fill: an unprovable player is left unlinked and
+            # logged, never guessed; one bad directory row cannot block the rest.
+            try:
+                _resolve_one_sleeper_identity(
+                    provider, roster, anchors, indexes, resolved, seen_provider_ids,
                 )
-            candidates.add(verified["gsis_id"])
-        if not candidates:
-            candidates = _exact_bio_candidates(roster, provider)
-        if len(candidates) != 1:
-            raise RefreshGateError(
-                "player bio crosswalk has missing or disagreeing stable anchors "
-                f"for provider_id={provider_id}; supplied={supplied}; "
-                f"candidate_gsis={sorted(candidates)}"
-            )
-        (gsis,) = candidates
-        if gsis in resolved:
-            raise RefreshGateError("multiple Sleeper players claim one NFL identity")
-        target = roster[roster["gsis_id"] == gsis]
-        for anchor, value in supplied.items():
-            if anchor in target and any(v != value for v in target[anchor].dropna()):
-                raise RefreshGateError(f"conflicting player bio crosswalk: {anchor}")
-        if "sleeper_id" in target and any(v != provider_id for v in target["sleeper_id"].dropna()):
-            raise RefreshGateError("NFL roster already has a conflicting Sleeper ID")
-        if indexes.get("sleeper_id", {}).get(provider_id, set()) - {gsis}:
-            raise RefreshGateError("Sleeper ID already belongs to another NFL identity")
-        resolved[gsis] = provider_id
-    return pd.DataFrame([
+            except RefreshGateError as exc:
+                skipped.append(f"{provider.get('player_id')}: {exc}")
+                if "claim one NFL identity" in str(exc):
+                    contested.add(str(exc).rsplit("=", 1)[-1])
+            continue
+        _resolve_one_sleeper_identity(provider, roster, anchors, indexes, resolved, seen_provider_ids)
+    for gsis in contested:
+        resolved.pop(gsis, None)  # two Sleeper players claimed it: link neither
+    frame = pd.DataFrame([
         {"NFL_player_id": gsis, "sleeper_player_id": int(provider_id)}
         for gsis, provider_id in resolved.items()
     ], columns=[name for name, _ in columns])
+    frame.attrs["skipped"] = skipped
+    return frame
+
+
+def _resolve_one_sleeper_identity(provider, roster, anchors, indexes, resolved, seen_provider_ids) -> None:
+    """Resolve one Sleeper directory row to exactly one NFLverse GSIS id, or raise."""
+    provider_id = _provider_identity(provider.get("player_id"))
+    if provider_id is None or provider_id in seen_provider_ids:
+        raise RefreshGateError("player bio crosswalk requires unique nonempty provider IDs")
+    seen_provider_ids.add(provider_id)
+    candidates: set[str] = set()
+    supplied: dict[str, str] = {}
+    for anchor in anchors:
+        value = _provider_identity(provider.get(anchor), numeric=anchor != "gsis_id")
+        if value is None:
+            continue
+        supplied[anchor] = value
+        matches = indexes.get(anchor, {}).get(value, set())
+        if len(matches) > 1:
+            raise RefreshGateError(f"ambiguous player bio crosswalk: {anchor}")
+        candidates.update(matches)
+    verified = _VERIFIED_SLEEPER_IDENTITIES.get(provider_id)
+    if not candidates and verified is not None:
+        expected_anchor = {
+            key: value for key, value in verified.items() if key != "gsis_id"
+        }
+        if not expected_anchor or any(
+            supplied.get(key) != value for key, value in expected_anchor.items()
+        ):
+            raise RefreshGateError(
+                "verified player bio crosswalk anchor mismatch "
+                f"for provider_id={provider_id}; supplied={supplied}"
+            )
+        candidates.add(verified["gsis_id"])
+    if not candidates:
+        candidates = _exact_bio_candidates(roster, provider)
+    if len(candidates) != 1:
+        raise RefreshGateError(
+            "player bio crosswalk has missing or disagreeing stable anchors "
+            f"for provider_id={provider_id}; supplied={supplied}; "
+            f"candidate_gsis={sorted(candidates)}"
+        )
+    (gsis,) = candidates
+    if gsis in resolved:
+        raise RefreshGateError(f"multiple Sleeper players claim one NFL identity gsis={gsis}")
+    target = roster[roster["gsis_id"] == gsis]
+    for anchor, value in supplied.items():
+        if anchor in target and any(v != value for v in target[anchor].dropna()):
+            raise RefreshGateError(f"conflicting player bio crosswalk: {anchor}")
+    if "sleeper_id" in target and any(v != provider_id for v in target["sleeper_id"].dropna()):
+        raise RefreshGateError("NFL roster already has a conflicting Sleeper ID")
+    if indexes.get("sleeper_id", {}).get(provider_id, set()) - {gsis}:
+        raise RefreshGateError("Sleeper ID already belongs to another NFL identity")
+    resolved[gsis] = provider_id
 
 
 def build_player_bio_rows(
@@ -1293,6 +1316,276 @@ def _rebuild_local_rollups(artifact: Path, baseline_artifact: Path) -> dict[str,
         con.close()
 
 
+SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
+ESPN_TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams"
+_ESPN_TO_NFLVERSE_TEAM = {"WSH": "WAS", "LAR": "LA"}
+_ESPN_TO_NFLVERSE_POSITION = {"PK": "K"}
+
+
+def _surname_key(value) -> str | None:
+    key = _bio_name_key(value)
+    return key.split()[-1] if key else None
+
+
+def _date_key(value) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()[:10]
+    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else None
+
+
+def _nflverse_team_key(value) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    token = str(value).strip().upper()
+    if not token:
+        return None
+    return _STATHEAD_TO_NFLVERSE_TEAM.get(token, token)
+
+
+def fetch_espn_athletes(*, timeout: float = 15.0) -> pd.DataFrame:
+    """Every rostered NFL athlete from ESPN's own team rosters (one call per team)."""
+    teams = requests.get(ESPN_TEAMS_URL, timeout=timeout)
+    teams.raise_for_status()
+    team_ids = [
+        entry["team"]["id"]
+        for sport in teams.json().get("sports", [])
+        for league in sport.get("leagues", [])
+        for entry in league.get("teams", [])
+    ]
+    rows = []
+    for team_id in team_ids:
+        response = requests.get(f"{ESPN_TEAMS_URL}/{team_id}/roster", timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+        team = str(payload.get("team", {}).get("abbreviation") or "").upper()
+        team = _ESPN_TO_NFLVERSE_TEAM.get(team, team)
+        for group in payload.get("athletes", []):
+            for athlete in group.get("items", []):
+                position = str((athlete.get("position") or {}).get("abbreviation") or "").upper()
+                rows.append({
+                    "espn_id": str(athlete.get("id") or "").strip(),
+                    "full_name": athlete.get("fullName"),
+                    "birth_date": _date_key(athlete.get("dateOfBirth")),
+                    "position": _ESPN_TO_NFLVERSE_POSITION.get(position, position),
+                    "team": team,
+                })
+    return pd.DataFrame(rows, columns=["espn_id", "full_name", "birth_date", "position", "team"])
+
+
+def build_espn_bio_link_rows(
+    bio_missing: pd.DataFrame, espn_athletes: pd.DataFrame, *, used_espn_ids: set[str],
+) -> pd.DataFrame:
+    """Link bio rows that no public directory has given an ESPN ID.
+
+    nflverse supplies ESPN IDs for most players; undrafted rookies can have
+    none anywhere (Gregory Desrosiers, NYG 2026). ESPN's own roster is then the
+    witness: birth date, current team, position and surname must all agree,
+    and the key must be unique on BOTH sides. Names alone never link, and an
+    ESPN ID already present in the bio is never reassigned.
+    """
+    columns = ["NFL_player_id", "espn_id"]
+    if bio_missing.empty or espn_athletes.empty:
+        return pd.DataFrame(columns=columns)
+
+    def keyed(frame, name_col, team_col, position_col):
+        keys = list(zip(
+            frame["birth_date"].map(_date_key),
+            frame[team_col].map(_nflverse_team_key),
+            frame[position_col].map(_bio_text),
+            frame[name_col].map(_surname_key),
+        ))
+        return [None if any(part is None for part in key) else key for key in keys]
+
+    bio = bio_missing.copy()
+    bio["_key"] = keyed(bio, "player", "latest_team", "nfl_position")
+    espn = espn_athletes[~espn_athletes["espn_id"].astype(str).isin(used_espn_ids)].copy()
+    espn = espn[espn["espn_id"].astype(str).str.fullmatch(r"\d+")]
+    espn["_key"] = keyed(espn, "full_name", "team", "position")
+    bio = bio[bio["_key"].notna()]
+    espn = espn[espn["_key"].notna()]
+    bio_counts = bio["_key"].value_counts()
+    espn_counts = espn["_key"].value_counts()
+    bio_unique = bio[bio["_key"].map(bio_counts).eq(1)]
+    espn_unique = espn[espn["_key"].map(espn_counts).eq(1)]
+    matched = bio_unique[["NFL_player_id", "_key"]].merge(
+        espn_unique[["_key", "espn_id"]], on="_key", how="inner",
+    )
+    return matched[columns].reset_index(drop=True)
+
+
+def load_provider_link_sources(year: int) -> dict[str, pd.DataFrame | None]:
+    """Fetch the public identity directories; any unavailable source is None."""
+    def sleeper_directory() -> pd.DataFrame:
+        response = requests.get(SLEEPER_PLAYERS_URL, timeout=30)
+        response.raise_for_status()
+        return pd.DataFrame([dict(player, player_id=key) for key, player in response.json().items()])
+
+    loaders = {
+        "roster": lambda: load_nflverse_identity_roster(year),
+        "sleeper": sleeper_directory,
+        "espn": fetch_espn_athletes,
+    }
+    sources: dict[str, pd.DataFrame | None] = {}
+    for name, loader in loaders.items():
+        try:
+            sources[name] = loader()
+        except Exception as exc:  # a missing directory only means fewer links
+            logger.warning("[player-bio-links] %s directory unavailable: %s", name, exc)
+            sources[name] = None
+    return sources
+
+
+def repair_contradicted_sleeper_links(
+    con: duckdb.DuckDBPyConnection,
+    sleeper: pd.DataFrame,
+    *,
+    roster: pd.DataFrame | None = None,
+    table: str = "nfl_historical.player_bio",
+) -> list[dict[str, object]]:
+    """Remove a Sleeper ID from bio rows the Sleeper directory itself contradicts.
+
+    One person, one ID: when several bio rows carry the same Sleeper ID, the
+    Sleeper directory row for that ID is the witness. First choice is a shared
+    stable ID (GSIS/ESPN/Rotowire resolved through NFLverse) naming exactly one
+    of the rows; otherwise the directory birth date must agree with exactly one
+    row and contradict every other. The ID stays on that row and is cleared
+    from the rest. Anything less decisive changes nothing and is reported.
+    """
+    target = _qident(table)
+    shared = con.execute(
+        f"SELECT CAST(sleeper_player_id AS BIGINT) AS sid, NFL_player_id, player, "
+        f"CAST(birth_date AS VARCHAR) AS birth_date FROM {target} WHERE sleeper_player_id IN ("
+        f"SELECT sleeper_player_id FROM {target} WHERE sleeper_player_id IS NOT NULL "
+        f"GROUP BY 1 HAVING COUNT(*) > 1)"
+    ).fetchdf()
+    if shared.empty:
+        return []
+    directory = sleeper.assign(player_id=sleeper["player_id"].astype(str)).set_index("player_id")
+    repairs: list[dict[str, object]] = []
+    for sid, group in shared.groupby("sid"):
+        anchor_gsis = None
+        if roster is not None and str(int(sid)) in directory.index:
+            provider = dict(directory.loc[str(int(sid))].to_dict(), player_id=str(int(sid)))
+            provider.pop("full_name", None)  # anchors only: names never decide this
+            try:
+                resolved = build_sleeper_bio_mapping_rows(
+                    roster, pd.DataFrame([provider]), skip_unresolved=True,
+                )
+                if len(resolved) == 1:
+                    anchor_gsis = str(resolved.iloc[0]["NFL_player_id"])
+            except RefreshGateError:
+                anchor_gsis = None
+        witness = directory["birth_date"].get(str(int(sid))) if "birth_date" in directory else None
+        witness_dob = _date_key(witness)
+        dobs = group["birth_date"].map(_date_key)
+        if anchor_gsis is not None and group["NFL_player_id"].astype(str).eq(anchor_gsis).sum() == 1:
+            agreeing = group[group["NFL_player_id"].astype(str).eq(anchor_gsis)]
+            contradicted = group[~group["NFL_player_id"].astype(str).eq(anchor_gsis)]
+        elif witness_dob:
+            agreeing = group[dobs.eq(witness_dob)]
+            contradicted = group[dobs.notna() & dobs.ne(witness_dob)]
+        else:
+            agreeing = contradicted = group.iloc[0:0]
+        if len(agreeing) != 1 or len(contradicted) != len(group) - 1:
+            logger.warning(
+                "[player-bio-links] Sleeper %s shared by %s; directory birth date %s does not "
+                "settle it - left unchanged", int(sid), list(group["NFL_player_id"]), witness_dob,
+            )
+            continue
+        for row in contradicted.itertuples():
+            updated = con.execute(
+                f"UPDATE {target} SET sleeper_player_id = NULL "
+                f"WHERE NFL_player_id = ? AND CAST(sleeper_player_id AS BIGINT) = ? RETURNING 1",
+                [row.NFL_player_id, int(sid)],
+            ).fetchall()
+            if len(updated) != 1:
+                raise RefreshGateError("contradicted Sleeper link repair touched an unexpected row count")
+            repairs.append({
+                "sleeper_player_id": int(sid), "cleared_from": row.NFL_player_id,
+                "cleared_player": row.player, "kept_on": agreeing.iloc[0]["NFL_player_id"],
+                "witness": "stable_id" if anchor_gsis is not None else "birth_date",
+                "directory_birth_date": witness_dob, "cleared_birth_date": _date_key(row.birth_date),
+            })
+    return repairs
+
+
+def fill_missing_provider_links(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    year: int,
+    sources: dict[str, pd.DataFrame | None],
+    table: str = "nfl_historical.player_bio",
+    stats_table: str = "nfl_historical.nfl_player_stats_all",
+) -> dict[str, object]:
+    """Fill absent Sleeper/ESPN IDs for players active this season, durably.
+
+    League updates resolve links from this bio, so a link written here reaches
+    every league. Only empty fields are filled, only from a provable match, and
+    a contested or conflicting ID is skipped rather than guessed.
+    """
+    target = _qident(table)
+    active = con.execute(
+        f"SELECT DISTINCT bio.NFL_player_id, bio.player, CAST(bio.birth_date AS VARCHAR) AS birth_date, "
+        f"bio.nfl_position, bio.latest_team, bio.espn_id, bio.sleeper_player_id FROM {target} bio "
+        f"JOIN (SELECT DISTINCT NFL_player_id FROM {_qident(stats_table)} WHERE year = ?) s "
+        f"USING (NFL_player_id)", [int(year)],
+    ).fetchdf()
+    receipt: dict[str, object] = {"active_players": len(active), "sleeper_linked": 0, "espn_linked": 0}
+
+    roster, sleeper = sources.get("roster"), sources.get("sleeper")
+    if sleeper is not None and not sleeper.empty:
+        receipt["sleeper_contradictions_repaired"] = repair_contradicted_sleeper_links(
+            con, sleeper, roster=roster, table=table,
+        )
+        if receipt["sleeper_contradictions_repaired"]:
+            # A freed row may now be linkable to its own Sleeper ID below.
+            active = con.execute(
+                f"SELECT DISTINCT bio.NFL_player_id, bio.player, CAST(bio.birth_date AS VARCHAR) AS birth_date, "
+                f"bio.nfl_position, bio.latest_team, bio.espn_id, bio.sleeper_player_id FROM {target} bio "
+                f"JOIN (SELECT DISTINCT NFL_player_id FROM {_qident(stats_table)} WHERE year = ?) s "
+                f"USING (NFL_player_id)", [int(year)],
+            ).fetchdf()
+    if roster is not None and sleeper is not None and not sleeper.empty:
+        linked = {
+            str(int(v)) for (v,) in con.execute(
+                f"SELECT sleeper_player_id FROM {target} WHERE sleeper_player_id IS NOT NULL"
+            ).fetchall()
+        }
+        ids = sleeper["player_id"].astype(str)
+        teams = sleeper["team"] if "team" in sleeper else pd.Series(pd.NA, index=sleeper.index)
+        candidates = sleeper[ids.str.fullmatch(r"\d+") & ~ids.isin(linked) & teams.notna()]
+        mappings = build_sleeper_bio_mapping_rows(roster, candidates, skip_unresolved=True)
+        skipped = mappings.attrs.get("skipped", [])
+        open_ids = set(active.loc[active["sleeper_player_id"].isna(), "NFL_player_id"].astype(str))
+        mappings = mappings[mappings["NFL_player_id"].astype(str).isin(open_ids)].reset_index(drop=True)
+        receipt["sleeper_unresolved"] = len(skipped)
+        if not mappings.empty:
+            _, receipt["sleeper_linked"] = upsert_player_bio_rows(
+                con, mappings, table=table, mapping_only=True,
+            )
+
+    espn = sources.get("espn")
+    if espn is not None and not espn.empty:
+        used = {str(v) for (v,) in con.execute(
+            f"SELECT CAST(espn_id AS VARCHAR) FROM {target} WHERE espn_id IS NOT NULL"
+        ).fetchall()}
+        missing = active[active["espn_id"].isna()]
+        links = build_espn_bio_link_rows(missing, espn, used_espn_ids=used)
+        if not links.empty:
+            con.register("_espn_bio_links", links)
+            try:
+                con.execute(
+                    f"UPDATE {target} AS bio SET espn_id = src.espn_id FROM _espn_bio_links src "
+                    f"WHERE bio.NFL_player_id = src.NFL_player_id AND bio.espn_id IS NULL"
+                )
+            finally:
+                con.unregister("_espn_bio_links")
+            receipt["espn_linked"] = len(links)
+            receipt["espn_links"] = links.to_dict("records")
+    return receipt
+
+
 def refresh_local_ops_artifact(
     *,
     base_artifact: Path | str,
@@ -1302,6 +1595,7 @@ def refresh_local_ops_artifact(
     players: pd.DataFrame,
     year: int,
     week: int,
+    link_sources: dict[str, pd.DataFrame | None] | None = None,
 ) -> dict[str, object]:
     """Build and verify a complete replacement artifact without contacting Fly.
 
@@ -1323,6 +1617,14 @@ def refresh_local_ops_artifact(
         enriched = _add_franchise_numbers(facts)
         bio_rows = build_player_bio_rows(enriched, players, bio_schema)
         bios_inserted, bios_updated = upsert_player_bio_rows(con, bio_rows)
+        bio_links: dict[str, object] = {}
+        if link_sources is not None:
+            try:
+                bio_links = fill_missing_provider_links(con, year=year, sources=link_sources)
+                logger.info("[player-bio-links] %s", bio_links)
+            except Exception as exc:  # never block the NFL stats refresh on links
+                logger.error("[player-bio-links] link fill skipped: %s", exc)
+                bio_links = {"error": str(exc)}
         enriched = _hydrate_primary_position(enriched, con)
         aligned = align_facts_to_wide_schema(enriched, wide_schema)
         rows_replaced = replace_completed_game_rows(
@@ -1355,6 +1657,7 @@ def refresh_local_ops_artifact(
         "weekly_rows_replaced": rows_replaced,
         "player_bio_rows_inserted": bios_inserted,
         "player_bio_rows_updated": bios_updated,
+        "player_bio_links": bio_links,
         "table_counts": counts,
         "schema_columns": schema_columns,
         "rollups": rollups,

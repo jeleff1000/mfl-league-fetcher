@@ -372,6 +372,12 @@ def capture_active_provider_player_scope(
     return keys
 
 
+# Unlinked scored rows tolerated before an update fails closed. Above this a
+# missing bio sync or broken identity join is far more likely than rookies.
+UNMAPPED_SCORED_TOLERANCE_ROWS = 5
+UNMAPPED_SCORED_TOLERANCE_SHARE = 0.05
+
+
 def assert_transformed_active_player_scope(
     conn: Any, *, db_name: str, year: int, weeks: tuple[int, ...],
     provider_id_column: str, expected_keys: set[tuple[int, str]],
@@ -392,6 +398,7 @@ def assert_transformed_active_player_scope(
         raise IncompleteSourceError("transformed provider player inventory changed")
     mapped_scored = 0
     unmapped_scored = 0
+    unmapped_keys: list[str] = []
     for week, player_id, nfl_id, points in rows:
         score = pd.to_numeric(pd.Series([points]), errors="coerce").iloc[0]
         if pd.isna(score) or not isfinite(float(score)):
@@ -404,13 +411,31 @@ def assert_transformed_active_player_scope(
         identity = str(nfl_id or "").strip()
         if not identity or identity.upper().startswith(("ESPN-", "YAHOO-", "SLEEPER-")):
             unmapped_scored += 1
+            unmapped_keys.append(f"week={int(week)} {provider_id_column}={player_id}")
         else:
             mapped_scored += 1
+    result = {"provider_player_keys": len(observed), "mapped_scored_players": mapped_scored}
     if unmapped_scored:
-        raise IncompleteSourceError(
-            f"{unmapped_scored} scored provider players lack NFL mappings after transformations"
+        # A few not-yet-linked players (typically rookies no public directory
+        # has cross-referenced yet) publish as pending rows with their provider
+        # points intact; they link on a later update once the bio has them.
+        # Only a share large enough to mean a broken bio/identity input blocks.
+        scored = mapped_scored + unmapped_scored
+        if unmapped_scored > max(
+            UNMAPPED_SCORED_TOLERANCE_ROWS, UNMAPPED_SCORED_TOLERANCE_SHARE * scored,
+        ):
+            raise IncompleteSourceError(
+                f"{unmapped_scored} scored provider players lack NFL mappings after transformations "
+                f"({unmapped_scored}/{scored} scored rows; identity input looks broken)"
+            )
+        print(
+            f"[player-scope] {unmapped_scored}/{scored} scored rows publish pending an NFL link: "
+            + ", ".join(unmapped_keys[:20]),
+            flush=True,
         )
-    return {"provider_player_keys": len(observed), "mapped_scored_players": mapped_scored}
+        result["unmapped_scored_players"] = unmapped_scored
+        result["unmapped_scored_keys"] = unmapped_keys
+    return result
 
 
 def _active_matchup_scores(

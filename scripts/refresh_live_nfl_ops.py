@@ -144,6 +144,11 @@ def main(argv: list[str] | None = None) -> int:
         season_type=args.season_type,
         game_date=args.game_date,
     )
+    from multi_league.data_fetchers.live_nfl_ops_refresh import load_provider_link_sources
+
+    # Public Sleeper/ESPN/NFLverse directories let the bio fill provider IDs
+    # durably, so every league's update links new players without guessing.
+    link_sources = load_provider_link_sources(args.year)
     result = refresh_local_ops_artifact(
         base_artifact=args.base,
         output_artifact=args.output,
@@ -152,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
         players=players,
         year=args.year,
         week=args.week,
+        link_sources=link_sources,
     )
+    print(f"[live-nfl-ops] player bio links: {result.get('player_bio_links')}")
     manifest = args.output.with_suffix(".manifest.json")
     write_refresh_manifest(result, manifest)
     print(f"[live-nfl-ops] local artifact verified: {args.output}")

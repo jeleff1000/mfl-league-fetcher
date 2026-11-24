@@ -63,11 +63,14 @@ def test_post_transform_player_scope_rejects_lost_provider_ids_and_unmapped_scor
         )
     conn.execute("DELETE FROM public.player_fantasy WHERE espn_player_id='phantom'")
     conn.execute("UPDATE public.player_fantasy SET NFL_player_id='ESPN-101' WHERE espn_player_id='101'")
-    with pytest.raises(IncompleteSourceError, match="scored provider players lack NFL mappings"):
-        assert_transformed_active_player_scope(
-            conn, db_name="afi_data", year=2026, weeks=(1,),
-            provider_id_column="espn_player_id", expected_keys=expected,
-        )
+    # One not-yet-linked rookie publishes pending instead of failing the update
+    # (fantasy 2026: Greg Desrosiers Jr., 2 points, run 45446989620).
+    pending = assert_transformed_active_player_scope(
+        conn, db_name="afi_data", year=2026, weeks=(1,),
+        provider_id_column="espn_player_id", expected_keys=expected,
+    )
+    assert pending["unmapped_scored_players"] == 1
+    assert pending["unmapped_scored_keys"] == ["week=1 espn_player_id=101"]
     conn.execute("UPDATE public.player_fantasy SET NFL_player_id='00-101', fantasy_points='inf' WHERE espn_player_id='101'")
     with pytest.raises(IncompleteSourceError, match="score is malformed"):
         assert_transformed_active_player_scope(
@@ -1136,3 +1139,25 @@ def test_sleeper_schedule_fetch_only_names_map_to_exact_matchup_team_keys():
             matchups=matchups,
             schedule=schedule.assign(team_name=["Team A", "Wrong Team"]),
         )
+
+
+def test_widespread_unmapped_scored_rows_still_fail_closed():
+    import duckdb
+
+    from multi_league.core.league_update_validation import assert_transformed_active_player_scope
+
+    with duckdb.connect() as conn:
+        conn.execute("CREATE SCHEMA public")
+        conn.execute(
+            "CREATE TABLE public.player_fantasy (db_name VARCHAR, year INTEGER, week INTEGER, "
+            "espn_player_id VARCHAR, fantasy_points DOUBLE, NFL_player_id VARCHAR)"
+        )
+        rows = [("lg", 2026, 1, str(i), 5.0, None if i < 10 else f"00-{i}") for i in range(100)]
+        conn.executemany("INSERT INTO public.player_fantasy VALUES (?,?,?,?,?,?)", rows)
+        keys = {(1, str(i)) for i in range(100)}
+        kwargs = dict(db_name="lg", year=2026, weeks=(1,), provider_id_column="espn_player_id",
+                      expected_keys=keys)
+        with pytest.raises(IncompleteSourceError, match="10 scored provider players lack NFL mappings"):
+            assert_transformed_active_player_scope(conn, **kwargs)
+        conn.execute("UPDATE public.player_fantasy SET NFL_player_id='00-x' WHERE CAST(espn_player_id AS INT) >= 5")
+        assert assert_transformed_active_player_scope(conn, **kwargs)["unmapped_scored_players"] == 5

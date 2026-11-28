@@ -18,7 +18,7 @@ def test_weekly_update_workers_skip_virtualenv_and_pip_upgrade(platform: str, wo
     # Dependency-cache restore and post-publication cache/receipt steps run
     # outside the separately bounded two-minute worker execution.
     assert "timeout-minutes: 5" in workflow
-    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 120 ))" in workflow
+    assert "LEAGUE_UPDATE_DEADLINE_EPOCH=$(( $(date +%s) + 210 ))" in workflow
     assert 'timeout --signal=KILL "${remaining}s"' in workflow
     assert "python -m venv" not in workflow
     assert "python -m pip install --upgrade pip" not in workflow

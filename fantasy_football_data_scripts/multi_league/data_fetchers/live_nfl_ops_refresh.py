@@ -223,17 +223,26 @@ def finalized_game_scope(
     )
 
 
+SCHEDULED_LOOKBACK_DAYS = 6
+
+
 def discover_scheduled_refresh_scope(
     schedule: pd.DataFrame,
     *,
     season: int,
     game_date: str,
 ) -> dict[str, object] | None:
-    """Discover exactly one final REG/POST work item for a scheduler game date.
+    """Discover the one final REG/POST week to refresh for a scheduler date.
 
-    A no-game date is an intentional no-op.  Two weekly/postseason work-item
-    keys on one date are ambiguous to the one-work-item refresh runner and
-    fail closed rather than broadening a replacement scope.
+    The work item is the most recent NFL week with a final game on or within
+    ``SCHEDULED_LOOKBACK_DAYS`` before the scheduler date, covering EVERY final
+    game of that week so far (not only that date's). NFLverse can publish a
+    game's stats hours after the nightly run (2026 week 12: Friday DEN@PIT was
+    absent at all three Saturday attempts and the date-only scope never came
+    back to it). Re-scoping the week each night retries such a game the next
+    night; games NFLverse has not published are skipped, never deleted.
+    No final game in the window is an intentional no-op; two work-item keys in
+    that week fail closed.
     """
     missing = sorted(_SCHEDULE_COLUMNS - set(schedule.columns))
     if missing:
@@ -251,11 +260,21 @@ def discover_scheduled_refresh_scope(
     if dates.isna().any():
         raise RefreshGateError("schedule has an invalid game date")
     scoped["game_date"] = dates.dt.strftime("%Y-%m-%d")
-    scoped = scoped.loc[scoped["game_date"] == target_date].copy()
-    if scoped.empty:
-        return None
-    if scoped[["away_score", "home_score"]].apply(pd.to_numeric, errors="coerce").isna().any().any():
+    on_date = scoped.loc[scoped["game_date"] == target_date]
+    if not on_date.empty and on_date[["away_score", "home_score"]].apply(
+        pd.to_numeric, errors="coerce"
+    ).isna().any().any():
         raise RefreshGateError(f"scheduled NFL games are not final for {target_date}")
+    window_start = (pd.Timestamp(target_date) - pd.Timedelta(days=SCHEDULED_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    final = scoped[["away_score", "home_score"]].apply(pd.to_numeric, errors="coerce").notna().all(axis=1)
+    recent = scoped.loc[final & (scoped["game_date"] <= target_date) & (scoped["game_date"] >= window_start)]
+    if recent.empty:
+        return None
+    latest = recent.loc[recent["game_date"] == recent["game_date"].max()]
+    scoped = scoped.loc[
+        scoped["week"].isin(latest["week"].unique()) & scoped["season_type"].isin(latest["season_type"].unique())
+        & (scoped["game_date"] <= target_date)
+    ].copy()
 
     scoped["_week"] = pd.to_numeric(scoped["week"], errors="coerce")
     if scoped["_week"].isna().any():
@@ -273,15 +292,16 @@ def discover_scheduled_refresh_scope(
         year=int(season),
         week=week,
         season_types=(season_type,),
-        game_date=target_date,
     )
+    games = games.loc[pd.to_datetime(games["game_date"], errors="coerce").dt.strftime("%Y-%m-%d") <= target_date]
     if games.empty:
         raise RefreshGateError("scheduled refresh scope lost all finalized games")
+    # No "game_date" key: the runner refreshes the whole week's final games.
     return {
         "year": int(season),
         "week": week,
         "season_type": season_type,
-        "game_date": target_date,
+        "through_date": target_date,
         "game_ids": sorted(games["game_id"].astype(str).tolist()),
     }
 
@@ -1510,6 +1530,55 @@ def repair_contradicted_sleeper_links(
     return repairs
 
 
+def veto_contradicted_sleeper_ids(
+    frame: pd.DataFrame | None, sleeper: pd.DataFrame | None, *, id_col: str = "sleeper_id",
+) -> tuple[pd.DataFrame | None, list[dict[str, object]]]:
+    """Drop NFLverse Sleeper IDs that Sleeper's own directory says belong to someone else.
+
+    NFLverse occasionally carries a wrong cross-reference (2026: Sam Hartman
+    listed with Sleeper 11376, which Sleeper assigns to Richard Gouraige; his
+    real ID is 11558). Re-copying it nightly re-broke the bio. An ID is vetoed
+    only when Sleeper's row for it disagrees on BOTH birth date and surname and
+    names no matching GSIS ID - a one-field discrepancy (Chris Brazzell II's
+    birth date differs by a month between the two directories) is kept.
+    """
+    if frame is None or sleeper is None or frame.empty or sleeper.empty or id_col not in frame:
+        return frame, []
+    name_col = next((c for c in ("full_name", "display_name", "player") if c in frame), None)
+    if name_col is None or "birth_date" not in frame:
+        return frame, []
+    directory = sleeper.assign(_sid=sleeper["player_id"].astype(str)).drop_duplicates("_sid").set_index("_sid")
+    result = frame.copy()
+    vetoed: list[dict[str, object]] = []
+    for index, row in result.iterrows():
+        raw = row.get(id_col)
+        if raw is None or (isinstance(raw, float) and pd.isna(raw)) or str(raw).strip() == "":
+            continue
+        try:
+            sid = str(int(float(raw)))
+        except (TypeError, ValueError):
+            continue
+        if sid not in directory.index:
+            continue
+        witness = directory.loc[sid]
+        witness_gsis = witness.get("gsis_id") if hasattr(witness, "get") else None
+        if witness_gsis is not None and not pd.isna(witness_gsis) and str(witness_gsis).strip() == str(row.get("gsis_id", "")).strip():
+            continue
+        dob_row, dob_witness = _date_key(row.get("birth_date")), _date_key(witness.get("birth_date"))
+        name_row, name_witness = _surname_key(row.get(name_col)), _surname_key(witness.get("full_name"))
+        if None in (dob_row, dob_witness, name_row, name_witness):
+            continue
+        if dob_row != dob_witness and name_row != name_witness:
+            result.at[index, id_col] = pd.NA
+            vetoed.append({
+                "gsis_id": row.get("gsis_id"), "player": row.get(name_col), "sleeper_id": sid,
+                "sleeper_says": witness.get("full_name"),
+            })
+    if vetoed:
+        logger.warning("[player-bio-links] vetoed %d contradicted NFLverse Sleeper IDs: %s", len(vetoed), vetoed)
+    return result, vetoed
+
+
 def fill_missing_provider_links(
     con: duckdb.DuckDBPyConnection,
     *,
@@ -1534,6 +1603,9 @@ def fill_missing_provider_links(
     receipt: dict[str, object] = {"active_players": len(active), "sleeper_linked": 0, "espn_linked": 0}
 
     roster, sleeper = sources.get("roster"), sources.get("sleeper")
+    roster, roster_vetoed = veto_contradicted_sleeper_ids(roster, sleeper)
+    if roster_vetoed:
+        receipt["roster_sleeper_ids_vetoed"] = roster_vetoed
     if sleeper is not None and not sleeper.empty:
         receipt["sleeper_contradictions_repaired"] = repair_contradicted_sleeper_links(
             con, sleeper, roster=roster, table=table,
@@ -1615,12 +1687,17 @@ def refresh_local_ops_artifact(
         wide_schema = _schema_columns(con, "nfl_historical.nfl_player_stats_all")
         bio_schema = _schema_columns(con, "nfl_historical.player_bio")
         enriched = _add_franchise_numbers(facts)
+        directory_vetoed: list[dict[str, object]] = []
+        if link_sources is not None:
+            players, directory_vetoed = veto_contradicted_sleeper_ids(players, link_sources.get("sleeper"))
         bio_rows = build_player_bio_rows(enriched, players, bio_schema)
         bios_inserted, bios_updated = upsert_player_bio_rows(con, bio_rows)
         bio_links: dict[str, object] = {}
         if link_sources is not None:
             try:
                 bio_links = fill_missing_provider_links(con, year=year, sources=link_sources)
+                if directory_vetoed:
+                    bio_links["directory_sleeper_ids_vetoed"] = directory_vetoed
                 logger.info("[player-bio-links] %s", bio_links)
             except Exception as exc:  # never block the NFL stats refresh on links
                 logger.error("[player-bio-links] link fill skipped: %s", exc)

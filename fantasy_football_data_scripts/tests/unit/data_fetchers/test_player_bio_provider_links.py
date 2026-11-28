@@ -134,3 +134,19 @@ def test_unresolvable_directory_rows_are_skipped_not_fatal():
     assert rows.empty and len(rows.attrs["skipped"]) == 1
     with pytest.raises(live.RefreshGateError):
         live.build_sleeper_bio_mapping_rows(ROSTER, SLEEPER[SLEEPER.player_id == "99999"])
+
+
+def test_nflverse_sleeper_id_contradicted_by_sleeper_is_vetoed_not_recopied():
+    """NFLverse lists Sam Hartman with Sleeper 11376 (Sleeper: Richard Gouraige);
+    re-copying it nightly kept re-breaking the bio. Brazzell II's birth date
+    differs by a month between directories but the surname agrees: kept."""
+    directory = pd.DataFrame([
+        {"gsis_id": "00-0039677", "full_name": "Sam Hartman", "birth_date": "1999-07-29", "sleeper_id": "11376"},
+        {"gsis_id": "00-0041047", "full_name": "Chris Brazzell II", "birth_date": "2003-10-23", "sleeper_id": "13353"},
+        {"gsis_id": "00-0000009", "full_name": "Unknown Guy", "birth_date": "2001-01-01", "sleeper_id": "424242"},
+    ])
+    vetted, vetoed = live.veto_contradicted_sleeper_ids(directory, SLEEPER)
+    assert [v["sleeper_id"] for v in vetoed] == ["11376"]
+    assert pd.isna(vetted.loc[0, "sleeper_id"])
+    assert vetted.loc[1, "sleeper_id"] == "13353"
+    assert vetted.loc[2, "sleeper_id"] == "424242"   # absent from Sleeper: no witness, unchanged

@@ -41,7 +41,7 @@ def test_discovery_cli_emits_week_one_scope_for_september_tenth(monkeypatch, tmp
             "year": 2026,
             "week": 1,
             "season_type": "REG",
-            "game_date": "2026-09-10",
+            "through_date": "2026-09-10",
             "game_ids": ["2026_01_NE_SEA"],
         },
     }

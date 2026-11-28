@@ -198,9 +198,37 @@ def test_discover_scheduled_refresh_scope_returns_one_exact_ready_work_item(game
         "year": 2026,
         "week": 1,
         "season_type": season_type,
-        "game_date": "2026-09-10",
+        "through_date": "2026-09-10",
         "game_ids": ["2026_01_NE_SEA"],
     }
+
+
+def test_scheduled_scope_retries_a_late_published_game_on_the_next_night():
+    """2026 week 12: Friday DEN@PIT stats were not on NFLverse at any of the
+    three Saturday attempts. The no-game Saturday date must re-scope the whole
+    week (Wed/Thu/Fri games) so Sunday's run loads it; unplayed Sunday games
+    stay out, and an off-season date is still a no-op."""
+    def game(game_id, day, final=True):
+        return {
+            "game_id": game_id, "season": 2026, "week": 12, "game_type": "REG", "gameday": day,
+            "away_team": game_id.split("_")[2], "home_team": game_id.split("_")[3],
+            "away_score": 20 if final else None, "home_score": 17 if final else None,
+        }
+
+    schedule = pd.DataFrame([
+        game("2026_12_GB_LA", "2026-11-25"),
+        game("2026_12_KC_BUF", "2026-11-26"),
+        game("2026_12_DEN_PIT", "2026-11-27"),
+        game("2026_12_NO_CIN", "2026-11-29", final=False),
+    ])
+    expected = ["2026_12_DEN_PIT", "2026_12_GB_LA", "2026_12_KC_BUF"]
+    for scheduler_date in ("2026-11-27", "2026-11-28"):
+        scope = discover_scheduled_refresh_scope(schedule, season=2026, game_date=scheduler_date)
+        assert scope["week"] == 12 and scope["game_ids"] == expected and "game_date" not in scope
+    assert discover_scheduled_refresh_scope(schedule, season=2026, game_date="2026-11-26")["game_ids"] == [
+        "2026_12_GB_LA", "2026_12_KC_BUF",
+    ]
+    assert discover_scheduled_refresh_scope(schedule, season=2026, game_date="2026-12-20") is None
 
 
 def test_discover_scheduled_refresh_scope_rejects_multiple_work_item_keys():
